@@ -115,10 +115,15 @@ jobs:
           url=$(vercel --cwd "$GITHUB_WORKSPACE" --token "$VERCEL_TOKEN" --yes)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
-  build-frontend-staging:
+  deploy-frontend-staging:
     needs: [gate]
     if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -133,53 +138,15 @@ jobs:
       - name: Install frontend dependencies
         working-directory: example_project/src/frontend
         run: npm ci
-      - name: Build frontend for staging
-        working-directory: example_project/src/frontend
+      - name: Deploy frontend to Vercel staging
+        id: deploy
         env:
           NEXT_PUBLIC_API_URL: ${{ vars.STAGING_API_URL || 'http://localhost:8000/api/v1' }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND_STAGING }}
         run: |
-          # Build from the repository root so the project's Root Directory is resolved correctly.
-          vercel build --cwd "$GITHUB_WORKSPACE" --yes --token "$VERCEL_TOKEN"
-      - name: Upload staging frontend build
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: frontend-build-staging
-          path: .vercel/output
-          include-hidden-files: true
-
-  deploy-frontend-staging:
-    needs: [build-frontend-staging]
-    runs-on: ubuntu-latest
-    environment:
-      name: staging
-      url: ${{ steps.deploy.outputs.url }}
-    outputs:
-      url: ${{ steps.deploy.outputs.url }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Download staging frontend build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: frontend-build-staging
-          path: .vercel/output
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "20"
-      - name: Install Vercel CLI
-        run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
-      - name: Deploy frontend to Vercel staging
-        id: deploy
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND_STAGING }}
-        run: |
-          url=$(vercel --cwd "$GITHUB_WORKSPACE" --prebuilt --token "$VERCEL_TOKEN" --yes)
+          url=$(vercel --cwd "$GITHUB_WORKSPACE" --token "$VERCEL_TOKEN" -b "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" --yes)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
   smoke-staging:
@@ -246,10 +213,14 @@ jobs:
           url=$(vercel --cwd "$GITHUB_WORKSPACE" --token "$VERCEL_TOKEN" --prod --yes)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
-  build-frontend-production:
-    needs: [gate]
-    if: needs.gate.outputs.proceed == 'true'
+  deploy-frontend-production:
+    needs: [smoke-staging]
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -264,56 +235,15 @@ jobs:
       - name: Install frontend dependencies
         working-directory: example_project/src/frontend
         run: npm ci
-      - name: Build frontend for production
-        working-directory: example_project/src/frontend
+      - name: Deploy frontend to Vercel production
+        id: deploy
         env:
           NEXT_PUBLIC_API_URL: ${{ vars.PRODUCTION_API_URL || 'http://localhost:8000/api/v1' }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
         run: |
-          vercel build --cwd "$GITHUB_WORKSPACE" --yes --token "$VERCEL_TOKEN"
-      - name: Upload production frontend build
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: frontend-build-production
-          path: .vercel/output
-          include-hidden-files: true
-
-  deploy-frontend-production:
-    needs: [smoke-staging, build-frontend-production]
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ steps.deploy.outputs.url }}
-    outputs:
-      url: ${{ steps.deploy.outputs.url }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Download production frontend build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: frontend-build-production
-          path: .vercel/output
-      - name: Attest frontend build provenance
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
-        with:
-          subject-path: .vercel/output
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "20"
-      - name: Install Vercel CLI
-        run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
-      - name: Deploy frontend to Vercel production
-        id: deploy
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
-        run: |
-          url=$(vercel --cwd "$GITHUB_WORKSPACE" --prebuilt --token "$VERCEL_TOKEN" --prod --yes)
+          url=$(vercel --cwd "$GITHUB_WORKSPACE" --token "$VERCEL_TOKEN" --prod -b "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" --yes)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
   canary-analysis:
