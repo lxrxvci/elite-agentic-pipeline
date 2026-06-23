@@ -110,7 +110,9 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND_STAGING }}
         run: |
-          url=$(vercel --token "$VERCEL_TOKEN" --yes)
+          # Run the CLI from the repository root so the project's Root Directory
+          # (example_project/src/backend) resolves correctly.
+          url=$(vercel --cwd "$GITHUB_WORKSPACE" --token "$VERCEL_TOKEN" --yes)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
   build-frontend-staging:
@@ -128,6 +130,9 @@ jobs:
           cache-dependency-path: example_project/src/frontend/package-lock.json
       - name: Install Vercel CLI
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
+      - name: Install frontend dependencies
+        working-directory: example_project/src/frontend
+        run: npm ci
       - name: Build frontend for staging
         working-directory: example_project/src/frontend
         env:
@@ -136,13 +141,13 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND_STAGING }}
         run: |
-          npm ci
-          vercel build --yes --token "$VERCEL_TOKEN"
+          # Build from the repository root so the project's Root Directory is resolved correctly.
+          vercel build --cwd "$GITHUB_WORKSPACE" --yes --token "$VERCEL_TOKEN"
       - name: Upload staging frontend build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: frontend-build-staging
-          path: example_project/src/frontend/.vercel/output
+          path: .vercel/output
           include-hidden-files: true
 
   deploy-frontend-staging:
@@ -160,7 +165,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: frontend-build-staging
-          path: example_project/src/frontend/.vercel/output
+          path: .vercel/output
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -169,13 +174,12 @@ jobs:
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
       - name: Deploy frontend to Vercel staging
         id: deploy
-        working-directory: example_project/src/frontend
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND_STAGING }}
         run: |
-          url=$(vercel --prebuilt --token "$VERCEL_TOKEN" --yes)
+          url=$(vercel --cwd "$GITHUB_WORKSPACE" --prebuilt --token "$VERCEL_TOKEN" --yes)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
   smoke-staging:
@@ -239,7 +243,7 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
         run: |
-          url=$(vercel --token "$VERCEL_TOKEN" --prod --yes)
+          url=$(vercel --cwd "$GITHUB_WORKSPACE" --token "$VERCEL_TOKEN" --prod --yes)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
   build-frontend-production:
@@ -257,6 +261,9 @@ jobs:
           cache-dependency-path: example_project/src/frontend/package-lock.json
       - name: Install Vercel CLI
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
+      - name: Install frontend dependencies
+        working-directory: example_project/src/frontend
+        run: npm ci
       - name: Build frontend for production
         working-directory: example_project/src/frontend
         env:
@@ -265,13 +272,12 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
         run: |
-          npm ci
-          vercel build --yes --token "$VERCEL_TOKEN"
+          vercel build --cwd "$GITHUB_WORKSPACE" --yes --token "$VERCEL_TOKEN"
       - name: Upload production frontend build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: frontend-build-production
-          path: example_project/src/frontend/.vercel/output
+          path: .vercel/output
           include-hidden-files: true
 
   deploy-frontend-production:
@@ -289,11 +295,11 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: frontend-build-production
-          path: example_project/src/frontend/.vercel/output
+          path: .vercel/output
       - name: Attest frontend build provenance
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
-          subject-path: example_project/src/frontend/.vercel/output
+          subject-path: .vercel/output
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -302,13 +308,12 @@ jobs:
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
       - name: Deploy frontend to Vercel production
         id: deploy
-        working-directory: example_project/src/frontend
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
         run: |
-          url=$(vercel --prebuilt --token "$VERCEL_TOKEN" --prod --yes)
+          url=$(vercel --cwd "$GITHUB_WORKSPACE" --prebuilt --token "$VERCEL_TOKEN" --prod --yes)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
   canary-analysis:
@@ -368,9 +373,35 @@ jobs:
           VERCEL_PROJECT_ID_BACKEND: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
           VERCEL_PROJECT_ID_FRONTEND: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
         run: |
-          echo "Rolling back backend and frontend production deployments..."
-          vercel rollback "$VERCEL_PROJECT_ID_BACKEND" --token "$VERCEL_TOKEN" --yes
-          vercel rollback "$VERCEL_PROJECT_ID_FRONTEND" --token "$VERCEL_TOKEN" --yes
+          set -euo pipefail
+          team_q=""
+          if [ -n "$VERCEL_ORG_ID" ]; then
+            team_q="?teamId=${VERCEL_ORG_ID}"
+          fi
+
+          previous_url() {
+            project_id="$1"
+            curl -sS "https://api.vercel.com/v6/deployments?projectId=${project_id}&target=production&limit=2&state=READY${team_q}" \
+              -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+              | python3 -c "import sys, json; ds=json.load(sys.stdin).get('deployments', []); print(ds[1]['url'] if len(ds) > 1 else '')"
+          }
+
+          backend_url=$(previous_url "$VERCEL_PROJECT_ID_BACKEND")
+          frontend_url=$(previous_url "$VERCEL_PROJECT_ID_FRONTEND")
+
+          if [ -n "$backend_url" ]; then
+            echo "Rolling back backend to https://$backend_url ..."
+            vercel rollback "https://$backend_url" --token "$VERCEL_TOKEN" --yes
+          else
+            echo "No previous backend deployment found; skipping backend rollback."
+          fi
+
+          if [ -n "$frontend_url" ]; then
+            echo "Rolling back frontend to https://$frontend_url ..."
+            vercel rollback "https://$frontend_url" --token "$VERCEL_TOKEN" --yes
+          else
+            echo "No previous frontend deployment found; skipping frontend rollback."
+          fi
       - name: Verify rollback health
         env:
           BACKEND_URL: ${{ vars.PRODUCTION_BACKEND_URL }}
