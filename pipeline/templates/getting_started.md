@@ -15,6 +15,8 @@ Copy the example environment file and fill in real values:
 cp .env.example .env
 ```
 
+Review `docs/RUNBOOKS/secrets.md` for the full secret-management checklist.
+
 Edit `.env`:
 - `SECRET_KEY` — generate a strong random secret for production.
 - `DATABASE_URL` — defaults to the Docker Compose PostgreSQL.

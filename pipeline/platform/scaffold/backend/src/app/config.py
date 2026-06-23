@@ -14,8 +14,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/elite_db"
     enabled_features: str = ""
 
-    # Feature flag provider (Unleash). If URL is unset, the app falls back to
-    # the comma-separated ENABLED_FEATURES env variable.
+    # Feature flag provider. Priority:
+    # 1. Managed feature-flag endpoint (MANAGED_FEATURE_FLAGS_URL)
+    # 2. Unleash (UNLEASH_URL)
+    # 3. Comma-separated ENABLED_FEATURES env variable
+    managed_feature_flags_url: str = ""
+    managed_feature_flags_token: str = ""
     unleash_url: str = ""
     unleash_api_token: str = ""
     unleash_refresh_interval: int = 15

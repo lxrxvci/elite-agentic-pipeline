@@ -1,8 +1,11 @@
-"""Feature flag integration with Unleash and env-based fallback."""
+"""Feature flag integration with managed endpoint, Unleash, and env fallback."""
 
 from __future__ import annotations
 
+import json
 import logging
+import time
+import urllib.request
 from typing import Any
 
 from app.config import settings
@@ -10,6 +13,8 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _unleash_client: Any | None = None
+_managed_flags_cache: dict[str, bool] | None = None
+_managed_flags_fetched_at: float = 0.0
 
 
 def _get_unleash_client() -> Any | None:
@@ -39,12 +44,59 @@ def _get_unleash_client() -> Any | None:
         return None
 
 
+def _fetch_managed_flags() -> dict[str, bool]:
+    """Fetch feature flags from a managed HTTP endpoint.
+
+    The endpoint is expected to return a JSON object mapping flag keys to booleans.
+    """
+    url = settings.managed_feature_flags_url
+    if not url:
+        return {}
+
+    req = urllib.request.Request(url, method="GET")
+    if settings.managed_feature_flags_token:
+        req.add_header("Authorization", f"Bearer {settings.managed_feature_flags_token}")
+
+    try:
+        # nosemgrep
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            if isinstance(data, dict):
+                return {str(k): bool(v) for k, v in data.items()}
+    except Exception:
+        logger.exception("Failed to fetch managed feature flags from %s", url)
+
+    return {}
+
+
+def _get_managed_flags() -> dict[str, bool] | None:
+    """Return cached managed flags, or None if no managed endpoint is configured."""
+    global _managed_flags_cache, _managed_flags_fetched_at  # noqa: PLW0603
+
+    if not settings.managed_feature_flags_url:
+        return None
+
+    now = time.time()
+    ttl = max(settings.unleash_refresh_interval, 15)
+    if _managed_flags_cache is None or (now - _managed_flags_fetched_at) > ttl:
+        _managed_flags_cache = _fetch_managed_flags()
+        _managed_flags_fetched_at = now
+
+    return _managed_flags_cache
+
+
 def is_feature_enabled(flag_key: str, context: dict[str, Any] | None = None) -> bool:
     """Return True if the feature flag is enabled.
 
-    Uses Unleash when configured; otherwise falls back to the comma-separated
-    ENABLED_FEATURES environment variable.
+    Resolution order:
+    1. Managed feature-flag endpoint (MANAGED_FEATURE_FLAGS_URL)
+    2. Unleash (UNLEASH_URL)
+    3. Comma-separated ENABLED_FEATURES environment variable
     """
+    managed = _get_managed_flags()
+    if managed is not None:
+        return managed.get(flag_key, False)
+
     client = _get_unleash_client()
     if client is not None:
         try:

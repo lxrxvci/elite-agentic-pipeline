@@ -15,6 +15,8 @@ Copy the example environment file and fill in real values:
 cp .env.example .env
 ```
 
+Review `docs/RUNBOOKS/secrets.md` for the full secret-management checklist.
+
 Install pre-commit hooks (required before committing):
 
 ```bash

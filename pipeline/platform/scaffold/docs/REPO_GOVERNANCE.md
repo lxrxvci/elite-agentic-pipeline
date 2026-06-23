@@ -47,6 +47,8 @@ Configure these rules in GitHub repository settings:
 | `CLERK_JWKS_URL` | backend runtime |
 | `CLERK_AUDIENCE` | backend runtime |
 
+See `docs/RUNBOOKS/secrets.md` for a per-environment checklist and rotation guidance.
+
 ## Required GitHub Variables
 
 | Variable | Purpose |
