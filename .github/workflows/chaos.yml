@@ -1,0 +1,49 @@
+name: Chaos Engineering
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+      experiment:
+        description: "Experiment to run"
+        required: true
+        default: "latency-injection"
+        type: choice
+        options:
+          - latency-injection
+          - error-budget-check
+          - dependency-failure
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.inputs.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        working-directory: example_project/src/backend
+        run: pip install -e ".[dev]"
+      - name: Run chaos experiment
+        env:
+          BACKEND_URL: ${{ github.event.inputs.target == 'production' && vars.PRODUCTION_BACKEND_URL || vars.STAGING_BACKEND_URL }}
+        run: |
+          echo "Running '${{ github.event.inputs.experiment }}' against $BACKEND_URL"
+          echo "This is a manual game-day experiment. Capture results in docs/RUNBOOKS/chaos-runbook.md"
+          python example_project/scripts/canary_analysis.py --url "$BACKEND_URL/api/v1/health" --requests 50 --concurrency 5
+      - name: Verify health after chaos
+        env:
+          BACKEND_URL: ${{ github.event.inputs.target == 'production' && vars.PRODUCTION_BACKEND_URL || vars.STAGING_BACKEND_URL }}
+        run: |
+          sleep 10
+          curl --fail --retry 10 --retry-delay 5 "$BACKEND_URL/api/v1/health"

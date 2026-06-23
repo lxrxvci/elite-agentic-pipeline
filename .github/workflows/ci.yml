@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: "20"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+      infra: ${{ steps.filter.outputs.infra }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Detect changed paths
+        uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'example_project/src/frontend/**'
+            backend:
+              - 'example_project/src/backend/**'
+            infra:
+              - 'example_project/infra/**'
+              - 'pipeline/platform/terraform/**'
+
+  frontend:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    uses: ./.github/workflows/_ci-frontend.yml
+    with:
+      node-version: ${{ env.NODE_VERSION }}
+
+  backend:
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' }}
+    uses: ./.github/workflows/_ci-backend.yml
+    with:
+      python-version: ${{ env.PYTHON_VERSION }}
+      database-url: postgresql+psycopg://postgres:postgres@localhost:5432/elite_db
+      secret-key: ${{ secrets.CI_SECRET_KEY || 'ci-secret-key-not-for-production' }}
+
+  infra:
+    needs: changes
+    if: ${{ needs.changes.outputs.infra == 'true' }}
+    uses: ./.github/workflows/_ci-infra.yml
+
+  required:
+    name: CI required checks
+    needs: [changes, frontend, backend, infra]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all required jobs passed
+        run: |
+          echo "frontend=${{ needs.frontend.result }}"
+          echo "backend=${{ needs.backend.result }}"
+          echo "infra=${{ needs.infra.result }}"
+          if [ "${{ needs.frontend.result }}" = "failure" ] || [ "${{ needs.backend.result }}" = "failure" ] || [ "${{ needs.infra.result }}" = "failure" ]; then
+            echo "One or more CI jobs failed."
+            exit 1
+          fi
+          if [ "${{ needs.frontend.result }}" = "cancelled" ] || [ "${{ needs.backend.result }}" = "cancelled" ] || [ "${{ needs.infra.result }}" = "cancelled" ]; then
+            echo "One or more CI jobs were cancelled."
+            exit 1
+          fi
+          echo "All required CI jobs passed or were skipped."
