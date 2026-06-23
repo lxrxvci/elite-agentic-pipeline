@@ -1,0 +1,39 @@
+name: Update Vercel Root Directories
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Patch Vercel project root directories
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          BACKEND: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
+          BACKEND_STAGING: ${{ secrets.VERCEL_PROJECT_ID_BACKEND_STAGING }}
+          FRONTEND: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
+          FRONTEND_STAGING: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND_STAGING }}
+        run: |
+          set -euo pipefail
+          team_q=""
+          if [ -n "$VERCEL_ORG_ID" ]; then
+            team_q="?teamId=${VERCEL_ORG_ID}"
+          fi
+
+          update_root() {
+            project_id="$1"
+            root_dir="$2"
+            echo "Updating $project_id root directory to $root_dir ..."
+            curl -sS -X PATCH "https://api.vercel.com/v9/projects/${project_id}${team_q}" \
+              -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"rootDirectory\":\"${root_dir}\"}" \
+              | python3 -m json.tool
+          }
+
+          update_root "$BACKEND" "example_project/src/backend"
+          update_root "$BACKEND_STAGING" "example_project/src/backend"
+          update_root "$FRONTEND" "example_project/src/frontend"
+          update_root "$FRONTEND_STAGING" "example_project/src/frontend"
