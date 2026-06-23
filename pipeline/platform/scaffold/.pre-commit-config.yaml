@@ -1,0 +1,65 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.0
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^src/backend/
+      - id: ruff-format
+        files: ^src/backend/
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-python-jose, types-passlib]
+        files: ^src/backend/
+        args: [--strict]
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: ["-r", "src", "-ll", "-ii"]
+        files: ^src/backend/
+
+  - repo: local
+    hooks:
+      - id: eslint-frontend
+        name: eslint frontend
+        entry: bash -c 'cd src/frontend && npm run lint'
+        language: system
+        files: ^src/frontend/
+        pass_filenames: false
+
+      - id: typecheck-frontend
+        name: typecheck frontend
+        entry: bash -c 'cd src/frontend && npm run typecheck'
+        language: system
+        files: ^src/frontend/
+        pass_filenames: false
+
+      - id: test-frontend
+        name: test frontend
+        entry: bash -c 'cd src/frontend && npm run test:ci'
+        language: system
+        files: ^src/frontend/
+        pass_filenames: false
+
+  - repo: https://github.com/trufflesecurity/trufflehog
+    rev: v3.82.2
+    hooks:
+      - id: trufflehog
+        entry: trufflehog git
+        args: [--only-verified]

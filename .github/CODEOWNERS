@@ -1,0 +1,12 @@
+# Default reviewers for the entire repository
+* @lxrxcvi
+
+# Pipeline orchestrator, agents, workflows, and templates
+/pipeline/ @lxrxcvi
+
+# Infrastructure and platform engineering
+/pipeline/platform/terraform/ @lxrxcvi
+/pipeline/platform/github_actions/ @lxrxcvi
+
+# Generated projects should be owned by the product squad once initialized.
+# This file is copied into generated projects and should be customized per team.

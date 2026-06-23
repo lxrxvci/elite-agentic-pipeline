@@ -1,0 +1,36 @@
+name: Workflow Drift Check
+
+on:
+  workflow_call:
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check platform workflows are synced to example_project
+        run: |
+          PLATFORM_DIR="pipeline/platform/github_actions"
+          PROJECT_DIR="example_project/.github/workflows"
+          FAIL=0
+
+          for file in "$PLATFORM_DIR"/*.yml; do
+            filename=$(basename "$file")
+            project_file="$PROJECT_DIR/$filename"
+            if [ ! -f "$project_file" ]; then
+              echo "MISSING: $project_file does not exist (platform has $filename)"
+              FAIL=1
+              continue
+            fi
+            if ! diff -q "$file" "$project_file" > /dev/null; then
+              echo "DRIFT: $filename differs between platform and example_project"
+              diff "$file" "$project_file" || true
+              FAIL=1
+            fi
+          done
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "Workflow drift detected. Run the platform sync script to reconcile."
+            exit 1
+          fi
+          echo "No workflow drift detected."
