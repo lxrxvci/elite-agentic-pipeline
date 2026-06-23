@@ -7,7 +7,13 @@ import uuid
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from app.dependencies import CurrentUser, get_current_user, get_db
+from app.dependencies import (
+    CurrentUser,
+    get_current_user,
+    get_db,
+    require_role,
+    require_tenant_quota,
+)
 from app.exceptions import ConflictError, NotFoundError
 from app.limiter import limiter
 from app.observability import get_metrics_provider
@@ -84,8 +90,9 @@ def list_invoices(
 def create_invoice(
     request: Request,
     payload: InvoiceCreateSchema,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_role("owner")),
     db: Session = Depends(get_db),
+    _quota: None = Depends(require_tenant_quota()),
 ) -> InvoiceSchema:
     invoice_repo = InvoiceRepository(db, user.tenant_id)
 
@@ -145,8 +152,9 @@ def mark_invoice_paid(
     request: Request,
     invoice_id: uuid.UUID,
     payload: InvoiceMarkPaidSchema,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_role("owner")),
     db: Session = Depends(get_db),
+    _quota: None = Depends(require_tenant_quota()),
 ) -> InvoiceSchema:
     repo = InvoiceRepository(db, user.tenant_id)
     invoice = repo.get(invoice_id)

@@ -2,7 +2,7 @@
 
 const cspHeader = (
   "default-src 'self'; " +
-  "script-src 'self' 'unsafe-eval' 'unsafe-inline'; " +
+  "script-src 'self'; " +
   "style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: blob:; " +
   "font-src 'self'; " +

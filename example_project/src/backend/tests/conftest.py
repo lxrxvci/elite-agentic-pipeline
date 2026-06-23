@@ -86,6 +86,7 @@ def seeded_user(db: Session):
         tenant_id=tenant.id,
         email="test@example.com",
         name="Test User",
+        role="owner",
     )
     db.add(user)
     db.commit()

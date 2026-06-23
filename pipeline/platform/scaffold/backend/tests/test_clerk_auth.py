@@ -196,6 +196,7 @@ def test_get_current_user_dev_token_in_development() -> None:
     db_user.id = user_id
     db_user.email = "dev@example.com"
     db_user.name = "Dev"
+    db_user.role = "owner"
     db_user.tenant_id = tenant_id
     db.query.return_value.filter.return_value.first.return_value = db_user
 
@@ -234,6 +235,7 @@ def test_get_current_user_uses_cookie_when_no_header() -> None:
     db_user.id = user_id
     db_user.email = "cookie@example.com"
     db_user.name = "Cookie User"
+    db_user.role = "member"
     db_user.tenant_id = tenant_id
     db.query.return_value.filter.return_value.first.return_value = db_user
 

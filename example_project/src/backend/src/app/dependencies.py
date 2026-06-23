@@ -1,8 +1,11 @@
-"""FastAPI dependencies for auth, database, and tenant isolation."""
+"""FastAPI dependencies for auth, database, tenant isolation, and quotas."""
 
 from __future__ import annotations
 
+import time
 import uuid
+from collections import defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -28,7 +31,13 @@ __all__ = [
     "get_current_tenant",
     "get_db",
     "is_feature_enabled",
+    "require_role",
+    "require_tenant_quota",
 ]
+
+# In-memory per-tenant mutation quota tracker.
+# In a multi-process deployment this should be replaced with Redis.
+_TENANT_QUOTA: dict[tuple[str, str], list[float]] = defaultdict(list)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
@@ -39,6 +48,7 @@ class CurrentUser(BaseModel):
     email: str
     name: str
     tenant_id: uuid.UUID
+    role: str = "member"
 
 
 class CurrentTenant(BaseModel):
@@ -95,7 +105,8 @@ def _get_or_create_user_from_claims(
     user_id = uuid.uuid5(uuid.NAMESPACE_URL, f"clerk://user/{clerk_id}")
 
     tenant = db.query(TenantORM).filter(TenantORM.id == tenant_id).first()
-    if not tenant:
+    is_new_tenant = tenant is None
+    if is_new_tenant:
         tenant = TenantORM(id=tenant_id, name=f"{name}'s Workspace")
         db.add(tenant)
         db.flush()
@@ -106,6 +117,7 @@ def _get_or_create_user_from_claims(
         email=email,
         name=name,
         clerk_id=clerk_id,
+        role="owner" if is_new_tenant else "member",
     )
     db.add(user)
     db.commit()
@@ -166,7 +178,22 @@ def get_current_user(
         email=user.email,
         name=user.name,
         tenant_id=user.tenant_id,
+        role=user.role or "member",
     )
+
+
+def require_role(*allowed_roles: str) -> Callable[..., CurrentUser]:
+    """Return a dependency that restricts an endpoint to specific user roles."""
+
+    def _check_role(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return user
+
+    return _check_role
 
 
 def get_current_tenant(
@@ -184,6 +211,39 @@ def get_current_tenant(
         if tenant.default_hourly_rate
         else None,
     )
+
+
+def require_tenant_quota(
+    limit: int | None = None,
+    window: int | None = None,
+    key: str = "default",
+) -> Callable[..., None]:
+    """Return a dependency that enforces a per-tenant mutation quota.
+
+    Defaults are read from `settings.tenant_quota_limit` and
+    `settings.tenant_quota_window`. The quota is tracked in process memory, so
+    it is most accurate behind a single worker or with sticky sessions. Replace
+    with Redis for multi-process deployments.
+    """
+
+    def _check(user: CurrentUser = Depends(get_current_user)) -> None:
+        """Enforce the per-tenant quota for the current request."""
+        now = time.time()
+        quota_key = (str(user.tenant_id), key)
+        quota_limit = limit if limit is not None else settings.tenant_quota_limit
+        quota_window = window if window is not None else settings.tenant_quota_window
+        window_start = now - quota_window
+        _TENANT_QUOTA[quota_key] = [
+            ts for ts in _TENANT_QUOTA[quota_key] if ts > window_start
+        ]
+        if len(_TENANT_QUOTA[quota_key]) >= quota_limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Tenant quota exceeded. Please retry later.",
+            )
+        _TENANT_QUOTA[quota_key].append(now)
+
+    return _check
 
 
 # is_feature_enabled is re-exported from app.features for backward compatibility.

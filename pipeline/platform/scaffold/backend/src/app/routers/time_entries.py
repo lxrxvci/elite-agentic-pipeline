@@ -8,7 +8,13 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from app.dependencies import CurrentUser, get_current_user, get_db
+from app.dependencies import (
+    CurrentUser,
+    get_current_user,
+    get_db,
+    require_role,
+    require_tenant_quota,
+)
 from app.exceptions import ConflictError, NotFoundError
 from app.limiter import limiter
 from app.observability import get_metrics_provider
@@ -79,8 +85,9 @@ def list_time_entries(
 def create_time_entry_endpoint(
     request: Request,
     payload: TimeEntryCreateSchema,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_role("owner")),
     db: Session = Depends(get_db),
+    _quota: None = Depends(require_tenant_quota()),
 ) -> TimeEntrySchema:
     tenant_repo = TenantRepository(db, user.tenant_id)
     tenant_orm = tenant_repo.get()
@@ -141,8 +148,9 @@ def update_time_entry(
     request: Request,
     time_entry_id: uuid.UUID,
     payload: TimeEntryUpdateSchema,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_role("owner")),
     db: Session = Depends(get_db),
+    _quota: None = Depends(require_tenant_quota()),
 ) -> TimeEntrySchema:
     repo = TimeEntryRepository(db, user.tenant_id)
     entry = repo.get(time_entry_id)

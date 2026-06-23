@@ -8,7 +8,11 @@ from types import ModuleType
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
+_test_file = Path(__file__).resolve()
+SCRIPTS_DIR = next(
+    (p / "scripts" for p in _test_file.parents if (p / "scripts").is_dir()),
+    _test_file.parents[3] / "scripts",
+)
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 slo_check: ModuleType = __import__("slo_check")

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
+from app.dependencies import _TENANT_QUOTA
+
 
 def test_auth_token_rate_limit(client: TestClient) -> None:
     """The dev token endpoint should be strictly rate limited to 5/minute."""
@@ -56,3 +59,43 @@ def test_mutation_endpoints_have_rate_limit_decorators() -> None:
         assert hasattr(route.endpoint, "__wrapped__") or hasattr(
             route.endpoint, "limits"
         ), f"Route {method} {path} is not rate limited"
+
+
+def test_tenant_quota_enforced(client: TestClient, seeded_user) -> None:
+    """Mutation endpoints should enforce a per-tenant quota."""
+    _TENANT_QUOTA.clear()
+    original_limit = settings.tenant_quota_limit
+    original_window = settings.tenant_quota_window
+    settings.tenant_quota_limit = 2
+    settings.tenant_quota_window = 60
+
+    try:
+        headers = seeded_user["headers"]
+
+        # First two requests succeed.
+        r1 = client.post("/api/v1/clients", headers=headers, json={
+            "name": "Quota Client 1",
+            "email": "q1@example.com",
+            "currency": "USD",
+        })
+        assert r1.status_code == 201
+
+        r2 = client.post("/api/v1/clients", headers=headers, json={
+            "name": "Quota Client 2",
+            "email": "q2@example.com",
+            "currency": "USD",
+        })
+        assert r2.status_code == 201
+
+        # Third request exceeds the quota.
+        r3 = client.post("/api/v1/clients", headers=headers, json={
+            "name": "Quota Client 3",
+            "email": "q3@example.com",
+            "currency": "USD",
+        })
+        assert r3.status_code == 429
+        assert "quota" in r3.json()["detail"].lower()
+    finally:
+        settings.tenant_quota_limit = original_limit
+        settings.tenant_quota_window = original_window
+        _TENANT_QUOTA.clear()

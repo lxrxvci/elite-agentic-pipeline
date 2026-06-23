@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str = ""
     log_level: str = "info"
 
+    # Per-tenant mutation quota. In-memory by default; use Redis for multi-process.
+    tenant_quota_limit: int = 100
+    tenant_quota_window: int = 60
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @model_validator(mode="after")

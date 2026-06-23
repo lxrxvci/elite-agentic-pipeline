@@ -8,7 +8,13 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from app.dependencies import CurrentUser, get_current_user, get_db
+from app.dependencies import (
+    CurrentUser,
+    get_current_user,
+    get_db,
+    require_role,
+    require_tenant_quota,
+)
 from app.exceptions import NotFoundError
 from app.limiter import limiter
 from app.schemas import ClientCreateSchema, ClientSchema, PaginatedResponse
@@ -53,8 +59,9 @@ def list_clients(
 def create_client(
     request: Request,
     payload: ClientCreateSchema,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_role("owner")),
     db: Session = Depends(get_db),
+    _quota: None = Depends(require_tenant_quota()),
 ) -> ClientSchema:
     repo = ClientRepository(db, user.tenant_id)
     client = Client(
