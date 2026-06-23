@@ -11,9 +11,11 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
+import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 PIPELINE_DIR = Path(__file__).resolve().parent
@@ -70,7 +72,7 @@ def save_state(project_dir: Path, state: dict) -> None:
 def log(project_dir: Path, message: str) -> None:
     log_file = project_dir / ".pipeline" / "orchestrator.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
     with log_file.open("a") as f:
         f.write(f"[{timestamp}] {message}\n")
 
@@ -222,8 +224,13 @@ def validate_advance(project_dir: Path, current: str, next_stage: str) -> None:
         if adr_dir.exists():
             for adr_file in adr_dir.glob("*.md"):
                 content = adr_file.read_text(encoding="utf-8")
-                if "## Status" in content and "- Accepted" not in content and "- Proposed" in content:
-                    errors.append(f"ADR {adr_file.name} is still Proposed. Accept or reject it first.")
+                has_status = "## Status" in content
+                accepted = "- Accepted" in content
+                proposed = "- Proposed" in content
+                if has_status and not accepted and proposed:
+                    errors.append(
+                        f"ADR {adr_file.name} is still Proposed. Accept or reject it first."
+                    )
         else:
             errors.append("docs/adr/ directory is missing. At least one accepted ADR is required.")
 
@@ -274,8 +281,12 @@ def init_project(brief: str, target_dir: Path | None = None) -> Path:
 
     discovery_dir = target_dir / "DISCOVERY"
     discovery_dir.mkdir(exist_ok=True)
-    (discovery_dir / "OST.md").write_text("# Opportunity Solution Tree\n\n*Outcomes → Opportunities → Solutions → Experiments*\n")
-    (discovery_dir / "ASSUMPTIONS.md").write_text("# Riskiest Assumptions\n\n*List assumptions ranked by impact and uncertainty.*\n")
+    (discovery_dir / "OST.md").write_text(
+        "# Opportunity Solution Tree\n\n*Outcomes → Opportunities → Solutions → Experiments*\n"
+    )
+    (discovery_dir / "ASSUMPTIONS.md").write_text(
+        "# Riskiest Assumptions\n\n*List assumptions ranked by impact and uncertainty.*\n"
+    )
     (discovery_dir / "INTERVIEW_NOTES").mkdir(exist_ok=True)
 
     copy_scaffold(target_dir)
@@ -306,7 +317,7 @@ def init_project(brief: str, target_dir: Path | None = None) -> Path:
             "docker-compose.yml",
             "infra/",
         ],
-        "history": [{"stage": "init", "at": datetime.now(timezone.utc).isoformat()}],
+        "history": [{"stage": "init", "at": datetime.now(UTC).isoformat()}],
     }
     save_state(target_dir, state)
     log(target_dir, "Project initialized")
@@ -381,7 +392,10 @@ def build_agent_context(project_dir: Path, agent_name: str) -> str:
     """Build the full context block passed to an agent prompt."""
     state = load_state(project_dir)
     stage = state.get("stage", "discovery")
-    brief = (project_dir / "BRIEF.md").read_text() if (project_dir / "BRIEF.md").exists() else "No brief found."
+    if (project_dir / "BRIEF.md").exists():
+        brief = (project_dir / "BRIEF.md").read_text()
+    else:
+        brief = "No brief found."
     workflow_file = WORKFLOWS_DIR / stage_workflow(stage)
     workflow = workflow_file.read_text() if workflow_file.exists() else "No workflow found."
     feedback = collect_feedback(project_dir)
@@ -443,8 +457,28 @@ def dispatch_agent(project_dir: Path, agent_name: str, auto: bool = False) -> Pa
     return None
 
 
-def run_dispatch_queue(project_dir: Path) -> None:
-    """Process pending agent dispatch manifests."""
+def write_dispatch_queue(project_dir: Path, manifests: list[Path]) -> Path:
+    """Write a machine-readable queue of pending agent manifests."""
+    queue_file = project_dir / ".pipeline" / "dispatch" / "queue.json"
+    queue_file.parent.mkdir(parents=True, exist_ok=True)
+    queue = [
+        {
+            "agent": manifest.stem,
+            "manifest": str(manifest.relative_to(project_dir)),
+        }
+        for manifest in manifests
+    ]
+    queue_file.write_text(json.dumps(queue, indent=2))
+    log(project_dir, f"Wrote dispatch queue: {queue_file}")
+    return queue_file
+
+
+def run_dispatch_queue(project_dir: Path, execute: bool = False) -> None:
+    """Process pending agent dispatch manifests.
+
+    In normal mode, list manifests and write a queue.json index. In execute
+    mode, invoke the configured ELITE_AGENT_RUNNER for each manifest.
+    """
     dispatch_dir = project_dir / ".pipeline" / "dispatch"
     if not dispatch_dir.exists():
         print("No pending agent dispatches.")
@@ -455,12 +489,36 @@ def run_dispatch_queue(project_dir: Path) -> None:
         print("No pending agent dispatches.")
         return
 
-    print(f"\nProcessing {len(pending)} pending agent dispatch(es):\n")
+    queue_file = write_dispatch_queue(project_dir, pending)
+
+    if not execute:
+        print(f"\nProcessing {len(pending)} pending agent dispatch(es):\n")
+        for manifest in pending:
+            print(f"- {manifest.name}")
+        print(f"\nManifests are ready in: {dispatch_dir}")
+        print(f"Dispatch queue written to: {queue_file}")
+        print("Run 'execute' to invoke the configured agent runner.")
+        return
+
+    runner = os.environ.get("ELITE_AGENT_RUNNER")
+    if not runner:
+        print(
+            "\nNo agent runner configured. Set ELITE_AGENT_RUNNER to a command "
+            "that accepts a manifest path, or consume the queue manually:\n",
+            file=sys.stderr,
+        )
+        print(queue_file.read_text())
+        sys.exit(1)
+
+    print(f"\nExecuting {len(pending)} pending agent dispatch(es) with runner: {runner}\n")
     for manifest in pending:
         print(f"- {manifest.name}")
-        # In a fully agentic runtime this is where the Agent tool would be invoked.
-        # For now the manifest remains available for manual or wrapper-driven execution.
-    print(f"\nManifests are ready in: {dispatch_dir}")
+        try:
+            subprocess.run([*shlex.split(runner), str(manifest)], check=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"ERROR: runner failed for {manifest.name}: {exc}", file=sys.stderr)
+            sys.exit(1)
+    print("\nAll pending dispatches executed.")
 
 
 def run_stage(project_dir: Path, auto: bool = False) -> None:
@@ -479,6 +537,7 @@ def run_stage(project_dir: Path, auto: bool = False) -> None:
 
     print("\n--- Recommended Agent Invocations ---\n")
 
+    manifests: list[Path] = []
     for agent_name in STAGE_AGENTS.get(stage, ["product_strategist"]):
         agent_file = AGENTS_DIR / f"{agent_name}.md"
         print(f"Agent: {agent_name}")
@@ -487,8 +546,13 @@ def run_stage(project_dir: Path, auto: bool = False) -> None:
             manifest = dispatch_agent(project_dir, agent_name, auto=True)
             if manifest:
                 print(f"Dispatched manifest: {manifest}")
+                manifests.append(manifest)
         else:
             print(f"Suggested call: dispatch_agent('{agent_name}', project_dir='{project_dir}')\n")
+
+    if auto and manifests:
+        queue_file = write_dispatch_queue(project_dir, manifests)
+        print(f"\nDispatch queue written to: {queue_file}")
 
 
 def advance(
@@ -533,7 +597,7 @@ def advance(
     validate_advance(project_dir, current, next_stage)
 
     state["stage"] = next_stage
-    state["history"].append({"stage": state["stage"], "at": datetime.now(timezone.utc).isoformat()})
+    state["history"].append({"stage": state["stage"], "at": datetime.now(UTC).isoformat()})
     save_state(project_dir, state)
     log(project_dir, f"Advanced to stage: {state['stage']}")
     print(f"Advanced to stage: {state['stage']}")
@@ -615,7 +679,9 @@ def main() -> None:
     init_parser = subparsers.add_parser("init", help="Initialize a new project from a brief")
     init_parser.add_argument("--brief", required=True, help="Product brief")
 
-    run_parser = subparsers.add_parser("run", help="Show current stage workflow and recommended agents")
+    run_parser = subparsers.add_parser(
+        "run", help="Show current stage workflow and recommended agents"
+    )
     run_parser.add_argument("--auto", action="store_true", help="Generate agent dispatch manifests")
 
     advance_parser = subparsers.add_parser("advance", help="Advance to the next stage")
@@ -626,7 +692,11 @@ def main() -> None:
         help="Only advance if CI feedback gates are satisfied",
     )
 
-    subparsers.add_parser("dispatch", help="Process pending agent dispatch queue")
+    subparsers.add_parser("dispatch", help="List pending agent dispatch queue")
+
+    subparsers.add_parser(
+        "execute", help="Execute pending agent dispatch manifests via ELITE_AGENT_RUNNER"
+    )
 
     subparsers.add_parser("status", help="Show project state")
 
@@ -651,6 +721,8 @@ def main() -> None:
         advance(project_dir, args.next_stage, auto=args.auto)
     elif args.command == "dispatch":
         run_dispatch_queue(project_dir)
+    elif args.command == "execute":
+        run_dispatch_queue(project_dir, execute=True)
     elif args.command == "status":
         status(project_dir)
     elif args.command == "check":
