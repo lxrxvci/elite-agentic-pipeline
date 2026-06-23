@@ -9,6 +9,11 @@ on:
     - cron: '0 6 * * 1'
   workflow_call:
 
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
 jobs:
   scan:
     uses: ./.github/workflows/_security-scan.yml
