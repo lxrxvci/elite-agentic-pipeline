@@ -75,7 +75,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.12"
       - name: Install dependencies
         working-directory: src/backend
         run: pip install -e ".[dev]"
@@ -101,7 +101,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "20"
       - name: Install Vercel CLI
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
       - name: Deploy backend to Vercel staging
@@ -125,7 +125,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "20"
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
       - name: Install Vercel CLI
@@ -166,7 +166,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "20"
       - name: Install Vercel CLI
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
       - name: Deploy frontend to Vercel staging
@@ -204,7 +204,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.12"
       - name: Install dependencies
         working-directory: src/backend
         run: pip install -e ".[dev]"
@@ -230,7 +230,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "20"
       - name: Install Vercel CLI
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
       - name: Deploy backend to Vercel production
@@ -254,7 +254,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "20"
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
       - name: Install Vercel CLI
@@ -299,7 +299,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "20"
       - name: Install Vercel CLI
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
       - name: Deploy frontend to Vercel production
@@ -322,7 +322,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.12"
       - name: Run canary analysis
         env:
           BACKEND_URL: ${{ needs.deploy-backend-production.outputs.url }}
@@ -360,7 +360,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "20"
       - name: Install Vercel CLI
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
       - name: Rollback production deployments

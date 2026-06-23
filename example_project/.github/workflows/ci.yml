@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  NODE_VERSION: "20"
-  PYTHON_VERSION: "3.12"
 
 jobs:
   changes:
@@ -38,16 +35,17 @@ jobs:
     if: ${{ needs.changes.outputs.frontend == 'true' }}
     uses: ./.github/workflows/_ci-frontend.yml
     with:
-      node-version: ${{ env.NODE_VERSION }}
+      node-version: "20"
 
   backend:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
     uses: ./.github/workflows/_ci-backend.yml
     with:
-      python-version: ${{ env.PYTHON_VERSION }}
+      python-version: "3.12"
       database-url: postgresql+psycopg://postgres:postgres@localhost:5432/elite_db
-      secret-key: ${{ secrets.CI_SECRET_KEY || 'ci-secret-key-not-for-production' }}
+    secrets:
+      ci-secret-key: ${{ secrets.CI_SECRET_KEY }}
 
   infra:
     needs: changes
