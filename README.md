@@ -1,6 +1,8 @@
 # Elite Agentic SDLC Pipeline
 
-> Build market-ready software the way elite product firms do — with a cross-functional agent squad, DORA-grade delivery practices, and Kimi 2.7 Code as the execution engine.
+> Build market-ready software the way elite product firms do — with a cross-functional agent squad, DORA-grade delivery practices, and a Vercel-only deploy pipeline to staging and production.
+
+> Status: Phase 3 complete. Vercel projects and Neon databases provisioned; CI/CD running on GitHub Actions. — with a cross-functional agent squad, DORA-grade delivery practices, and Kimi 2.7 Code as the execution engine.
 
 ## Quick start
 
