@@ -1,0 +1,13 @@
+# Default reviewers for the entire repository.
+# Replace the placeholder teams below with your actual GitHub team handles.
+* @elite-squad/backend @elite-squad/frontend @elite-squad/platform
+
+# Backend changes
+/src/backend/ @elite-squad/backend
+
+# Frontend changes
+/src/frontend/ @elite-squad/frontend
+
+# Infrastructure and platform engineering
+/infra/ @elite-squad/platform
+/.github/workflows/ @elite-squad/platform
