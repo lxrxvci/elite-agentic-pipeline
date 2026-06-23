@@ -1,0 +1,38 @@
+name: Update Vercel Root Directories
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Patch Vercel project root directories to '.'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          BACKEND: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
+          BACKEND_STAGING: ${{ secrets.VERCEL_PROJECT_ID_BACKEND_STAGING }}
+          FRONTEND: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
+          FRONTEND_STAGING: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND_STAGING }}
+        run: |
+          set -euo pipefail
+          team_q=""
+          if [ -n "$VERCEL_ORG_ID" ]; then
+            team_q="?teamId=${VERCEL_ORG_ID}"
+          fi
+
+          update_root() {
+            project_id="$1"
+            echo "Setting root directory to '.' for $project_id ..."
+            curl -sS -X PATCH "https://api.vercel.com/v9/projects/${project_id}${team_q}" \
+              -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{"rootDirectory":"."}' \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print('  rootDirectory:', repr(d.get('rootDirectory'))); print('  name:', d.get('name'))"
+          }
+
+          update_root "$BACKEND"
+          update_root "$BACKEND_STAGING"
+          update_root "$FRONTEND"
+          update_root "$FRONTEND_STAGING"
