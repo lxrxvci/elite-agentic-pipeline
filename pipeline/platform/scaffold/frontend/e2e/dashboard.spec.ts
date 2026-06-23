@@ -36,7 +36,7 @@ test.describe('dashboard', () => {
       })
     })
 
-    await page.route(/\/time-entries\?status=unbilled.*$/, async (route) => {
+    await page.route(/\/time-entries.*status=unbilled/, async (route) => {
       await route.fulfill({
         status: 200,
         headers: { 'Content-Type': 'application/json' },

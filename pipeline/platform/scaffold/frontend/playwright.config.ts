@@ -19,5 +19,8 @@ export default defineConfig({
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
+    env: {
+      NEXT_PUBLIC_ENABLED_FEATURES: 'time-capture.quick-entry,time-capture.live-timer',
+    },
   },
 })
