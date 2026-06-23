@@ -5,11 +5,12 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.dependencies import CurrentUser, get_current_user, get_db
 from app.exceptions import NotFoundError
+from app.limiter import limiter
 from app.schemas import ClientCreateSchema, ClientSchema, PaginatedResponse
 from domain.entities import Client
 from infrastructure.repositories import ClientRepository
@@ -48,7 +49,9 @@ def list_clients(
 
 
 @router.post("", response_model=ClientSchema, status_code=201)
+@limiter.limit("100/minute")
 def create_client(
+    request: Request,
     payload: ClientCreateSchema,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),

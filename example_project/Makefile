@@ -18,8 +18,11 @@ typecheck: ## Run type checks on backend and frontend
 	cd src/frontend && npm run typecheck
 
 test: ## Run backend and frontend unit tests
-	cd src/backend && source .venv/bin/activate && TEST_DATABASE_URL=sqlite:///./test.db pytest --cov=src --cov-report=term-missing
+	cd src/backend && source .venv/bin/activate && TEST_DATABASE_URL=sqlite:///./test.db pytest --ignore=tests/contracts --cov=src --cov-report=term-missing
 	cd src/frontend && npm run test:ci
+
+test-contracts: ## Run Pact provider contract tests against a running backend
+	cd src/backend && source .venv/bin/activate && pytest tests/contracts/
 
 test-e2e: ## Run Playwright E2E tests
 	cd src/frontend && npm run test:e2e
@@ -31,6 +34,15 @@ infra-plan: ## Plan Terraform infrastructure
 	cd infra && terraform plan -var="db_password=$${DB_PASSWORD:?required}"
 
 ci: lint typecheck test ## Local CI simulation
+
+feedback: ## Aggregate CI feedback for the orchestrator
+	python3 scripts/ci_feedback.py --project-dir . --write-gates
+
+check: feedback ## Check current stage and CI feedback gates
+	python3 ../pipeline/orchestrator.py --project-dir . check
+
+advance-auto: ## Advance to next stage if CI feedback gates pass
+	python3 ../pipeline/orchestrator.py --project-dir . advance --auto
 
 deploy-local-backend: ## Deploy backend preview to Vercel using your local login
 	scripts/deploy-local.sh backend

@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -123,17 +123,22 @@ def _get_user_from_dev_token(db: Session, token: str) -> UserORM:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
 ) -> CurrentUser:
-    if not credentials:
+    token = credentials.credentials if credentials else None
+
+    # Fallback to httpOnly session cookie if no Authorization header is present.
+    if not token:
+        token = request.cookies.get("elite_session")
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    token = credentials.credentials
 
     # Prefer Clerk when configured. This allows testing Clerk locally and forces
     # Clerk in production without branching on ENV.

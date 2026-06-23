@@ -1,0 +1,4 @@
+bucket         = "elite-terraform-state"
+dynamodb_table = "elite-terraform-locks"
+region         = "us-east-1"
+encrypt        = true

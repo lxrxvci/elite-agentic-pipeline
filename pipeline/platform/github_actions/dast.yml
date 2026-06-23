@@ -1,0 +1,68 @@
+name: DAST
+
+on:
+  workflow_run:
+    workflows: [Deploy]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  dast:
+    name: OWASP ZAP baseline scan
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Determine staging URL
+        id: staging
+        run: |
+          url="${{ vars.STAGING_FRONTEND_URL }}"
+          if [ -z "$url" ]; then
+            echo "STAGING_FRONTEND_URL is not set."
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: OWASP ZAP baseline scan
+        id: zap
+        uses: zaproxy/action-baseline@41aee98c80cf782390ccb35faba62e2f2f0076c9 # v0.14.0
+        with:
+          target: ${{ steps.staging.outputs.url }}
+          cmd_options: '-a'
+
+      - name: Write DAST feedback
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          feedback = {
+              "status": "collected",
+              "dast": {
+                  "passed": os.environ.get("ZAP_OUTCOME") == "success",
+                  "target": os.environ.get("ZAP_TARGET", ""),
+              },
+          }
+          path = ".dast-feedback.json"
+          with open(path, "w") as f:
+              json.dump(feedback, f, indent=2)
+          print(f"Wrote {path}")
+          PY
+        env:
+          ZAP_OUTCOME: ${{ steps.zap.outcome }}
+          ZAP_TARGET: ${{ steps.staging.outputs.url }}
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: dast-feedback
+          path: .dast-feedback.json

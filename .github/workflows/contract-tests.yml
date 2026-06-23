@@ -13,7 +13,7 @@ env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "20"
   DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/elite_db
-  SECRET_KEY: ${{ secrets.CI_SECRET_KEY || 'ci-secret-key-not-for-production' }}
+  SECRET_KEY: ${{ secrets.CI_SECRET_KEY }}
 
 jobs:
   consumer:

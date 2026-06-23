@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState } from 'react'
 import { FeatureFlagsProvider } from '@/shared/lib/FeatureFlagsProvider'
+import { AuthProvider } from '@/features/auth/ui/AuthProvider'
 
 function parseEnvFlags(): Record<string, boolean> {
   if (typeof window === 'undefined') return {}
@@ -22,7 +23,7 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <FeatureFlagsProvider fallbackFlags={parseEnvFlags()}>
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </FeatureFlagsProvider>
     </QueryClientProvider>
   )

@@ -14,23 +14,69 @@ jobs:
       run:
         working-directory: src/frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
       - run: npm ci
-      - run: npm audit --audit-level=high
+      - name: Run npm audit
+        id: npm-audit
+        run: npm audit --audit-level=high
         continue-on-error: true
       - run: npx playwright install --with-deps chromium
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test:ci
-      - run: npm run test:a11y
-      - run: npm run build
-      - uses: actions/upload-artifact@v4
+      - name: Run lint
+        id: lint
+        run: npm run lint
+      - name: Run typecheck
+        id: typecheck
+        run: npm run typecheck
+      - name: Run tests
+        id: tests
+        run: npm run test:ci
+      - name: Run accessibility tests
+        id: a11y
+        run: npm run test:a11y
+      - name: Build
+        id: build
+        run: npm run build
+      - name: Write frontend CI feedback
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const outcome = (id) => process.env[`${id.toUpperCase().replace(/-/g, '_')}_OUTCOME`] === 'success';
+          const feedback = {
+            status: 'collected',
+            checks: {
+              tests: { passed: outcome('tests') },
+              lint: { passed: outcome('lint') },
+              typecheck: { passed: outcome('typecheck') },
+              a11y: { passed: outcome('a11y') },
+              build: { passed: outcome('build') },
+              'npm-audit': { passed: outcome('npm-audit') },
+            },
+          };
+          const path = 'src/frontend/.ci-feedback.json';
+          fs.writeFileSync(path, JSON.stringify(feedback, null, 2));
+          console.log(`Wrote ${path}`);
+          JS
+        env:
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          A11Y_OUTCOME: ${{ steps.a11y.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          NPM_AUDIT_OUTCOME: ${{ steps.npm-audit.outcome }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: frontend-coverage
           path: src/frontend/coverage
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: frontend-ci-feedback
+          path: src/frontend/.ci-feedback.json

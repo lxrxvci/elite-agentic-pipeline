@@ -36,10 +36,12 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run Bandit (Python SAST)
+        id: bandit
         working-directory: src/backend
         run: bandit -r src -ll -ii
 
       - name: Run Semgrep (JavaScript/TypeScript SAST)
+        id: semgrep
         uses: returntocorp/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d # v1
         with:
           config: >-
@@ -49,6 +51,7 @@ jobs:
             p/security-audit
 
       - name: Run Trivy vulnerability scanner
+        id: trivy
         uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.24.0
         with:
           scan-type: 'fs'
@@ -57,12 +60,14 @@ jobs:
           exit-code: '1'
 
       - name: GitHub dependency review
+        id: dependency-review
         uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
         if: github.event_name == 'pull_request'
         with:
           fail-on-severity: high
 
       - name: Detect secrets
+        id: trufflehog
         uses: trufflesecurity/trufflehog@7e78ca385fb82c19568c7a4b341c97d57d9aa5e1 # v3.82.2
         with:
           path: ./
@@ -79,4 +84,92 @@ jobs:
         uses: github/codeql-action/autobuild@b0c4fd77f6c559021d78430ec4d0d169ae74a4eb # v3
 
       - name: Perform CodeQL Analysis
+        id: codeql
         uses: github/codeql-action/analyze@b0c4fd77f6c559021d78430ec4d0d169ae74a4eb # v3
+
+      - name: Write security feedback
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          def ok(step_id):
+              return os.environ.get(f"{step_id.upper()}_OUTCOME", "failure") == "success"
+
+          feedback = {
+              "status": "collected",
+              "checks": {
+                  "bandit": {"passed": ok("bandit")},
+                  "semgrep": {"passed": ok("semgrep")},
+                  "trivy": {"passed": ok("trivy")},
+                  "dependency-review": {"passed": ok("dependency-review")},
+                  "trufflehog": {"passed": ok("trufflehog")},
+                  "codeql": {"passed": ok("codeql")},
+              },
+          }
+          path = ".security-feedback.json"
+          with open(path, "w") as f:
+              json.dump(feedback, f, indent=2)
+          print(f"Wrote {path}")
+          PY
+        env:
+          BANDIT_OUTCOME: ${{ steps.bandit.outcome }}
+          SEMGREP_OUTCOME: ${{ steps.semgrep.outcome }}
+          TRIVY_OUTCOME: ${{ steps.trivy.outcome }}
+          DEPENDENCY_REVIEW_OUTCOME: ${{ steps.dependency-review.outcome }}
+          TRUFFLEHOG_OUTCOME: ${{ steps.trufflehog.outcome }}
+          CODEQL_OUTCOME: ${{ steps.codeql.outcome }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: security-feedback
+          path: .security-feedback.json
+
+  image-scan:
+    name: Container image scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@988b5a0280414a52101361d6182f37b7f48a57cb # v3
+
+      - name: Build backend image
+        run: docker build -t elite-backend:scan -f src/backend/Dockerfile src/backend
+
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.24.0
+        with:
+          image-ref: 'elite-backend:scan'
+          format: 'sarif'
+          output: 'trivy-backend.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Build frontend image
+        run: docker build -t elite-frontend:scan -f src/frontend/Dockerfile src/frontend
+
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.24.0
+        with:
+          image-ref: 'elite-frontend:scan'
+          format: 'sarif'
+          output: 'trivy-frontend.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Upload SARIF results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trivy-image-scan-results
+          path: |
+            trivy-backend.sarif
+            trivy-frontend.sarif

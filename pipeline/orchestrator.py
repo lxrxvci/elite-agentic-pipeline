@@ -491,7 +491,11 @@ def run_stage(project_dir: Path, auto: bool = False) -> None:
             print(f"Suggested call: dispatch_agent('{agent_name}', project_dir='{project_dir}')\n")
 
 
-def advance(project_dir: Path, next_stage: str | None = None) -> None:
+def advance(
+    project_dir: Path,
+    next_stage: str | None = None,
+    auto: bool = False,
+) -> None:
     state = load_state(project_dir)
     current = state.get("stage", "discovery")
 
@@ -518,6 +522,14 @@ def advance(project_dir: Path, next_stage: str | None = None) -> None:
     else:
         next_stage = "discovery"
 
+    if auto:
+        passed, blockers = check_stage_gates(project_dir)
+        if not passed:
+            print("\nCannot auto-advance. Please resolve the following:\n", file=sys.stderr)
+            for blocker in blockers:
+                print(f"  - {blocker}", file=sys.stderr)
+            sys.exit(1)
+
     validate_advance(project_dir, current, next_stage)
 
     state["stage"] = next_stage
@@ -530,6 +542,64 @@ def advance(project_dir: Path, next_stage: str | None = None) -> None:
 def status(project_dir: Path) -> None:
     state = load_state(project_dir)
     print(json.dumps(state, indent=2))
+
+
+def load_feedback_gates(project_dir: Path) -> dict[str, bool]:
+    """Load per-stage gate status from CI feedback, if available."""
+    gates_file = project_dir / ".pipeline" / "gates.json"
+    if gates_file.exists():
+        return json.loads(gates_file.read_text())
+
+    feedback_file = project_dir / ".pipeline" / "feedback.json"
+    if feedback_file.exists():
+        feedback = json.loads(feedback_file.read_text())
+        return feedback.get("gates", {})
+
+    return {}
+
+
+def check_stage_gates(project_dir: Path) -> tuple[bool, list[str]]:
+    """Check whether the current stage's exit criteria are satisfied.
+
+    Returns (all_passed, list of blocking items).
+    """
+    state = load_state(project_dir)
+    stage = state.get("stage", "discovery")
+    gates = load_feedback_gates(project_dir)
+    blockers: list[str] = []
+
+    # Map stage to the gate that must be open before advancing out of it.
+    required_gates = {
+        "discovery": None,
+        "shaping": None,
+        "rfc_adr": None,
+        "design_build": "design_build",
+        "ci_cd": "ci_cd",
+        "deploy_release": "deploy_release",
+        "observe_improve": "observe_improve",
+    }
+
+    required = required_gates.get(stage)
+    if required and not gates.get(required, False):
+        blockers.append(f"Gate '{required}' is not satisfied (run CI and scripts/ci_feedback.py)")
+
+    return (not blockers, blockers)
+
+
+def check(project_dir: Path) -> None:
+    """Report current stage and gate status."""
+    state = load_state(project_dir)
+    stage = state.get("stage", "discovery")
+    gates = load_feedback_gates(project_dir)
+    passed, blockers = check_stage_gates(project_dir)
+
+    report = {
+        "stage": stage,
+        "gates": gates,
+        "can_advance": passed,
+        "blockers": blockers,
+    }
+    print(json.dumps(report, indent=2))
 
 
 def main() -> None:
@@ -550,10 +620,17 @@ def main() -> None:
 
     advance_parser = subparsers.add_parser("advance", help="Advance to the next stage")
     advance_parser.add_argument("--to", dest="next_stage", help="Target stage")
+    advance_parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Only advance if CI feedback gates are satisfied",
+    )
 
     subparsers.add_parser("dispatch", help="Process pending agent dispatch queue")
 
     subparsers.add_parser("status", help="Show project state")
+
+    subparsers.add_parser("check", help="Check current stage and CI feedback gates")
 
     args = parser.parse_args()
 
@@ -571,11 +648,13 @@ def main() -> None:
     if args.command == "run":
         run_stage(project_dir, auto=args.auto)
     elif args.command == "advance":
-        advance(project_dir, args.next_stage)
+        advance(project_dir, args.next_stage, auto=args.auto)
     elif args.command == "dispatch":
         run_dispatch_queue(project_dir)
     elif args.command == "status":
         status(project_dir)
+    elif args.command == "check":
+        check(project_dir)
 
 
 if __name__ == "__main__":

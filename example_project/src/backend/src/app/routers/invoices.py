@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.dependencies import CurrentUser, get_current_user, get_db
 from app.exceptions import ConflictError, NotFoundError
+from app.limiter import limiter
 from app.observability import get_metrics_provider
 from app.schemas import (
     InvoiceCreateSchema,
@@ -79,11 +80,20 @@ def list_invoices(
 
 
 @router.post("", response_model=InvoiceSchema, status_code=201)
+@limiter.limit("100/minute")
 def create_invoice(
+    request: Request,
     payload: InvoiceCreateSchema,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> InvoiceSchema:
+    invoice_repo = InvoiceRepository(db, user.tenant_id)
+
+    if payload.idempotency_key:
+        existing = invoice_repo.get_by_idempotency_key(payload.idempotency_key)
+        if existing:
+            return _to_schema(existing)
+
     client_repo = ClientRepository(db, user.tenant_id)
     client = client_repo.get(payload.client_id)
     if not client:
@@ -108,7 +118,6 @@ def create_invoice(
         idempotency_key=payload.idempotency_key,
     )
 
-    invoice_repo = InvoiceRepository(db, user.tenant_id)
     created = invoice_repo.create(invoice)
     for entry in time_entries:
         time_entry_repo.update(entry)
@@ -131,7 +140,9 @@ def get_invoice(
 
 
 @router.post("/{invoice_id}/mark-paid", response_model=InvoiceSchema)
+@limiter.limit("100/minute")
 def mark_invoice_paid(
+    request: Request,
     invoice_id: uuid.UUID,
     payload: InvoiceMarkPaidSchema,
     user: CurrentUser = Depends(get_current_user),

@@ -313,6 +313,17 @@ class InvoiceRepository(BaseRepository[Invoice]):
             return None
         return self._to_domain(orm)
 
+    def get_by_idempotency_key(self, key: str) -> Invoice | None:
+        orm = (
+            self.session.query(models.Invoice)
+            .filter(models.Invoice.tenant_id == self.tenant_id)
+            .filter(models.Invoice.idempotency_key == key)
+            .first()
+        )
+        if not orm:
+            return None
+        return self._to_domain(orm)
+
     def create(self, invoice: Invoice) -> Invoice:
         orm = models.Invoice(
             id=invoice.id,

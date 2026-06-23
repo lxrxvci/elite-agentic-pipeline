@@ -1,5 +1,3 @@
-import { useAuthStore } from '@/features/auth/model/store'
-
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
 export interface ProblemDetail {
@@ -25,14 +23,13 @@ export async function apiClient<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = useAuthStore.getState().token
   const url = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
 
   const response = await fetch(url, {
     ...options,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
   })

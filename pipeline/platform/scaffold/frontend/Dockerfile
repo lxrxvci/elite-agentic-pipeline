@@ -1,5 +1,5 @@
 # Frontend production Dockerfile
-# Builds a static Next.js app and serves it with a lightweight Node server.
+# Builds a standalone Next.js app and serves it with Node.
 
 FROM node:20-alpine AS builder
 
@@ -18,20 +18,17 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Copy only production dependencies into the final image.
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-
-COPY --from=builder /app/.next ./.next
+# Next.js standalone output contains only the runtime files.
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
+RUN apk upgrade --no-cache && addgroup -S app && adduser -S app -G app
 USER app
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://localhost:3000').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))" || exit 1
+  CMD node -e "require('http').get('http://localhost:3000/', (r) => { process.exit(r.statusCode < 400 ? 0 : 1) }).on('error', () => process.exit(1))"
 
-CMD ["npm", "start"]
+CMD ["node", "server.js"]

@@ -4,13 +4,28 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 9 * * 1'
+  workflow_run:
+    workflows: [Deploy]
+    types: [completed]
+    branches: [main]
+
+env:
+  PUSHGATEWAY_URL: ${{ vars.DORA_PUSHGATEWAY_URL || 'http://localhost:9091' }}
 
 jobs:
   collect:
     runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    services:
+      pushgateway:
+        image: prom/pushgateway:v1.9.0
+        ports:
+          - 9091:9091
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Collect DORA metrics
@@ -25,7 +40,18 @@ jobs:
             --repo "$REPO" \
             --days 30 \
             --output dora-metrics.prom
-      - uses: actions/upload-artifact@v4
+      - name: Push DORA metrics to Pushgateway
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/dora_pushgateway.py \
+            --input dora-metrics.prom \
+            --pushgateway-url "$PUSHGATEWAY_URL" \
+            --job dora-metrics \
+            --instance "${{ github.repository }}" \
+            --username "${{ secrets.DORA_PUSHGATEWAY_USERNAME }}" \
+            --password "${{ secrets.DORA_PUSHGATEWAY_PASSWORD }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dora-metrics
           path: dora-metrics.prom

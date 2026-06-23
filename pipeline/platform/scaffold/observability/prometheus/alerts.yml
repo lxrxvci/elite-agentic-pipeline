@@ -2,7 +2,12 @@ groups:
   - name: elite-api
     rules:
       - alert: HighErrorRate
-        expr: rate(elite_request_duration_seconds_count{status_code=~"5.."}[5m]) > 0.01
+        expr: |
+          (
+            sum(rate(elite_request_duration_seconds_count{status_code=~"5.."}[5m]))
+            /
+            sum(rate(elite_request_duration_seconds_count[5m]))
+          ) > 0.01
         for: 5m
         labels:
           severity: critical

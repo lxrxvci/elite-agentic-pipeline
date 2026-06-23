@@ -1,24 +1,17 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 
 interface AuthState {
-  token: string | null
   isAuthenticated: boolean
-  setToken: (token: string) => void
-  clearToken: () => void
+  isLoading: boolean
+  setAuthenticated: (value: boolean) => void
+  setLoading: (value: boolean) => void
+  clearAuth: () => void
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      token: null,
-      isAuthenticated: false,
-      setToken: (token) => set({ token, isAuthenticated: true }),
-      clearToken: () => set({ token: null, isAuthenticated: false }),
-    }),
-    {
-      name: 'elite-auth',
-      partialize: (state) => ({ token: state.token, isAuthenticated: state.isAuthenticated }),
-    }
-  )
-)
+export const useAuthStore = create<AuthState>()((set) => ({
+  isAuthenticated: false,
+  isLoading: true,
+  setAuthenticated: (value) => set({ isAuthenticated: value, isLoading: false }),
+  setLoading: (value) => set({ isLoading: value }),
+  clearAuth: () => set({ isAuthenticated: false, isLoading: false }),
+}))

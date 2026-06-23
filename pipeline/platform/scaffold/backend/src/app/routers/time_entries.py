@@ -5,11 +5,12 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.dependencies import CurrentUser, get_current_user, get_db
 from app.exceptions import ConflictError, NotFoundError
+from app.limiter import limiter
 from app.observability import get_metrics_provider
 from app.schemas import (
     PaginatedResponse,
@@ -74,7 +75,9 @@ def list_time_entries(
 
 
 @router.post("", response_model=TimeEntrySchema, status_code=201)
+@limiter.limit("100/minute")
 def create_time_entry_endpoint(
+    request: Request,
     payload: TimeEntryCreateSchema,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -133,7 +136,9 @@ def get_time_entry(
 
 
 @router.patch("/{time_entry_id}", response_model=TimeEntrySchema)
+@limiter.limit("100/minute")
 def update_time_entry(
+    request: Request,
     time_entry_id: uuid.UUID,
     payload: TimeEntryUpdateSchema,
     user: CurrentUser = Depends(get_current_user),

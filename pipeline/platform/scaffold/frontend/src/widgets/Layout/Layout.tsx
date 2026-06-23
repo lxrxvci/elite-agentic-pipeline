@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '@/features/auth/model/store'
 import { Button } from '@/shared/ui'
+import { apiClient } from '@/shared/api/client'
 
 const navItems = [
   { href: '/', label: 'Dashboard' },
@@ -16,10 +17,15 @@ const navItems = [
 export function Layout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { isAuthenticated, clearToken } = useAuthStore()
+  const { isAuthenticated, clearAuth } = useAuthStore()
 
-  const handleLogout = () => {
-    clearToken()
+  const handleLogout = async () => {
+    try {
+      await apiClient('/auth/logout', { method: 'POST' })
+    } catch {
+      // Ignore logout errors; clear local state regardless.
+    }
+    clearAuth()
     router.push('/login')
   }
 

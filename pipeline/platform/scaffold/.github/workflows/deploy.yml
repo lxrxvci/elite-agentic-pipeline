@@ -33,33 +33,33 @@ jobs:
     outputs:
       proceed: ${{ steps.check.outputs.proceed }}
     steps:
-      - name: Manual deploy gate
+      - name: Deploy gate check
         id: check
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "Manual deploy gate passed"
-          echo "proceed=true" >> "$GITHUB_OUTPUT"
-      - name: Verify CI and Security succeeded for this commit
-        id: check
-        if: github.event_name == 'workflow_run'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || '' }}
           REPO: ${{ github.repository }}
         run: |
-          echo "Checking CI and Security workflow runs for $HEAD_SHA..."
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual deploy gate passed"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Checking CI, Security, and DAST workflow runs for $HEAD_SHA..."
           ci_status=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA&per_page=1" --jq '.workflow_runs[0].conclusion')
           sec_status=$(gh api "repos/$REPO/actions/workflows/security.yml/runs?head_sha=$HEAD_SHA&per_page=1" --jq '.workflow_runs[0].conclusion')
+          dast_status=$(gh api "repos/$REPO/actions/workflows/dast.yml/runs?head_sha=$HEAD_SHA&per_page=1" --jq '.workflow_runs[0].conclusion')
           echo "CI conclusion: $ci_status"
           echo "Security conclusion: $sec_status"
-          if [ "$ci_status" = "success" ] && [ "$sec_status" = "success" ]; then
-            echo "Both CI and Security succeeded."
+          echo "DAST conclusion: $dast_status"
+          if [ "$ci_status" = "success" ] && [ "$sec_status" = "success" ] && [ "$dast_status" = "success" ]; then
+            echo "CI, Security, and DAST succeeded."
             echo "proceed=true" >> "$GITHUB_OUTPUT"
-          elif [ "$ci_status" = "failure" ] || [ "$ci_status" = "cancelled" ] || [ "$sec_status" = "failure" ] || [ "$sec_status" = "cancelled" ]; then
-            echo 'CI or Security did not succeed; blocking deploy.'
+          elif [ "$ci_status" = "failure" ] || [ "$ci_status" = "cancelled" ] || [ "$sec_status" = "failure" ] || [ "$sec_status" = "cancelled" ] || [ "$dast_status" = "failure" ] || [ "$dast_status" = "cancelled" ]; then
+            echo 'CI, Security, or DAST did not succeed; blocking deploy.'
             exit 1
           else
-            echo 'CI or Security is still in progress; skipping deploy until the other workflow completes.'
+            echo 'CI, Security, or DAST is still in progress; skipping deploy until the other workflows complete.'
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -335,8 +335,34 @@ jobs:
             --max-error-rate 0.01 \
             --max-latency-p99 0.5
 
-  smoke-production:
+  slo-check:
     needs: [canary-analysis, deploy-backend-production, deploy-frontend-production]
+    if: always() && needs.canary-analysis.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Check SLOs against production Prometheus
+        env:
+          PROMETHEUS_URL: ${{ vars.PROMETHEUS_URL }}
+        run: |
+          if [ -z "$PROMETHEUS_URL" ]; then
+            echo "PROMETHEUS_URL is not set; skipping SLO check."
+            exit 0
+          fi
+          python scripts/slo_check.py \
+            --prometheus-url "$PROMETHEUS_URL" \
+            --window 5m \
+            --max-error-rate 0.01 \
+            --max-latency-p99 0.5
+
+  smoke-production:
+    needs: [slo-check, canary-analysis, deploy-backend-production, deploy-frontend-production]
+    if: always() && (needs.slo-check.result == 'success' || needs.slo-check.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Smoke test production
@@ -349,7 +375,7 @@ jobs:
           curl --fail --retry 5 --retry-delay 10 "$FRONTEND_URL"
 
   rollback-on-failure:
-    needs: [canary-analysis, smoke-production]
+    needs: [canary-analysis, slo-check, smoke-production]
     if: failure()
     runs-on: ubuntu-latest
     environment:

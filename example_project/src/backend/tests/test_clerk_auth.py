@@ -17,6 +17,12 @@ from app.auth.clerk import ClerkAuthError, claims_to_user_kwargs, validate_clerk
 from app.dependencies import get_current_user
 
 
+def _mock_request(cookies: dict | None = None) -> MagicMock:
+    request = MagicMock()
+    request.cookies = cookies or {}
+    return request
+
+
 def _generate_rsa_keypair() -> tuple[str, str]:
     private_key = rsa.generate_private_key(
         public_exponent=65537,
@@ -144,12 +150,13 @@ def test_get_current_user_uses_clerk_when_configured(
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
 
+    request = _mock_request()
     with patch("app.dependencies.settings") as dep_settings:
         dep_settings.clerk_jwks_url = "https://clerk.example.com/.well-known/jwks.json"
         dep_settings.clerk_audience = "elite-backend"
         dep_settings.clerk_issuer = "https://clerk.example.com"
         with patch("app.auth.clerk._get_signing_key", return_value=signing_key):
-            user = get_current_user(credentials, db)
+            user = get_current_user(request, credentials, db)
 
     assert user.email == "clerk@example.com"
     assert user.name == "Clerk User"
@@ -160,9 +167,10 @@ def test_get_current_user_rejects_invalid_clerk_token(mock_clerk_settings: None)
     credentials.credentials = "not-a-valid-token"
 
     db = MagicMock()
+    request = _mock_request()
 
     with pytest.raises(HTTPException) as exc_info:
-        get_current_user(credentials, db)
+        get_current_user(request, credentials, db)
 
     assert exc_info.value.status_code == 401
 
@@ -191,9 +199,10 @@ def test_get_current_user_dev_token_in_development() -> None:
     db_user.tenant_id = tenant_id
     db.query.return_value.filter.return_value.first.return_value = db_user
 
+    request = _mock_request()
     with patch.object(settings, "env", "development"):
         with patch.object(settings, "clerk_jwks_url", ""):
-            user = get_current_user(credentials, db)
+            user = get_current_user(request, credentials, db)
 
     assert user.email == "dev@example.com"
     assert user.tenant_id == tenant_id
@@ -201,6 +210,38 @@ def test_get_current_user_dev_token_in_development() -> None:
 
 def test_get_current_user_missing_credentials() -> None:
     db = MagicMock()
+    request = _mock_request()
     with pytest.raises(HTTPException) as exc_info:
-        get_current_user(None, db)
+        get_current_user(request, None, db)
     assert exc_info.value.status_code == 401
+
+
+def test_get_current_user_uses_cookie_when_no_header() -> None:
+    from app.config import settings
+    from app.dependencies import create_access_token
+
+    tenant_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    token = create_access_token(
+        user_id=user_id,
+        email="cookie@example.com",
+        name="Cookie User",
+        tenant_id=tenant_id,
+    )
+
+    db = MagicMock()
+    db_user = MagicMock()
+    db_user.id = user_id
+    db_user.email = "cookie@example.com"
+    db_user.name = "Cookie User"
+    db_user.tenant_id = tenant_id
+    db.query.return_value.filter.return_value.first.return_value = db_user
+
+    request = _mock_request({"elite_session": token})
+
+    with patch.object(settings, "env", "development"):
+        with patch.object(settings, "clerk_jwks_url", ""):
+            user = get_current_user(request, None, db)
+
+    assert user.email == "cookie@example.com"
+    assert user.tenant_id == tenant_id

@@ -10,7 +10,7 @@ export function LoginForm() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const setToken = useAuthStore((s) => s.setToken)
+  const setAuthenticated = useAuthStore((s) => s.setAuthenticated)
   const router = useRouter()
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -18,14 +18,11 @@ export function LoginForm() {
     setLoading(true)
     setError('')
     try {
-      const data = await apiClient<{ access_token: string; token_type: string }>(
-        '/auth/token',
-        {
-          method: 'POST',
-          body: JSON.stringify({ email }),
-        }
-      )
-      setToken(data.access_token)
+      await apiClient<{ access_token: string; token_type: string }>('/auth/token', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      })
+      setAuthenticated(true)
       router.push('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed')
@@ -49,7 +46,7 @@ export function LoginForm() {
         Sign in
       </Button>
       <p className="text-sm text-elite-text-secondary">
-        Dev mode: any email creates a tenant and returns a token.
+        Dev mode: any email creates a tenant and returns a session cookie.
       </p>
     </form>
   )

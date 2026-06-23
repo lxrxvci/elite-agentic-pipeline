@@ -27,7 +27,6 @@ services:
       DATABASE_URL: postgresql+psycopg://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-elite_db}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required. Use a strong random value in production.}
       ALLOWED_ORIGINS: http://localhost:3000
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       LOG_LEVEL: info
     ports:
       - "8000:8000"
@@ -73,6 +72,26 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+    depends_on:
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    environment:
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/placeholder}
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml.template:/etc/alertmanager/alertmanager.yml.template:ro
+      - ./observability/alertmanager/entrypoint.sh:/entrypoint.sh:ro
+    ports:
+      - "9093:9093"
+    entrypoint:
+      - '/bin/sh'
+      - '/entrypoint.sh'
+
+  pushgateway:
+    image: prom/pushgateway:v1.9.0
+    ports:
+      - "9091:9091"
 
   tempo:
     image: grafana/tempo:2.5.0
@@ -101,6 +120,7 @@ services:
       - "3001:3000"
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     depends_on:
       - prometheus

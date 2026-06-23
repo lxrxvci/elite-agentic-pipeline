@@ -7,8 +7,8 @@ jobs:
   infra:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
       - name: Check Terraform lock file is tracked
         working-directory: infra
         run: |
@@ -22,7 +22,47 @@ jobs:
         working-directory: infra
       - run: terraform validate
         working-directory: infra
-      - uses: bridgecrewio/checkov-action@v12
+      - name: Verify backend configuration files
+        working-directory: infra
+        run: |
+          if [ ! -f backend.tfvars.example ]; then
+            echo "ERROR: backend.tfvars.example is missing."
+            exit 1
+          fi
+          if [ -f backend.tfvars ]; then
+            for key in bucket dynamodb_table region encrypt; do
+              if ! grep -qE "^${key}\s*=" backend.tfvars; then
+                echo "ERROR: backend.tfvars is missing required key: $key"
+                exit 1
+              fi
+            done
+            echo "backend.tfvars contains required keys."
+          else
+            echo "NOTE: backend.tfvars is not committed. Copy backend.tfvars.example and run 'terraform init -backend-config=backend.tfvars' to use remote state."
+          fi
+      - uses: bridgecrewio/checkov-action@fa9edf8f0a491c59a924ea6accd5bdcf07752cff # v12
         with:
           directory: infra
           framework: terraform
+
+      - name: Install amtool
+        run: |
+          ALERTMANAGER_VERSION=0.27.0
+          curl -fsSL "https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz" \
+            | tar -xz --strip-components=1 -C /tmp "alertmanager-${ALERTMANAGER_VERSION}.linux-amd64/amtool"
+          chmod +x /tmp/amtool
+          /tmp/amtool --version
+
+      - name: Validate Alertmanager configuration
+        env:
+          SLACK_WEBHOOK_URL: https://hooks.slack.com/services/placeholder
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          src = Path("observability/alertmanager/alertmanager.yml.template")
+          dst = Path("/tmp/alertmanager.yml")
+          dst.write_text(os.environ["SLACK_WEBHOOK_URL"].join(src.read_text().split("${SLACK_WEBHOOK_URL}")))
+          PY
+          /tmp/amtool check-config /tmp/alertmanager.yml

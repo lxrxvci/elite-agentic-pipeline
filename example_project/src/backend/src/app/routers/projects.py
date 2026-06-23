@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.dependencies import CurrentUser, get_current_user, get_db
 from app.exceptions import NotFoundError
+from app.limiter import limiter
 from app.schemas import PaginatedResponse, ProjectCreateSchema, ProjectSchema
 from domain.entities import Project
 from infrastructure.repositories import ClientRepository, ProjectRepository
@@ -47,7 +48,9 @@ def list_projects(
 
 
 @router.post("", response_model=ProjectSchema, status_code=201)
+@limiter.limit("100/minute")
 def create_project(
+    request: Request,
     payload: ProjectCreateSchema,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),

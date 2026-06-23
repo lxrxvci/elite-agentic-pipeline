@@ -28,6 +28,12 @@ advance: ## Advance project to next stage
 status: ## Show project state
 	python3 pipeline/orchestrator.py --project-dir $(PROJECT_DIR) status
 
+check: ## Check CI feedback gates for the current stage
+	python3 pipeline/orchestrator.py --project-dir $(PROJECT_DIR) check
+
+advance-auto: ## Advance project to next stage if CI feedback gates pass
+	python3 pipeline/orchestrator.py --project-dir $(PROJECT_DIR) advance --auto
+
 lint-project: ## Run lint/typecheck on the generated project
 	cd $(PROJECT_DIR)/src/backend && source .venv/bin/activate && ruff check src tests
 	cd $(PROJECT_DIR)/src/backend && source .venv/bin/activate && mypy src
@@ -43,12 +49,18 @@ lint-scaffold: ## Run lint/typecheck on scaffold code
 lint: lint-project ## Default lint targets the generated project
 
 test-project: ## Run backend and frontend unit tests in the generated project
-	cd $(PROJECT_DIR)/src/backend && source .venv/bin/activate && TEST_DATABASE_URL=sqlite:///./test.db pytest --cov=src --cov-report=term-missing
+	cd $(PROJECT_DIR)/src/backend && source .venv/bin/activate && TEST_DATABASE_URL=sqlite:///./test.db pytest --ignore=tests/contracts --cov=src --cov-report=term-missing
 	cd $(PROJECT_DIR)/src/frontend && npm run test:ci
 
+test-contracts-project: ## Run Pact provider contract tests against a running backend
+	cd $(PROJECT_DIR)/src/backend && source .venv/bin/activate && pytest tests/contracts/
+
 test-scaffold: ## Run backend and frontend unit tests in the scaffold
-	cd pipeline/platform/scaffold/backend && source .venv/bin/activate && TEST_DATABASE_URL=sqlite:///./test.db pytest --cov=src --cov-report=term-missing
+	cd pipeline/platform/scaffold/backend && source .venv/bin/activate && TEST_DATABASE_URL=sqlite:///./test.db pytest --ignore=tests/contracts --cov=src --cov-report=term-missing
 	cd pipeline/platform/scaffold/frontend && npm run test:ci
+
+test-contracts-scaffold: ## Run Pact provider contract tests against a running scaffold backend
+	cd pipeline/platform/scaffold/backend && source .venv/bin/activate && pytest tests/contracts/
 
 test: test-project ## Default test targets the generated project
 

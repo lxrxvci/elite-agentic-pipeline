@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -30,16 +30,31 @@ class DevLoginRequest(BaseModel):
     email: str
 
 
+def _set_auth_cookie(response: Response, token: str) -> None:
+    """Set the session token as an httpOnly cookie."""
+    response.set_cookie(
+        key="elite_session",
+        value=token,
+        httponly=True,
+        secure=settings.env != "development",
+        samesite="strict",
+        max_age=60 * settings.access_token_expire_minutes,
+        path="/",
+    )
+
+
 @router.post("/token", response_model=TokenResponse)
 @limiter.limit("5/minute")
 def dev_token(
     request: Request,
+    response: Response,
     payload: DevLoginRequest,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     """Return a token for development/testing only.
 
     In production this endpoint must be removed and replaced with an OIDC flow.
+    The token is also set as an httpOnly cookie for secure frontend usage.
     """
     if settings.env != "development":
         raise HTTPException(
@@ -68,5 +83,13 @@ def dev_token(
         name=user.name,
         tenant_id=user.tenant_id,
     )
+    _set_auth_cookie(response, token)
     get_metrics_provider().increment("login", str(user.tenant_id))
     return TokenResponse(access_token=token)
+
+
+@router.post("/logout")
+def logout(response: Response) -> dict[str, str]:
+    """Clear the session cookie."""
+    response.delete_cookie(key="elite_session", path="/")
+    return {"status": "logged_out"}
