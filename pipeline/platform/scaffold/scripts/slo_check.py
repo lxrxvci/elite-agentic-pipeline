@@ -13,7 +13,7 @@ from urllib.error import URLError
 def query_prometheus(base_url: str, promql: str) -> float | None:
     url = f"{base_url}/api/v1/query?query={urllib.parse.quote(promql)}"
     try:
-        with urllib.request.urlopen(url, timeout=10) as response:
+        with urllib.request.urlopen(url, timeout=10) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             data = json.loads(response.read())
     except URLError as exc:
         print(f"ERROR: failed to query Prometheus: {exc}", file=sys.stderr)

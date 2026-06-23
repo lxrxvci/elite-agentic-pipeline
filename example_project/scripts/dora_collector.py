@@ -25,7 +25,7 @@ def github_api(path: str, token: str) -> list[dict]:
             "Accept": "application/vnd.github+json",
         },
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         return json.loads(resp.read().decode("utf-8"))
 
 

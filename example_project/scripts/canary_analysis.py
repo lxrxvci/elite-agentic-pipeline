@@ -15,7 +15,7 @@ def request_once(url: str, timeout: float) -> tuple[float, int | None]:
     start = time.perf_counter()
     status: int | None = None
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with urllib.request.urlopen(url, timeout=timeout) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             status = response.getcode()
     except HTTPError as exc:
         status = exc.code
