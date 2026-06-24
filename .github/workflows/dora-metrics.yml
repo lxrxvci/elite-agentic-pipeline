@@ -11,6 +11,9 @@ on:
   schedule:
     - cron: '0 9 * * 1'
 
+permissions:
+  contents: write
+
 env:
   PROJECT_DIR: example_project
 
