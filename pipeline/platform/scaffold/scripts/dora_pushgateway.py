@@ -16,18 +16,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-
-def _build_auth_handler(username: str | None, password: str | None) -> urllib.request.OpenerDirector | None:
-    if not username or not password:
-        return None
-    password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-    password_mgr.add_password(None, "", username, password)
-    handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
-    return urllib.request.build_opener(handler)
+import httpx
 
 
 def push_metrics(
@@ -47,27 +38,25 @@ def push_metrics(
     if instance:
         url = f"{url}/instance/{instance}"
 
-    req = urllib.request.Request(
-        url,
-        data=payload.encode("utf-8"),
-        headers={"Content-Type": "text/plain; version=0.0.4; charset=utf-8"},
-        method="POST",
-    )
-    opener = _build_auth_handler(username, password)
+    auth = (username, password) if username and password else None
     try:
-        # nosemgrep
-        if opener:
-            with opener.open(req, timeout=30) as response:
-                print(f"Pushed DORA metrics to {url}: {response.status}")
-        else:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                print(f"Pushed DORA metrics to {url}: {response.status}")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="ignore")
-        print(f"ERROR: Pushgateway returned {exc.code}: {body}", file=sys.stderr)
+        response = httpx.post(
+            url,
+            content=payload,
+            headers={"Content-Type": "text/plain; version=0.0.4; charset=utf-8"},
+            auth=auth,
+            timeout=30,
+        )
+        response.raise_for_status()
+        print(f"Pushed DORA metrics to {url}: {response.status_code}")
+    except httpx.HTTPStatusError as exc:
+        print(
+            f"ERROR: Pushgateway returned {exc.response.status_code}: {exc.response.text}",
+            file=sys.stderr,
+        )
         return 1
-    except urllib.error.URLError as exc:
-        print(f"ERROR: failed to reach Pushgateway: {exc.reason}", file=sys.stderr)
+    except httpx.RequestError as exc:
+        print(f"ERROR: failed to reach Pushgateway: {exc}", file=sys.stderr)
         return 1
 
     return 0

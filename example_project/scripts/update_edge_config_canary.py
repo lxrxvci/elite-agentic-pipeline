@@ -14,12 +14,10 @@ Set ``--percentage 0`` to disable canary routing.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
-import urllib.error
-import urllib.request
 from typing import Any
 
+import httpx
 
 VERCEL_API = "https://api.vercel.com"
 
@@ -38,31 +36,31 @@ def update_edge_config(
         canary["deploymentUrl"] = deployment_url
 
     payload = {"items": [{"operation": "upsert", "key": "canary", "value": canary}]}
-    data = json.dumps(payload).encode("utf-8")
-
     url = f"{VERCEL_API}/v1/edge-config/{edge_config_id}/items"
-    request = urllib.request.Request(
-        url,
-        data=data,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        method="PATCH",
-    )
 
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            response.read()
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="ignore")
-        print(f"ERROR: failed to update Edge Config: {exc.code} {body}", file=sys.stderr)
+        response = httpx.patch(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.text
+        print(
+            f"ERROR: failed to update Edge Config: {exc.response.status_code} {body}",
+            file=sys.stderr,
+        )
         return 1
-    except urllib.error.URLError as exc:
+    except httpx.RequestError as exc:
         print(f"ERROR: failed to reach Vercel API: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Edge Config updated: canary={percentage}%, apiUrl={api_url}, deploymentUrl={deployment_url}")
+    print(
+        f"Edge Config updated: canary={percentage}%, "
+        f"apiUrl={api_url}, deploymentUrl={deployment_url}"
+    )
     return 0
 
 

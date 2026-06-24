@@ -11,11 +11,11 @@ backend canary via a cookie.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
-import urllib.error
-import urllib.request
+from typing import Any
+
+import httpx
 
 
 def set_canary(
@@ -26,7 +26,7 @@ def set_canary(
     api_url: str | None = None,
     team_id: str | None = None,
 ) -> bool:
-    value: dict[str, object] = {"percentage": percentage}
+    value: dict[str, Any] = {"percentage": percentage}
     if deployment_url:
         value["deploymentUrl"] = deployment_url
     if api_url:
@@ -46,21 +46,17 @@ def set_canary(
     if team_id:
         url = f"{url}?teamId={team_id}"
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        method="PATCH",
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            body = json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        print(f"HTTP error {exc.code}: {exc.read().decode()}", file=sys.stderr)
+        response = httpx.patch(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+    except httpx.HTTPStatusError as exc:
+        print(f"HTTP error {exc.response.status_code}: {exc.response.text}", file=sys.stderr)
         return False
     except Exception as exc:  # pragma: no cover - network failures
         print(f"Failed to update Edge Config: {exc}", file=sys.stderr)
