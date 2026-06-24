@@ -17,12 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start services
+      - name: Start backend services
         working-directory: ${{ inputs.project-dir }}
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
         run: |
-          docker compose up -d backend frontend
+          docker compose up -d backend
           for i in {1..30}; do
             if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
               echo "Backend is healthy"
