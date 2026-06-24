@@ -76,6 +76,8 @@ jobs:
   dora:
     needs: changes
     if: ${{ github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: write
     uses: ./.github/workflows/dora-metrics.yml
     with:
       project-dir: example_project
