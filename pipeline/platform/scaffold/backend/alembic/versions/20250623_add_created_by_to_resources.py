@@ -21,7 +21,7 @@ def upgrade() -> None:
     for table in ("clients", "projects", "time_entries", "invoices"):
         op.add_column(
             table,
-            sa.Column("created_by", sa.Uuid(), nullable=True),
+            sa.Column("created_by", sa.UUID(), nullable=True),
         )
         op.create_index(f"ix_{table}_created_by", table, ["created_by"], unique=False)
         op.create_foreign_key(
