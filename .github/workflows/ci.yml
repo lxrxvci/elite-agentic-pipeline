@@ -76,8 +76,6 @@ jobs:
     uses: ./.github/workflows/dora-metrics.yml
     with:
       project-dir: example_project
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   pipeline:
     needs: changes

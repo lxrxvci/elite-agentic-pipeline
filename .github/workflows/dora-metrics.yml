@@ -7,9 +7,6 @@ on:
         required: false
         type: string
         default: example_project
-    secrets:
-      GITHUB_TOKEN:
-        required: true
   workflow_dispatch:
   schedule:
     - cron: '0 9 * * 1'

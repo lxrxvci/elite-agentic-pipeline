@@ -45,7 +45,9 @@ jobs:
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       - name: Write backend config
-        if: secrets.TERRAFORM_BACKEND_CONFIG != ''
+        env:
+          BACKEND_CONFIG: ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+        if: env.BACKEND_CONFIG != ''
         run: |
           cat > backend.tfvars <<'EOF'
           ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
@@ -114,7 +116,9 @@ jobs:
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       - name: Write backend config
-        if: secrets.TERRAFORM_BACKEND_CONFIG != ''
+        env:
+          BACKEND_CONFIG: ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+        if: env.BACKEND_CONFIG != ''
         run: |
           cat > backend.tfvars <<'EOF'
           ${{ secrets.TERRAFORM_BACKEND_CONFIG }}

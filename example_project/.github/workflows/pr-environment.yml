@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened, closed]
     branches: [main]
     paths:
-      - 'infra/**'
+      - 'example_project/infra/**'
 
 permissions:
   contents: read
@@ -14,7 +14,7 @@ permissions:
 
 env:
   TF_IN_AUTOMATION: true
-  INFRA_DIR: infra
+  INFRA_DIR: example_project/infra
   TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
   TF_VAR_enable_pr_environments: true
   PREVIEW_WORKSPACE: pr-${{ github.event.pull_request.number }}
@@ -42,7 +42,9 @@ jobs:
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       - name: Write backend config
-        if: secrets.TERRAFORM_BACKEND_CONFIG != ''
+        env:
+          BACKEND_CONFIG: ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+        if: env.BACKEND_CONFIG != ''
         run: |
           cat > backend.tfvars <<'EOF'
           ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
@@ -98,7 +100,9 @@ jobs:
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       - name: Write backend config
-        if: secrets.TERRAFORM_BACKEND_CONFIG != ''
+        env:
+          BACKEND_CONFIG: ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+        if: env.BACKEND_CONFIG != ''
         run: |
           cat > backend.tfvars <<'EOF'
           ${{ secrets.TERRAFORM_BACKEND_CONFIG }}

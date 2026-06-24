@@ -4,13 +4,13 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'infra/**'
-      - 'observability/**'
+      - 'example_project/infra/**'
+      - 'example_project/observability/**'
   push:
     branches: [main]
     paths:
-      - 'infra/**'
-      - 'observability/**'
+      - 'example_project/infra/**'
+      - 'example_project/observability/**'
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ env:
   TF_IN_AUTOMATION: true
   TF_WORKSPACE: default
   TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
-  INFRA_DIR: infra
+  INFRA_DIR: example_project/infra
 
 jobs:
   plan:
@@ -45,7 +45,9 @@ jobs:
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       - name: Write backend config
-        if: secrets.TERRAFORM_BACKEND_CONFIG != ''
+        env:
+          BACKEND_CONFIG: ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+        if: env.BACKEND_CONFIG != ''
         run: |
           cat > backend.tfvars <<'EOF'
           ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
@@ -114,7 +116,9 @@ jobs:
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       - name: Write backend config
-        if: secrets.TERRAFORM_BACKEND_CONFIG != ''
+        env:
+          BACKEND_CONFIG: ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+        if: env.BACKEND_CONFIG != ''
         run: |
           cat > backend.tfvars <<'EOF'
           ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
