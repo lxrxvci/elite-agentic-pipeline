@@ -21,4 +21,4 @@ jobs:
   scan:
     uses: ./.github/workflows/_security-scan.yml
     with:
-      project-dir: ${{ env.PROJECT_DIR }}
+      project-dir: example_project

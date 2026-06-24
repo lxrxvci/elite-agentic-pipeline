@@ -13,4 +13,4 @@ jobs:
   drift-check:
     uses: ./.github/workflows/_drift-check.yml
     with:
-      project-dir: ${{ env.PROJECT_DIR }}
+      project-dir: example_project
