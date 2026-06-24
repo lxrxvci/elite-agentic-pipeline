@@ -109,6 +109,7 @@ def seeded_user(db: Session):
 def seeded_client(db: Session, seeded_user):
     client = Client(
         tenant_id=seeded_user["tenant"].id,
+        created_by=seeded_user["user"].id,
         name="Acme Corp",
         email="billing@acme.example",
         currency="USD",
@@ -123,6 +124,7 @@ def seeded_client(db: Session, seeded_user):
 def seeded_project(db: Session, seeded_user, seeded_client):
     project = Project(
         tenant_id=seeded_user["tenant"].id,
+        created_by=seeded_user["user"].id,
         client_id=seeded_client.id,
         name="Website Redesign",
         rounding_minutes=15,

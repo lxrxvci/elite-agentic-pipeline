@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  PROJECT_DIR: example_project
+
 jobs:
   changes:
     runs-on: ubuntu-latest
@@ -13,6 +16,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
       infra: ${{ steps.filter.outputs.infra }}
+      pipeline: ${{ steps.filter.outputs.pipeline }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -22,18 +26,22 @@ jobs:
         with:
           filters: |
             frontend:
-              - 'example_project/src/frontend/**'
+              - '${{ env.PROJECT_DIR }}/src/frontend/**'
             backend:
-              - 'example_project/src/backend/**'
+              - '${{ env.PROJECT_DIR }}/src/backend/**'
             infra:
-              - 'example_project/infra/**'
+              - '${{ env.PROJECT_DIR }}/infra/**'
               - 'pipeline/platform/terraform/**'
+            pipeline:
+              - 'pipeline/**'
+              - '.github/workflows/_ci-*.yml'
 
   frontend:
     needs: changes
     if: ${{ needs.changes.outputs.frontend == 'true' }}
     uses: ./.github/workflows/_ci-frontend.yml
     with:
+      project-dir: ${{ env.PROJECT_DIR }}
       node-version: "20"
 
   backend:
@@ -41,6 +49,7 @@ jobs:
     if: ${{ needs.changes.outputs.backend == 'true' }}
     uses: ./.github/workflows/_ci-backend.yml
     with:
+      project-dir: ${{ env.PROJECT_DIR }}
       python-version: "3.12"
       database-url: postgresql+psycopg://postgres:postgres@localhost:5432/elite_db
     secrets:
@@ -50,10 +59,43 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.infra == 'true' }}
     uses: ./.github/workflows/_ci-infra.yml
+    with:
+      project-dir: ${{ env.PROJECT_DIR }}
+
+  e2e-real:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true' }}
+    uses: ./.github/workflows/_ci-e2e-real.yml
+    with:
+      project-dir: ${{ env.PROJECT_DIR }}
+      node-version: "20"
+
+  dora:
+    needs: changes
+    if: ${{ github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/dora-metrics.yml
+    with:
+      project-dir: ${{ env.PROJECT_DIR }}
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pipeline:
+    needs: changes
+    if: ${{ needs.changes.outputs.pipeline == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check pipeline/
+      - run: mypy pipeline/orchestrator.py pipeline/agent_runner.py pipeline/run_parent_agent.py
+      - run: pytest pipeline/tests/ -v
 
   required:
     name: CI required checks
-    needs: [changes, frontend, backend, infra]
+    needs: [changes, frontend, backend, infra, e2e-real, dora, pipeline]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -62,11 +104,14 @@ jobs:
           echo "frontend=${{ needs.frontend.result }}"
           echo "backend=${{ needs.backend.result }}"
           echo "infra=${{ needs.infra.result }}"
-          if [ "${{ needs.frontend.result }}" = "failure" ] || [ "${{ needs.backend.result }}" = "failure" ] || [ "${{ needs.infra.result }}" = "failure" ]; then
+          echo "e2e-real=${{ needs.e2e-real.result }}"
+          echo "dora=${{ needs.dora.result }}"
+          echo "pipeline=${{ needs.pipeline.result }}"
+          if [ "${{ needs.frontend.result }}" = "failure" ] || [ "${{ needs.backend.result }}" = "failure" ] || [ "${{ needs.infra.result }}" = "failure" ] || [ "${{ needs.e2e-real.result }}" = "failure" ] || [ "${{ needs.dora.result }}" = "failure" ] || [ "${{ needs.pipeline.result }}" = "failure" ]; then
             echo "One or more CI jobs failed."
             exit 1
           fi
-          if [ "${{ needs.frontend.result }}" = "cancelled" ] || [ "${{ needs.backend.result }}" = "cancelled" ] || [ "${{ needs.infra.result }}" = "cancelled" ]; then
+          if [ "${{ needs.frontend.result }}" = "cancelled" ] || [ "${{ needs.backend.result }}" = "cancelled" ] || [ "${{ needs.infra.result }}" = "cancelled" ] || [ "${{ needs.e2e-real.result }}" = "cancelled" ] || [ "${{ needs.dora.result }}" = "cancelled" ] || [ "${{ needs.pipeline.result }}" = "cancelled" ]; then
             echo "One or more CI jobs were cancelled."
             exit 1
           fi

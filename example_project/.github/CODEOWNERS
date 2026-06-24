@@ -1,13 +1,28 @@
-# Default reviewers for the entire repository.
-# Replace the placeholder teams below with your actual GitHub team handles.
-* @elite-squad/backend @elite-squad/frontend @elite-squad/platform
+# Role-based CODEOWNERS for a generated Elite Agentic SDLC project.
+# Replace the @elite-platform/* team handles below with your actual GitHub teams.
+
+# Default reviewers — all three disciplines are notified for broad changes.
+* @elite-platform/backend @elite-platform/frontend @elite-platform/platform
 
 # Backend changes
-/src/backend/ @elite-squad/backend
+/src/backend/ @elite-platform/backend
 
 # Frontend changes
-/src/frontend/ @elite-squad/frontend
+/src/frontend/ @elite-platform/frontend
+
+# Database migrations and schema
+/src/database/ @elite-platform/backend @elite-platform/platform
 
 # Infrastructure and platform engineering
-/infra/ @elite-squad/platform
-/.github/workflows/ @elite-squad/platform
+/infra/ @elite-platform/platform
+/.github/workflows/ @elite-platform/platform
+
+# Security, SRE, and operational docs
+/docs/THREAT_MODEL.md @elite-platform/security @elite-platform/platform
+/docs/SLOs.md @elite-platform/platform
+/docs/TEST_STRATEGY.md @elite-platform/backend @elite-platform/frontend @elite-platform/platform
+/docs/RUNBOOKS/ @elite-platform/platform
+/METRICS.md @elite-platform/platform
+
+# Repository configuration
+/.github/CODEOWNERS @elite-platform/platform

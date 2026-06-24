@@ -1,22 +1,22 @@
 name: DAST
 
 on:
-  workflow_run:
-    workflows: [Deploy]
-    types: [completed]
-    branches: [main]
+  # DAST is also run inside the Deploy workflow before production promotion.
+  # This standalone workflow exists for scheduled/ad-hoc scans.
+  schedule:
+    - cron: '0 7 * * 1'
   workflow_dispatch:
 
 jobs:
   dast:
     name: OWASP ZAP baseline scan
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_branch == 'main'
-      )
+      github.event_name == 'schedule'
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

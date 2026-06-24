@@ -1,12 +1,27 @@
-# Default reviewers for the entire repository
-* @lxrxcvi
+# Role-based CODEOWNERS for the elite-agentic-pipeline repository.
+# Replace the @elite-platform/* team handles below with your actual GitHub teams.
 
-# Pipeline orchestrator, agents, workflows, and templates
-/pipeline/ @lxrxcvi
+# Default fallback — platform/SRE owns the pipeline framework.
+* @elite-platform/platform
 
-# Infrastructure and platform engineering
-/pipeline/platform/terraform/ @lxrxcvi
-/pipeline/platform/github_actions/ @lxrxcvi
+# Pipeline core: orchestrator, agents, workflows, templates
+/pipeline/agents/ @elite-platform/platform
+/pipeline/orchestrator.py @elite-platform/platform
+/pipeline/run_parent_agent.py @elite-platform/platform
+/pipeline/workflows/ @elite-platform/platform
+/pipeline/templates/ @elite-platform/platform
+/pipeline/tests/ @elite-platform/platform
 
-# Generated projects should be owned by the product squad once initialized.
-# This file is copied into generated projects and should be customized per team.
+# Golden Path platform layer (scaffolds, CI templates, IaC)
+/pipeline/platform/ @elite-platform/platform
+
+# Generated example project is co-owned by the product squad once it becomes
+# a real application. Until then, platform retains oversight.
+/example_project/ @elite-platform/backend @elite-platform/frontend @elite-platform/platform
+
+# Repository configuration
+/.github/ @elite-platform/platform
+/AGENTS.md @elite-platform/platform
+/README.md @elite-platform/platform
+/PIPELINE_SUMMARY.md @elite-platform/platform
+/Makefile @elite-platform/platform

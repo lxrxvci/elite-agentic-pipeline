@@ -1,0 +1,56 @@
+name: CI — Real Backend E2E
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        required: false
+        type: string
+        default: example_project
+      node-version:
+        required: true
+        type: string
+
+jobs:
+  e2e-real:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start services
+        working-directory: ${{ inputs.project-dir }}
+        run: |
+          docker-compose up -d postgres backend frontend
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              echo "Backend is healthy"
+              break
+            fi
+            echo "Waiting for backend..."
+            sleep 2
+          done
+          curl -fsS --retry 10 --retry-delay 3 http://localhost:8000/health
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.project-dir }}/src/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ${{ inputs.project-dir }}/src/frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: ${{ inputs.project-dir }}/src/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run real-backend E2E tests
+        working-directory: ${{ inputs.project-dir }}/src/frontend
+        run: npm run test:e2e:real
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-real-report
+          path: ${{ inputs.project-dir }}/src/frontend/playwright-report

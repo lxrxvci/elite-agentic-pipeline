@@ -1,6 +1,12 @@
 name: Load Tests
 
 on:
+  workflow_call:
+    inputs:
+      project-dir:
+        required: false
+        type: string
+        default: example_project
   workflow_dispatch:
   schedule:
     - cron: '0 8 * * 1'
@@ -12,10 +18,11 @@ jobs:
   load-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@v4
       - name: Setup k6
-        uses: grafana/setup-k6-action@c00053c996b4061198c9c24a00474b748abdf8b7 # v1
+        uses: grafana/setup-k6-action@v1
       - name: Run load tests
+        working-directory: ${{ inputs.project-dir || 'example_project' }}
         run: k6 run tests/perf/load.js
         env:
           BASE_URL: ${{ env.BASE_URL }}

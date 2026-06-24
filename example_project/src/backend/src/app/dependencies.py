@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from collections import defaultdict
@@ -14,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
+from redis import Redis
 from sqlalchemy.orm import Session
 
 from app.auth.clerk import ClerkAuthError, validate_clerk_token
@@ -23,6 +25,28 @@ from infrastructure.database import get_db
 from infrastructure.models import Tenant as TenantORM
 from infrastructure.models import User as UserORM
 
+_redis_client: Redis | None = None
+_redis_lock = threading.Lock()
+
+
+def _get_redis_client() -> Redis | None:
+    """Return a shared Redis client if REDIS_URL is configured, otherwise None."""
+    global _redis_client
+    if not settings.redis_url:
+        return None
+    if _redis_client is None:
+        with _redis_lock:
+            if _redis_client is None:
+                _redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+    return _redis_client
+
+
+def _reset_redis_client() -> None:
+    """Reset the cached Redis client (useful for tests)."""
+    global _redis_client
+    with _redis_lock:
+        _redis_client = None
+
 __all__ = [
     "CurrentUser",
     "CurrentTenant",
@@ -31,6 +55,7 @@ __all__ = [
     "get_current_tenant",
     "get_db",
     "is_feature_enabled",
+    "require_resource_owner",
     "require_role",
     "require_tenant_quota",
 ]
@@ -152,6 +177,13 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if settings.env == "production" and not settings.clerk_jwks_url:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Clerk authentication is required in production",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Prefer Clerk when configured. This allows testing Clerk locally and forces
     # Clerk in production without branching on ENV.
     if settings.clerk_jwks_url:
@@ -221,17 +253,37 @@ def require_tenant_quota(
     """Return a dependency that enforces a per-tenant mutation quota.
 
     Defaults are read from `settings.tenant_quota_limit` and
-    `settings.tenant_quota_window`. The quota is tracked in process memory, so
-    it is most accurate behind a single worker or with sticky sessions. Replace
-    with Redis for multi-process deployments.
+    `settings.tenant_quota_window`. When REDIS_URL is configured the quota is
+    tracked in Redis so it works across serverless/multi-process deployments;
+    otherwise it falls back to in-memory tracking.
     """
 
     def _check(user: CurrentUser = Depends(get_current_user)) -> None:
         """Enforce the per-tenant quota for the current request."""
-        now = time.time()
-        quota_key = (str(user.tenant_id), key)
         quota_limit = limit if limit is not None else settings.tenant_quota_limit
         quota_window = window if window is not None else settings.tenant_quota_window
+        now = time.time()
+        quota_key = (str(user.tenant_id), key)
+
+        redis_client = _get_redis_client()
+        if redis_client is not None:
+            redis_key = f"elite:quota:{quota_key[0]}:{quota_key[1]}"
+            # Remove entries outside the rolling window, add the current request,
+            # and count what remains.
+            redis_client.zremrangebyscore(redis_key, 0, now - quota_window)
+            redis_client.zadd(redis_key, {str(now): now})
+            redis_client.expire(redis_key, quota_window)
+            current = redis_client.zcard(redis_key)
+            if current > quota_limit:
+                # Roll back the timestamp we just added so the count is accurate.
+                redis_client.zrem(redis_key, str(now))
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Tenant quota exceeded. Please retry later.",
+                )
+            return
+
+        # In-memory fallback for local development and single-process deployments.
         window_start = now - quota_window
         _TENANT_QUOTA[quota_key] = [
             ts for ts in _TENANT_QUOTA[quota_key] if ts > window_start
@@ -242,6 +294,36 @@ def require_tenant_quota(
                 detail="Tenant quota exceeded. Please retry later.",
             )
         _TENANT_QUOTA[quota_key].append(now)
+
+    return _check
+
+
+def require_resource_owner[T](
+    repo_type: type,
+    getter: Callable[[Any, uuid.UUID], T | None],
+) -> Callable[..., CurrentUser]:
+    """Return a dependency that allows mutation only by the resource creator or a tenant owner."""
+
+    def _check(
+        resource_id: uuid.UUID,
+        user: CurrentUser = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> CurrentUser:
+        if user.role == "owner":
+            return user
+        repo = repo_type(db, user.tenant_id)
+        resource = getter(repo, resource_id)
+        if resource is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Resource not found",
+            )
+        if getattr(resource, "created_by", None) != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return user
 
     return _check
 

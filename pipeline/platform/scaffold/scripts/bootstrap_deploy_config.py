@@ -122,6 +122,7 @@ def main() -> int:
     vercel_project_id_frontend_staging = _prompt_required(
         "VERCEL_PROJECT_ID_FRONTEND_STAGING"
     )
+    vercel_edge_config_id = _prompt_required("VERCEL_EDGE_CONFIG_ID")
 
     print("\n--- Database secrets ---")
     staging_database_url = _prompt_secret("STAGING_DATABASE_URL")
@@ -135,6 +136,11 @@ def main() -> int:
     print("\n--- Optional secrets ---")
     dora_pushgateway_username = _prompt_optional("DORA_PUSHGATEWAY_USERNAME")
     dora_pushgateway_password = _prompt_optional("DORA_PUSHGATEWAY_PASSWORD")
+    redis_url = _prompt_optional("REDIS_URL (production)")
+    otlp_endpoint = _prompt_optional("OTEL_EXPORTER_OTLP_ENDPOINT (production)")
+    otlp_headers = _prompt_optional("OTEL_EXPORTER_OTLP_HEADERS (production)")
+    slack_webhook_url = _prompt_optional("SLACK_WEBHOOK_URL (Alertmanager)")
+    pagerduty_integration_key = _prompt_optional("PAGERDUTY_INTEGRATION_KEY (Alertmanager)")
 
     print("\n--- Public variables (used by workflows) ---")
     staging_api_url = _prompt_required("STAGING_API_URL (e.g. https://staging-api.example.com/api/v1)")
@@ -158,9 +164,20 @@ def main() -> int:
         ("VERCEL_PROJECT_ID_BACKEND_STAGING", vercel_project_id_backend_staging),
         ("VERCEL_PROJECT_ID_FRONTEND", vercel_project_id_frontend),
         ("VERCEL_PROJECT_ID_FRONTEND_STAGING", vercel_project_id_frontend_staging),
+        ("VERCEL_EDGE_CONFIG_ID", vercel_edge_config_id),
         ("STAGING_DATABASE_URL", staging_database_url),
         ("PRODUCTION_DATABASE_URL", production_database_url),
     ]
+    if redis_url:
+        secrets_to_set.append(("REDIS_URL", redis_url))
+    if otlp_endpoint:
+        secrets_to_set.append(("OTEL_EXPORTER_OTLP_ENDPOINT", otlp_endpoint))
+    if otlp_headers:
+        secrets_to_set.append(("OTEL_EXPORTER_OTLP_HEADERS", otlp_headers))
+    if slack_webhook_url:
+        secrets_to_set.append(("SLACK_WEBHOOK_URL", slack_webhook_url))
+    if pagerduty_integration_key:
+        secrets_to_set.append(("PAGERDUTY_INTEGRATION_KEY", pagerduty_integration_key))
     for name, value in secrets_to_set:
         _set_secret(name, value)
 
@@ -203,8 +220,11 @@ def main() -> int:
     print("1. Create GitHub environments 'staging' and 'production' under")
     print("   Settings → Environments, with required reviewers and wait timers.")
     print("2. In each Vercel project, set DATABASE_URL, SECRET_KEY, ENV,")
-    print("   ALLOWED_ORIGINS, and Clerk OIDC credentials if applicable.")
-    print("3. Push to main and verify CI → Security → Contract Tests → Deploy.")
+    print("   ALLOWED_ORIGINS, REDIS_URL, OTEL_EXPORTER_OTLP_ENDPOINT/HEADERS,")
+    print("   and Clerk OIDC credentials if applicable.")
+    print("3. Configure Alertmanager receivers with SLACK_WEBHOOK_URL and")
+    print("   PAGERDUTY_INTEGRATION_KEY in your hosted Alertmanager instance.")
+    print("4. Push to main and verify CI → Security → Contract Tests → Deploy.")
 
     return 0
 

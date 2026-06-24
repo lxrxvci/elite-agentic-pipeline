@@ -2,27 +2,94 @@ name: CI — Infrastructure
 
 on:
   workflow_call:
+    inputs:
+      project-dir:
+        required: false
+        type: string
+        default: example_project
 
 jobs:
   infra:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      INFRA_DIR: ${{ inputs.project-dir }}/infra
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS credentials via OIDC
+        if: vars.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@4fc4975a852cc8e66790e101327e48932722da20 # v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+
       - name: Check Terraform lock file is tracked
-        working-directory: infra
+        working-directory: ${{ env.INFRA_DIR }}
         run: |
           if [ ! -f .terraform.lock.hcl ]; then
             echo "ERROR: .terraform.lock.hcl is missing. Run 'terraform providers lock' and commit it."
             exit 1
           fi
-      - run: terraform fmt -check -recursive
-        working-directory: infra
-      - run: terraform init -backend=false
-        working-directory: infra
-      - run: terraform validate
-        working-directory: infra
-      - uses: bridgecrewio/checkov-action@v12
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive ${{ env.INFRA_DIR }}
+
+      - name: Initialise Terraform (no backend)
+        working-directory: ${{ env.INFRA_DIR }}
+        run: terraform init -backend=false
+
+      - name: Validate Terraform
+        working-directory: ${{ env.INFRA_DIR }}
+        run: terraform validate
+
+      - name: Verify backend configuration files
+        working-directory: ${{ env.INFRA_DIR }}
+        run: |
+          if [ ! -f backend.tfvars.example ]; then
+            echo "ERROR: backend.tfvars.example is missing."
+            exit 1
+          fi
+          if [ -f backend.tfvars ]; then
+            for key in bucket dynamodb_table region encrypt; do
+              if ! grep -qE "^${key}\s*=" backend.tfvars; then
+                echo "ERROR: backend.tfvars is missing required key: $key"
+                exit 1
+              fi
+            done
+            echo "backend.tfvars contains required keys."
+          else
+            echo "NOTE: backend.tfvars is not committed. Copy backend.tfvars.example and run 'terraform init -backend-config=backend.tfvars' to use remote state."
+          fi
+
+      - uses: bridgecrewio/checkov-action@fa9edf8f0a491c59a924ea6accd5bdcf07752cff # v12
         with:
-          directory: infra
+          directory: ${{ env.INFRA_DIR }}
           framework: terraform
+
+      - name: Install Prometheus tooling
+        run: |
+          PROMETHEUS_VERSION=2.53.0
+          ALERTMANAGER_VERSION=0.27.0
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" \
+            | tar -xz --strip-components=1 -C /tmp "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          curl -fsSL "https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz" \
+            | tar -xz --strip-components=1 -C /tmp "alertmanager-${ALERTMANAGER_VERSION}.linux-amd64/amtool"
+          chmod +x /tmp/promtool /tmp/amtool
+          /tmp/promtool --version
+          /tmp/amtool --version
+
+      - name: Validate Prometheus alert rules
+        run: /tmp/promtool check rules ${{ inputs.project-dir }}/observability/prometheus/alerts.yml
+
+      - name: Validate Alertmanager configuration
+        env:
+          SLACK_WEBHOOK_URL: https://hooks.slack.com/services/placeholder
+          PAGERDUTY_INTEGRATION_KEY: placeholder-set-your-key
+        run: |
+          envsubst < ${{ inputs.project-dir }}/observability/alertmanager/alertmanager.yml > /tmp/alertmanager.yml
+          /tmp/amtool check-config /tmp/alertmanager.yml

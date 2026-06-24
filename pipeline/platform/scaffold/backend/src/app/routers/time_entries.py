@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.dependencies import (
@@ -16,6 +16,7 @@ from app.dependencies import (
     require_tenant_quota,
 )
 from app.exceptions import ConflictError, NotFoundError
+from app.idempotency import IdempotencyRepository, get_idempotency_key
 from app.limiter import limiter
 from app.observability import get_metrics_provider
 from app.schemas import (
@@ -85,10 +86,19 @@ def list_time_entries(
 def create_time_entry_endpoint(
     request: Request,
     payload: TimeEntryCreateSchema,
-    user: CurrentUser = Depends(require_role("owner")),
+    user: CurrentUser = Depends(require_role("owner", "member")),
     db: Session = Depends(get_db),
     _quota: None = Depends(require_tenant_quota()),
 ) -> TimeEntrySchema:
+    idempotency = IdempotencyRepository(db)
+    idempotency_key = get_idempotency_key(request, payload.idempotency_key)
+    if idempotency_key:
+        cached = idempotency.get_response(
+            user.tenant_id, "time_entries.create", idempotency_key
+        )
+        if cached:
+            return TimeEntrySchema(**cached)
+
     tenant_repo = TenantRepository(db, user.tenant_id)
     tenant_orm = tenant_repo.get()
     if not tenant_orm:
@@ -122,10 +132,16 @@ def create_time_entry_endpoint(
         ended_at=payload.ended_at,
     )
 
+    entry.created_by = user.id
     repo = TimeEntryRepository(db, user.tenant_id)
     created = repo.create(entry)
     db.commit()
     get_metrics_provider().increment("time_entry", str(user.tenant_id))
+    if idempotency_key:
+        idempotency.record_response(
+            user.tenant_id, "time_entries.create", idempotency_key, _to_schema(created)
+        )
+        db.commit()
     return _to_schema(created)
 
 
@@ -148,16 +164,30 @@ def update_time_entry(
     request: Request,
     time_entry_id: uuid.UUID,
     payload: TimeEntryUpdateSchema,
-    user: CurrentUser = Depends(require_role("owner")),
+    user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
     _quota: None = Depends(require_tenant_quota()),
 ) -> TimeEntrySchema:
+    idempotency = IdempotencyRepository(db)
+    idempotency_key = get_idempotency_key(request, payload.idempotency_key)
+    if idempotency_key:
+        cached = idempotency.get_response(
+            user.tenant_id, "time_entries.update", idempotency_key
+        )
+        if cached:
+            return TimeEntrySchema(**cached)
+
     repo = TimeEntryRepository(db, user.tenant_id)
     entry = repo.get(time_entry_id)
     if not entry:
         raise NotFoundError("Time entry not found")
     if entry.status.value == "billed":
         raise ConflictError("Cannot edit a billed time entry")
+    if user.role != "owner" and entry.created_by != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed to edit this time entry",
+        )
 
     if payload.description is not None:
         entry.description = payload.description
@@ -174,4 +204,9 @@ def update_time_entry(
 
     updated = repo.update(entry)
     db.commit()
+    if idempotency_key:
+        idempotency.record_response(
+            user.tenant_id, "time_entries.update", idempotency_key, _to_schema(updated)
+        )
+        db.commit()
     return _to_schema(updated)

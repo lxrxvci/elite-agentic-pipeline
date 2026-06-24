@@ -29,9 +29,6 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 
 from app.config import settings
 
-OTEL_SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "elite-backend")
-OTEL_RESOURCE_ATTRIBUTES = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "")
-
 
 class NoopMetricsProvider:
     """Fallback when neither Prometheus nor OTLP metrics are enabled."""
@@ -96,9 +93,19 @@ class PrometheusMetricsProvider:
             counter.labels(tenant_id=str(tenant_id)).inc()
 
 
+def _parse_headers(header_string: str) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for pair in header_string.split(","):
+        pair = pair.strip()
+        if "=" in pair:
+            key, value = pair.split("=", 1)
+            headers[key.strip()] = value.strip()
+    return headers
+
+
 def _build_resource() -> Resource:
-    attributes: dict[str, Any] = {"service.name": OTEL_SERVICE_NAME}
-    for pair in OTEL_RESOURCE_ATTRIBUTES.split(","):
+    attributes: dict[str, Any] = {"service.name": settings.otel_service_name}
+    for pair in settings.otel_resource_attributes.split(","):
         if "=" in pair:
             key, value = pair.split("=", 1)
             attributes[key.strip()] = value.strip()
@@ -110,7 +117,11 @@ class OtelMetricsProvider:
 
     def __init__(self) -> None:
         resource = _build_resource()
-        exporter = OTLPMetricExporter(endpoint=settings.otel_exporter_otlp_endpoint)
+        metric_headers = _parse_headers(settings.otel_exporter_otlp_headers)
+        exporter = OTLPMetricExporter(
+            endpoint=settings.otel_exporter_otlp_endpoint,
+            headers=metric_headers,
+        )
         reader = PeriodicExportingMetricReader(exporter, export_interval_millis=60000)
         provider = MeterProvider(resource=resource, metric_readers=[reader])
         metrics.set_meter_provider(provider)
@@ -176,7 +187,8 @@ def configure_tracing() -> None:
 
     resource = _build_resource()
     provider = TracerProvider(resource=resource)
-    exporter = OTLPSpanExporter(endpoint=endpoint)
+    trace_headers = _parse_headers(settings.otel_exporter_otlp_headers)
+    exporter = OTLPSpanExporter(endpoint=endpoint, headers=trace_headers)
     processor = BatchSpanProcessor(exporter)
     provider.add_span_processor(processor)
     trace.set_tracer_provider(provider)

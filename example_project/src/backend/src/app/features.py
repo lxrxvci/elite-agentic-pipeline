@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -53,13 +54,18 @@ def _fetch_managed_flags() -> dict[str, bool]:
     if not url:
         return {}
 
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        logger.warning("Invalid feature-flag URL scheme: %s", parsed.scheme)
+        return {}
+
     req = urllib.request.Request(url, method="GET")
     if settings.managed_feature_flags_token:
         req.add_header("Authorization", f"Bearer {settings.managed_feature_flags_token}")
 
     try:
         # nosemgrep
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:  # nosec B310
             data = json.loads(response.read().decode("utf-8"))
             if isinstance(data, dict):
                 return {str(k): bool(v) for k, v in data.items()}

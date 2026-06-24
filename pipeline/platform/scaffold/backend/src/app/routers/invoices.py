@@ -15,6 +15,7 @@ from app.dependencies import (
     require_tenant_quota,
 )
 from app.exceptions import ConflictError, NotFoundError
+from app.idempotency import IdempotencyRepository, get_idempotency_key
 from app.limiter import limiter
 from app.observability import get_metrics_provider
 from app.schemas import (
@@ -95,9 +96,10 @@ def create_invoice(
     _quota: None = Depends(require_tenant_quota()),
 ) -> InvoiceSchema:
     invoice_repo = InvoiceRepository(db, user.tenant_id)
+    idempotency_key = get_idempotency_key(request, payload.idempotency_key)
 
-    if payload.idempotency_key:
-        existing = invoice_repo.get_by_idempotency_key(payload.idempotency_key)
+    if idempotency_key:
+        existing = invoice_repo.get_by_idempotency_key(idempotency_key)
         if existing:
             return _to_schema(existing)
 
@@ -122,9 +124,10 @@ def create_invoice(
         issue_date=payload.issue_date,
         due_date=payload.due_date,
         notes=payload.notes,
-        idempotency_key=payload.idempotency_key,
+        idempotency_key=idempotency_key,
     )
 
+    invoice.created_by = user.id
     created = invoice_repo.create(invoice)
     for entry in time_entries:
         time_entry_repo.update(entry)
@@ -156,6 +159,15 @@ def mark_invoice_paid(
     db: Session = Depends(get_db),
     _quota: None = Depends(require_tenant_quota()),
 ) -> InvoiceSchema:
+    idempotency = IdempotencyRepository(db)
+    idempotency_key = get_idempotency_key(request, payload.idempotency_key)
+    if idempotency_key:
+        cached = idempotency.get_response(
+            user.tenant_id, "invoices.mark_paid", idempotency_key
+        )
+        if cached:
+            return InvoiceSchema(**cached)
+
     repo = InvoiceRepository(db, user.tenant_id)
     invoice = repo.get(invoice_id)
     if not invoice:
@@ -166,4 +178,9 @@ def mark_invoice_paid(
     invoice.mark_paid(payload.payment_method, payload.paid_at)
     updated = repo.update(invoice)
     db.commit()
+    if idempotency_key:
+        idempotency.record_response(
+            user.tenant_id, "invoices.mark_paid", idempotency_key, _to_schema(updated)
+        )
+        db.commit()
     return _to_schema(updated)

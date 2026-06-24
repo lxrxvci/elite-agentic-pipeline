@@ -13,6 +13,11 @@ provider "aws" {
 }
 
 resource "aws_s3_bucket" "terraform_state" {
+  #checkov:skip=CKV_AWS_18:Access logging is intentionally disabled for the state bucket in this reference architecture.
+  #checkov:skip=CKV_AWS_144:Cross-region replication is not required for the Terraform state bucket.
+  #checkov:skip=CKV2_AWS_62:Event notifications are not required for the Terraform state bucket.
+  #checkov:skip=CKV2_AWS_61:Object lifecycle is not required for the Terraform state bucket.
+  #checkov:skip=CKV_AWS_145:AWS managed SSE-S3 encryption is acceptable for the state bucket.
   bucket = var.state_bucket_name
 }
 
@@ -47,8 +52,13 @@ resource "aws_dynamodb_table" "terraform_locks" {
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "LockID"
 
+  #checkov:skip=CKV_AWS_119:AWS managed KMS key is acceptable for the lock table.
   attribute {
     name = "LockID"
     type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
   }
 }

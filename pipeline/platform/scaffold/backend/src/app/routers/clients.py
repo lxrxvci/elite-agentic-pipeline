@@ -16,6 +16,7 @@ from app.dependencies import (
     require_tenant_quota,
 )
 from app.exceptions import NotFoundError
+from app.idempotency import IdempotencyRepository, get_idempotency_key
 from app.limiter import limiter
 from app.schemas import ClientCreateSchema, ClientSchema, PaginatedResponse
 from domain.entities import Client
@@ -64,9 +65,19 @@ def create_client(
     _quota: None = Depends(require_tenant_quota()),
 ) -> ClientSchema:
     repo = ClientRepository(db, user.tenant_id)
+    idempotency = IdempotencyRepository(db)
+    idempotency_key = get_idempotency_key(request, payload.idempotency_key)
+    if idempotency_key:
+        cached = idempotency.get_response(
+            user.tenant_id, "clients.create", idempotency_key
+        )
+        if cached:
+            return ClientSchema(**cached)
+
     client = Client(
         id=uuid.uuid4(),
         tenant_id=user.tenant_id,
+        created_by=user.id,
         name=payload.name,
         email=payload.email,
         currency=payload.currency,
@@ -76,6 +87,11 @@ def create_client(
     )
     created = repo.create(client)
     db.commit()
+    if idempotency_key:
+        idempotency.record_response(
+            user.tenant_id, "clients.create", idempotency_key, _to_schema(created)
+        )
+        db.commit()
     return _to_schema(created)
 
 

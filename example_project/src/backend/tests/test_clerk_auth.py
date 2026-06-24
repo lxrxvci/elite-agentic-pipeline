@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 
 from app.auth.clerk import ClerkAuthError, claims_to_user_kwargs, validate_clerk_token
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_resource_owner
 
 
 def _mock_request(cookies: dict | None = None) -> MagicMock:
@@ -247,3 +247,97 @@ def test_get_current_user_uses_cookie_when_no_header() -> None:
 
     assert user.email == "cookie@example.com"
     assert user.tenant_id == tenant_id
+
+
+
+def test_get_current_user_requires_clerk_in_production() -> None:
+    from app.config import settings
+
+    db = MagicMock()
+    request = _mock_request()
+    credentials = MagicMock()
+    credentials.credentials = "dev-token"
+
+    with patch.object(settings, "env", "production"):
+        with patch.object(settings, "clerk_jwks_url", ""):
+            with pytest.raises(HTTPException) as exc_info:
+                get_current_user(request, credentials, db)
+
+    assert exc_info.value.status_code == 401
+    assert "Clerk authentication" in str(exc_info.value.detail)
+
+
+def test_require_resource_owner_allows_owner() -> None:
+    repo_cls = MagicMock()
+    resource = MagicMock()
+    resource.created_by = uuid.uuid4()
+    repo_instance = MagicMock()
+    repo_instance.get.return_value = resource
+    repo_cls.return_value = repo_instance
+
+    dependency = require_resource_owner(repo_cls, lambda repo, rid: repo.get(rid))
+    owner_user = MagicMock()
+    owner_user.role = "owner"
+    owner_user.id = uuid.uuid4()
+    owner_user.tenant_id = uuid.uuid4()
+
+    result = dependency(uuid.uuid4(), owner_user, MagicMock())
+    assert result == owner_user
+
+
+def test_require_resource_owner_allows_creator() -> None:
+    repo_cls = MagicMock()
+    creator_id = uuid.uuid4()
+    tenant_id = uuid.uuid4()
+    resource = MagicMock()
+    resource.created_by = creator_id
+    repo_instance = MagicMock()
+    repo_instance.get.return_value = resource
+    repo_cls.return_value = repo_instance
+
+    dependency = require_resource_owner(repo_cls, lambda repo, rid: repo.get(rid))
+    member_user = MagicMock()
+    member_user.role = "member"
+    member_user.id = creator_id
+    member_user.tenant_id = tenant_id
+
+    result = dependency(uuid.uuid4(), member_user, MagicMock())
+    assert result == member_user
+
+
+def test_require_resource_owner_rejects_non_creator_member() -> None:
+    repo_cls = MagicMock()
+    resource = MagicMock()
+    resource.created_by = uuid.uuid4()
+    repo_instance = MagicMock()
+    repo_instance.get.return_value = resource
+    repo_cls.return_value = repo_instance
+
+    dependency = require_resource_owner(repo_cls, lambda repo, rid: repo.get(rid))
+    member_user = MagicMock()
+    member_user.role = "member"
+    member_user.id = uuid.uuid4()
+    member_user.tenant_id = uuid.uuid4()
+
+    with pytest.raises(HTTPException) as exc_info:
+        dependency(uuid.uuid4(), member_user, MagicMock())
+
+    assert exc_info.value.status_code == 403
+
+
+def test_require_resource_owner_not_found() -> None:
+    repo_cls = MagicMock()
+    repo_instance = MagicMock()
+    repo_instance.get.return_value = None
+    repo_cls.return_value = repo_instance
+
+    dependency = require_resource_owner(repo_cls, lambda repo, rid: repo.get(rid))
+    member_user = MagicMock()
+    member_user.role = "member"
+    member_user.id = uuid.uuid4()
+    member_user.tenant_id = uuid.uuid4()
+
+    with pytest.raises(HTTPException) as exc_info:
+        dependency(uuid.uuid4(), member_user, MagicMock())
+
+    assert exc_info.value.status_code == 404

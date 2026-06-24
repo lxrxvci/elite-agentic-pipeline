@@ -38,6 +38,9 @@ ci: lint typecheck test ## Local CI simulation
 feedback: ## Aggregate CI feedback for the orchestrator
 	python3 scripts/ci_feedback.py --project-dir . --write-gates
 
+collect: feedback ## Refresh CI feedback gates and print orchestrator status
+	python3 ../pipeline/orchestrator.py --project-dir . check
+
 check: feedback ## Check current stage and CI feedback gates
 	python3 ../pipeline/orchestrator.py --project-dir . check
 

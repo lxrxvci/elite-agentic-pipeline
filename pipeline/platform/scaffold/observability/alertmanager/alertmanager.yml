@@ -33,13 +33,11 @@ receivers:
         text: '{{ range .Alerts }}{{ .Annotations.summary }} — {{ .Annotations.description }}{{ end }}'
         send_resolved: true
 
-  # To enable PagerDuty, set PAGERDUTY_INTEGRATION_KEY in docker-compose.yml or
-  # in your runtime environment and uncomment the receiver below.
-  # - name: 'pagerduty-critical'
-  #   pagerduty_configs:
-  #     - routing_key: '${PAGERDUTY_INTEGRATION_KEY}'
-  #       severity: critical
-  #       description: '{{ .GroupLabels.alertname }}: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - routing_key: '${PAGERDUTY_INTEGRATION_KEY}'
+        severity: critical
+        description: '{{ .GroupLabels.alertname }}: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
 
 inhibit_rules:
   - source_match:

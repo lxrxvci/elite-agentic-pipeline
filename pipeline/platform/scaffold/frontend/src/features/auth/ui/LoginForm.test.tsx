@@ -35,4 +35,43 @@ describe('LoginForm', () => {
     })
     expect(useAuthStore.getState().isAuthenticated).toBe(true)
   })
+
+  it('displays an error message when sign in fails', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('Network error'))
+
+    render(<LoginForm />)
+    await userEvent.type(screen.getByLabelText('Email'), 'dev@example.com')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Network error')).toBeInTheDocument()
+    })
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+  })
+
+  it('disables the submit button while loading', async () => {
+    vi.mocked(fetch).mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({ access_token: 'test-token' }),
+              } as Response),
+            100
+          )
+        )
+    )
+
+    render(<LoginForm />)
+    await userEvent.type(screen.getByLabelText('Email'), 'dev@example.com')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeDisabled()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Sign in' })).not.toBeDisabled()
+    })
+  })
 })

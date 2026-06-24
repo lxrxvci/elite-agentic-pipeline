@@ -3,6 +3,10 @@ name: CI — Frontend
 on:
   workflow_call:
     inputs:
+      project-dir:
+        required: false
+        type: string
+        default: example_project
       node-version:
         required: true
         type: string
@@ -12,14 +16,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: example_project/src/frontend
+        working-directory: ${{ inputs.project-dir }}/src/frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
-          cache-dependency-path: example_project/src/frontend/package-lock.json
+          cache-dependency-path: ${{ inputs.project-dir }}/src/frontend/package-lock.json
       - run: npm ci
       - run: npm audit --audit-level=high
         continue-on-error: true
@@ -33,4 +37,4 @@ jobs:
         if: always()
         with:
           name: frontend-coverage
-          path: example_project/src/frontend/coverage
+          path: ${{ inputs.project-dir }}/src/frontend/coverage

@@ -58,8 +58,8 @@ def dev_token(
     """
     if settings.env != "development":
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Dev token endpoint is disabled outside development environment",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
         )
 
     user = db.query(User).filter(User.email == payload.email).first()

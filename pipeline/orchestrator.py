@@ -17,6 +17,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 PIPELINE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = PIPELINE_DIR.parent
@@ -55,15 +56,86 @@ SCAFFOLD_SKIP = {
     "*.log",
 }
 
+# Canonical SDLC stage order. The orchestrator enforces linear progression
+# through this flow by default; explicit --force can override for recovery.
+VALID_STAGE_FLOW: list[str] = [
+    "init",
+    "discovery",
+    "shaping",
+    "rfc_adr",
+    "design_build",
+    "ci_cd",
+    "deploy_release",
+    "observe_improve",
+]
 
-def load_state(project_dir: Path) -> dict:
+
+def stage_index(stage: str) -> int:
+    """Return the position of a stage in the canonical flow, or -1 if unknown."""
+    try:
+        return VALID_STAGE_FLOW.index(stage)
+    except ValueError:
+        return -1
+
+
+def allowed_next_stages(current: str) -> set[str]:
+    """Return the set of stages that can be advanced to from `current`.
+
+    By default only the next stage in VALID_STAGE_FLOW is allowed, plus the
+    terminal loop-back to observe_improve once at the end.
+    """
+    idx = stage_index(current)
+    if idx == -1:
+        return set()
+    if idx + 1 < len(VALID_STAGE_FLOW):
+        return {VALID_STAGE_FLOW[idx + 1]}
+    # Terminal stage loops back to itself.
+    return {current}
+
+
+def refresh_feedback(project_dir: Path) -> bool:
+    """Run the project's CI feedback aggregator to refresh gates.json/feedback.json.
+
+    Returns True if feedback was refreshed successfully, False otherwise.
+    """
+    project_dir = project_dir.resolve()
+    feedback_script = project_dir / "scripts" / "ci_feedback.py"
+    if not feedback_script.exists():
+        print(
+            f"Note: feedback script not found at {feedback_script}; using existing gates.",
+            file=sys.stderr,
+        )
+        return False
+
+    print("Refreshing CI feedback gates...")
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(feedback_script),
+                "--project-dir",
+                str(project_dir),
+                "--write-gates",
+            ],
+            check=True,
+            cwd=str(project_dir),
+        )
+        log(project_dir, "Refreshed CI feedback gates")
+        return True
+    except subprocess.CalledProcessError as exc:
+        print(f"WARNING: Failed to refresh feedback gates: {exc}", file=sys.stderr)
+        return False
+
+
+def load_state(project_dir: Path) -> dict[str, Any]:
     state_file = project_dir / ".pipeline" / "state.json"
     if state_file.exists():
-        return json.loads(state_file.read_text())
+        state: dict[str, Any] = json.loads(state_file.read_text())
+        return state
     return {"stage": "init", "artifacts": [], "history": []}
 
 
-def save_state(project_dir: Path, state: dict) -> None:
+def save_state(project_dir: Path, state: dict[str, Any]) -> None:
     state_file = project_dir / ".pipeline" / "state.json"
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps(state, indent=2))
@@ -473,6 +545,50 @@ def write_dispatch_queue(project_dir: Path, manifests: list[Path]) -> Path:
     return queue_file
 
 
+def _pending_agent_results(project_dir: Path) -> list[str]:
+    """Return agent names whose manifests lack a corresponding result file.
+
+    When running in dispatch mode, subagents are expected to write a result JSON
+    to `.pipeline/dispatch/completed/<role>.json` before the loop completes.
+    """
+    dispatch_dir = project_dir / ".pipeline" / "dispatch"
+    completed_dir = dispatch_dir / "completed"
+    pending: list[str] = []
+    for manifest in sorted(dispatch_dir.glob("*.md")):
+        result_file = completed_dir / f"{manifest.stem}.json"
+        if not result_file.exists():
+            pending.append(manifest.stem)
+    return pending
+
+
+def mark_manifests_completed(project_dir: Path) -> list[Path]:
+    """Move pending dispatch manifests into a completed folder.
+
+    Returns the list of moved files.
+    """
+    dispatch_dir = project_dir / ".pipeline" / "dispatch"
+    completed_dir = dispatch_dir / "completed"
+    completed_dir.mkdir(parents=True, exist_ok=True)
+
+    moved: list[Path] = []
+    for manifest in sorted(dispatch_dir.glob("*.md")):
+        destination = completed_dir / manifest.name
+        # Overwrite any previous completed manifest with the same name.
+        if destination.exists():
+            destination.unlink()
+        manifest.rename(destination)
+        moved.append(destination)
+
+    # Clear the queue now that everything is completed.
+    queue_file = dispatch_dir / "queue.json"
+    if queue_file.exists():
+        queue_file.write_text(json.dumps([], indent=2))
+
+    if moved:
+        log(project_dir, f"Marked {len(moved)} manifest(s) as completed")
+    return moved
+
+
 def run_dispatch_queue(project_dir: Path, execute: bool = False) -> None:
     """Process pending agent dispatch manifests.
 
@@ -503,12 +619,19 @@ def run_dispatch_queue(project_dir: Path, execute: bool = False) -> None:
     runner = os.environ.get("ELITE_AGENT_RUNNER")
     if not runner:
         print(
-            "\nNo agent runner configured. Set ELITE_AGENT_RUNNER to a command "
-            "that accepts a manifest path, or consume the queue manually:\n",
+            "\nNo ELITE_AGENT_RUNNER configured. The following manifests are ready to execute:\n",
             file=sys.stderr,
         )
-        print(queue_file.read_text())
-        sys.exit(1)
+        for manifest in pending:
+            print(f"  - {manifest.name}", file=sys.stderr)
+        print(
+            f"\nDispatch queue written to: {queue_file}\n"
+            "Set ELITE_AGENT_RUNNER to a command that accepts a manifest path, "
+            "or invoke each manifest with your agent runtime.",
+            file=sys.stderr,
+        )
+        # Return successfully so callers can consume the queue externally.
+        return
 
     print(f"\nExecuting {len(pending)} pending agent dispatch(es) with runner: {runner}\n")
     for manifest in pending:
@@ -559,34 +682,38 @@ def advance(
     project_dir: Path,
     next_stage: str | None = None,
     auto: bool = False,
+    force: bool = False,
 ) -> None:
     state = load_state(project_dir)
     current = state.get("stage", "discovery")
 
-    flow = [
-        "discovery",
-        "shaping",
-        "rfc_adr",
-        "design_build",
-        "ci_cd",
-        "deploy_release",
-        "observe_improve",
-    ]
-
     if next_stage:
-        if next_stage not in flow:
+        if stage_index(next_stage) == -1:
             print(f"Unknown stage: {next_stage}", file=sys.stderr)
             sys.exit(1)
-    elif current in flow:
-        idx = flow.index(current)
-        if idx + 1 < len(flow):
-            next_stage = flow[idx + 1]
-        else:
-            next_stage = "observe_improve"  # continuous loop
     else:
-        next_stage = "discovery"
+        allowed = allowed_next_stages(current)
+        next_stage = next(iter(allowed)) if allowed else "discovery"
+
+    # Enforce linear stage progression unless explicitly forced.
+    if not force and stage_index(next_stage) > stage_index(current) + 1:
+        print(
+            f"\nCannot advance from '{current}' to '{next_stage}' — that skips stages. "
+            "Complete each stage in order, or use --force to override.\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Warn when moving backward or repeating non-terminal stages.
+    if not force and next_stage != current and stage_index(next_stage) <= stage_index(current):
+        print(
+            f"\nWarning: moving from '{current}' back to '{next_stage}'. "
+            "Use --force to suppress this warning.\n",
+            file=sys.stderr,
+        )
 
     if auto:
+        refresh_feedback(project_dir)
         passed, blockers = check_stage_gates(project_dir)
         if not passed:
             print("\nCannot auto-advance. Please resolve the following:\n", file=sys.stderr)
@@ -612,14 +739,154 @@ def load_feedback_gates(project_dir: Path) -> dict[str, bool]:
     """Load per-stage gate status from CI feedback, if available."""
     gates_file = project_dir / ".pipeline" / "gates.json"
     if gates_file.exists():
-        return json.loads(gates_file.read_text())
+        gates: dict[str, bool] = json.loads(gates_file.read_text())
+        return gates
 
     feedback_file = project_dir / ".pipeline" / "feedback.json"
     if feedback_file.exists():
-        feedback = json.loads(feedback_file.read_text())
-        return feedback.get("gates", {})
+        feedback: dict[str, Any] = json.loads(feedback_file.read_text())
+        gates = feedback.get("gates", {})
+        if isinstance(gates, dict):
+            return gates
 
-    return {}
+    return derive_gates_from_artifacts(project_dir)
+
+
+# Expected workflow artifact paths produced by the CI reusable workflows.
+ARTIFACT_PATHS = {
+    "backend": "src/backend/.ci-feedback.json",
+    "frontend": "src/frontend/.ci-feedback.json",
+    "security": ".security-feedback.json",
+    "dora": "dora-metrics.prom",
+}
+
+
+def parse_workflow_artifacts(project_dir: Path) -> dict[str, Any]:
+    """Parse CI workflow artifacts and derive stage gate status.
+
+    This function reads the JSON files produced by backend/frontend/security
+    CI jobs and the DORA metrics file. It returns a summary of each artifact
+    plus a ``gates`` dictionary that mirrors the structure written by
+    ``scripts/ci_feedback.py``.
+    """
+    project_dir = project_dir.resolve()
+    artifacts: dict[str, Any] = {}
+
+    for key, rel_path in ARTIFACT_PATHS.items():
+        path = project_dir / rel_path
+        if not path.exists():
+            artifacts[key] = {"status": "missing", "path": rel_path}
+            continue
+        if key == "dora":
+            artifacts[key] = {
+                "status": "collected",
+                "path": rel_path,
+                "metrics": path.read_text().splitlines(),
+            }
+        else:
+            try:
+                artifacts[key] = {
+                    "status": "collected",
+                    "path": rel_path,
+                    "data": json.loads(path.read_text()),
+                }
+            except json.JSONDecodeError as exc:
+                artifacts[key] = {
+                    "status": "corrupt",
+                    "path": rel_path,
+                    "error": str(exc),
+                }
+
+    artifacts["gates"] = derive_gates_from_artifacts(project_dir, artifacts)
+    return artifacts
+
+
+def _artifact_check_ok(artifacts: dict[str, Any], category: str, name: str) -> bool:
+    """Return True if the named check passed in the parsed artifacts."""
+    category_data = artifacts.get(category, {})
+    if not isinstance(category_data, dict):
+        return False
+    data = category_data.get("data", {})
+    if not isinstance(data, dict):
+        return False
+    checks = data.get("checks", {})
+    if not isinstance(checks, dict):
+        return False
+    check = checks.get(name, {})
+    if not isinstance(check, dict):
+        return False
+    return bool(check.get("passed", False))
+
+
+def _artifact_coverage(artifacts: dict[str, Any]) -> float:
+    """Return the backend coverage percentage from parsed artifacts."""
+    data = artifacts.get("backend", {}).get("data", {})
+    if not isinstance(data, dict):
+        return 0.0
+    return float(data.get("coverage_percent", 0.0))
+
+
+def _is_ci() -> bool:
+    """Return True when running in a CI environment."""
+    return os.environ.get("CI", "").lower() in {"1", "true", "yes"}
+
+
+def derive_gates_from_artifacts(
+    project_dir: Path, artifacts: dict[str, Any] | None = None
+) -> dict[str, bool]:
+    """Derive SDLC stage gate status from parsed workflow artifacts.
+
+    Early stages (discovery, shaping, rfc_adr) are always considered open
+    because they are driven by documentation and review rather than CI
+    signals. Later gates require specific CI artifacts to be present and
+    passing.
+
+    Security artifacts are only produced by the Security workflow in CI. When
+    running locally (CI env var not set) and the security artifact is missing,
+    the deploy_release gate is considered open so that local iteration is not
+    blocked. Set ``CI=true`` to enforce strict security gating locally.
+    """
+    if artifacts is None:
+        artifacts = parse_workflow_artifacts(project_dir)
+
+    backend_ok = artifacts.get("backend", {}).get("status") == "collected"
+    frontend_ok = artifacts.get("frontend", {}).get("status") == "collected"
+    security_status = artifacts.get("security", {}).get("status")
+    security_ok = security_status == "collected" or (
+        security_status == "missing" and not _is_ci()
+    )
+    dora_ok = artifacts.get("dora", {}).get("status") == "collected"
+
+    return {
+        "discovery": True,
+        "shaping": True,
+        "rfc_adr": True,
+        "design_build": (
+            backend_ok
+            and frontend_ok
+            and _artifact_check_ok(artifacts, "backend", "tests")
+            and _artifact_check_ok(artifacts, "frontend", "tests")
+            and _artifact_coverage(artifacts) >= 80
+        ),
+        "ci_cd": (
+            backend_ok
+            and frontend_ok
+            and _artifact_check_ok(artifacts, "backend", "lint")
+            and _artifact_check_ok(artifacts, "backend", "typecheck")
+            and _artifact_check_ok(artifacts, "frontend", "lint")
+            and _artifact_check_ok(artifacts, "frontend", "typecheck")
+            and _artifact_check_ok(artifacts, "backend", "bandit")
+        ),
+        "deploy_release": (
+            security_ok
+            and _artifact_check_ok(artifacts, "security", "bandit")
+            and _artifact_check_ok(artifacts, "security", "semgrep")
+            and _artifact_check_ok(artifacts, "security", "trivy")
+            and _artifact_check_ok(artifacts, "security", "trufflehog")
+            and _artifact_check_ok(artifacts, "security", "codeql")
+        ),
+        "observe_improve": dora_ok,
+    }
 
 
 def check_stage_gates(project_dir: Path) -> tuple[bool, list[str]]:
@@ -666,6 +933,133 @@ def check(project_dir: Path) -> None:
     print(json.dumps(report, indent=2))
 
 
+def collect(project_dir: Path) -> None:
+    """Refresh CI feedback and print the resulting gate report."""
+    refresh_feedback(project_dir)
+    check(project_dir)
+
+
+def _build_agent_tool_call(project_dir: Path, manifest: Path) -> dict[str, Any]:
+    """Build a machine-readable Agent tool call description for a manifest."""
+    content = manifest.read_text(encoding="utf-8")
+    result_file = (
+        project_dir / ".pipeline" / "dispatch" / "completed" / f"{manifest.stem}.json"
+    )
+    return {
+        "tool": "Agent",
+        "description": f"{manifest.stem.replace('_', ' ').title()}: {manifest.stem}",
+        "subagent_type": "coder",
+        "prompt": content,
+        "manifest": str(manifest.relative_to(project_dir)),
+        "result_file": str(result_file.relative_to(project_dir)),
+    }
+
+
+def loop(
+    project_dir: Path,
+    prepare: bool = False,
+    complete: bool = False,
+    dispatch: bool = False,
+    force: bool = False,
+) -> None:
+    """Drive the agentic loop.
+
+    --prepare: clear stale manifests, dispatch the current stage's agents,
+               write the queue, and print a machine-readable action plan.
+    --dispatch: include Agent tool call descriptions in the --prepare report so a
+                parent AI can invoke subagents natively. Subagents should write
+                their result to .pipeline/dispatch/completed/<role>.json.
+    --complete: mark pending manifests completed, refresh feedback, parse workflow
+                artifacts, check gates, and auto-advance if possible. Gate failure
+                blocks advancement unless --force is supplied.
+    --force: allow advancement even when CI feedback gates have not passed.
+    """
+    project_dir = project_dir.resolve()
+    dispatch_dir = project_dir / ".pipeline" / "dispatch"
+
+    if prepare:
+        # Clear stale pending manifests and queue so the loop starts fresh.
+        for stale in dispatch_dir.glob("*.md"):
+            stale.unlink()
+        queue_file = dispatch_dir / "queue.json"
+        if queue_file.exists():
+            queue_file.unlink()
+
+        run_stage(project_dir, auto=True)
+        queue_file = write_dispatch_queue(
+            project_dir, sorted(dispatch_dir.glob("*.md"))
+        )
+        state = load_state(project_dir)
+        manifests = sorted(dispatch_dir.glob("*.md"))
+        report: dict[str, Any] = {
+            "stage": state.get("stage"),
+            "agents": [
+                {"agent": p.stem, "manifest": str(p.relative_to(project_dir))}
+                for p in manifests
+            ],
+            "queue": str(queue_file.relative_to(project_dir)),
+            "action": "Dispatch each agent with its manifest, then run loop --complete.",
+        }
+        if dispatch:
+            report["tool_calls"] = [
+                _build_agent_tool_call(project_dir, p) for p in manifests
+            ]
+            report["action"] = (
+                "Invoke each Agent tool call, then run loop --complete. "
+                "Each subagent should write its result to the corresponding result_file."
+            )
+        print(json.dumps(report, indent=2))
+        return
+
+    if complete:
+        completed = mark_manifests_completed(project_dir)
+        pending_results = _pending_agent_results(project_dir)
+        refresh_feedback(project_dir)
+        artifacts = parse_workflow_artifacts(project_dir)
+        passed, blockers = check_stage_gates(project_dir)
+        state = load_state(project_dir)
+        report = {
+            "stage": state.get("stage"),
+            "can_advance": passed and not pending_results,
+            "blockers": blockers
+            + (
+                [f"Missing agent results: {', '.join(pending_results)}"]
+                if pending_results
+                else []
+            ),
+            "completed_manifests": [str(p.relative_to(project_dir)) for p in completed],
+            "pending_results": pending_results,
+            "artifacts": artifacts,
+            "advanced_to": None,
+        }
+
+        if passed:
+            # Auto-advance to the next stage and report the new stage.
+            try:
+                advance(project_dir, auto=True)
+                report["advanced_to"] = load_state(project_dir).get("stage")
+            except SystemExit:
+                # advance exits on validation/gate failure; report remains accurate.
+                report["advanced_to"] = None
+        elif force:
+            # Override gate failure and advance anyway (requires explicit opt-in).
+            try:
+                advance(project_dir, force=True)
+                report["advanced_to"] = load_state(project_dir).get("stage")
+                report["forced"] = True
+            except SystemExit:
+                report["advanced_to"] = None
+
+        print(json.dumps(report, indent=2))
+        return
+
+    print(
+        "Use --prepare to dispatch agents or --complete to collect feedback and advance.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Elite Agentic SDLC Pipeline Orchestrator")
     parser.add_argument(
@@ -691,6 +1085,11 @@ def main() -> None:
         action="store_true",
         help="Only advance if CI feedback gates are satisfied",
     )
+    advance_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow non-linear stage transitions (use with care)",
+    )
 
     subparsers.add_parser("dispatch", help="List pending agent dispatch queue")
 
@@ -701,6 +1100,32 @@ def main() -> None:
     subparsers.add_parser("status", help="Show project state")
 
     subparsers.add_parser("check", help="Check current stage and CI feedback gates")
+
+    subparsers.add_parser("collect", help="Refresh CI feedback gates and print status")
+
+    loop_parser = subparsers.add_parser(
+        "loop", help="Run the agentic loop (prepare dispatch or complete cycle)"
+    )
+    loop_parser.add_argument(
+        "--prepare",
+        action="store_true",
+        help="Dispatch current-stage agents and write the action queue",
+    )
+    loop_parser.add_argument(
+        "--complete",
+        action="store_true",
+        help="Mark agents completed, refresh feedback, and auto-advance if gates pass",
+    )
+    loop_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Advance even when CI feedback gates have not passed",
+    )
+    loop_parser.add_argument(
+        "--dispatch",
+        action="store_true",
+        help="Include Agent tool call descriptions in the prepare report",
+    )
 
     args = parser.parse_args()
 
@@ -718,7 +1143,7 @@ def main() -> None:
     if args.command == "run":
         run_stage(project_dir, auto=args.auto)
     elif args.command == "advance":
-        advance(project_dir, args.next_stage, auto=args.auto)
+        advance(project_dir, args.next_stage, auto=args.auto, force=args.force)
     elif args.command == "dispatch":
         run_dispatch_queue(project_dir)
     elif args.command == "execute":
@@ -727,6 +1152,16 @@ def main() -> None:
         status(project_dir)
     elif args.command == "check":
         check(project_dir)
+    elif args.command == "collect":
+        collect(project_dir)
+    elif args.command == "loop":
+        loop(
+            project_dir,
+            prepare=args.prepare,
+            complete=args.complete,
+            dispatch=args.dispatch,
+            force=args.force,
+        )
 
 
 if __name__ == "__main__":

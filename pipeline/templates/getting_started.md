@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.12+
 - Node.js 20+
 - Docker + docker-compose (for PostgreSQL)
 - (Optional) Terraform 1.5+ for infrastructure

@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 _test_file = Path(__file__).resolve()
 SCRIPTS_DIR = next(
-    (p / "scripts" for p in _test_file.parents if (p / "scripts").is_dir()),
+    (p / "scripts" for p in _test_file.parents if (p / "scripts" / "slo_check.py").is_file()),
     _test_file.parents[3] / "scripts",
 )
 sys.path.insert(0, str(SCRIPTS_DIR))

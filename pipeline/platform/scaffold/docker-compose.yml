@@ -17,6 +17,18 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./src/backend
@@ -25,6 +37,7 @@ services:
     environment:
       ENV: development
       DATABASE_URL: postgresql+psycopg://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-elite_db}
+      REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required. Use a strong random value in production.}
       ALLOWED_ORIGINS: http://localhost:3000
       LOG_LEVEL: info
@@ -32,6 +45,8 @@ services:
       - "8000:8000"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       tempo:
         condition: service_started
@@ -79,14 +94,11 @@ services:
     image: prom/alertmanager:v0.27.0
     environment:
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/placeholder}
+      PAGERDUTY_INTEGRATION_KEY: ${PAGERDUTY_INTEGRATION_KEY:-placeholder-set-your-key}
     volumes:
-      - ./observability/alertmanager/alertmanager.yml.template:/etc/alertmanager/alertmanager.yml.template:ro
-      - ./observability/alertmanager/entrypoint.sh:/entrypoint.sh:ro
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
       - "9093:9093"
-    entrypoint:
-      - '/bin/sh'
-      - '/entrypoint.sh'
 
   pushgateway:
     image: prom/pushgateway:v1.9.0
@@ -129,4 +141,5 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
   grafana-data:

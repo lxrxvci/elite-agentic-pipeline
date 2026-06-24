@@ -9,6 +9,9 @@ on:
     - cron: '0 6 * * 1'
   workflow_call:
 
+env:
+  PROJECT_DIR: example_project
+
 permissions:
   contents: read
   security-events: write
@@ -17,3 +20,5 @@ permissions:
 jobs:
   scan:
     uses: ./.github/workflows/_security-scan.yml
+    with:
+      project-dir: ${{ env.PROJECT_DIR }}

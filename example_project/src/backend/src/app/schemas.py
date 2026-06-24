@@ -33,6 +33,7 @@ class ClientCreateSchema(BaseModel):
     email: EmailStr | None = None
     currency: str = Field(default="USD", min_length=3, max_length=3)
     default_hourly_rate: str | None = Field(None, pattern=r"^\d+(\.\d{1,2})?$")
+    idempotency_key: str | None = Field(None, max_length=255)
 
 
 class ClientSchema(BaseModel):
@@ -52,6 +53,7 @@ class ProjectCreateSchema(BaseModel):
     client_id: UUID
     name: str = Field(..., min_length=1, max_length=255)
     rounding_minutes: int = Field(default=15, ge=1)
+    idempotency_key: str | None = Field(None, max_length=255)
 
 
 class ProjectSchema(BaseModel):
@@ -73,6 +75,7 @@ class TimeEntryCreateSchema(BaseModel):
     duration_minutes: int | None = Field(None, ge=0)
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    idempotency_key: str | None = Field(None, max_length=255)
 
     @field_validator("duration_minutes")
     @classmethod
@@ -88,6 +91,7 @@ class TimeEntryUpdateSchema(BaseModel):
     duration_minutes: int | None = Field(None, ge=0)
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    idempotency_key: str | None = Field(None, max_length=255)
 
 
 class TimeEntrySchema(BaseModel):
@@ -145,6 +149,7 @@ class InvoiceCreateSchema(BaseModel):
 class InvoiceMarkPaidSchema(BaseModel):
     payment_method: str = Field(..., pattern=r"^(bank_transfer|card|cash|check|other)$")
     paid_at: datetime | None = None
+    idempotency_key: str | None = Field(None, max_length=255)
 
 
 class PaginatedResponse(BaseModel):

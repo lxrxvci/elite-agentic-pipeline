@@ -53,6 +53,7 @@ class Client:
     email: str | None = None
     currency: str = "USD"
     default_hourly_rate: Decimal | None = None
+    created_by: uuid.UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -64,6 +65,7 @@ class Project:
     client_id: uuid.UUID
     name: str
     rounding_minutes: int = 15
+    created_by: uuid.UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -85,6 +87,7 @@ class TimeEntry:
     rounded_minutes: int
     status: TimeEntryStatus
     invoice_id: uuid.UUID | None = None
+    created_by: uuid.UUID | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -124,6 +127,7 @@ class Invoice:
     idempotency_key: str | None = None
     payment_method: str | None = None
     paid_at: datetime | None = None
+    created_by: uuid.UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 

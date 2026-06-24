@@ -13,10 +13,12 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary', 'json'],
       thresholds: {
-        statements: 11,
-        branches: 45,
-        functions: 40,
-        lines: 11,
+        // Ratchet: raise these as more tests are added. Current baseline ~72% lines/statements,
+        // ~81% functions, ~82% branches.
+        statements: 72,
+        branches: 82,
+        functions: 80,
+        lines: 72,
       },
     },
   },

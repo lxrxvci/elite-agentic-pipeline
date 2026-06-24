@@ -21,13 +21,22 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 
-def run_cmd(cmd: list[str], cwd: Path | None = None, timeout: int = 120) -> dict[str, Any]:
+def run_cmd(
+    cmd: list[str],
+    cwd: Path | None = None,
+    timeout: int = 120,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Run a command and return structured result metadata."""
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
     try:
         result = subprocess.run(
             cmd,
@@ -35,6 +44,7 @@ def run_cmd(cmd: list[str], cwd: Path | None = None, timeout: int = 120) -> dict
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=run_env,
         )
         return {
             "passed": result.returncode == 0,
@@ -84,11 +94,30 @@ def collect_backend_feedback(project_dir: Path) -> dict[str, Any]:
         return {"status": "missing", "checks": {}}
 
     python = _find_backend_python(backend_dir)
-    tests = run_cmd(
-        [python, "-m", "pytest", "--ignore=tests/contracts", "-q", "--cov=src", "--cov-report=term-missing"],
-        cwd=backend_dir,
-        timeout=300,
-    )
+
+    # Use a fresh SQLite database file so stale local test.db state cannot break coverage runs.
+    test_db_fd, test_db_path = tempfile.mkstemp(suffix=".db", prefix="elite_test_")
+    os.close(test_db_fd)
+    test_db_url = f"sqlite:///{test_db_path}"
+
+    try:
+        tests = run_cmd(
+            [
+                python,
+                "-m",
+                "pytest",
+                "--ignore=tests/contracts",
+                "-q",
+                "--cov=src",
+                "--cov-report=term-missing",
+            ],
+            cwd=backend_dir,
+            timeout=300,
+            env={"TEST_DATABASE_URL": test_db_url},
+        )
+    finally:
+        Path(test_db_path).unlink(missing_ok=True)
+
     lint = run_cmd([python, "-m", "ruff", "check", "src", "tests"], cwd=backend_dir)
     types = run_cmd([python, "-m", "mypy", "src"], cwd=backend_dir)
     bandit = run_cmd([python, "-m", "bandit", "-r", "src", "-ll", "-ii"], cwd=backend_dir)
@@ -199,7 +228,7 @@ def main() -> None:
 
     feedback = {
         "project": str(project_dir),
-        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "collected_at": datetime.now(UTC).isoformat(),
         "backend": collect_backend_feedback(project_dir),
         "frontend": collect_frontend_feedback(project_dir),
         "security": collect_security_feedback(project_dir),

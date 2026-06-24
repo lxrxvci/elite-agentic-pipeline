@@ -4,6 +4,8 @@ import './globals.css'
 import { QueryProvider } from './providers'
 import { ToastProvider } from '@/shared/ui'
 import { Layout } from '@/widgets/Layout/Layout'
+import { ErrorBoundary } from '@/shared/ui/ErrorBoundary'
+import { WebVitalsInit } from '@/shared/ui/WebVitalsInit'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
@@ -20,11 +22,16 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} font-sans`}>
-        <QueryProvider>
-          <ToastProvider>
-            <Layout>{children}</Layout>
-          </ToastProvider>
-        </QueryProvider>
+        <ErrorBoundary>
+          <QueryProvider>
+            <ToastProvider>
+              <Layout>
+                <WebVitalsInit />
+                {children}
+              </Layout>
+            </ToastProvider>
+          </QueryProvider>
+        </ErrorBoundary>
       </body>
     </html>
   )

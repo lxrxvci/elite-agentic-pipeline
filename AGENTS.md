@@ -41,7 +41,7 @@ pipeline/
 - OpenAPI-first REST
 - TanStack Query (server state), Zustand (client state)
 - Tailwind CSS + design tokens
-- Vitest + Playwright + axe-core (contract testing with Pact is a Phase 2 addition)
+- Vitest + Playwright + axe-core + Pact (contract testing is implemented and PR-gated)
 - GitHub Actions + Vercel/Fly.io (deployment targets must be configured per project)
 - Terraform (Pulumi is an optional future alternative)
 - OpenTelemetry + Prometheus (Grafana dashboards are a Phase 3 addition)

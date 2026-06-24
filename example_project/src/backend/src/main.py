@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import settings
 from app.exceptions import add_exception_handlers
@@ -27,7 +28,7 @@ from app.observability import (
     metrics_response,
     shutdown_tracing,
 )
-from app.routers import auth, clients, invoices, me, projects, time_entries
+from app.routers import auth, clients, invoices, me, projects, time_entries, vitals
 from infrastructure.database import ping_database
 
 # Configure logging and tracing at import time so local development, Docker,
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Elite API", version="0.1.0", lifespan=lifespan)
 app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -156,6 +158,7 @@ app.include_router(clients.router, prefix="/api/v1")
 app.include_router(projects.router, prefix="/api/v1")
 app.include_router(time_entries.router, prefix="/api/v1")
 app.include_router(invoices.router, prefix="/api/v1")
+app.include_router(vitals.router, prefix="/api/v1")
 
 
 @app.get("/health")

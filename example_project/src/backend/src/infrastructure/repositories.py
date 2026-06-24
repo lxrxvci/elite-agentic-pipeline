@@ -127,6 +127,7 @@ class ClientRepository(BaseRepository[Client]):
         orm = models.Client(
             id=client.id,
             tenant_id=client.tenant_id,
+            created_by=client.created_by,
             name=client.name,
             email=client.email,
             currency=client.currency,
@@ -179,6 +180,7 @@ class ProjectRepository(BaseRepository[Project]):
         orm = models.Project(
             id=project.id,
             tenant_id=project.tenant_id,
+            created_by=project.created_by,
             client_id=project.client_id,
             name=project.name,
             rounding_minutes=project.rounding_minutes,
@@ -233,6 +235,7 @@ class TimeEntryRepository(BaseRepository[TimeEntry]):
         orm = models.TimeEntry(
             id=time_entry.id,
             tenant_id=time_entry.tenant_id,
+            created_by=time_entry.created_by,
             client_id=time_entry.client_id,
             project_id=time_entry.project_id,
             invoice_id=time_entry.invoice_id,
@@ -270,6 +273,7 @@ class TimeEntryRepository(BaseRepository[TimeEntry]):
         return TimeEntry(
             id=orm.id,
             tenant_id=orm.tenant_id,
+            created_by=orm.created_by,
             client_id=orm.client_id,
             project_id=orm.project_id,
             description=orm.description,
@@ -328,6 +332,7 @@ class InvoiceRepository(BaseRepository[Invoice]):
         orm = models.Invoice(
             id=invoice.id,
             tenant_id=invoice.tenant_id,
+            created_by=invoice.created_by,
             client_id=invoice.client_id,
             status=invoice.status.value,
             issue_date=invoice.issue_date,
@@ -381,6 +386,7 @@ class InvoiceRepository(BaseRepository[Invoice]):
         return Invoice(
             id=orm.id,
             tenant_id=orm.tenant_id,
+            created_by=orm.created_by,
             client_id=orm.client_id,
             status=InvoiceStatus(orm.status),
             issue_date=orm.issue_date,

@@ -1,3 +1,5 @@
+import { CANARY_API_URL_COOKIE } from '../lib/canary'
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
 export interface ProblemDetail {
@@ -19,11 +21,24 @@ export class ApiError extends Error {
   }
 }
 
+function getCookieValue(name: string): string | undefined {
+  if (typeof document === 'undefined') {
+    return undefined
+  }
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]*)`))
+  return match ? decodeURIComponent(match[1]) : undefined
+}
+
+function getApiBaseUrl(): string {
+  return getCookieValue(CANARY_API_URL_COOKIE) || API_BASE_URL
+}
+
 export async function apiClient<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
+  const baseUrl = getApiBaseUrl()
+  const url = `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`
 
   const response = await fetch(url, {
     ...options,

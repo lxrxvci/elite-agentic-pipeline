@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
+
 
 def test_dev_token_sets_http_only_cookie(client: TestClient) -> None:
     response = client.post("/api/v1/auth/token", json={"email": "cookie-test@example.com"})
@@ -38,7 +40,10 @@ def test_logout_clears_cookie(client: TestClient) -> None:
 
 
 def test_dev_token_disabled_in_production(client: TestClient) -> None:
-    # The endpoint checks settings.env; in CI/tests it defaults to development,
-    # so we cannot easily test the 403 without mocking settings. This test
-    # documents the expectation and can be expanded once settings are injectable.
-    pass
+    original_env = settings.env
+    settings.env = "production"
+    try:
+        response = client.post("/api/v1/auth/token", json={"email": "prod-test@example.com"})
+        assert response.status_code == 404
+    finally:
+        settings.env = original_env

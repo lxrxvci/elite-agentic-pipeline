@@ -1,36 +1,34 @@
 name: DORA Metrics
 
 on:
+  workflow_call:
+    inputs:
+      project-dir:
+        required: false
+        type: string
+        default: example_project
+    secrets:
+      GITHUB_TOKEN:
+        required: true
   workflow_dispatch:
   schedule:
     - cron: '0 9 * * 1'
-  workflow_run:
-    workflows: [Deploy]
-    types: [completed]
-    branches: [main]
 
 env:
-  PUSHGATEWAY_URL: ${{ vars.DORA_PUSHGATEWAY_URL || 'http://localhost:9091' }}
+  PROJECT_DIR: example_project
 
 jobs:
   collect:
     runs-on: ubuntu-latest
-    if: >
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
-    services:
-      pushgateway:
-        image: prom/pushgateway:v1.9.0
-        ports:
-          - 9091:9091
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Collect DORA metrics
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ${{ inputs.project-dir || env.PROJECT_DIR }}
         run: |
           REPO_NAME="${{ github.repository }}"
           OWNER="${REPO_NAME%%/*}"
@@ -40,18 +38,10 @@ jobs:
             --repo "$REPO" \
             --days 30 \
             --output dora-metrics.prom
-      - name: Push DORA metrics to Pushgateway
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit DORA metrics
         run: |
-          python scripts/dora_pushgateway.py \
-            --input dora-metrics.prom \
-            --pushgateway-url "$PUSHGATEWAY_URL" \
-            --job dora-metrics \
-            --instance "${{ github.repository }}" \
-            --username "${{ secrets.DORA_PUSHGATEWAY_USERNAME }}" \
-            --password "${{ secrets.DORA_PUSHGATEWAY_PASSWORD }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: dora-metrics
-          path: dora-metrics.prom
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ inputs.project-dir || env.PROJECT_DIR }}/dora-metrics.prom"
+          git diff --staged --quiet || git commit -m "chore: update DORA metrics"
+          git push

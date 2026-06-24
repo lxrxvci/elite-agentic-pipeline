@@ -15,6 +15,7 @@ from app.dependencies import (
     require_tenant_quota,
 )
 from app.exceptions import NotFoundError
+from app.idempotency import IdempotencyRepository, get_idempotency_key
 from app.limiter import limiter
 from app.schemas import PaginatedResponse, ProjectCreateSchema, ProjectSchema
 from domain.entities import Project
@@ -62,6 +63,15 @@ def create_project(
     db: Session = Depends(get_db),
     _quota: None = Depends(require_tenant_quota()),
 ) -> ProjectSchema:
+    idempotency = IdempotencyRepository(db)
+    idempotency_key = get_idempotency_key(request, payload.idempotency_key)
+    if idempotency_key:
+        cached = idempotency.get_response(
+            user.tenant_id, "projects.create", idempotency_key
+        )
+        if cached:
+            return ProjectSchema(**cached)
+
     client_repo = ClientRepository(db, user.tenant_id)
     client = client_repo.get(payload.client_id)
     if not client:
@@ -71,12 +81,18 @@ def create_project(
     project = Project(
         id=uuid.uuid4(),
         tenant_id=user.tenant_id,
+        created_by=user.id,
         client_id=payload.client_id,
         name=payload.name,
         rounding_minutes=payload.rounding_minutes,
     )
     created = repo.create(project)
     db.commit()
+    if idempotency_key:
+        idempotency.record_response(
+            user.tenant_id, "projects.create", idempotency_key, _to_schema(created)
+        )
+        db.commit()
     return _to_schema(created)
 
 

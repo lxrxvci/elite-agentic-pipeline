@@ -13,6 +13,12 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'real-backend',
+      testMatch: /journey-real\.spec\.ts$/,
+      use: { ...devices['Desktop Chrome'] },
+      dependencies: [],
+    },
   ],
   webServer: {
     command: 'npm run build && npm run start',

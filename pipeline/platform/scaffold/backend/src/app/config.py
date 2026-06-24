@@ -32,7 +32,14 @@ class Settings(BaseSettings):
 
     # Observability
     otel_exporter_otlp_endpoint: str = ""
+    otel_exporter_otlp_headers: str = ""
+    otel_service_name: str = "elite-backend"
+    otel_resource_attributes: str = ""
     log_level: str = "info"
+
+    # Redis is required for multi-process rate limiting and quotas.
+    # Falls back to in-memory storage when not configured.
+    redis_url: str = ""
 
     # Per-tenant mutation quota. In-memory by default; use Redis for multi-process.
     tenant_quota_limit: int = 100
@@ -50,6 +57,12 @@ class Settings(BaseSettings):
                 "SECRET_KEY must be changed from the default placeholder "
                 "in non-development environments"
             )
+        return self
+
+    @model_validator(mode="after")
+    def require_clerk_in_production(self) -> Settings:
+        if self.env == "production" and not self.clerk_jwks_url:
+            raise ValueError("CLERK_JWKS_URL is required in production")
         return self
 
 

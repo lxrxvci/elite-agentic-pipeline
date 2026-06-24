@@ -1,10 +1,14 @@
 # Elite Agentic SDLC Pipeline — Developer Makefile
-.PHONY: help setup setup-project setup-scaffold init run advance status lint lint-project lint-scaffold test test-project test-scaffold test-e2e migrate infra-plan project-infra-plan ci
+.PHONY: help setup setup-pipeline setup-project setup-scaffold init run advance status check collect sync-scaffold advance-auto lint lint-pipeline lint-project lint-scaffold test test-pipeline test-project test-scaffold test-contracts-project test-contracts-scaffold test-e2e migrate infra-plan project-infra-plan ci ci-pipeline
 
 PROJECT_DIR ?= example_project
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+setup-pipeline: ## Install pipeline developer dependencies into .venv
+	python3 -m venv .venv
+	source .venv/bin/activate && pip install -e ".[dev]"
 
 setup-project: ## Install dependencies in the generated project (default: example_project)
 	cd $(PROJECT_DIR)/src/backend && python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
@@ -31,8 +35,18 @@ status: ## Show project state
 check: ## Check CI feedback gates for the current stage
 	python3 pipeline/orchestrator.py --project-dir $(PROJECT_DIR) check
 
+collect: ## Refresh CI feedback gates for the current project
+	cd $(PROJECT_DIR) && source src/backend/.venv/bin/activate && python3 scripts/ci_feedback.py --project-dir . --write-gates
+
+sync-scaffold: ## Copy validated $(PROJECT_DIR) changes back into pipeline/platform/scaffold
+	python3 pipeline/platform/sync_scaffold.py --project-dir $(PROJECT_DIR)
+
 advance-auto: ## Advance project to next stage if CI feedback gates pass
 	python3 pipeline/orchestrator.py --project-dir $(PROJECT_DIR) advance --auto
+
+lint-pipeline: ## Run lint/typecheck on pipeline tooling
+	source .venv/bin/activate && ruff check pipeline/
+	source .venv/bin/activate && mypy pipeline/orchestrator.py pipeline/agent_runner.py pipeline/run_parent_agent.py
 
 lint-project: ## Run lint/typecheck on the generated project
 	cd $(PROJECT_DIR)/src/backend && source .venv/bin/activate && ruff check src tests
@@ -47,6 +61,9 @@ lint-scaffold: ## Run lint/typecheck on scaffold code
 	cd pipeline/platform/scaffold/frontend && npm run typecheck
 
 lint: lint-project ## Default lint targets the generated project
+
+test-pipeline: ## Run pipeline orchestrator tests
+	source .venv/bin/activate && pytest pipeline/tests/ -v
 
 test-project: ## Run backend and frontend unit tests in the generated project
 	cd $(PROJECT_DIR)/src/backend && source .venv/bin/activate && TEST_DATABASE_URL=sqlite:///./test.db pytest --ignore=tests/contracts --cov=src --cov-report=term-missing
@@ -76,4 +93,5 @@ infra-plan: ## Plan Terraform infrastructure for the pipeline platform module
 project-infra-plan: ## Plan Terraform infrastructure inside a generated project
 	cd $(PROJECT_DIR)/infra && terraform plan -var="db_password=$${DB_PASSWORD:?required}"
 
-ci: lint test ## Local CI simulation (lint + unit tests)
+ci-pipeline: lint-pipeline test-pipeline ## Validate pipeline tooling
+ci: lint test ## Local CI simulation for the generated project (lint + unit tests)

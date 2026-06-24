@@ -1,9 +1,21 @@
 name: DORA Metrics
 
 on:
+  workflow_call:
+    inputs:
+      project-dir:
+        required: false
+        type: string
+        default: example_project
+    secrets:
+      GITHUB_TOKEN:
+        required: true
   workflow_dispatch:
   schedule:
     - cron: '0 9 * * 1'
+
+env:
+  PROJECT_DIR: example_project
 
 jobs:
   collect:
@@ -16,6 +28,7 @@ jobs:
       - name: Collect DORA metrics
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ${{ inputs.project-dir || env.PROJECT_DIR }}
         run: |
           REPO_NAME="${{ github.repository }}"
           OWNER="${REPO_NAME%%/*}"
@@ -25,7 +38,10 @@ jobs:
             --repo "$REPO" \
             --days 30 \
             --output dora-metrics.prom
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dora-metrics
-          path: dora-metrics.prom
+      - name: Commit DORA metrics
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ inputs.project-dir || env.PROJECT_DIR }}/dora-metrics.prom"
+          git diff --staged --quiet || git commit -m "chore: update DORA metrics"
+          git push
