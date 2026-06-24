@@ -1,0 +1,12 @@
+# HELP elite_deployments_total Number of deployments in the window
+# TYPE elite_deployments_total counter
+elite_deployments_total{window="30d"} 65
+# HELP elite_lead_time_seconds Median lead time for changes
+# TYPE elite_lead_time_seconds gauge
+elite_lead_time_seconds{window="30d"} 15.0
+# HELP elite_change_failure_rate Ratio of failed deployments
+# TYPE elite_change_failure_rate gauge
+elite_change_failure_rate{window="30d"} 0.0
+# HELP elite_recovery_time_seconds Median time to recovery
+# TYPE elite_recovery_time_seconds gauge
+elite_recovery_time_seconds{window="30d"} 0
