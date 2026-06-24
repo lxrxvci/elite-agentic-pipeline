@@ -73,7 +73,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Configure AWS credentials via OIDC
         if: vars.AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@4fc4975a852cc8e66790e101327e48932722da20 # v4
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -105,7 +105,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Configure AWS credentials via OIDC
         if: vars.AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@4fc4975a852cc8e66790e101327e48932722da20 # v4
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -142,7 +142,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Configure AWS credentials via OIDC
         if: vars.AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@4fc4975a852cc8e66790e101327e48932722da20 # v4
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -191,7 +191,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Configure AWS credentials via OIDC
         if: vars.AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@4fc4975a852cc8e66790e101327e48932722da20 # v4
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -224,7 +224,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Configure AWS credentials via OIDC
         if: vars.AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@4fc4975a852cc8e66790e101327e48932722da20 # v4
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -288,7 +288,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Configure AWS credentials via OIDC
         if: vars.AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@4fc4975a852cc8e66790e101327e48932722da20 # v4
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -353,7 +353,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Configure AWS credentials via OIDC
         if: vars.AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@4fc4975a852cc8e66790e101327e48932722da20 # v4
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -429,7 +429,7 @@ jobs:
             --percentage 0 || true
       - name: Configure AWS credentials via OIDC
         if: vars.AWS_ROLE_ARN != ''
-        uses: aws-actions/configure-aws-credentials@4fc4975a852cc8e66790e101327e48932722da20 # v4
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
