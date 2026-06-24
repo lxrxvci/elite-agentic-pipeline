@@ -19,6 +19,8 @@ jobs:
 
       - name: Start services
         working-directory: ${{ inputs.project-dir }}
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
         run: |
           docker compose up -d backend frontend
           for i in {1..30}; do

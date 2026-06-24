@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "20250623_add_created_by_to_resources"
+revision: str = "20250623_created_by"
 down_revision: Union[str, None] = "5e8d3c9b1a42"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
