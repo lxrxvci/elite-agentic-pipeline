@@ -1,6 +1,6 @@
 # HELP elite_deployments_total Number of deployments in the window
 # TYPE elite_deployments_total counter
-elite_deployments_total{window="30d"} 77
+elite_deployments_total{window="30d"} 80
 # HELP elite_lead_time_seconds Median lead time for changes
 # TYPE elite_lead_time_seconds gauge
 elite_lead_time_seconds{window="30d"} 17.0
