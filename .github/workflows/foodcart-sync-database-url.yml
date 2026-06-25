@@ -21,25 +21,41 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
         run: |
           python - <<'PY'
-          import json, os, urllib.request
-          url = f"https://api.vercel.com/v10/projects/{os.environ['PROJECT_ID']}/env"
-          payload = {
-              "key": "DATABASE_URL",
-              "value": os.environ["DATABASE_URL"],
-              "target": ["${{ github.event.inputs.environment }}"],
-              "type": "encrypted",
-          }
-          req = urllib.request.Request(
-              url,
-              data=json.dumps(payload).encode(),
-              headers={
-                  "Authorization": f"Bearer {os.environ['VERCEL_TOKEN']}",
-                  "Content-Type": "application/json",
-              },
-              method="POST",
-          )
-          with urllib.request.urlopen(req) as resp:
-              print(resp.read().decode())
+          import json, os, urllib.request, urllib.error
+          project_id = os.environ["PROJECT_ID"]
+          token = os.environ["VERCEL_TOKEN"]
+          value = os.environ["DATABASE_URL"]
+          target = os.environ["ENVIRONMENT"]
+
+          def api_call(method, path, payload=None):
+              url = f"https://api.vercel.com{path}"
+              data = json.dumps(payload).encode() if payload else None
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                  method=method,
+              )
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return resp.status, resp.read().decode()
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.read().decode()
+
+          # Find existing env var
+          status, body = api_call("GET", f"/v9/projects/{project_id}/env?target={target}")
+          envs = json.loads(body).get("envs", [])
+          existing = next((e for e in envs if e["key"] == "DATABASE_URL" and target in e.get("target", [])), None)
+
+          payload = {"key": "DATABASE_URL", "value": value, "target": [target], "type": "encrypted"}
+          if existing:
+              env_id = existing["id"]
+              status, body = api_call("PATCH", f"/v9/projects/{project_id}/env/{env_id}", payload)
+              print(f"PATCH status {status}:", body)
+          else:
+              status, body = api_call("POST", f"/v10/projects/{project_id}/env", payload)
+              print(f"POST status {status}:", body)
           PY
