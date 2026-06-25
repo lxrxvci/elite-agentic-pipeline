@@ -23,6 +23,14 @@ on:
         description: "Alembic revision (default: head for upgrade, -1 for downgrade)"
         required: false
         type: string
+      project-dir:
+        description: "Repository-relative path to the project root"
+        required: true
+        default: "example_project"
+        type: choice
+        options:
+          - example_project
+          - foodcart-saas
 
 env:
   PYTHON_VERSION: "3.12"
@@ -41,12 +49,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        working-directory: example_project/src/backend
+        working-directory: ${{ github.event.inputs.project-dir }}/src/backend
         run: pip install -e .
       - name: Backup reminder
         run: echo "Ensure a database backup has been taken before proceeding."
       - name: Run migration
-        working-directory: example_project/src/backend
+        working-directory: ${{ github.event.inputs.project-dir }}/src/backend
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
         run: |
@@ -69,12 +77,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        working-directory: example_project/src/backend
+        working-directory: ${{ github.event.inputs.project-dir }}/src/backend
         run: pip install -e .
       - name: Backup reminder
         run: echo "Ensure a database backup has been taken before proceeding."
       - name: Run migration
-        working-directory: example_project/src/backend
+        working-directory: ${{ github.event.inputs.project-dir }}/src/backend
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
         run: |
