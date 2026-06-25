@@ -60,8 +60,13 @@ def _get_signing_key(token: str) -> jwt.PyJWK:
         return _get_jwks_client().get_signing_key_from_jwt(token)
     except jwt.PyJWKClientError as exc:
         logger.warning("PyJWKClient failed, falling back to manual JWKS fetch", error=str(exc))
-        jwks = _fallback_fetch_jwks()
-        unverified_header = jwt.get_unverified_header(token)
+        try:
+            jwks = _fallback_fetch_jwks()
+            unverified_header = jwt.get_unverified_header(token)
+        except jwt.InvalidTokenError as header_exc:
+            raise ClerkAuthError(f"Invalid token: {header_exc}") from header_exc
+        except httpx.HTTPError as http_exc:
+            raise ClerkAuthError("Unable to load Clerk signing key") from http_exc
         kid = unverified_header.get("kid")
         for key in jwks.get("keys", []):
             if key.get("kid") == kid:
@@ -76,7 +81,9 @@ def validate_clerk_token(token: str) -> dict[str, Any]:
     """
     try:
         signing_key = _get_signing_key(token)
-    except jwt.PyJWKClientError as exc:
+    except ClerkAuthError:
+        raise
+    except Exception as exc:
         raise ClerkAuthError("Unable to load Clerk signing key") from exc
 
     audience = settings.clerk_audience or None
