@@ -7,26 +7,60 @@ on:
         required: false
         type: string
         default: example_project
+        description: "Repository-relative path to the project root."
+      infra-dir:
+        required: false
+        type: string
+        default: infra
+        description: "Path from project-dir to the Terraform root module."
+      observability-dir:
+        required: false
+        type: string
+        default: observability
+        description: "Path from project-dir to the observability configs."
+      aws-region:
+        required: false
+        type: string
+        default: us-east-1
+        description: "AWS region for Terraform validation and OIDC."
+      checkov-frameworks:
+        required: false
+        type: string
+        default: terraform
+        description: "Comma-separated Checkov frameworks."
+      prometheus-version:
+        required: false
+        type: string
+        default: "2.53.0"
+      alertmanager-version:
+        required: false
+        type: string
+        default: "0.27.0"
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
 
 jobs:
   infra:
+    name: Infrastructure validation
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     env:
-      INFRA_DIR: ${{ inputs.project-dir }}/infra
+      INFRA_DIR: ${{ inputs.project-dir }}/${{ inputs.infra-dir }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Configure AWS credentials via OIDC
         if: vars.AWS_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          aws-region: ${{ vars.AWS_REGION || inputs.aws-region }}
 
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       - name: Check Terraform lock file is tracked
         working-directory: ${{ env.INFRA_DIR }}
@@ -47,7 +81,7 @@ jobs:
         working-directory: ${{ env.INFRA_DIR }}
         run: terraform validate
 
-      - name: Verify backend configuration files
+      - name: Verify backend configuration example
         working-directory: ${{ env.INFRA_DIR }}
         run: |
           if [ ! -f backend.tfvars.example ]; then
@@ -63,18 +97,21 @@ jobs:
             done
             echo "backend.tfvars contains required keys."
           else
-            echo "NOTE: backend.tfvars is not committed. Copy backend.tfvars.example and run 'terraform init -backend-config=backend.tfvars' to use remote state."
+            echo "NOTE: backend.tfvars is not committed. Copy backend.tfvars.example to use remote state."
           fi
 
-      - uses: bridgecrewio/checkov-action@fa9edf8f0a491c59a924ea6accd5bdcf07752cff # v12
+      - name: Checkov static analysis
+        uses: bridgecrewio/checkov-action@fa9edf8f0a491c59a924ea6accd5bdcf07752cff # v12
         with:
           directory: ${{ env.INFRA_DIR }}
-          framework: terraform
+          framework: ${{ inputs.checkov-frameworks }}
+          output_format: cli,sarif
+          output_file_path: reports/
 
       - name: Install Prometheus tooling
         run: |
-          PROMETHEUS_VERSION=2.53.0
-          ALERTMANAGER_VERSION=0.27.0
+          PROMETHEUS_VERSION=${{ inputs.prometheus-version }}
+          ALERTMANAGER_VERSION=${{ inputs.alertmanager-version }}
           curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" \
             | tar -xz --strip-components=1 -C /tmp "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
           curl -fsSL "https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz" \
@@ -84,12 +121,12 @@ jobs:
           /tmp/amtool --version
 
       - name: Validate Prometheus alert rules
-        run: /tmp/promtool check rules ${{ inputs.project-dir }}/observability/prometheus/alerts.yml
+        run: /tmp/promtool check rules ${{ inputs.project-dir }}/${{ inputs.observability-dir }}/prometheus/alerts.yml
 
       - name: Validate Alertmanager configuration
         env:
           SLACK_WEBHOOK_URL: https://hooks.slack.com/services/placeholder
           PAGERDUTY_INTEGRATION_KEY: placeholder-set-your-key
         run: |
-          envsubst < ${{ inputs.project-dir }}/observability/alertmanager/alertmanager.yml > /tmp/alertmanager.yml
+          envsubst < ${{ inputs.project-dir }}/${{ inputs.observability-dir }}/alertmanager/alertmanager.yml > /tmp/alertmanager.yml
           /tmp/amtool check-config /tmp/alertmanager.yml

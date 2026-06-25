@@ -1,5 +1,12 @@
 name: Security
 
+# Entry-point security workflow. Can be used directly (push/PR/schedule) or
+# called as a reusable workflow (workflow_call) from a squad CI orchestrator.
+#
+# Foodcart SaaS learning: squads with a monorepo root layout need to pass
+# project-dir so scans run against the correct backend, frontend, and infra
+# directories.
+
 on:
   push:
     branches: [main]
@@ -8,9 +15,24 @@ on:
   schedule:
     - cron: '0 6 * * 1'
   workflow_call:
-
-env:
-  PROJECT_DIR: example_project
+    inputs:
+      project-dir:
+        required: false
+        type: string
+        default: example_project
+        description: "Repository-relative path to the project root."
+      backend-dir:
+        required: false
+        type: string
+        default: src/backend
+      frontend-dir:
+        required: false
+        type: string
+        default: src/frontend
+      infra-dir:
+        required: false
+        type: string
+        default: infra
 
 permissions:
   contents: read
@@ -19,6 +41,10 @@ permissions:
 
 jobs:
   scan:
+    name: Security scan
     uses: ./.github/workflows/_security-scan.yml
     with:
-      project-dir: example_project
+      project-dir: ${{ inputs.project-dir || 'example_project' }}
+      backend-dir: ${{ inputs.backend-dir || 'src/backend' }}
+      frontend-dir: ${{ inputs.frontend-dir || 'src/frontend' }}
+      infra-dir: ${{ inputs.infra-dir || 'infra' }}

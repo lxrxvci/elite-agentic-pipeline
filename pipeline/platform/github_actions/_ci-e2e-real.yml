@@ -7,52 +7,131 @@ on:
         required: false
         type: string
         default: example_project
+        description: "Repository-relative path to the project root."
       node-version:
         required: true
         type: string
+        description: "Node.js version for the frontend test runner."
+      frontend-dir:
+        required: false
+        type: string
+        default: src/frontend
+        description: "Path from project-dir to the frontend package."
+      backend-dir:
+        required: false
+        type: string
+        default: src/backend
+        description: "Path from project-dir to the backend package."
+      e2e-project:
+        required: false
+        type: string
+        default: real-backend
+        description: "Playwright project name to run."
+      compose-file:
+        required: false
+        type: string
+        default: docker-compose.yml
+        description: "Docker Compose file to use."
+      compose-service:
+        required: false
+        type: string
+        default: backend
+        description: "Docker Compose service to start for the real backend."
+      health-endpoint:
+        required: false
+        type: string
+        default: http://localhost:8000/health
+        description: "Health endpoint to wait for before running tests."
+      health-timeout-seconds:
+        required: false
+        type: number
+        default: 120
+        description: "Maximum seconds to wait for the health endpoint."
+      e2e-command:
+        required: false
+        type: string
+        default: ""
+        description: "Optional override for the E2E test command. Defaults to 'npx playwright test --project=<e2e-project>'."
+      smoke-frontend-url:
+        required: false
+        type: string
+        default: ""
+        description: "Optional URL to smoke-test after the backend is healthy."
+    secrets:
+      ci-secret-key:
+        required: false
+        description: "Backend SECRET_KEY used when starting services."
+      clerk-jwks-url:
+        required: false
+      clerk-issuer:
+        required: false
+      redis-url:
+        required: false
+        description: "Optional Redis URL for multi-process rate limiting in E2E."
 
 jobs:
   e2e-real:
+    name: Real-backend E2E
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Start backend services
         working-directory: ${{ inputs.project-dir }}
         env:
-          SECRET_KEY: ci-test-secret-key-not-for-production
+          SECRET_KEY: ${{ secrets.ci-secret-key || 'ci-test-secret-key-not-for-production' }}
+          CLERK_JWKS_URL: ${{ secrets.clerk-jwks-url || '' }}
+          CLERK_ISSUER: ${{ secrets.clerk-issuer || '' }}
+          REDIS_URL: ${{ secrets.redis-url || '' }}
         run: |
-          docker compose up -d backend
-          for i in {1..30}; do
-            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+          docker compose -f ${{ inputs.compose-file }} up -d ${{ inputs.compose-service }}
+          timeout=${{ inputs.health-timeout-seconds }}
+          elapsed=0
+          while [ $elapsed -lt $timeout ]; do
+            if curl -fsS ${{ inputs.health-endpoint }} >/dev/null 2>&1; then
               echo "Backend is healthy"
               break
             fi
-            echo "Waiting for backend..."
+            echo "Waiting for backend... ($elapsed/$timeout)"
             sleep 2
+            elapsed=$((elapsed + 2))
           done
-          curl -fsS --retry 10 --retry-delay 3 http://localhost:8000/health
+          curl -fsS --retry 10 --retry-delay 3 ${{ inputs.health-endpoint }}
 
-      - uses: actions/setup-node@v4
+      - name: Optional frontend smoke check
+        if: inputs.smoke-frontend-url != ''
+        run: curl --fail --retry 5 --retry-delay 3 ${{ inputs.smoke-frontend-url }}
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
-          cache-dependency-path: ${{ inputs.project-dir }}/src/frontend/package-lock.json
+          cache-dependency-path: ${{ inputs.project-dir }}/${{ inputs.frontend-dir }}/package-lock.json
 
       - name: Install frontend dependencies
-        working-directory: ${{ inputs.project-dir }}/src/frontend
+        working-directory: ${{ inputs.project-dir }}/${{ inputs.frontend-dir }}
         run: npm ci
 
       - name: Install Playwright browsers
-        working-directory: ${{ inputs.project-dir }}/src/frontend
+        working-directory: ${{ inputs.project-dir }}/${{ inputs.frontend-dir }}
         run: npx playwright install --with-deps chromium
 
       - name: Run real-backend E2E tests
-        working-directory: ${{ inputs.project-dir }}/src/frontend
-        run: npm run test:e2e:real
+        working-directory: ${{ inputs.project-dir }}/${{ inputs.frontend-dir }}
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        run: |
+          if [ -n "${{ inputs.e2e-command }}" ]; then
+            ${{ inputs.e2e-command }}
+          else
+            npx playwright test --project=${{ inputs.e2e-project }}
+          fi
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Playwright report
         if: failure()
+        uses: actions/upload-artifact@v4
         with:
           name: e2e-real-report
-          path: ${{ inputs.project-dir }}/src/frontend/playwright-report
+          path: ${{ inputs.project-dir }}/${{ inputs.frontend-dir }}/playwright-report

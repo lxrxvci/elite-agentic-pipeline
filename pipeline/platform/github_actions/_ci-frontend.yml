@@ -7,34 +7,85 @@ on:
         required: false
         type: string
         default: example_project
+        description: "Repository-relative path to the project root."
       node-version:
         required: true
         type: string
+        description: "Node.js version for the frontend (e.g. '20')."
+      frontend-dir:
+        required: false
+        type: string
+        default: src/frontend
+        description: "Path from project-dir to the frontend package."
+      build-env-vars:
+        required: false
+        type: string
+        default: ""
+        description: >-
+          Optional newline-separated KEY=value pairs passed to the build step
+          (e.g. NEXT_PUBLIC_API_URL). Use repository variables for non-secrets.
+      run-a11y:
+        required: false
+        type: boolean
+        default: true
+        description: "Run Playwright accessibility smoke tests."
 
 jobs:
   frontend:
+    name: Frontend CI
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ${{ inputs.project-dir }}/src/frontend
+        working-directory: ${{ inputs.project-dir }}/${{ inputs.frontend-dir }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
-          cache-dependency-path: ${{ inputs.project-dir }}/src/frontend/package-lock.json
-      - run: npm ci
-      - run: npm audit --audit-level=high
+          cache-dependency-path: ${{ inputs.project-dir }}/${{ inputs.frontend-dir }}/package-lock.json
+
+      - name: Export public build variables
+        if: inputs.build-env-vars != ''
+        env:
+          BUILD_VARS: ${{ inputs.build-env-vars }}
+        run: |
+          while IFS='=' read -r key value; do
+            [ -n "$key" ] && echo "$key=$value" >> "$GITHUB_ENV"
+          done <<< "$BUILD_VARS"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Dependency vulnerability audit
+        run: npm audit --audit-level=high
         continue-on-error: true
-      - run: npx playwright install --with-deps chromium
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test:ci
-      - run: npm run test:a11y
-      - run: npm run build
-      - uses: actions/upload-artifact@v4
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests with coverage
+        run: npm run test:ci
+
+      - name: Accessibility smoke tests
+        if: inputs.run-a11y
+        run: npm run test:a11y
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload coverage report
         if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: frontend-coverage
-          path: ${{ inputs.project-dir }}/src/frontend/coverage
+          path: ${{ inputs.project-dir }}/${{ inputs.frontend-dir }}/coverage
