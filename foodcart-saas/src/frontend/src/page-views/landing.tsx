@@ -94,7 +94,7 @@ export function LandingPage() {
               Log in
             </Link>
             <Link
-              href="/admin/onboarding"
+              href="/admin/sign-up"
               className="group inline-flex items-center gap-2 rounded-full bg-[#6161FF] px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-[#6161FF]/25 transition hover:bg-[#4f4fdb] hover:shadow-lg hover:shadow-[#6161FF]/30"
             >
               Get Started
@@ -124,7 +124,7 @@ export function LandingPage() {
             </p>
             <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <Link
-                href="/admin/onboarding"
+                href="/admin/sign-up"
                 className="group inline-flex items-center gap-2 rounded-full bg-[#6161FF] px-8 py-4 text-base font-semibold text-white shadow-xl shadow-[#6161FF]/25 transition hover:bg-[#4f4fdb] hover:shadow-2xl hover:shadow-[#6161FF]/30"
               >
                 Get Started
@@ -390,7 +390,7 @@ export function LandingPage() {
             Join food trucks already using WebAgentic to turn hungry browsers into loyal regulars.
           </p>
           <Link
-            href="/admin/onboarding"
+            href="/admin/sign-up"
             className="group mt-8 inline-flex items-center gap-2 rounded-full bg-white px-8 py-4 text-base font-semibold text-[#0a0a0a] shadow-xl transition hover:bg-[#f5f5f5]"
           >
             Start building for free
@@ -413,7 +413,7 @@ export function LandingPage() {
             <Link href="/admin/login" className="text-sm text-[#737373] hover:text-[#0a0a0a]">
               Admin login
             </Link>
-            <Link href="/admin/onboarding" className="text-sm text-[#737373] hover:text-[#0a0a0a]">
+            <Link href="/admin/sign-up" className="text-sm text-[#737373] hover:text-[#0a0a0a]">
               Sign up
             </Link>
           </div>
