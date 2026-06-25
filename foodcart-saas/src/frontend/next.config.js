@@ -13,6 +13,7 @@ const cspHeader = (
   `img-src 'self' data: blob: https://img.clerk.com ${clerkOrigin}; ` +
   `font-src 'self' ${clerkOrigin} ${clerkDevOrigin}; ` +
   `connect-src 'self' ${apiOrigin} ${clerkOrigin} ${clerkDevOrigin}; ` +
+  "worker-src 'self' blob:; " +
   "frame-ancestors 'none'; " +
   "base-uri 'self'; " +
   "form-action 'self';"
