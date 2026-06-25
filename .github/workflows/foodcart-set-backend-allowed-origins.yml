@@ -1,0 +1,78 @@
+name: Foodcart Set Backend Allowed Origins
+
+on:
+  workflow_dispatch:
+    inputs:
+      project-secret-suffix:
+        description: "Backend project suffix"
+        required: true
+        default: "BACKEND"
+        type: choice
+        options:
+          - BACKEND
+          - BACKEND_STAGING
+      environment:
+        description: "Target environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - preview
+      origins:
+        description: "Comma-separated origins to add to ALLOWED_ORIGINS"
+        required: true
+        type: string
+
+jobs:
+  set-allowed-origins:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update ALLOWED_ORIGINS in Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PROJECT_ID: ${{ secrets[format('VERCEL_PROJECT_ID_{0}', github.event.inputs.project-secret-suffix)] }}
+          TARGET: ${{ github.event.inputs.environment }}
+          NEW_ORIGINS: ${{ github.event.inputs.origins }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request, urllib.error
+
+          project_id = os.environ["PROJECT_ID"]
+          token = os.environ["VERCEL_TOKEN"]
+          target = os.environ["TARGET"]
+          new_origins = [o.strip() for o in os.environ["NEW_ORIGINS"].split(",") if o.strip()]
+
+          def api_call(method, path, payload=None):
+              url = f"https://api.vercel.com{path}"
+              data = json.dumps(payload).encode() if payload else None
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                  method=method,
+              )
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return resp.status, resp.read().decode()
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.read().decode()
+
+          status, body = api_call("GET", f"/v9/projects/{project_id}/env?target={target}")
+          envs = json.loads(body).get("envs", [])
+          existing = next((e for e in envs if e["key"] == "ALLOWED_ORIGINS" and target in e.get("target", [])), None)
+
+          current = existing.get("value", "") if existing else ""
+          current_origins = [o.strip() for o in current.split(",") if o.strip()]
+          merged = list(dict.fromkeys(current_origins + new_origins))
+          value = ",".join(merged)
+
+          payload = {"key": "ALLOWED_ORIGINS", "value": value, "target": [target], "type": "plain"}
+          if existing:
+              status, body = api_call("PATCH", f"/v9/projects/{project_id}/env/{existing['id']}", payload)
+          else:
+              status, body = api_call("POST", f"/v10/projects/{project_id}/env", payload)
+
+          print(f"status {status}")
+          print(body)
+          PY
