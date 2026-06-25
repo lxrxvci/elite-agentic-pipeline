@@ -3,11 +3,13 @@ import { render, screen } from '@/shared/lib/test-utils'
 import { LandingPage } from './landing'
 
 describe('LandingPage', () => {
-  it('renders the monday-style hero and CTAs', () => {
+  it('renders WebAgentic branding and the monday-style hero', () => {
     render(<LandingPage />)
 
+    expect(screen.getAllByText('WebAgentic').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText(/You cook\./i)).toBeInTheDocument()
     expect(screen.getByText(/We build your site\./i)).toBeInTheDocument()
+    expect(screen.getByText(/WebAgentic is the simplest way/i)).toBeInTheDocument()
     expect(screen.getAllByRole('link', { name: /Get Started/i }).length).toBeGreaterThanOrEqual(1)
     expect(screen.getByRole('link', { name: /View a demo/i })).toBeInTheDocument()
   })

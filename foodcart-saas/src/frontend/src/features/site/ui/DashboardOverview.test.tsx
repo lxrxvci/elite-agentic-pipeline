@@ -19,7 +19,7 @@ vi.mock('../api/useUpdateSite', () => ({
 describe('DashboardOverview', () => {
   it('renders site and toggles publish', async () => {
     render(<DashboardOverview />)
-    expect(screen.getByText('tacos.foodcartsite.com')).toBeInTheDocument()
+    expect(screen.getByText('tacos.webagentic.app')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /publish/i }))
     expect(mutateMock).toHaveBeenCalledWith({ publish_state: 'published' })
   })

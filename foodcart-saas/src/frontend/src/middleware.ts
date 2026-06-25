@@ -1,3 +1,4 @@
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 import { get } from '@vercel/edge-config'
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
@@ -11,6 +12,19 @@ import {
 } from './shared/lib/canary'
 
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+
+const isProtectedAdminRoute = createRouteMatcher([
+  '/admin/dashboard(.*)',
+  '/admin/dashboard/:path*',
+  '/admin/onboarding(.*)',
+])
+
+export default clerkMiddleware(async (auth, request) => {
+  if (isProtectedAdminRoute(request)) {
+    await auth.protect()
+  }
+  return canaryMiddleware(request)
+})
 
 /**
  * Edge middleware for percentage-based canary traffic splitting.
@@ -26,7 +40,7 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 30
  * the backend canary. The response CSP is patched to allow that origin in
  * `connect-src`.
  */
-export async function middleware(request: NextRequest) {
+async function canaryMiddleware(request: NextRequest): Promise<NextResponse> {
   let canary: CanaryConfig | undefined
   try {
     canary = await get<CanaryConfig>('canary')

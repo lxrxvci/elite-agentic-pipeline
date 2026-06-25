@@ -6,6 +6,8 @@ import { CANARY_API_URL_COOKIE, CANARY_BUCKET_COOKIE } from './shared/lib/canary
 const getMock = vi.fn()
 const nextMock = vi.fn()
 const rewriteMock = vi.fn()
+const protectMock = vi.fn()
+const createRouteMatcherMock = vi.fn(() => () => false)
 
 vi.mock('@vercel/edge-config', () => ({
   get: (...args: unknown[]) => getMock(...args),
@@ -18,9 +20,19 @@ vi.mock('next/server', () => ({
   },
 }))
 
+vi.mock('@clerk/nextjs/server', () => ({
+  clerkMiddleware: (handler: (auth: () => { protect: typeof protectMock }, req: NextRequest) => Promise<Response>) => {
+    return async (req: NextRequest) => {
+      const auth = () => ({ protect: protectMock })
+      return handler(auth, req)
+    }
+  },
+  createRouteMatcher: createRouteMatcherMock,
+}))
+
 async function loadMiddleware() {
   const mod = await import('./middleware')
-  return mod.middleware
+  return mod.default
 }
 
 function createResponse() {
@@ -56,6 +68,7 @@ describe('middleware', () => {
     getMock.mockReset()
     nextMock.mockReset()
     rewriteMock.mockReset()
+    protectMock.mockReset()
   })
 
   it('passes through when Edge Config is unavailable', async () => {

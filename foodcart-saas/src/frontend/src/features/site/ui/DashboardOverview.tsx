@@ -32,7 +32,7 @@ export function DashboardOverview() {
       </div>
       {site && (
         <Card>
-          <h2 className="font-semibold text-lg mb-2">{site.slug}.foodcartsite.com</h2>
+          <h2 className="font-semibold text-lg mb-2">{site.slug}.webagentic.app</h2>
           <p className="text-fc-text-secondary mb-4">Template: {site.template_id}</p>
           <div className="flex gap-3">
             <Link href={`/sites/${site.slug}`} target="_blank" className="inline-flex items-center rounded-lg bg-fc-cobalt-600 text-white px-4 py-2 text-sm font-semibold hover:bg-fc-cobalt-700">

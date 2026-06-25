@@ -12,7 +12,7 @@ export function FooterSection({ data, theme }: FooterSectionProps) {
     <footer className={`${theme.surface} ${theme.text} py-12`}>
       <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
         <SocialLinks links={data.social_links} inverse={theme.text === 'text-white'} />
-        <p className="text-sm opacity-70">{data.copyright || '© Foodcart site'}</p>
+        <p className="text-sm opacity-70">{data.copyright || '© WebAgentic site'}</p>
       </div>
     </footer>
   )

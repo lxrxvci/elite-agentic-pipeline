@@ -96,7 +96,7 @@ export function OnboardingWizard() {
                     required
                     aria-describedby="slug-suffix"
                   />
-                  <span id="slug-suffix" className="text-fc-text-secondary whitespace-nowrap">.foodcartsite.com</span>
+                  <span id="slug-suffix" className="text-fc-text-secondary whitespace-nowrap">.webagentic.app</span>
                 </div>
                 {slugAvailable === true && <p className="text-sm text-fc-success-text mt-1">{slug} is available</p>}
                 {slugAvailable === false && <p className="text-sm text-fc-danger-text mt-1">{slug} is unavailable</p>}
@@ -138,7 +138,7 @@ export function OnboardingWizard() {
             <div className="space-y-6">
               <div className="bg-fc-success/10 text-fc-success-text rounded-xl p-4">
                 <h3 className="font-semibold">Ready to publish</h3>
-                <p className="text-sm mt-1">{businessName} will be live at <strong>{slug}.foodcartsite.com</strong></p>
+                <p className="text-sm mt-1">{businessName} will be live at <strong>{slug}.webagentic.app</strong></p>
                 <p className="text-sm">Template: <strong>{TEMPLATES.find((t) => t.id === templateId)?.name}</strong></p>
               </div>
               {onboard.error && <p className="text-sm text-fc-danger-text" role="alert">{onboard.error.message}</p>}

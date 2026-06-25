@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useAuthStore } from '@/features/auth/model/store'
+import { useClerk } from '@clerk/nextjs'
 
 interface FoodcartLayoutProps {
   children: React.ReactNode
@@ -22,14 +22,14 @@ const NAV = [
 export function FoodcartLayout({ children, tenantName, onToggleAssistant }: FoodcartLayoutProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const pathname = usePathname()
-  const logout = useAuthStore((s) => s.logout)
+  const { signOut } = useClerk()
 
   return (
     <div className="min-h-screen bg-fc-neutral-50 flex flex-col">
       <header className="h-16 bg-white border-b border-fc-neutral-200 flex items-center justify-between px-4 md:px-6 sticky top-0 z-30">
         <div className="flex items-center gap-4">
           <Link href="/admin/dashboard" className="font-display font-bold text-xl text-fc-text-primary">
-            Foodcart
+            WebAgentic
           </Link>
           {tenantName && <span className="hidden md:inline text-sm text-fc-text-secondary">{tenantName}</span>}
         </div>
@@ -52,7 +52,7 @@ export function FoodcartLayout({ children, tenantName, onToggleAssistant }: Food
           </button>
           <button
             type="button"
-            onClick={logout}
+            onClick={() => signOut({ redirectUrl: '/admin/login' })}
             className="text-sm font-semibold text-fc-text-secondary hover:text-fc-text-primary px-3 py-2"
           >
             Sign out

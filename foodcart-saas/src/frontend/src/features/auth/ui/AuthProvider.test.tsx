@@ -3,6 +3,12 @@ import { render, waitFor } from '@/shared/lib/test-utils'
 import { useAuthStore } from '@/features/auth/model/store'
 import { AuthProvider } from './AuthProvider'
 
+vi.mock('@clerk/nextjs', () => ({
+  useAuth: () => {
+    throw new Error('Not inside ClerkProvider')
+  },
+}))
+
 describe('AuthProvider', () => {
   beforeEach(() => {
     global.fetch = vi.fn()

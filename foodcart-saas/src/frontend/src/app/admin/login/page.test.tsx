@@ -1,18 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import AdminLoginPage from './page'
 
-const pushMock = vi.fn()
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: pushMock }),
+vi.mock('@clerk/nextjs', () => ({
+  SignIn: () => <div data-testid="clerk-sign-in">Clerk SignIn</div>,
 }))
 
 describe('AdminLoginPage', () => {
-  it('submits token and redirects', async () => {
+  it('renders the Clerk sign-in component', () => {
     render(<AdminLoginPage />)
-    await userEvent.type(screen.getByLabelText(/Clerk token/i), 'tok')
-    await userEvent.click(screen.getByRole('button', { name: /Sign in/i }))
-    expect(pushMock).toHaveBeenCalledWith('/admin/dashboard')
+    expect(screen.getByTestId('clerk-sign-in')).toBeInTheDocument()
   })
 })

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen } from '@/shared/lib/test-utils'
-import { useAuthStore } from '@/features/auth/model/store'
 import { AdminProtectedRoute } from './AdminProtectedRoute'
 
 const replaceMock = vi.fn()
@@ -10,14 +9,19 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/admin/dashboard',
 }))
 
+let authState = { isSignedIn: false, isLoaded: false }
+vi.mock('@clerk/nextjs', () => ({
+  useAuth: () => authState,
+}))
+
 describe('AdminProtectedRoute', () => {
   beforeEach(() => {
     replaceMock.mockClear()
-    useAuthStore.setState({ isAuthenticated: false, isLoading: true, token: null })
+    authState = { isSignedIn: false, isLoaded: false }
   })
 
-  it('renders children when authenticated', () => {
-    useAuthStore.setState({ isAuthenticated: true, isLoading: false })
+  it('renders children when signed in', () => {
+    authState = { isSignedIn: true, isLoaded: true }
     render(
       <AdminProtectedRoute>
         <div data-testid="protected" />
@@ -26,8 +30,8 @@ describe('AdminProtectedRoute', () => {
     expect(screen.getByTestId('protected')).toBeInTheDocument()
   })
 
-  it('redirects to admin login when not authenticated', () => {
-    useAuthStore.setState({ isAuthenticated: false, isLoading: false })
+  it('redirects to admin login when not signed in', () => {
+    authState = { isSignedIn: false, isLoaded: true }
     render(
       <AdminProtectedRoute>
         <div data-testid="protected" />

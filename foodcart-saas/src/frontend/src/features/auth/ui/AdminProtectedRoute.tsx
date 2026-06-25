@@ -2,23 +2,22 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuthStore } from '../model/store'
+import { useAuth } from '@clerk/nextjs'
 
 export function AdminProtectedRoute({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  const isLoading = useAuthStore((s) => s.isLoading)
+  const { isSignedIn, isLoaded } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    if (isLoaded && !isSignedIn) {
       router.replace('/admin/login')
     }
-  }, [isLoading, isAuthenticated, router])
+  }, [isLoaded, isSignedIn, router])
 
-  if (isLoading || !isAuthenticated) {
+  if (!isLoaded || !isSignedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-fc-cobalt-600 border-t-transparent" aria-label="Loading" />
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#6161FF] border-t-transparent" aria-label="Loading" />
       </div>
     )
   }

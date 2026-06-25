@@ -73,7 +73,7 @@ export function LandingPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2">
             <span className="text-2xl">🍴</span>
-            <span className="text-xl font-bold tracking-tight">Foodcart</span>
+            <span className="text-xl font-bold tracking-tight">WebAgentic</span>
           </Link>
           <nav className="hidden items-center gap-8 md:flex">
             <a href="#features" className="text-sm font-medium text-[#737373] hover:text-[#0a0a0a]">
@@ -119,7 +119,7 @@ export function LandingPage() {
               We build your site.
             </h1>
             <p className="mt-6 max-w-lg text-lg leading-relaxed text-[#525252] sm:text-xl">
-              Foodcart is the simplest way for food trucks and carts to get a professional website —
+              WebAgentic is the simplest way for food trucks and carts to get a professional website —
               menu, hours, locations, and AI updates, all in one place.
             </p>
             <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
@@ -156,7 +156,7 @@ export function LandingPage() {
                 <div className="h-3 w-3 rounded-full bg-amber-400" />
                 <div className="h-3 w-3 rounded-full bg-green-400" />
                 <div className="ml-4 h-7 flex-1 rounded-lg bg-[#f5f5f5] text-center text-xs leading-7 text-[#a3a3a3]">
-                  tacos-bros.foodcart.app
+                  tacos-bros.webagentic.app
                 </div>
               </div>
 
@@ -176,7 +176,7 @@ export function LandingPage() {
                     <div className="flex items-center gap-3">
                       <div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-100 text-lg">🤖</div>
                       <div>
-                        <div className="text-sm font-semibold">Foodcart AI</div>
+                        <div className="text-sm font-semibold">WebAgentic AI</div>
                         <div className="text-xs text-[#a3a3a3]">Just now</div>
                       </div>
                     </div>
@@ -267,7 +267,7 @@ export function LandingPage() {
               Everything you need to go live
             </h2>
             <p className="mt-4 text-lg text-[#525252]">
-              No more wrestling with website builders. Foodcart is built for mobile vendors.
+              No more wrestling with website builders. WebAgentic is built for mobile vendors.
             </p>
           </div>
           <div className="grid gap-6 md:grid-cols-2">
@@ -387,7 +387,7 @@ export function LandingPage() {
             Ready to feed more customers?
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-white/80">
-            Join food trucks already using Foodcart to turn hungry browsers into loyal regulars.
+            Join food trucks already using WebAgentic to turn hungry browsers into loyal regulars.
           </p>
           <Link
             href="/admin/onboarding"
@@ -404,10 +404,10 @@ export function LandingPage() {
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-6 sm:flex-row">
           <div className="flex items-center gap-2">
             <span className="text-xl">🍴</span>
-            <span className="font-semibold">Foodcart</span>
+            <span className="font-semibold">WebAgentic</span>
           </div>
           <p className="text-sm text-[#a3a3a3]">
-            © {new Date().getFullYear()} Foodcart. Built for food trucks everywhere.
+            © {new Date().getFullYear()} WebAgentic. Built for food trucks everywhere.
           </p>
           <div className="flex gap-6">
             <Link href="/admin/login" className="text-sm text-[#737373] hover:text-[#0a0a0a]">

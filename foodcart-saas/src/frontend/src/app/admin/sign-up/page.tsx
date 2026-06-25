@@ -1,14 +1,14 @@
 'use client'
 
-import { SignIn } from '@clerk/nextjs'
+import { SignUp } from '@clerk/nextjs'
 
-export default function AdminLoginPage() {
+export default function AdminSignUpPage() {
   return (
     <div className="min-h-screen bg-[#fafafa] flex items-center justify-center p-4">
-      <SignIn
+      <SignUp
         routing="hash"
-        signUpUrl="/admin/sign-up"
-        fallbackRedirectUrl="/admin/dashboard"
+        signInUrl="/admin/login"
+        fallbackRedirectUrl="/admin/onboarding"
         appearance={{
           elements: {
             card: 'shadow-elevated',
