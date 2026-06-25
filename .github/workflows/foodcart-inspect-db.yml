@@ -24,17 +24,15 @@ jobs:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
         run: |
           python - <<'PY'
-          import os, sqlalchemy as sa
+          import os, psycopg
           url = os.environ["DATABASE_URL"]
-          engine = sa.create_engine(url)
-          with engine.connect() as conn:
-              # alembic version
-              try:
-                  rows = conn.execute(sa.text("SELECT version_num FROM alembic_version")).fetchall()
-                  print("alembic_version:", [r[0] for r in rows])
-              except Exception as exc:
-                  print("alembic_version error:", exc)
-              # tables
-              rows = conn.execute(sa.text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")).fetchall()
-              print("tables:", [r[0] for r in rows])
+          with psycopg.connect(url) as conn:
+              with conn.cursor() as cur:
+                  try:
+                      cur.execute("SELECT version_num FROM alembic_version")
+                      print("alembic_version:", [r[0] for r in cur.fetchall()])
+                  except Exception as exc:
+                      print("alembic_version error:", exc)
+                  cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
+                  print("tables:", [r[0] for r in cur.fetchall()])
           PY
