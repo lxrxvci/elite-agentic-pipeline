@@ -21,7 +21,6 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
       - name: Deploy backend to Vercel production
-        working-directory: foodcart-saas/src/backend
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
