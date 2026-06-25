@@ -108,9 +108,10 @@ def add_exception_handlers(app: FastAPI) -> None:
             error_type=type(exc).__name__,
             error=str(exc),
         )
+        detail = f"{type(exc).__name__}: {exc}"
         return problem_response(
             status=500,
             title="Internal server error",
-            detail="An unexpected error occurred. Please try again later.",
+            detail=detail,
             instance=str(request.url.path),
         )
