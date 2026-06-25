@@ -1,0 +1,45 @@
+name: Foodcart Sync DATABASE_URL to Vercel
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - preview
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set DATABASE_URL in Vercel from GitHub secret
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          url = f"https://api.vercel.com/v10/projects/{os.environ['PROJECT_ID']}/env"
+          payload = {
+              "key": "DATABASE_URL",
+              "value": os.environ["DATABASE_URL"],
+              "target": ["${{ github.event.inputs.environment }}"],
+              "type": "encrypted",
+          }
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode(),
+              headers={
+                  "Authorization": f"Bearer {os.environ['VERCEL_TOKEN']}",
+                  "Content-Type": "application/json",
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(req) as resp:
+              print(resp.read().decode())
+          PY
