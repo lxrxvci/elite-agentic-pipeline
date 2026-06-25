@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+  <rect width="400" height="300" fill="#1e5caa"/>
+  <circle cx="280" cy="150" r="80" fill="#d4a017"/>
+  <text x="50" y="130" fill="#fff" font-family="serif" font-size="32" font-weight="700">Mis Abuelos</text>
+  <text x="50" y="170" fill="#c65d3b" font-family="serif" font-size="18">Family warmth</text>
+</svg>

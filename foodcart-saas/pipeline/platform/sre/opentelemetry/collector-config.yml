@@ -1,0 +1,97 @@
+# SRE Platform — OpenTelemetry Collector configuration snippet
+# Adapt hostnames, endpoints, and exporters for the squad's observability stack.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Drop health probes to reduce noise and cost.
+  filter/health:
+    traces:
+      span:
+        - 'attributes["http.route"] == "/health"'
+        - 'attributes["http.route"] == "/ready"'
+    metrics:
+      metric:
+        - 'name == "http_requests_total" and attributes["http.route"] == "/health"'
+        - 'name == "http_requests_total" and attributes["http.route"] == "/ready"'
+
+  # Protect collector memory under load spikes.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Batch telemetry for efficient export.
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  # Enrich telemetry with service and tenant context.
+  resource:
+    attributes:
+      - key: service.namespace
+        value: foodcart-saas
+        action: upsert
+      - key: deployment.environment
+        from_attribute: env
+        action: upsert
+
+  # Redact PII from attributes before export.
+  attributes/redact:
+    actions:
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+      - key: user.email
+        action: hash
+      - key: end_user.email
+        action: hash
+
+exporters:
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    # Add headers/auth if using a managed Prometheus backend.
+
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    labels:
+      attributes:
+        service.name: service_name
+        service.namespace: service_namespace
+        deployment.environment: deployment_environment
+        tenant.slug: tenant_slug
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+service:
+  extensions: [health_check, pprof]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/health, attributes/redact, resource, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/health, resource, batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, resource, batch]
+      exporters: [loki]

@@ -1,0 +1,1009 @@
+openapi: 3.0.2
+info:
+  title: Foodcart SaaS API
+  description: |
+    Core API contract for the Foodcart SaaS platform: tenant onboarding,
+    site management, content blocks, AI-assisted editing, and revisions.
+  version: 0.2.0-rfc-accepted
+  contact:
+    name: Foodcart Engineering
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development
+  - url: https://api.foodcartsite.com/api/v1
+    description: Production
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /tenants/slug/check:
+    post:
+      tags: [Onboarding]
+      summary: Check slug availability
+      description: |
+        Advises whether a proposed site slug is available. This check is
+        advisory; the authoritative reservation happens during onboarding.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SlugCheckRequest"
+      responses:
+        "200":
+          description: Availability result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SlugCheckResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /tenants/onboard:
+    post:
+      tags: [Onboarding]
+      summary: Create a tenant and initial site
+      description: |
+        Provisions a new tenant, creates the owner user from the Clerk token,
+        and initializes the first site with the chosen template.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantOnboardingRequest"
+      responses:
+        "201":
+          description: Tenant and site created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantOnboardingResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /tenants/me:
+    get:
+      tags: [Tenant]
+      summary: Get current tenant
+      responses:
+        "200":
+          description: Current tenant details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /sites:
+    get:
+      tags: [Sites]
+      summary: List sites for the current tenant
+      responses:
+        "200":
+          description: List of sites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Site"
+    post:
+      tags: [Sites]
+      summary: Create a new site
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteCreate"
+      responses:
+        "201":
+          description: Site created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /sites/{site_id}:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+    get:
+      tags: [Sites]
+      summary: Get a site
+      responses:
+        "200":
+          description: Site details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Sites]
+      summary: Update a site
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteUpdate"
+      responses:
+        "200":
+          description: Updated site
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Sites]
+      summary: Delete a site and its content
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /sites/{site_id}/content:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+    get:
+      tags: [Content]
+      summary: Get all content blocks for a site
+      responses:
+        "200":
+          description: Ordered content blocks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site_id:
+                    type: string
+                    format: uuid
+                  blocks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContentBlock"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /sites/{site_id}/content/blocks:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+    post:
+      tags: [Content]
+      summary: Add a content block
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContentBlockCreate"
+      responses:
+        "201":
+          description: Block created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentBlock"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /sites/{site_id}/content/blocks/{block_id}:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+      - $ref: "#/components/parameters/BlockId"
+    put:
+      tags: [Content]
+      summary: Update a content block
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContentBlockCreate"
+      responses:
+        "200":
+          description: Updated block
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentBlock"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Content]
+      summary: Delete a content block
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /sites/{site_id}/ingest:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+    post:
+      tags: [Ingestion]
+      summary: Trigger ingestion from external sources
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestionRequest"
+      responses:
+        "202":
+          description: Ingestion jobs accepted
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IngestionJob"
+
+  /sites/{site_id}/ingest/jobs:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+    get:
+      tags: [Ingestion]
+      summary: List ingestion jobs for a site
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of ingestion jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IngestionJob"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /sites/{site_id}/ingest/jobs/{job_id}:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [Ingestion]
+      summary: Get ingestion job details
+      responses:
+        "200":
+          description: Ingestion job details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestionJobDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /sites/{site_id}/ai/propose:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+    post:
+      tags: [AI Assistant]
+      summary: Propose a content change from natural language
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIProposeRequest"
+      responses:
+        "200":
+          description: Change preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIProposeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+
+  /sites/{site_id}/ai/apply:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+    post:
+      tags: [AI Assistant]
+      summary: Apply an approved AI proposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIApplyRequest"
+      responses:
+        "200":
+          description: Applied change and new revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Revision"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /sites/{site_id}/revisions:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+    get:
+      tags: [Revisions]
+      summary: List content revisions for a site
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of revisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Revision"
+
+  /sites/{site_id}/revisions/{revision_id}/revert:
+    parameters:
+      - $ref: "#/components/parameters/SiteId"
+      - $ref: "#/components/parameters/RevisionId"
+    post:
+      tags: [Revisions]
+      summary: Revert site content to a previous revision
+      responses:
+        "200":
+          description: New revision created from the revert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Revision"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /public/sites/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9-]+$"
+    get:
+      tags: [Public]
+      summary: Get published site content by slug
+      security: []
+      responses:
+        "200":
+          description: Public site payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicSite"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /public/sites/{slug}/preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9-]+$"
+      - name: preview_token
+        in: query
+        required: true
+        schema:
+          type: string
+          description: Short-lived signed preview token issued by the backend.
+    get:
+      tags: [Public]
+      summary: Preview a draft site with a signed token
+      security: []
+      responses:
+        "200":
+          description: Draft site payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicSite"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Clerk JWT access token
+
+  parameters:
+    SiteId:
+      name: site_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    BlockId:
+      name: block_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RevisionId:
+      name: revision_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Conflict (e.g., duplicate slug)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unprocessable:
+      description: Unprocessable entity (e.g., AI output could not be validated)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+
+    SlugCheckRequest:
+      type: object
+      required: [slug]
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9-]+(?:[a-z0-9-]+)*$"
+          maxLength: 63
+
+    SlugCheckResponse:
+      type: object
+      required: [slug, available]
+      properties:
+        slug:
+          type: string
+        available:
+          type: boolean
+        normalized_slug:
+          type: string
+        suggestions:
+          type: array
+          items:
+            type: string
+
+    IngestionJobDetail:
+      allOf:
+        - $ref: "#/components/schemas/IngestionJob"
+        - type: object
+          properties:
+            raw_payload:
+              type: object
+              nullable: true
+              description: Cached raw response from the external source.
+            proposed_blocks:
+              type: array
+              items:
+                $ref: "#/components/schemas/ContentBlock"
+              description: Proposed content blocks derived from normalized data.
+
+    AIRequest:
+      type: object
+      required: [id, tenant_id, site_id, prompt, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        prompt:
+          type: string
+        prompt_hash:
+          type: string
+        model:
+          type: string
+        status:
+          type: string
+          enum: [proposed, applied, rejected, failed]
+        proposed_patch:
+          type: array
+          items:
+            $ref: "#/components/schemas/PatchOperation"
+        applied_revision_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Tenant:
+      type: object
+      required: [id, name, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+          enum: [active, suspended, archived]
+        billing_status:
+          type: string
+          enum: [trial, active, past_due, canceled]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TenantOnboardingRequest:
+      type: object
+      required: [business_name, slug, template_id]
+      properties:
+        business_name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          pattern: "^[a-z0-9-]+$"
+          maxLength: 63
+        template_id:
+          type: string
+          enum: [banhmi, real-indian, mis-abuelos]
+        initial_sources:
+          $ref: "#/components/schemas/IngestionRequest"
+
+    TenantOnboardingResponse:
+      type: object
+      required: [tenant, site]
+      properties:
+        tenant:
+          $ref: "#/components/schemas/Tenant"
+        site:
+          $ref: "#/components/schemas/Site"
+
+    Site:
+      type: object
+      required: [id, tenant_id, slug, template_id, publish_state, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        template_id:
+          type: string
+        publish_state:
+          type: string
+          enum: [draft, published]
+        seo:
+          $ref: "#/components/schemas/SeoMeta"
+        custom_domain:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SiteCreate:
+      type: object
+      required: [slug, template_id]
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9-]+$"
+          maxLength: 63
+        template_id:
+          type: string
+          enum: [banhmi, real-indian, mis-abuelos]
+        seo:
+          $ref: "#/components/schemas/SeoMeta"
+
+    SiteUpdate:
+      type: object
+      properties:
+        template_id:
+          type: string
+          enum: [banhmi, real-indian, mis-abuelos]
+        publish_state:
+          type: string
+          enum: [draft, published]
+        seo:
+          $ref: "#/components/schemas/SeoMeta"
+        custom_domain:
+          type: string
+          nullable: true
+
+    SeoMeta:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        favicon_url:
+          type: string
+          format: uri
+
+    ContentBlock:
+      type: object
+      required: [id, site_id, tenant_id, block_type, schema_version, data, sort_order]
+      properties:
+        id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        block_type:
+          type: string
+          enum: [hero, story, menu, locations, catering, contact, order_links, footer]
+        schema_version:
+          type: string
+        data:
+          type: object
+        sort_order:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ContentBlockCreate:
+      type: object
+      required: [block_type, schema_version, data, sort_order]
+      properties:
+        block_type:
+          type: string
+          enum: [hero, story, menu, locations, catering, contact, order_links, footer]
+        schema_version:
+          type: string
+        data:
+          type: object
+        sort_order:
+          type: integer
+
+    MenuCategory:
+      type: object
+      required: [title, items]
+      properties:
+        title:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuItem"
+
+    MenuItem:
+      type: object
+      required: [name, price]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: string
+        image_url:
+          type: string
+          format: uri
+        tags:
+          type: array
+          items:
+            type: string
+
+    Location:
+      type: object
+      required: [name, address, phone, hours, timezone]
+      properties:
+        name:
+          type: string
+        address:
+          type: string
+        phone:
+          type: string
+        hours:
+          type: object
+          additionalProperties:
+            type: string
+        timezone:
+          type: string
+        map_url:
+          type: string
+          format: uri
+
+    SocialLink:
+      type: object
+      required: [platform, url]
+      properties:
+        platform:
+          type: string
+          enum: [google, yelp, instagram, facebook, tiktok, website]
+        url:
+          type: string
+          format: uri
+
+    OrderLink:
+      type: object
+      required: [platform, url]
+      properties:
+        platform:
+          type: string
+          enum: [doordash, ubereats, grubhub, website, phone]
+        url:
+          type: string
+
+    IngestionRequest:
+      type: object
+      properties:
+        google_business_url:
+          type: string
+          format: uri
+        yelp_url:
+          type: string
+          format: uri
+        menu_url:
+          type: string
+          format: uri
+        website_url:
+          type: string
+          format: uri
+        social_links:
+          type: array
+          items:
+            $ref: "#/components/schemas/SocialLink"
+        order_links:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderLink"
+
+    IngestionJob:
+      type: object
+      required: [id, site_id, source_type, source_url, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        source_type:
+          type: string
+          enum: [google_business, yelp, menu_url, website, social_links]
+        source_url:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        normalized_data:
+          type: object
+          nullable: true
+        errors:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    AIProposeRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          maxLength: 2000
+
+    AIProposeResponse:
+      type: object
+      required: [proposal_id, summary, in_scope, operations]
+      properties:
+        proposal_id:
+          type: string
+          format: uuid
+        summary:
+          type: string
+        in_scope:
+          type: boolean
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        operations:
+          type: array
+          items:
+            $ref: "#/components/schemas/PatchOperation"
+
+    PatchOperation:
+      type: object
+      required: [op, path]
+      properties:
+        op:
+          type: string
+          enum: [add, replace, remove]
+        path:
+          type: string
+          description: JSON Pointer-like path to a content block or field.
+        value:
+          description: Required for add and replace operations.
+
+    AIApplyRequest:
+      type: object
+      required: [proposal_id, confirmed]
+      properties:
+        proposal_id:
+          type: string
+          format: uuid
+        confirmed:
+          type: boolean
+          description: Must be true to apply the proposal.
+
+    Revision:
+      type: object
+      required: [id, site_id, triggered_by, source, snapshot, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        triggered_by:
+          type: string
+          format: uuid
+        source:
+          type: string
+          enum: [manual, ai, ingestion, revert]
+        ai_request_id:
+          type: string
+          format: uuid
+          nullable: true
+        snapshot:
+          type: object
+          description: Full content snapshot before this revision.
+        created_at:
+          type: string
+          format: date-time
+
+    PublicSite:
+      type: object
+      required: [slug, template_id, publish_state, blocks]
+      properties:
+        slug:
+          type: string
+        template_id:
+          type: string
+        publish_state:
+          type: string
+          enum: [draft, published]
+        seo:
+          $ref: "#/components/schemas/SeoMeta"
+        blocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContentBlock"

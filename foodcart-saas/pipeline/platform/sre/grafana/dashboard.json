@@ -1,0 +1,109 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "foodcart-api",
+    "title": "Foodcart SaaS — Golden Signals",
+    "tags": ["foodcart", "sre", "golden-signals"],
+    "timezone": "utc",
+    "schemaVersion": 36,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Request Rate (RPS)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum by (service) (rate(http_requests_total{service=~\"foodcart-.*\"}[5m]))",
+            "legendFormat": "{{ service }}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Availability (%)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "foodcart:api:availability_5m",
+            "legendFormat": "{{ service }}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "5xx Error Rate (%)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "foodcart:api:error_rate_5m",
+            "legendFormat": "{{ service }}/{{ route }}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "id": 4,
+        "title": "API p95 Latency (s)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "foodcart:api:latency_p95_5m",
+            "legendFormat": "{{ service }}/{{ route }}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 5,
+        "title": "AI Assistant p95 Latency (s)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "foodcart:ai:latency_p95_5m",
+            "legendFormat": "{{ route }}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+      },
+      {
+        "id": 6,
+        "title": "Frontend LCP p75 (s)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.75, sum by (le, site_slug) (rate(foodcart_web_vitals_lcp_bucket[5m])))",
+            "legendFormat": "{{ site_slug }}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+      },
+      {
+        "id": 7,
+        "title": "DB Pool Utilization (%)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "foodcart:db:pool_utilization",
+            "legendFormat": "{{ service }}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }
+      },
+      {
+        "id": 8,
+        "title": "Monthly Error Budget Burn (%)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "foodcart:error_budget:availability_burn_rate_30d",
+            "legendFormat": "availability"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }
+      }
+    ]
+  }
+}

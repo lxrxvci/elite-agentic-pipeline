@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Repository-root layout for the foodcart-saas project.
+  PROJECT_DIR: .
+
+jobs:
+  # Commit stage: detect changes and run fastest checks first.
+  # Target total wall time < 5 minutes for the commit stage.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+      infra: ${{ steps.filter.outputs.infra }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Detect changed paths
+        uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'src/frontend/**'
+            backend:
+              - 'src/backend/**'
+            infra:
+              - 'infra/**'
+              - 'observability/**'
+
+  # Commit stage: fastest checks first (lint / type / unit).
+  frontend:
+    name: Frontend checks
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    uses: ./.github/workflows/_ci-frontend.yml
+    # _ci-frontend.yml runs: npm ci, npm audit, playwright install, lint, typecheck,
+    # test:ci, test:a11y, build. Target < 5 minutes.
+    timeout-minutes: 10
+    with:
+      project-dir: .
+      node-version: "20"
+
+  backend:
+    name: Backend checks
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' }}
+    uses: ./.github/workflows/_ci-backend.yml
+    # _ci-backend.yml runs: ruff, mypy, bandit, alembic migrations, pytest.
+    # Target < 5 minutes.
+    timeout-minutes: 10
+    with:
+      project-dir: .
+      python-version: "3.12"
+      database-url: postgresql+psycopg://postgres:postgres@localhost:5432/elite_db
+    secrets:
+      ci-secret-key: ${{ secrets.CI_SECRET_KEY }}
+
+  infra:
+    name: Infrastructure checks
+    needs: changes
+    if: ${{ needs.changes.outputs.infra == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_ci-infra.yml
+    timeout-minutes: 10
+    with:
+      project-dir: .
+
+  # PR stage: integration / contract / E2E smoke tests.
+  # They run only when frontend or backend changed and only after the fast
+  # commit-stage jobs succeed (fail-fast). Target < 15 minutes.
+  contract-tests:
+    name: Contract tests
+    needs: [changes, frontend, backend]
+    if: ${{ !cancelled() && (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && (needs.backend.result == 'success' || needs.backend.result == 'skipped') && (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true') }}
+    uses: ./.github/workflows/contract-tests.yml
+    timeout-minutes: 15
+    with:
+      project-dir: .
+    secrets: inherit
+
+  e2e-real:
+    name: E2E smoke tests
+    needs: [changes, frontend, backend]
+    if: ${{ !cancelled() && (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && (needs.backend.result == 'success' || needs.backend.result == 'skipped') && (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true') }}
+    uses: ./.github/workflows/_ci-e2e-real.yml
+    timeout-minutes: 15
+    with:
+      project-dir: .
+      node-version: "20"
+
+  dora:
+    name: DORA metrics
+    needs: changes
+    if: ${{ github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/dora-metrics.yml
+    timeout-minutes: 5
+    with:
+      project-dir: .
+
+  required:
+    name: CI required checks
+    needs: [changes, frontend, backend, infra, contract-tests, e2e-real, dora]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check all required jobs passed
+        run: |
+          echo "changes=${{ needs.changes.result }}"
+          echo "frontend=${{ needs.frontend.result }}"
+          echo "backend=${{ needs.backend.result }}"
+          echo "infra=${{ needs.infra.result }}"
+          echo "contract-tests=${{ needs.contract-tests.result }}"
+          echo "e2e-real=${{ needs.e2e-real.result }}"
+          echo "dora=${{ needs.dora.result }}"
+          if [ "${{ needs.changes.result }}" = "failure" ] || [ "${{ needs.changes.result }}" = "cancelled" ]; then
+            echo "Changes detection job failed or was cancelled."
+            exit 1
+          fi
+          if [ "${{ needs.frontend.result }}" = "failure" ] || [ "${{ needs.frontend.result }}" = "cancelled" ] || \
+             [ "${{ needs.backend.result }}" = "failure" ] || [ "${{ needs.backend.result }}" = "cancelled" ] || \
+             [ "${{ needs.infra.result }}" = "failure" ] || [ "${{ needs.infra.result }}" = "cancelled" ] || \
+             [ "${{ needs.contract-tests.result }}" = "failure" ] || [ "${{ needs.contract-tests.result }}" = "cancelled" ] || \
+             [ "${{ needs.e2e-real.result }}" = "failure" ] || [ "${{ needs.e2e-real.result }}" = "cancelled" ] || \
+             [ "${{ needs.dora.result }}" = "failure" ] || [ "${{ needs.dora.result }}" = "cancelled" ]; then
+            echo "One or more CI jobs failed."
+            exit 1
+          fi
+          echo "All required CI jobs passed or were skipped."

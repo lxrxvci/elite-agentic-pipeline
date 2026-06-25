@@ -1,0 +1,132 @@
+name: PR Preview Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/pr-environment.yml'
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  TF_IN_AUTOMATION: true
+  INFRA_DIR: infra
+  TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
+  TF_VAR_enable_pr_environments: true
+  PREVIEW_WORKSPACE: pr-${{ github.event.pull_request.number }}
+
+jobs:
+  provision:
+    name: Provision preview environment
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: preview
+    defaults:
+      run:
+        working-directory: ${{ env.INFRA_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+
+      - name: Write backend config
+        env:
+          BACKEND_CONFIG: ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+        if: env.BACKEND_CONFIG != ''
+        run: |
+          cat > backend.tfvars <<'EOF'
+          ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+          EOF
+
+      - name: Terraform Init
+        run: |
+          if [ -f backend.tfvars ]; then
+            terraform init -backend-config=backend.tfvars
+          else
+            echo "WARNING: backend.tfvars not provided; using local backend."
+            terraform init -backend=false
+          fi
+
+      - name: Select preview workspace
+        run: terraform workspace select "$PREVIEW_WORKSPACE" || terraform workspace new "$PREVIEW_WORKSPACE"
+
+      - name: Terraform Plan
+        run: terraform plan -no-color -input=false -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false tfplan
+
+      - name: Comment preview URL on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c379441c0 # v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 Terraform preview workspace **${process.env.PREVIEW_WORKSPACE}** has been provisioned. Resources will be destroyed automatically when this PR is closed.`
+            });
+
+  destroy:
+    name: Destroy preview environment
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ${{ env.INFRA_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+
+      - name: Write backend config
+        env:
+          BACKEND_CONFIG: ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+        if: env.BACKEND_CONFIG != ''
+        run: |
+          cat > backend.tfvars <<'EOF'
+          ${{ secrets.TERRAFORM_BACKEND_CONFIG }}
+          EOF
+
+      - name: Terraform Init
+        run: |
+          if [ -f backend.tfvars ]; then
+            terraform init -backend-config=backend.tfvars
+          else
+            echo "WARNING: backend.tfvars not provided; using local backend."
+            terraform init -backend=false
+          fi
+
+      - name: Destroy preview workspace
+        run: |
+          set -euo pipefail
+          if terraform workspace select "$PREVIEW_WORKSPACE"; then
+            terraform destroy -auto-approve -input=false
+            terraform workspace select default
+            terraform workspace delete "$PREVIEW_WORKSPACE"
+          else
+            echo "Preview workspace $PREVIEW_WORKSPACE does not exist; nothing to destroy."
+          fi

@@ -1,0 +1,85 @@
+name: Database Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+      command:
+        description: "Migration command"
+        required: true
+        default: "upgrade"
+        type: choice
+        options:
+          - upgrade
+          - downgrade
+      revision:
+        description: "Alembic revision (default: head for upgrade, -1 for downgrade)"
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  migrate-staging:
+    if: github.event.inputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        working-directory: src/backend
+        run: pip install -e .
+      - name: Backup reminder
+        run: echo "Ensure a database backup has been taken before proceeding."
+      - name: Run migration
+        working-directory: src/backend
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          if [ "${{ github.event.inputs.command }}" = "downgrade" ]; then
+            alembic downgrade "${{ github.event.inputs.revision || '-1' }}"
+          else
+            alembic upgrade "${{ github.event.inputs.revision || 'head' }}"
+          fi
+
+  migrate-production:
+    if: github.event.inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        working-directory: src/backend
+        run: pip install -e .
+      - name: Backup reminder
+        run: echo "Ensure a database backup has been taken before proceeding."
+      - name: Run migration
+        working-directory: src/backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          if [ "${{ github.event.inputs.command }}" = "downgrade" ]; then
+            alembic downgrade "${{ github.event.inputs.revision || '-1' }}"
+          else
+            alembic upgrade "${{ github.event.inputs.revision || 'head' }}"
+          fi

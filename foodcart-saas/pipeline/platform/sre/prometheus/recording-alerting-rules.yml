@@ -1,0 +1,249 @@
+# SRE Platform — Reusable Prometheus recording and alerting rules
+# Squad-specific configs in observability/prometheus/alerts.yml should be derived
+# from this template and customized for traffic patterns and routing.
+
+groups:
+  - name: foodcart-golden-signals
+    interval: 30s
+    rules:
+      - record: foodcart:api:request_rate_5m
+        expr: |
+          sum by (service, route) (
+            rate(http_requests_total{service=~"foodcart-.*"}[5m])
+          )
+
+      - record: foodcart:api:availability_5m
+        expr: |
+          (
+            sum by (service) (rate(http_requests_total{service=~"foodcart-.*",status=~"2..|3.."}[5m]))
+            /
+            sum by (service) (rate(http_requests_total{service=~"foodcart-.*"}[5m]))
+          ) * 100
+
+      - record: foodcart:api:error_rate_5m
+        expr: |
+          (
+            sum by (service, route) (rate(http_requests_total{service=~"foodcart-.*",status=~"5.."}[5m]))
+            /
+            sum by (service, route) (rate(http_requests_total{service=~"foodcart-.*"}[5m]))
+          ) * 100
+
+      - record: foodcart:api:latency_p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (service, route, le) (
+              rate(http_request_duration_seconds_bucket{service=~"foodcart-.*"}[5m])
+            )
+          )
+
+      - record: foodcart:ai:request_rate_5m
+        expr: |
+          sum by (route) (
+            rate(http_requests_total{service="foodcart-api",route=~"/api/v1/foodcart/ai/.*"}[5m])
+          )
+
+      - record: foodcart:ai:latency_p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (route, le) (
+              rate(http_request_duration_seconds_bucket{service="foodcart-api",route=~"/api/v1/foodcart/ai/.*"}[5m])
+            )
+          )
+
+      - record: foodcart:db:pool_utilization
+        expr: |
+          (
+            db_pool_active_connections{service=~"foodcart-.*"}
+            /
+            db_pool_max_connections{service=~"foodcart-.*"}
+          ) * 100
+
+      - record: foodcart:error_budget:availability_burn_rate_30d
+        expr: |
+          (
+            1 - foodcart:api:availability_5m / 100
+          ) / 0.001
+
+  - name: foodcart-alerts
+    rules:
+      - alert: FoodcartAvailabilityBelowSLO
+        expr: foodcart:api:availability_5m < 99.9
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart API availability below SLO"
+          description: "Availability for {{ $labels.service }} is {{ $value | humanize }}% over the last 5 minutes."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/incident-response"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartErrorRateCritical
+        expr: foodcart:api:error_rate_5m > 0.5
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart 5xx error rate critical"
+          description: "5xx rate for {{ $labels.service }}/{{ $labels.route }} is {{ $value | humanize }}% over 5 minutes."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/incident-response"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartErrorRateHigh
+        expr: foodcart:api:error_rate_5m > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart 5xx error rate elevated"
+          description: "5xx rate for {{ $labels.service }}/{{ $labels.route }} is {{ $value | humanize }}% over 5 minutes."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/incident-response"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartLatencyP95Critical
+        expr: foodcart:api:latency_p95_5m > 0.5
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart API p95 latency critical"
+          description: "p95 latency for {{ $labels.service }}/{{ $labels.route }} is {{ $value | humanizeDuration }} over 5 minutes."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/incident-response"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartLatencyP95High
+        expr: foodcart:api:latency_p95_5m > 0.3
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart API p95 latency high"
+          description: "p95 latency for {{ $labels.service }}/{{ $labels.route }} is {{ $value | humanizeDuration }} over 5 minutes."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/incident-response"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartAIAssistantLatencyHigh
+        expr: foodcart:ai:latency_p95_5m > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart AI assistant latency high"
+          description: "AI assistant p95 latency is {{ $value | humanizeDuration }} over 5 minutes."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/incident-response"
+          dashboard_url: "https://grafana.internal/d/foodcart-ai"
+
+      - alert: FoodcartAIAssistantGuardrailTriggered
+        expr: |
+          sum by (tenant_slug, route) (
+            increase(ai_assistant_guardrail_blocks_total{service="foodcart-api"}[5m])
+          ) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: appsec
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart AI assistant guardrail triggered"
+          description: "Guardrail blocked {{ $value }} attempt(s) for tenant {{ $labels.tenant_slug }} on route {{ $labels.route }}."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/ai-guardrail-response"
+          dashboard_url: "https://grafana.internal/d/foodcart-ai"
+
+      - alert: FoodcartDatabasePoolCritical
+        expr: foodcart:db:pool_utilization > 85
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart database pool critically saturated"
+          description: "DB pool utilization for {{ $labels.service }} is {{ $value | humanize }}%."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/database-saturation"
+          dashboard_url: "https://grafana.internal/d/foodcart-db"
+
+      - alert: FoodcartDatabasePoolSaturation
+        expr: foodcart:db:pool_utilization > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart database pool saturation warning"
+          description: "DB pool utilization for {{ $labels.service }} is {{ $value | humanize }}%."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/database-saturation"
+          dashboard_url: "https://grafana.internal/d/foodcart-db"
+
+      - alert: FoodcartTrafficDrop
+        expr: |
+          (
+            sum by (service) (rate(http_requests_total{service=~"foodcart-.*"}[5m]))
+            /
+            avg by (service) (rate(http_requests_total{service=~"foodcart-.*"}[1h] offset 1w))
+          ) < 0.7
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart traffic drop detected"
+          description: "Traffic for {{ $labels.service }} is below 70% of same-hour baseline."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/traffic-anomaly"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartErrorBudgetBurn50
+        expr: foodcart:error_budget:availability_burn_rate_30d > 14.4
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart error budget 50% burn"
+          description: "Availability error budget is burning at {{ $value | humanize }}× the monthly rate."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/error-budget"
+          dashboard_url: "https://grafana.internal/d/foodcart-slo"
+
+      - alert: FoodcartErrorBudgetExhausted
+        expr: foodcart:error_budget:availability_burn_rate_30d >= 100
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+          service: foodcart-api
+        annotations:
+          summary: "Foodcart error budget exhausted"
+          description: "Monthly availability error budget is exhausted. Feature freeze in effect."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/error-budget"
+          dashboard_url: "https://grafana.internal/d/foodcart-slo"
+
+      - alert: FoodcartPublicSiteDown
+        expr: |
+          sum by (slug) (
+            probe_success{job="foodcart-public-sites",slug=~".+"}
+          ) == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+          service: foodcart-public-site
+        annotations:
+          summary: "Foodcart public tenant site down"
+          description: "Synthetic probe failed for {{ $labels.slug }}.foodcartsite.com for 2 minutes."
+          runbook_url: "https://wiki.internal/runbooks/foodcart/public-site-down"
+          dashboard_url: "https://grafana.internal/d/foodcart-public-sites"

@@ -1,0 +1,11 @@
+{
+  "status": "collected",
+  "checks": {
+    "bandit": {"passed": true},
+    "semgrep": {"passed": true},
+    "trivy": {"passed": true},
+    "dependency_review": {"passed": true},
+    "trufflehog": {"passed": true},
+    "codeql": {"passed": true}
+  }
+}

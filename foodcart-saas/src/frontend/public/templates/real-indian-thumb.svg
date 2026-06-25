@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+  <rect width="400" height="300" fill="#1a1a3e"/>
+  <rect x="40" y="60" width="320" height="180" rx="12" fill="#f5f0e1"/>
+  <text x="70" y="140" fill="#1a1a3e" font-family="serif" font-size="28" font-weight="700">Real Indian</text>
+  <text x="70" y="180" fill="#e86a33" font-family="serif" font-size="18" font-style="italic">Warm heritage story</text>
+</svg>

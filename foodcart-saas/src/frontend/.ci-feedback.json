@@ -1,0 +1,23 @@
+{
+  "status": "collected",
+  "checks": {
+    "tests": {
+      "passed": true,
+      "returncode": 0,
+      "stdout": "              \n  ...artLayout.tsx |     100 |      100 |     100 |     100 |                   \n ...widgets/Header |     100 |      100 |     100 |     100 |                   \n  Header.tsx       |     100 |      100 |     100 |     100 |                   \n ...widgets/Layout |    98.3 |     90.9 |     100 |    98.3 |                   \n  Layout.tsx       |    98.3 |     90.9 |     100 |    98.3 | 27                \n-------------------|---------|----------|---------|---------|-------------------",
+      "stderr": "rnings ...` to show where the warning was created)\n(node:30760) Warning: `--localstorage-file` was provided without a valid path\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:30762) Warning: `--localstorage-file` was provided without a valid path\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:30785) Warning: `--localstorage-file` was provided without a valid path\n(Use `node --trace-warnings ...` to show where the warning was created)"
+    },
+    "lint": {
+      "passed": true,
+      "returncode": 0,
+      "stdout": "ext/next/no-img-element\n\n/Users/lxrxcvi/sdlc-pipeline/elite-agentic-pipeline/foodcart-saas/src/frontend/src/shared/ui/TemplateSelector.tsx\n  46:15  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element\n\n\u2716 4 problems (0 errors, 4 warnings)",
+      "stderr": ""
+    },
+    "typecheck": {
+      "passed": true,
+      "returncode": 0,
+      "stdout": "> elite-frontend@0.1.0 typecheck\n> tsc --noEmit",
+      "stderr": ""
+    }
+  }
+}
