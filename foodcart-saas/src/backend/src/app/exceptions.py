@@ -7,6 +7,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.observability import get_logger
+
+_logger = get_logger("app.exceptions")
+
 
 class ProblemDetail(BaseModel):
     type: str
@@ -97,6 +101,13 @@ def add_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def catchall_handler(request: Request, exc: Exception) -> JSONResponse:
+        _logger.exception(
+            "unhandled_exception",
+            path=str(request.url.path),
+            method=request.method,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
         return problem_response(
             status=500,
             title="Internal server error",
