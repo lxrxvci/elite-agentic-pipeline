@@ -29,6 +29,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
     router.push('/login')
   }
 
+  if (pathname === '/') {
+    return <>{children}</>
+  }
+
   return (
     <div className="min-h-screen bg-elite-surface">
       <header className="border-b border-elite-border bg-elite-white">

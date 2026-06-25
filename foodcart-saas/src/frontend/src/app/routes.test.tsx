@@ -16,6 +16,7 @@ vi.mock('@/page-views/invoice-detail', () => ({ default: () => <div data-testid=
 vi.mock('@/page-views/time-tracker', () => ({ default: () => <div data-testid="time-tracker-view" /> }))
 vi.mock('@/page-views/login', () => ({ default: () => <div data-testid="login-view" /> }))
 vi.mock('@/page-views/dashboard', () => ({ DashboardPage: () => <div data-testid="dashboard-view" /> }))
+vi.mock('@/page-views/landing', () => ({ LandingPage: () => <div data-testid="landing-view" /> }))
 
 import ClientsRoute from './clients/page'
 import NewClientRoute from './clients/new/page'
@@ -30,7 +31,7 @@ import HomeRoute from './page'
 
 describe('app routes', () => {
   it.each([
-    ['/', HomeRoute, 'dashboard-view'],
+    ['/', HomeRoute, 'landing-view'],
     ['/clients', ClientsRoute, 'clients-view'],
     ['/clients/new', NewClientRoute, 'clients-new-view'],
     ['/projects', ProjectsRoute, 'projects-view'],
