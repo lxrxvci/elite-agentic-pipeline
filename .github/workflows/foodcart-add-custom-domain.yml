@@ -1,0 +1,53 @@
+name: Foodcart Add Custom Domain to Frontend
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: "Custom domain to add (e.g. web.agenticpnw.com)"
+        required: true
+        type: string
+      project-secret-suffix:
+        description: "Frontend project suffix"
+        required: true
+        default: "FRONTEND"
+        type: choice
+        options:
+          - FRONTEND
+          - FRONTEND_STAGING
+
+jobs:
+  add-domain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add custom domain to Vercel project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PROJECT_ID: ${{ secrets[format('VERCEL_PROJECT_ID_{0}', github.event.inputs.project-secret-suffix)] }}
+          DOMAIN: ${{ github.event.inputs.domain }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request, urllib.error
+          project_id = os.environ["PROJECT_ID"]
+          token = os.environ["VERCEL_TOKEN"]
+          domain = os.environ["DOMAIN"]
+
+          def api_call(method, path, payload=None):
+              url = f"https://api.vercel.com{path}"
+              data = json.dumps(payload).encode() if payload else None
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                  method=method,
+              )
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return resp.status, resp.read().decode()
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.read().decode()
+
+          status, body = api_call("POST", f"/v9/projects/{project_id}/domains", {"name": domain})
+          print(f"Status {status}:")
+          print(body)
+          PY
