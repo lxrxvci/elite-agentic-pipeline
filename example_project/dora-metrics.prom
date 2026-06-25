@@ -3,7 +3,7 @@
 elite_deployments_total{window="30d"} 100
 # HELP elite_lead_time_seconds Median lead time for changes
 # TYPE elite_lead_time_seconds gauge
-elite_lead_time_seconds{window="30d"} 31.0
+elite_lead_time_seconds{window="30d"} 34.0
 # HELP elite_change_failure_rate Ratio of failed deployments
 # TYPE elite_change_failure_rate gauge
 elite_change_failure_rate{window="30d"} 0.0
