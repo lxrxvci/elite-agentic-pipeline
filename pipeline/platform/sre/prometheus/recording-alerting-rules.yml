@@ -1,0 +1,295 @@
+# Foodcart SaaS — Reusable Prometheus Recording & Alerting Rules
+# -----------------------------------------------------------------------------
+# Scope: multi-tenant restaurant website builder (Next.js frontend, FastAPI
+# backend, PostgreSQL, AI Website Assistant, ingestion pipeline).
+#
+# How to use:
+#   1. Copy this file into your squad observability stack
+#      (e.g. observability/prometheus/alerts.yml).
+#   2. Replace the metric prefix `foodcart_*` with your actual instrumentation
+#      prefix if it differs.
+#   3. Tune thresholds and `for:` durations based on traffic volume.
+#   4. Ensure every alert below links to a runbook (see annotations.runbook_url).
+#
+# Dependencies:
+#   - Histogram metric: http_request_duration_seconds_bucket/count/sum
+#   - Counter metric:   http_requests_total (with labels: status_code, method, path)
+#   - Gauge metric:     foodcart_db_pool_available_connections
+#   - Synthetic metric: probe_success (blackbox exporter) for public sites
+#   - Frontend metric:  foodcart_web_vitals_lcp_seconds (75th percentile)
+#
+groups:
+  - name: foodcart-recording-rules
+    interval: 30s
+    rules:
+      # Traffic (golden signal) — requests per second by service/route.
+      - record: foodcart:request_rate_5m
+        expr: |
+          sum by (service, method, path, status_code) (
+            rate(http_request_duration_seconds_count[5m])
+          )
+
+      # Availability SLI — successful (2xx/3xx) responses over total.
+      - record: foodcart:availability_ratio_5m
+        expr: |
+          sum by (service) (
+            rate(http_request_duration_seconds_count{status_code=~"2..|3.."}[5m])
+          )
+          /
+          sum by (service) (
+            rate(http_request_duration_seconds_count[5m])
+          )
+
+      # Error rate SLI — 5xx over total responses.
+      - record: foodcart:error_rate_5m
+        expr: |
+          sum by (service) (
+            rate(http_request_duration_seconds_count{status_code=~"5.."}[5m])
+          )
+          /
+          sum by (service) (
+            rate(http_request_duration_seconds_count[5m])
+          )
+
+      # Latency SLI — p95 by service.
+      - record: foodcart:latency_p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (service, le) (
+              rate(http_request_duration_seconds_bucket[5m])
+            )
+          )
+
+      # AI assistant latency — p95 end-to-end structured-change proposal.
+      - record: foodcart:ai_latency_p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(foodcart_ai_request_duration_seconds_bucket[5m])
+            )
+          )
+
+      # Frontend LCP — 75th percentile (reported by web-vitals / RUM).
+      - record: foodcart:frontend_lcp_p75_5m
+        expr: |
+          histogram_quantile(
+            0.75,
+            sum by (le) (
+              rate(foodcart_web_vitals_lcp_seconds_bucket[5m])
+            )
+          )
+
+      # Database connection-pool saturation.
+      - record: foodcart:db_pool_utilization_5m
+        expr: |
+          1 - (
+            avg by (service) (foodcart_db_pool_available_connections)
+            /
+            avg by (service) (foodcart_db_pool_max_connections)
+          )
+
+      # Error-budget burn rate (30-day window). 1.0 = budget exhausted.
+      - record: foodcart:availability_error_budget_burn_rate_30d
+        expr: |
+          (
+            1 - (
+              sum by (service) (
+                increase(http_request_duration_seconds_count{status_code=~"2..|3.."}[30d])
+              )
+              /
+              sum by (service) (
+                increase(http_request_duration_seconds_count[30d])
+              )
+            )
+          ) / 0.001
+
+  - name: foodcart-alerting-rules
+    rules:
+      # --- Availability ------------------------------------------------------
+      - alert: FoodcartAvailabilityBelowSLO
+        expr: foodcart:availability_ratio_5m < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Foodcart {{ $labels.service }} availability below 99.9% SLO"
+          description: "5-minute availability is {{ $value | humanizePercentage }}; SLO is 99.9%."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-availability"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      # --- Latency -----------------------------------------------------------
+      - alert: FoodcartLatencyP95High
+        expr: foodcart:latency_p95_5m > 0.3
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Foodcart {{ $labels.service }} p95 latency above 300ms"
+          description: "5-minute p95 latency is {{ $value }}s; SLO is < 300ms."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-latency"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartLatencyP95Critical
+        expr: foodcart:latency_p95_5m > 0.5
+        for: 5m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Foodcart {{ $labels.service }} p95 latency above 500ms"
+          description: "5-minute p95 latency is {{ $value }}s; alert threshold is 500ms."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-latency"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      # --- Error rate --------------------------------------------------------
+      - alert: FoodcartErrorRateHigh
+        expr: foodcart:error_rate_5m > 0.001
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Foodcart {{ $labels.service }} error rate above 0.1%"
+          description: "5-minute 5xx error rate is {{ $value | humanizePercentage }}; SLO is < 0.1%."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-error-rate"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartErrorRateCritical
+        expr: foodcart:error_rate_5m > 0.005
+        for: 5m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Foodcart {{ $labels.service }} error rate above 0.5%"
+          description: "5-minute 5xx error rate is {{ $value | humanizePercentage }}; critical threshold is 0.5%."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-error-rate"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      # --- AI assistant ------------------------------------------------------
+      - alert: FoodcartAIAssistantLatencyHigh
+        expr: foodcart:ai_latency_p95_5m > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: ai-assistant
+        annotations:
+          summary: "AI Website Assistant p95 latency above 5s"
+          description: "5-minute p95 latency for structured-change proposals is {{ $value }}s."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-ai-assistant"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartAIAssistantGuardrailTriggered
+        expr: |
+          increase(foodcart_ai_guardrail_blocked_total[5m]) > 0
+          or
+          increase(foodcart_ai_guardrail_audit_failed_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: ai-assistant
+        annotations:
+          summary: "AI Website Assistant guardrail event detected"
+          description: "Guardrail blocked or audit-failed events in the last 5 minutes."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-ai-guardrail"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      # --- Frontend ----------------------------------------------------------
+      - alert: FoodcartFrontendLCPHigh
+        expr: foodcart:frontend_lcp_p75_5m > 2.5
+        for: 10m
+        labels:
+          severity: warning
+          service: frontend
+        annotations:
+          summary: "Foodcart frontend LCP above 2.5s for 75th percentile"
+          description: "75th-percentile LCP is {{ $value }}s; SLO is < 2.5s."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-frontend-performance"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      # --- Saturation --------------------------------------------------------
+      - alert: FoodcartDatabasePoolSaturation
+        expr: foodcart:db_pool_utilization_5m > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "Foodcart database connection pool utilization above 80%"
+          description: "Pool utilization is {{ $value | humanizePercentage }}; SLO is < 80%."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-database-saturation"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartDatabasePoolCritical
+        expr: foodcart:db_pool_utilization_5m > 0.85
+        for: 5m
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "Foodcart database connection pool utilization above 85%"
+          description: "Pool utilization is {{ $value | humanizePercentage }}; critical threshold is 85%."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-database-saturation"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      # --- Traffic anomaly ---------------------------------------------------
+      - alert: FoodcartTrafficDrop
+        expr: |
+          (
+            sum(rate(http_request_duration_seconds_count[5m]))
+            /
+            avg_over_time(
+              sum(rate(http_request_duration_seconds_count[5m]))[1h:5m]
+            )
+          ) < 0.7
+        for: 5m
+        labels:
+          severity: warning
+          service: platform
+        annotations:
+          summary: "Foodcart request rate dropped more than 30% vs. 1-hour baseline"
+          description: "Current RPS is {{ $value | humanizePercentage }} of the recent baseline."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-traffic-anomaly"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      # --- Error budget ------------------------------------------------------
+      - alert: FoodcartErrorBudgetBurn50
+        expr: foodcart:availability_error_budget_burn_rate_30d > 0.5
+        for: 5m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Foodcart {{ $labels.service }} has burned 50% of monthly error budget"
+          description: "30-day burn rate is {{ $value | humanizePercentage }} of budget. Page on-call."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-error-budget"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      - alert: FoodcartErrorBudgetExhausted
+        expr: foodcart:availability_error_budget_burn_rate_30d >= 1.0
+        for: 5m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+        annotations:
+          summary: "Foodcart {{ $labels.service }} monthly error budget exhausted"
+          description: "Feature freeze is in effect until SLO is restored or budget resets."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-error-budget"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"
+
+      # --- Blackbox / synthetic ----------------------------------------------
+      - alert: FoodcartPublicSiteDown
+        expr: probe_success{job="foodcart-public-sites"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: public-site
+        annotations:
+          summary: "Foodcart public tenant site is unreachable"
+          description: "Synthetic probe failed for {{ $labels.instance }} for more than 2 minutes."
+          runbook_url: "https://wiki.internal/runbooks/foodcart-public-site-down"
+          dashboard_url: "https://grafana.internal/d/foodcart-api"

@@ -1,0 +1,230 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "foodcart-api",
+    "title": "Foodcart SaaS — Golden Signals & SLOs",
+    "tags": ["foodcart", "slo", "golden-signals", "sre"],
+    "timezone": "browser",
+    "schemaVersion": 36,
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "service",
+          "type": "query",
+          "query": "label_values(http_request_duration_seconds_count, service)",
+          "multi": true,
+          "includeAll": true,
+          "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Request Rate (Traffic)",
+        "type": "timeseries",
+        "description": "Golden signal: total requests per second across public sites, admin dashboard, and API.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "custom": { "drawStyle": "line", "lineInterpolation": "linear", "pointSize": 0 }
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum by (service) (rate(http_request_duration_seconds_count[5m]))",
+            "legendFormat": "{{ service }}"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Availability (5 min)",
+        "type": "timeseries",
+        "description": "SLI: ratio of successful (2xx/3xx) responses to total requests. Target 99.9%.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "steps": [
+                { "color": "red", "value": 0 },
+                { "color": "yellow", "value": 0.995 },
+                { "color": "green", "value": 0.999 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "foodcart:availability_ratio_5m",
+            "legendFormat": "{{ service }}"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Error Rate (5xx)",
+        "type": "timeseries",
+        "description": "SLI: 5xx responses / total responses. SLO < 0.1%.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.001 },
+                { "color": "red", "value": 0.005 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "foodcart:error_rate_5m",
+            "legendFormat": "{{ service }}"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "p95 API Latency",
+        "type": "timeseries",
+        "description": "SLI: 95th-percentile response time. SLO < 300ms; warning > 500ms.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.3 },
+                { "color": "red", "value": 0.5 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "foodcart:latency_p95_5m",
+            "legendFormat": "{{ service }}"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "AI Assistant Latency",
+        "type": "timeseries",
+        "description": "End-to-end latency for structured-change proposal requests. SLO p95 < 5s.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 5 },
+                { "color": "red", "value": 10 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "foodcart:ai_latency_p95_5m",
+            "legendFormat": "AI assistant"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Frontend LCP (p75)",
+        "type": "timeseries",
+        "description": "Real-user Largest Contentful Paint (75th percentile). SLO < 2.5s.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 2.5 },
+                { "color": "red", "value": 4 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "foodcart:frontend_lcp_p75_5m",
+            "legendFormat": "LCP p75"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Database Pool Saturation",
+        "type": "timeseries",
+        "description": "Golden signal: saturation of PostgreSQL connection pool. SLO < 80%.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.8 },
+                { "color": "red", "value": 0.85 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "foodcart:db_pool_utilization_5m",
+            "legendFormat": "{{ service }}"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Monthly Error Budget Burn",
+        "type": "timeseries",
+        "description": "Availability error budget burn rate over 30 days. 1.0 = budget exhausted.",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "thresholds": {
+              "steps": [
+                { "color": "green", "value": 0 },
+                { "color": "yellow", "value": 0.5 },
+                { "color": "red", "value": 1 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "expr": "foodcart:availability_error_budget_burn_rate_30d",
+            "legendFormat": "{{ service }}"
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

@@ -1,0 +1,132 @@
+# Foodcart SaaS — Reusable OpenTelemetry Collector Configuration Snippet
+# -----------------------------------------------------------------------------
+# This snippet shows a standard collector layout for the Foodcart stack:
+#   Next.js frontend  -> OTLP/HTTP (traces, RUM)
+#   FastAPI backend   -> OTLP/HTTP or OTLP/gRPC (traces, metrics)
+#   PostgreSQL        -> receiver/sqlquery or logs receiver
+#   AI assistant      -> custom spans/metrics instrumented in Python
+#
+# How to use:
+#   1. Place this under a ConfigMap/Secret mounted to the OpenTelemetry Collector.
+#   2. Replace placeholder endpoints (prometheus, tempo, loki, jaeger) with your
+#      actual observability backend URLs.
+#   3. Add resource attributes for environment, tenant, and service.
+#   4. Ensure sampling is configured to avoid high-cardinality explosion from
+#      tenant-scoped traces.
+#
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Tail-based sampling is recommended for high-traffic tenant websites.
+  # This is a head-sampling example; replace with a tail-sampling processor
+  # if running a dedicated collector cluster.
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'foodcart-backend'
+          static_configs:
+            - targets: ['backend:8000']
+          metrics_path: '/metrics'
+        - job_name: 'foodcart-frontend'
+          static_configs:
+            - targets: ['frontend:3000']
+          metrics_path: '/metrics'
+
+processors:
+  # Drop or downsample health/noise traces.
+  filter/health:
+    error_mode: ignore
+    traces:
+      span:
+        - attributes["http.route"] == "/health"
+        - attributes["http.route"] == "/ready"
+        - attributes["http.route"] == "/metrics"
+
+  # Limit memory pressure during traffic spikes.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Batch to reduce backend pressure and cost.
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  # Enrich every signal with Foodcart-specific resource attributes.
+  resource:
+    attributes:
+      - key: service.namespace
+        value: foodcart
+        action: upsert
+      - key: deployment.environment
+        from_attribute: env
+        action: upsert
+      - key: tenant.id
+        from_attribute: tenant.id
+        action: upsert
+
+  # Avoid leaking PII in tenant-scoped attributes.
+  attributes/redact:
+    actions:
+      - key: user.email
+        action: delete
+      - key: user.phone
+        action: delete
+      - key: payment.token
+        action: delete
+
+exporters:
+  # Prometheus remote-write endpoint (Thanos, Cortex, or self-hosted Prometheus).
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    # Add headers/auth for remote-write targets if required.
+
+  # Trace backend. Tempo is used locally; swap for your vendor OTLP endpoint.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Log backend. Loki supports OTLP in recent versions; otherwise use loki exporter.
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    labels:
+      attributes:
+        service.name: service_name
+        deployment.environment: env
+        tenant.id: tenant_id
+
+  # Debug exporter for local development only.
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/health, resource, attributes/redact, batch]
+      exporters: [otlp/tempo]
+
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, attributes/redact, batch]
+      exporters: [loki]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: normal
+      address: 0.0.0.0:8888
