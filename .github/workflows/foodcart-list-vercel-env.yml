@@ -1,0 +1,27 @@
+name: Foodcart List Vercel Env Vars
+
+on:
+  workflow_dispatch:
+    inputs:
+      project-secret-suffix:
+        description: "Secret suffix for VERCEL_PROJECT_ID_*"
+        required: true
+        default: "BACKEND"
+        type: choice
+        options:
+          - BACKEND
+          - BACKEND_STAGING
+          - FRONTEND
+          - FRONTEND_STAGING
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List Vercel env vars
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PROJECT_ID: ${{ secrets[format('VERCEL_PROJECT_ID_{0}', github.event.inputs.project-secret-suffix)] }}
+        run: |
+          curl -sS "https://api.vercel.com/v9/projects/$PROJECT_ID/env" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" | jq '.envs[] | {key, target, type, id}'
