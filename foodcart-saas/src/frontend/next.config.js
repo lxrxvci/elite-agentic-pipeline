@@ -3,13 +3,16 @@
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const apiOrigin = apiUrl ? new URL(apiUrl).origin : "'self'"
 
+const clerkOrigin = 'https://clerk.web.agenticpnw.com'
+const clerkDevOrigin = 'https://*.clerk.accounts.dev'
+
 const cspHeader = (
   "default-src 'self'; " +
-  "script-src 'self' 'unsafe-inline'; " +
-  "style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data: blob:; " +
-  "font-src 'self'; " +
-  `connect-src 'self' ${apiOrigin}; ` +
+  `script-src 'self' 'unsafe-inline' ${clerkOrigin} ${clerkDevOrigin}; ` +
+  `style-src 'self' 'unsafe-inline' ${clerkOrigin} ${clerkDevOrigin}; ` +
+  `img-src 'self' data: blob: https://img.clerk.com ${clerkOrigin}; ` +
+  `font-src 'self' ${clerkOrigin} ${clerkDevOrigin}; ` +
+  `connect-src 'self' ${apiOrigin} ${clerkOrigin} ${clerkDevOrigin}; ` +
   "frame-ancestors 'none'; " +
   "base-uri 'self'; " +
   "form-action 'self';"
