@@ -1,0 +1,94 @@
+name: Foodcart Set Clerk Environment Variables
+
+on:
+  workflow_dispatch:
+    inputs:
+      project-secret-suffix:
+        description: "Backend project suffix (BACKEND or BACKEND_STAGING)"
+        required: true
+        default: "BACKEND"
+        type: choice
+        options:
+          - BACKEND
+          - BACKEND_STAGING
+      environment:
+        description: "Target environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - preview
+      clerk_jwks_url:
+        description: "Clerk JWKS URL"
+        required: true
+        type: string
+      clerk_issuer:
+        description: "Clerk issuer (Frontend API URL)"
+        required: true
+        type: string
+      clerk_audience:
+        description: "Clerk audience (optional)"
+        required: false
+        type: string
+      app_env:
+        description: "ENV value for the backend"
+        required: true
+        default: "production"
+        type: string
+
+jobs:
+  set-env:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set Clerk env vars in Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PROJECT_ID: ${{ secrets[format('VERCEL_PROJECT_ID_{0}', github.event.inputs.project-secret-suffix)] }}
+          TARGET: ${{ github.event.inputs.environment }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request, urllib.error
+          project_id = os.environ["PROJECT_ID"]
+          token = os.environ["VERCEL_TOKEN"]
+          target = os.environ["TARGET"]
+
+          vars_to_set = [
+              ("CLERK_JWKS_URL", "${{ github.event.inputs.clerk_jwks_url }}"),
+              ("CLERK_ISSUER", "${{ github.event.inputs.clerk_issuer }}"),
+              ("ENV", "${{ github.event.inputs.app_env }}"),
+          ]
+          audience = "${{ github.event.inputs.clerk_audience }}"
+          if audience:
+              vars_to_set.append(("CLERK_AUDIENCE", audience))
+
+          def api_call(method, path, payload=None):
+              url = f"https://api.vercel.com{path}"
+              data = json.dumps(payload).encode() if payload else None
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                  method=method,
+              )
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return resp.status, resp.read().decode()
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.read().decode()
+
+          status, body = api_call("GET", f"/v9/projects/{project_id}/env?target={target}")
+          envs = json.loads(body).get("envs", [])
+
+          for key, value in vars_to_set:
+              existing = next((e for e in envs if e["key"] == key and target in e.get("target", [])), None)
+              payload = {"key": key, "value": value, "target": [target], "type": "encrypted"}
+              if existing:
+                  status, body = api_call("PATCH", f"/v9/projects/{project_id}/env/{existing['id']}", payload)
+                  print(f"PATCH {key} status {status}")
+              else:
+                  status, body = api_call("POST", f"/v10/projects/{project_id}/env", payload)
+                  print(f"POST {key} status {status}")
+              if status >= 400:
+                  print(body)
+          PY
