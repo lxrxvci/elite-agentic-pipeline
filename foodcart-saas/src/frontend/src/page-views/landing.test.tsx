@@ -18,7 +18,7 @@ describe('LandingPage', () => {
     render(<LandingPage />)
 
     const createLinks = screen.getAllByRole('link', { name: /Get Started/i })
-    expect(createLinks[0]).toHaveAttribute('href', '/admin/onboarding')
+    expect(createLinks[0]).toHaveAttribute('href', '/admin/sign-up')
 
     const demoLink = screen.getByRole('link', { name: /View a demo/i })
     expect(demoLink).toHaveAttribute('href', '/sites/demo-truck')
