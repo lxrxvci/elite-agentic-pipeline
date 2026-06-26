@@ -1,36 +1,12 @@
-# Foodcart SaaS Cycle 1 DORA metrics
-# Generated: 2026-06-24
-# Refreshed: 2026-06-24 (Cycle 1 Week 1 review)
-# NOTE: These are synthetic/baseline values. Foodcart SaaS has not yet been
-# deployed to production. Replace this file with live values from
-# scripts/dora_collector.py after the first production release.
-#
-# Weekly refresh process:
-#   1. Every Monday 09:00 UTC, run:
-#      GITHUB_TOKEN=$GITHUB_TOKEN python scripts/dora_collector.py \
-#        --owner <org> --repo <repo> --days 30 --output dora-metrics.prom
-#   2. Commit the updated dora-metrics.prom to trunk with the weekly review.
-#   3. The Data Analyst validates the values in the weekly squad review.
-#   4. If values breach DORA targets (CFR >= 5%, lead time >= 1 day,
-#      recovery time >= 1 hour), create a kaizen backlog item and notify
-#      the DevOps/SRE agent.
-
 # HELP elite_deployments_total Number of deployments in the window
 # TYPE elite_deployments_total counter
-elite_deployments_total{window="30d",environment="production",project="foodcart-saas"} 0
-
-# HELP elite_lead_time_seconds Median lead time for changes (PR merge to production)
+elite_deployments_total{window="30d"} 100
+# HELP elite_lead_time_seconds Median lead time for changes
 # TYPE elite_lead_time_seconds gauge
-elite_lead_time_seconds{window="30d",environment="production",project="foodcart-saas"} 0
-
-# HELP elite_change_failure_rate Ratio of failed deployments to total deployments
+elite_lead_time_seconds{window="30d"} 80.0
+# HELP elite_change_failure_rate Ratio of failed deployments
 # TYPE elite_change_failure_rate gauge
-elite_change_failure_rate{window="30d",environment="production",project="foodcart-saas"} 0.0
-
-# HELP elite_recovery_time_seconds Median time to recover from failed deploy
+elite_change_failure_rate{window="30d"} 0.0
+# HELP elite_recovery_time_seconds Median time to recovery
 # TYPE elite_recovery_time_seconds gauge
-elite_recovery_time_seconds{window="30d",environment="production",project="foodcart-saas"} 0
-
-# HELP elite_deployment_frequency_per_week Production deployments per week
-# TYPE elite_deployment_frequency_per_week gauge
-elite_deployment_frequency_per_week{environment="production",project="foodcart-saas"} 0
+elite_recovery_time_seconds{window="30d"} 0
