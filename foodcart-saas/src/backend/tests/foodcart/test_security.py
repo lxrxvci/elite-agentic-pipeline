@@ -269,10 +269,8 @@ def test_public_site_escapes_html_in_block_text(client: TestClient, onboarded, d
     block.data = {"title": "Story", "body": "<script>alert(1)</script>"}
     db.commit()
 
-    response = client.get(f"/api/v1/public/sites/{onboarded['site']['slug']}")
-    assert response.status_code == 404  # site is draft by default
-
-    # Publish and verify the raw payload is returned (frontend escapes it).
+    # Onboarding now publishes the site by default; verify the raw payload
+    # is returned (frontend escapes it).
     client.patch(
         f"/api/v1/sites/{onboarded['site']['id']}",
         json={"publish_state": "published"},

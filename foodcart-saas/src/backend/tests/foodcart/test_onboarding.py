@@ -45,7 +45,7 @@ class TestOnboarding:
         assert data["tenant"]["status"] == "active"
         assert data["site"]["template_id"] == "custom"
         assert data["site"]["brand_colors"]["primary"] == "#e86a33"
-        assert data["site"]["publish_state"] == "draft"
+        assert data["site"]["publish_state"] == "published"
 
     def test_onboard_twice_returns_conflict(self, client: TestClient, onboarded):
         response = client.post(

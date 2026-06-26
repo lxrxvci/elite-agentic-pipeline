@@ -1118,7 +1118,7 @@ def build_onboarding_result(
         tenant_id=tenant_id,
         slug=slug,
         template_id=template_id,
-        publish_state=SitePublishState.DRAFT,
+        publish_state=SitePublishState.PUBLISHED,
         seo={"title": business_name, "description": f"Welcome to {business_name}"},
         brand_colors=brand_colors,
     )

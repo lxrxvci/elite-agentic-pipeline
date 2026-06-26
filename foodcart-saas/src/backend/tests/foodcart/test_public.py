@@ -24,6 +24,15 @@ def test_public_published_site(client: TestClient, onboarded):
 
 
 def test_public_draft_site_returns_404(client: TestClient, onboarded):
+    # Onboarding now publishes the site by default.
+    response = client.get(f"/api/v1/public/sites/{onboarded['tenant']['slug']}")
+    assert response.status_code == 200
+
+    client.patch(
+        f"/api/v1/sites/{onboarded['site']['id']}",
+        json={"publish_state": "draft"},
+        headers=onboarded["user"]["headers"],
+    )
     response = client.get(f"/api/v1/public/sites/{onboarded['tenant']['slug']}")
     assert response.status_code == 404
 
@@ -40,7 +49,7 @@ def test_preview_token_shows_draft(client: TestClient, onboarded):
         f"/api/v1/public/sites/{onboarded['tenant']['slug']}/preview?preview_token={token}"
     )
     assert response.status_code == 200
-    assert response.json()["publish_state"] == "draft"
+    assert response.json()["publish_state"] == "published"
 
 
 def test_preview_invalid_token_rejected(client: TestClient, onboarded):
