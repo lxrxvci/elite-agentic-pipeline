@@ -248,6 +248,34 @@ class FoodcartTenant(Base):
     billing_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="trial"
     )
+
+    # Paddle Billing state (Paddle is the source of truth; this is a read replica)
+    paddle_customer_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True, index=True
+    )
+    paddle_subscription_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True, index=True
+    )
+    plan: Mapped[str] = mapped_column(String(50), nullable=False, default="base")
+    billing_interval: Mapped[str | None] = mapped_column(
+        String(10), nullable=True
+    )  # 'month' | 'year'
+    subscription_status: Mapped[str | None] = mapped_column(
+        String(30), nullable=True
+    )  # 'trialing' | 'active' | 'past_due' | 'canceled' | 'paused'
+    subscription_current_period_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    subscription_current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    trial_ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    canceled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now
     )
@@ -279,6 +307,21 @@ class Site(Base):
     )
     custom_domain: Mapped[str | None] = mapped_column(
         String(255), nullable=True, unique=True
+    )
+    domain_status: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )  # 'pending' | 'active' | 'expired' | 'error'
+    domain_provider: Mapped[str | None] = mapped_column(
+        String(30), nullable=True
+    )  # 'cloudflare' | 'namecheap' | 'external'
+    domain_registered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    domain_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    domain_paddle_transaction_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now

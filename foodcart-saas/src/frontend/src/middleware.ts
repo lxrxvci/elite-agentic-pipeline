@@ -23,8 +23,63 @@ export default clerkMiddleware(async (auth, request) => {
   if (isProtectedAdminRoute(request)) {
     await auth.protect()
   }
+
+  const customDomainRewrite = await customDomainMiddleware(request)
+  if (customDomainRewrite) {
+    return customDomainRewrite
+  }
+
   return canaryMiddleware(request)
 })
+
+/**
+ * Host-based routing for custom domains.
+ *
+ * When PLATFORM_DOMAIN is configured and the request Host does not match it,
+ * the middleware asks the backend which site owns the domain and rewrites the
+ * request to the public site renderer at /sites/{slug}.
+ */
+async function customDomainMiddleware(
+  request: NextRequest,
+): Promise<NextResponse | undefined> {
+  const platformDomain = process.env.PLATFORM_DOMAIN
+  if (!platformDomain) {
+    return undefined
+  }
+
+  const host = request.headers.get('host') ?? request.nextUrl.host
+  const normalizedHost = normalizeHost(host)
+  const normalizedPlatform = normalizeHost(platformDomain)
+
+  if (
+    normalizedHost === normalizedPlatform ||
+    normalizedHost === `www.${normalizedPlatform}`
+  ) {
+    return undefined
+  }
+
+  const apiUrl = process.env.API_URL ?? 'http://127.0.0.1:8000'
+  try {
+    const response = await fetch(
+      `${apiUrl}/api/v1/public/sites/by-domain/${encodeURIComponent(normalizedHost)}`,
+      { method: 'GET' },
+    )
+    if (!response.ok) {
+      return undefined
+    }
+    const site = (await response.json()) as { slug: string }
+    const url = new URL(`/sites/${site.slug}`, request.url)
+    return NextResponse.rewrite(url)
+  } catch {
+    // If the backend lookup fails, fall through to normal routing rather than
+    // breaking the request. A missing domain will surface as a 404 page.
+    return undefined
+  }
+}
+
+function normalizeHost(host: string): string {
+  return host.toLowerCase().split(':')[0].replace(/^www\./, '')
+}
 
 /**
  * Edge middleware for percentage-based canary traffic splitting.
@@ -108,7 +163,7 @@ function setBucketCookie(request: NextRequest, response: NextResponse, bucket: s
 
 function clearCanaryApiCookieIfPresent(
   request: NextRequest,
-  response?: NextResponse
+  response?: NextResponse,
 ): NextResponse {
   const res = response ?? NextResponse.next()
   if (request.cookies.has(CANARY_API_URL_COOKIE)) {

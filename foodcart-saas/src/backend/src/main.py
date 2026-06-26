@@ -24,7 +24,18 @@ from app.observability import (
     observability_middleware,
     shutdown_tracing,
 )
-from app.routers import auth, clients, invoices, me, projects, time_entries, vitals
+from app.routers import (
+    auth,
+    billing,
+    clients,
+    domains,
+    invoices,
+    me,
+    projects,
+    time_entries,
+    vitals,
+    webhooks,
+)
 from app.routers.foodcart import (
     ai,
     content,
@@ -126,6 +137,9 @@ async def security_headers(request: Request, call_next: Callable[[Request], Any]
 
 add_exception_handlers(app)
 
+# Webhooks must receive raw request bodies for signature verification.
+app.include_router(webhooks.router, prefix="/api/v1")
+
 app.include_router(me.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(clients.router, prefix="/api/v1")
@@ -141,6 +155,8 @@ app.include_router(ingest.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")
 app.include_router(revisions.router, prefix="/api/v1")
 app.include_router(public.router, prefix="/api/v1")
+app.include_router(billing.router, prefix="/api/v1")
+app.include_router(domains.router, prefix="/api/v1")
 
 
 @app.get("/health")

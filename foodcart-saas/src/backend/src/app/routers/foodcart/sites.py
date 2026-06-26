@@ -8,14 +8,23 @@ from typing import cast
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.dependencies import CurrentUser, get_current_user, get_db, require_role
-from app.exceptions import ConflictError, NotFoundError
+from app.dependencies import (
+    CurrentUser,
+    get_current_user,
+    get_db,
+    require_paid_plan,
+    require_role,
+)
+from app.exceptions import ConflictError, NotFoundError, ValidationError
 from app.schemas_foodcart import (
+    ConnectDomainRequestSchema,
+    DomainStatusResponseSchema,
     ErrorSchema,
     SiteCreateSchema,
     SiteSchema,
     SiteUpdateSchema,
 )
+from app.services.domain_service import DomainValidationError, validate_custom_domain
 from domain.entities import Site, SitePublishState
 from domain.services.foodcart import normalize_slug
 from infrastructure import models
@@ -133,3 +142,114 @@ def delete_site(
     # repository delete; SQLAlchemy cascade deletes cover the rest.
     repo.delete(site_id)
     db.commit()
+
+
+@router.post(
+    "/{site_id}/domain",
+    response_model=SiteSchema,
+    responses={
+        402: {"model": ErrorSchema},
+        404: {"model": ErrorSchema},
+        409: {"model": ErrorSchema},
+        422: {"model": ErrorSchema},
+    },
+)
+def connect_domain(
+    site_id: uuid.UUID,
+    payload: ConnectDomainRequestSchema,
+    user: CurrentUser = Depends(require_role("owner")),
+    _: CurrentUser = Depends(require_paid_plan()),
+    db: Session = Depends(get_db),
+) -> SiteSchema:
+    """Connect an external custom domain to a site.
+
+    Validates DNS (when enabled) and ensures the domain is not in use by
+    another site. Requires an active subscription.
+    """
+    orm = (
+        db.query(models.Site)
+        .filter(models.Site.tenant_id == user.tenant_id)
+        .filter(models.Site.id == site_id)
+        .first()
+    )
+    if not orm:
+        raise NotFoundError("Site not found")
+
+    try:
+        normalized = validate_custom_domain(
+            db,
+            payload.domain,
+            expected_site_id=site_id,
+        )
+    except DomainValidationError as exc:
+        raise ValidationError(str(exc)) from exc
+
+    orm.custom_domain = normalized
+    orm.domain_status = "active"
+    orm.domain_provider = payload.provider
+    db.commit()
+    db.refresh(orm)
+    return _to_schema(orm)
+
+
+@router.delete("/{site_id}/domain", status_code=status.HTTP_204_NO_CONTENT)
+def disconnect_domain(
+    site_id: uuid.UUID,
+    user: CurrentUser = Depends(require_role("owner")),
+    db: Session = Depends(get_db),
+) -> None:
+    """Remove the custom domain from a site."""
+    orm = (
+        db.query(models.Site)
+        .filter(models.Site.tenant_id == user.tenant_id)
+        .filter(models.Site.id == site_id)
+        .first()
+    )
+    if not orm:
+        raise NotFoundError("Site not found")
+    orm.custom_domain = None
+    orm.domain_status = None
+    orm.domain_provider = None
+    db.commit()
+
+
+@router.get(
+    "/{site_id}/domain/status",
+    response_model=DomainStatusResponseSchema,
+    responses={404: {"model": ErrorSchema}},
+)
+def get_domain_status(
+    site_id: uuid.UUID,
+    user: CurrentUser = Depends(require_role("owner")),
+    db: Session = Depends(get_db),
+) -> DomainStatusResponseSchema:
+    """Return the current custom-domain status and DNS check result."""
+    orm = (
+        db.query(models.Site)
+        .filter(models.Site.tenant_id == user.tenant_id)
+        .filter(models.Site.id == site_id)
+        .first()
+    )
+    if not orm:
+        raise NotFoundError("Site not found")
+
+    domain = orm.custom_domain
+    if not domain:
+        return DomainStatusResponseSchema(
+            domain="",
+            status="none",
+            provider=None,
+            dns_verified=False,
+            dns_message="No custom domain configured",
+        )
+
+    from app.services.domain_service import verify_domain_points_to_platform
+
+    ok, reason = verify_domain_points_to_platform(domain)
+    return DomainStatusResponseSchema(
+        domain=domain,
+        status=orm.domain_status or "pending",
+        provider=orm.domain_provider,
+        dns_verified=ok,
+        dns_message=reason,
+    )

@@ -212,6 +212,15 @@ class FoodcartTenant:
     slug: str
     status: FoodcartTenantStatus = FoodcartTenantStatus.ACTIVE
     billing_status: FoodcartBillingStatus = FoodcartBillingStatus.TRIAL
+    paddle_customer_id: str | None = None
+    paddle_subscription_id: str | None = None
+    plan: str = "base"
+    billing_interval: str | None = None
+    subscription_status: str | None = None
+    subscription_current_period_start: datetime | None = None
+    subscription_current_period_end: datetime | None = None
+    trial_ends_at: datetime | None = None
+    canceled_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 

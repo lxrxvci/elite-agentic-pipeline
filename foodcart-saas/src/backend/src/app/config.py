@@ -50,6 +50,29 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
 
+    # Paddle Billing configuration
+    paddle_api_key: str = ""
+    paddle_environment: str = "sandbox"  # 'sandbox' | 'production'
+    paddle_webhook_secret: str = ""
+    paddle_price_monthly_id: str = ""
+    paddle_price_yearly_id: str = ""
+    paddle_success_url: str = "http://localhost:3000/billing?success=1"
+    paddle_cancel_url: str = "http://localhost:3000/billing?canceled=1"
+    paddle_domain_product_id: str = ""  # Paddle product used for one-time domain purchases
+
+    # Custom domain configuration
+    platform_domain: str = ""  # e.g. "agenticpnw.com" for CNAME validation
+    platform_host_ip: str = ""  # e.g. "76.76.21.21" for A-record validation
+    domain_dns_validation_enabled: bool = True
+    domain_markup_cents: int = 0  # Optional platform markup on registrar cost
+    domain_purchase_success_url: str = "http://localhost:3000/settings/domain?purchase=success"
+    domain_purchase_cancel_url: str = "http://localhost:3000/settings/domain?purchase=canceled"
+
+    # Cloudflare Registrar API (beta) configuration
+    cloudflare_api_token: str = ""
+    cloudflare_account_id: str = ""
+    cloudflare_registrar_enabled: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @model_validator(mode="after")

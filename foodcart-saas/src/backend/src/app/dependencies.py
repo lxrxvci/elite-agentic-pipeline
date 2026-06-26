@@ -22,6 +22,7 @@ from app.auth.clerk import ClerkAuthError, validate_clerk_token
 from app.config import settings
 from app.features import is_feature_enabled
 from infrastructure.database import get_db
+from infrastructure.models import FoodcartTenant as FoodcartTenantORM
 from infrastructure.models import Tenant as TenantORM
 from infrastructure.models import User as UserORM
 
@@ -55,6 +56,7 @@ __all__ = [
     "get_current_tenant",
     "get_db",
     "is_feature_enabled",
+    "require_paid_plan",
     "require_resource_owner",
     "require_role",
     "require_tenant_quota",
@@ -294,6 +296,44 @@ def require_tenant_quota(
                 detail="Tenant quota exceeded. Please retry later.",
             )
         _TENANT_QUOTA[quota_key].append(now)
+
+    return _check
+
+
+def require_paid_plan(
+    active_statuses: frozenset[str] = frozenset({"active", "trialing"}),
+) -> Callable[..., CurrentUser]:
+    """Return a dependency that restricts an endpoint to tenants with paid/trial subscriptions.
+
+    Defaults to treating Paddle 'active' and 'trialing' subscriptions as paid.
+    Tenants in platform trial (billing_status='trial' with no subscription) are blocked.
+    """
+
+    def _check(
+        user: CurrentUser = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> CurrentUser:
+        tenant = db.query(TenantORM).filter(TenantORM.id == user.tenant_id).first()
+        if tenant is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Tenant not found",
+            )
+        # Use the ORM directly for Foodcart-specific fields.
+        foodcart_tenant = (
+            db.query(FoodcartTenantORM)
+            .filter(FoodcartTenantORM.id == user.tenant_id)
+            .first()
+        )
+        subscription_status = (
+            foodcart_tenant.subscription_status if foodcart_tenant else None
+        )
+        if subscription_status not in active_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="Active subscription required",
+            )
+        return user
 
     return _check
 

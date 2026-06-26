@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
@@ -50,6 +51,13 @@ class TenantSchema(BaseModel):
     slug: str
     status: str
     billing_status: str
+    plan: str
+    billing_interval: str | None = None
+    subscription_status: str | None = None
+    subscription_current_period_start: datetime | None = None
+    subscription_current_period_end: datetime | None = None
+    trial_ends_at: datetime | None = None
+    canceled_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -65,6 +73,8 @@ class SiteSchema(BaseModel):
     seo: dict[str, Any] | None = None
     brand_colors: BrandColorsSchema | None = None
     custom_domain: str | None = None
+    domain_status: str | None = None
+    domain_provider: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -90,6 +100,44 @@ class SiteUpdateSchema(BaseModel):
     seo: SeoMetaSchema | None = None
     brand_colors: BrandColorsSchema | None = None
     custom_domain: str | None = Field(None, max_length=255)
+
+
+class ConnectDomainRequestSchema(BaseModel):
+    domain: str = Field(..., min_length=3, max_length=255)
+    provider: str = Field("external", pattern=r"^(external|cloudflare|namecheap)$")
+
+
+class DomainStatusResponseSchema(BaseModel):
+    domain: str
+    status: str  # 'pending' | 'active' | 'error'
+    provider: str | None = None
+    dns_verified: bool
+    dns_message: str | None = None
+
+
+class DomainAvailabilitySchema(BaseModel):
+    name: str
+    registrable: bool
+    currency: str
+    registration_cost: str
+    renewal_cost: str
+    reason: str | None = None
+
+
+class DomainSearchResponseSchema(BaseModel):
+    query: str
+    domains: list[DomainAvailabilitySchema]
+
+
+class DomainPurchaseRequestSchema(BaseModel):
+    domain: str = Field(..., min_length=3, max_length=255)
+
+
+class DomainPurchaseResponseSchema(BaseModel):
+    checkout_url: str
+    domain: str
+    total: str
+    currency: str
 
 
 class ContentBlockSchema(BaseModel):
@@ -226,3 +274,44 @@ class TenantOnboardingResponseSchema(BaseModel):
 
 class ErrorSchema(BaseModel):
     detail: str
+
+
+class BillingInterval(StrEnum):
+    month = "month"
+    year = "year"
+
+
+class PlanSchema(BaseModel):
+    id: str
+    name: str
+    interval: BillingInterval
+    price_usd: str
+
+
+class BillingPlansResponse(BaseModel):
+    monthly: PlanSchema
+    yearly: PlanSchema
+
+
+class CheckoutRequest(BaseModel):
+    interval: BillingInterval
+
+
+class CheckoutResponse(BaseModel):
+    checkout_url: str
+
+
+class PortalResponse(BaseModel):
+    url: str
+
+
+class SubscriptionResponse(BaseModel):
+    plan: str
+    status: str | None
+    billing_interval: str | None
+    current_period_start: datetime | None
+    current_period_end: datetime | None
+    trial_ends_at: datetime | None
+    canceled_at: datetime | None
+    paddle_subscription_id: str | None
+    paddle_customer_id: str | None

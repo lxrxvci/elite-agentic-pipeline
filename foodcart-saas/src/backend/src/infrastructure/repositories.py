@@ -444,16 +444,7 @@ class FoodcartTenantRepository(BaseRepository[FoodcartTenant]):
         )
         if not orm:
             return None
-        return FoodcartTenant(
-            id=orm.id,
-            owner_user_id=orm.owner_user_id,
-            name=orm.name,
-            slug=orm.slug,
-            status=FoodcartTenantStatus(orm.status),
-            billing_status=FoodcartBillingStatus(orm.billing_status),
-            created_at=orm.created_at,
-            updated_at=orm.updated_at,
-        )
+        return self._to_domain(orm)
 
     def get_by_slug(self, slug: str) -> FoodcartTenant | None:
         orm = (
@@ -463,16 +454,7 @@ class FoodcartTenantRepository(BaseRepository[FoodcartTenant]):
         )
         if not orm:
             return None
-        return FoodcartTenant(
-            id=orm.id,
-            owner_user_id=orm.owner_user_id,
-            name=orm.name,
-            slug=orm.slug,
-            status=FoodcartTenantStatus(orm.status),
-            billing_status=FoodcartBillingStatus(orm.billing_status),
-            created_at=orm.created_at,
-            updated_at=orm.updated_at,
-        )
+        return self._to_domain(orm)
 
     def create(self, tenant: FoodcartTenant) -> FoodcartTenant:
         orm = models.FoodcartTenant(
@@ -484,10 +466,40 @@ class FoodcartTenantRepository(BaseRepository[FoodcartTenant]):
             billing_status=tenant.billing_status.value
             if isinstance(tenant.billing_status, FoodcartBillingStatus)
             else tenant.billing_status,
+            paddle_customer_id=tenant.paddle_customer_id,
+            paddle_subscription_id=tenant.paddle_subscription_id,
+            plan=tenant.plan,
+            billing_interval=tenant.billing_interval,
+            subscription_status=tenant.subscription_status,
+            subscription_current_period_start=tenant.subscription_current_period_start,
+            subscription_current_period_end=tenant.subscription_current_period_end,
+            trial_ends_at=tenant.trial_ends_at,
+            canceled_at=tenant.canceled_at,
         )
         self.session.add(orm)
         self.session.flush()
         return tenant
+
+    def _to_domain(self, orm: models.FoodcartTenant) -> FoodcartTenant:
+        return FoodcartTenant(
+            id=orm.id,
+            owner_user_id=orm.owner_user_id,
+            name=orm.name,
+            slug=orm.slug,
+            status=FoodcartTenantStatus(orm.status),
+            billing_status=FoodcartBillingStatus(orm.billing_status),
+            paddle_customer_id=orm.paddle_customer_id,
+            paddle_subscription_id=orm.paddle_subscription_id,
+            plan=orm.plan,
+            billing_interval=orm.billing_interval,
+            subscription_status=orm.subscription_status,
+            subscription_current_period_start=orm.subscription_current_period_start,
+            subscription_current_period_end=orm.subscription_current_period_end,
+            trial_ends_at=orm.trial_ends_at,
+            canceled_at=orm.canceled_at,
+            created_at=orm.created_at,
+            updated_at=orm.updated_at,
+        )
 
     def update(self, tenant: FoodcartTenant) -> FoodcartTenant:
         orm = (
@@ -501,6 +513,15 @@ class FoodcartTenantRepository(BaseRepository[FoodcartTenant]):
         orm.slug = tenant.slug
         orm.status = tenant.status.value
         orm.billing_status = tenant.billing_status.value
+        orm.paddle_customer_id = tenant.paddle_customer_id
+        orm.paddle_subscription_id = tenant.paddle_subscription_id
+        orm.plan = tenant.plan
+        orm.billing_interval = tenant.billing_interval
+        orm.subscription_status = tenant.subscription_status
+        orm.subscription_current_period_start = tenant.subscription_current_period_start
+        orm.subscription_current_period_end = tenant.subscription_current_period_end
+        orm.trial_ends_at = tenant.trial_ends_at
+        orm.canceled_at = tenant.canceled_at
         self.session.flush()
         return tenant
 

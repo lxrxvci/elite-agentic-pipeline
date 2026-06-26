@@ -16,6 +16,13 @@ export interface Tenant {
   slug: string
   status: 'active' | 'suspended' | 'archived'
   billing_status: 'trial' | 'active' | 'past_due' | 'canceled'
+  plan: string
+  billing_interval: 'month' | 'year' | null
+  subscription_status: 'trialing' | 'active' | 'past_due' | 'canceled' | 'paused' | null
+  subscription_current_period_start: string | null
+  subscription_current_period_end: string | null
+  trial_ends_at: string | null
+  canceled_at: string | null
   created_at: string
   updated_at: string
 }
@@ -41,6 +48,8 @@ export interface Site {
   seo?: SeoMeta
   brand_colors?: BrandColors
   custom_domain?: string | null
+  domain_status?: string | null
+  domain_provider?: string | null
   created_at: string
   updated_at: string
 }
@@ -174,6 +183,44 @@ export interface SiteUpdate {
   custom_domain?: string | null
 }
 
+export interface ConnectDomainRequest {
+  domain: string
+  provider?: 'external' | 'cloudflare' | 'namecheap'
+}
+
+export interface DomainStatus {
+  domain: string
+  status: 'none' | 'pending' | 'active' | 'error'
+  provider: string | null
+  dns_verified: boolean
+  dns_message: string | null
+}
+
+export interface DomainAvailability {
+  name: string
+  registrable: boolean
+  currency: string
+  registration_cost: string
+  renewal_cost: string
+  reason?: string | null
+}
+
+export interface DomainSearchResponse {
+  query: string
+  domains: DomainAvailability[]
+}
+
+export interface DomainPurchaseRequest {
+  domain: string
+}
+
+export interface DomainPurchaseResponse {
+  checkout_url: string
+  domain: string
+  total: string
+  currency: string
+}
+
 export interface ContentBlockCreate<T = unknown> {
   block_type: BlockType
   schema_version: string
@@ -241,4 +288,42 @@ export interface PublicSite {
   seo?: SeoMeta
   brand_colors?: BrandColors
   blocks: ContentBlock[]
+}
+
+export type BillingInterval = 'month' | 'year'
+
+export interface Plan {
+  id: string
+  name: string
+  interval: BillingInterval
+  price_usd: string
+}
+
+export interface BillingPlans {
+  monthly: Plan
+  yearly: Plan
+}
+
+export interface CheckoutRequest {
+  interval: BillingInterval
+}
+
+export interface CheckoutResponse {
+  checkout_url: string
+}
+
+export interface PortalResponse {
+  url: string
+}
+
+export interface Subscription {
+  plan: string
+  status: 'trialing' | 'active' | 'past_due' | 'canceled' | 'paused' | null
+  billing_interval: BillingInterval | null
+  current_period_start: string | null
+  current_period_end: string | null
+  trial_ends_at: string | null
+  canceled_at: string | null
+  paddle_subscription_id: string | null
+  paddle_customer_id: string | null
 }

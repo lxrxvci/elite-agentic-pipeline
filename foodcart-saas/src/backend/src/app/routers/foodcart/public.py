@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.dependencies import get_db
 from app.exceptions import NotFoundError
-from app.schemas_foodcart import ContentBlockSchema, PublicSiteSchema
+from app.schemas_foodcart import BrandColorsSchema, ContentBlockSchema, PublicSiteSchema
+from app.services.domain_service import normalize_domain
 from domain.services.foodcart import verify_preview_token
 from infrastructure import models
 
@@ -25,7 +26,9 @@ def _site_to_public_schema(
         template_id=site_orm.template_id,
         publish_state=site_orm.publish_state,
         seo=site_orm.seo or {},
-        brand_colors=site_orm.brand_colors,
+        brand_colors=BrandColorsSchema.model_validate(site_orm.brand_colors)
+        if site_orm.brand_colors
+        else None,
         blocks=[ContentBlockSchema.model_validate(b) for b in blocks_orm],
     )
 
@@ -67,6 +70,34 @@ def preview_site(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired preview token",
         )
+    blocks_orm = (
+        db.query(models.ContentBlock)
+        .filter(models.ContentBlock.site_id == site_orm.id)
+        .order_by(models.ContentBlock.sort_order.asc())
+        .all()
+    )
+    return _site_to_public_schema(site_orm, blocks_orm)
+
+
+@router.get("/sites/by-domain/{domain}", response_model=PublicSiteSchema)
+def get_public_site_by_domain(
+    domain: str,
+    db: Session = Depends(get_db),
+) -> PublicSiteSchema:
+    """Return a published site by its custom domain.
+
+    The frontend middleware uses this to route requests that arrive on a
+    custom domain back to the correct tenant site.
+    """
+    normalized = normalize_domain(domain)
+    site_orm = (
+        db.query(models.Site)
+        .filter(models.Site.custom_domain == normalized)
+        .filter(models.Site.publish_state == "published")
+        .first()
+    )
+    if not site_orm:
+        raise NotFoundError("Site not found")
     blocks_orm = (
         db.query(models.ContentBlock)
         .filter(models.ContentBlock.site_id == site_orm.id)
