@@ -523,6 +523,7 @@ jobs:
   production-slo-check:
     name: SLO check (production)
     needs: [smoke-production]
+    if: always() && !cancelled() && needs.smoke-production.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
@@ -554,7 +555,7 @@ jobs:
   tag-release:
     name: Tag deployment candidate
     needs: [smoke-production, production-slo-check]
-    if: needs.smoke-production.result == 'success' && needs.production-slo-check.result == 'success'
+    if: always() && !cancelled() && needs.smoke-production.result == 'success' && needs.production-slo-check.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
