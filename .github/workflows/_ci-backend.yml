@@ -6,7 +6,7 @@ on:
       project-dir:
         required: false
         type: string
-        default: example_project
+        default: foodcart-saas
       python-version:
         required: true
         type: string

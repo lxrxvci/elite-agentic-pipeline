@@ -10,7 +10,7 @@ on:
   workflow_call:
 
 env:
-  PROJECT_DIR: example_project
+  PROJECT_DIR: foodcart-saas
 
 permissions:
   contents: read
@@ -21,4 +21,4 @@ jobs:
   scan:
     uses: ./.github/workflows/_security-scan.yml
     with:
-      project-dir: example_project
+      project-dir: foodcart-saas

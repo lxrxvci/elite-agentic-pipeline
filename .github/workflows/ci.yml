@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  PROJECT_DIR: example_project
+  PROJECT_DIR: foodcart-saas
 
 jobs:
   changes:
@@ -41,7 +41,7 @@ jobs:
     if: ${{ needs.changes.outputs.frontend == 'true' }}
     uses: ./.github/workflows/_ci-frontend.yml
     with:
-      project-dir: example_project
+      project-dir: foodcart-saas
       node-version: "20"
 
   backend:
@@ -49,7 +49,7 @@ jobs:
     if: ${{ needs.changes.outputs.backend == 'true' }}
     uses: ./.github/workflows/_ci-backend.yml
     with:
-      project-dir: example_project
+      project-dir: foodcart-saas
       python-version: "3.12"
       database-url: postgresql+psycopg://postgres:postgres@localhost:5432/elite_db
     secrets:
@@ -63,14 +63,14 @@ jobs:
       id-token: write
     uses: ./.github/workflows/_ci-infra.yml
     with:
-      project-dir: example_project
+      project-dir: foodcart-saas
 
   e2e-real:
     needs: changes
     if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true' }}
     uses: ./.github/workflows/_ci-e2e-real.yml
     with:
-      project-dir: example_project
+      project-dir: foodcart-saas
       node-version: "20"
 
   dora:
@@ -80,7 +80,7 @@ jobs:
       contents: write
     uses: ./.github/workflows/dora-metrics.yml
     with:
-      project-dir: example_project
+      project-dir: foodcart-saas
 
   pipeline:
     needs: changes

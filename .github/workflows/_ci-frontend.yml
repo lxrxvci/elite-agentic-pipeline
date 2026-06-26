@@ -6,7 +6,7 @@ on:
       project-dir:
         required: false
         type: string
-        default: example_project
+        default: foodcart-saas
       node-version:
         required: true
         type: string

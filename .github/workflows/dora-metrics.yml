@@ -6,7 +6,7 @@ on:
       project-dir:
         required: false
         type: string
-        default: example_project
+        default: foodcart-saas
   workflow_dispatch:
   schedule:
     - cron: '0 9 * * 1'
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  PROJECT_DIR: example_project
+  PROJECT_DIR: foodcart-saas
 
 jobs:
   collect:
