@@ -218,9 +218,31 @@ jobs:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
         run: alembic upgrade head
 
+  canary-check:
+    name: Check backend canary configuration
+    needs: [migrate-production]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      backend_canary_enabled: ${{ steps.check.outputs.backend_canary_enabled }}
+    steps:
+      - name: Check for canary project
+        id: check
+        env:
+          CANARY_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND_CANARY }}
+        run: |
+          if [ -n "$CANARY_PROJECT_ID" ]; then
+            echo "backend_canary_enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Backend canary project configured"
+          else
+            echo "backend_canary_enabled=false" >> "$GITHUB_OUTPUT"
+            echo "No backend canary project configured; deploying directly to production"
+          fi
+
   deploy-backend-canary:
     name: Deploy backend canary
-    needs: [migrate-production]
+    needs: [migrate-production, canary-check]
+    if: needs.canary-check.outputs.backend_canary_enabled == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -256,7 +278,8 @@ jobs:
 
   enable-canary:
     name: Enable backend canary routing (Ring 1 - 5%)
-    needs: [deploy-backend-canary]
+    needs: [deploy-backend-canary, canary-check]
+    if: needs.canary-check.outputs.backend_canary_enabled == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
@@ -290,8 +313,51 @@ jobs:
       - name: Wait for Edge Config propagation
         run: sleep 30
 
+  deploy-backend-production:
+    name: Deploy backend directly to production
+    needs: [migrate-production, canary-check]
+    if: needs.canary-check.outputs.backend_canary_enabled != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Configure AWS credentials via OIDC
+        if: vars.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+      - name: Install Vercel CLI
+        run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
+      - name: Deploy backend to Vercel production project
+        working-directory: ${{ env.PROJECT_DIR }}/src/backend
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
+        run: |
+          url=$(vercel --cwd "$GITHUB_WORKSPACE" --token "$VERCEL_TOKEN" --prod --yes)
+          echo "Deployed backend directly to production: $url"
+
+  backend-production-ready:
+    name: Backend production ready
+    needs: [enable-canary, deploy-backend-production]
+    if: always() && !cancelled() && (needs.enable-canary.result == 'success' || needs.deploy-backend-production.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Confirm backend is live
+        run: echo "Backend production deployment is ready"
+
   deploy-frontend-production:
-    needs: [smoke-staging, enable-canary]
+    needs: [smoke-staging, backend-production-ready]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -332,7 +398,8 @@ jobs:
 
   canary-analysis:
     name: Canary analysis
-    needs: [deploy-backend-canary, deploy-frontend-production]
+    needs: [deploy-backend-canary, deploy-frontend-production, canary-check]
+    if: needs.canary-check.outputs.backend_canary_enabled == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -367,6 +434,7 @@ jobs:
   slo-check:
     name: SLO check (canary window)
     needs: [canary-analysis]
+    if: needs.canary-analysis.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
@@ -398,6 +466,7 @@ jobs:
   promote-canary:
     name: Promote canary to production
     needs: [canary-analysis, slo-check, deploy-backend-canary]
+    if: needs.canary-check.outputs.backend_canary_enabled == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -445,8 +514,18 @@ jobs:
             --team-id "$VERCEL_TEAM_ID" \
             --percentage 0
 
+  backend-production-final:
+    name: Backend production final
+    needs: [promote-canary, deploy-backend-production]
+    if: always() && !cancelled() && !failure() && (needs.promote-canary.result == 'success' || needs.deploy-backend-production.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Confirm backend promotion
+        run: echo "Backend production promotion/direct deploy completed"
+
   smoke-production:
-    needs: [promote-canary, deploy-frontend-production]
+    needs: [backend-production-final, deploy-frontend-production]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -524,7 +603,7 @@ jobs:
           echo "Created and pushed tag $tag"
 
   rollback-on-failure:
-    needs: [canary-analysis, slo-check, promote-canary, deploy-frontend-production, smoke-production, production-slo-check]
+    needs: [canary-analysis, slo-check, promote-canary, deploy-backend-production, deploy-frontend-production, smoke-production, production-slo-check]
     if: failure()
     runs-on: ubuntu-latest
     timeout-minutes: 10
