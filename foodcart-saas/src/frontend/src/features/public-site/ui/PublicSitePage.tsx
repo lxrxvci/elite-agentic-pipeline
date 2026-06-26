@@ -1,5 +1,5 @@
 import type { ContentBlock, PublicSite } from '@/shared/api/foodcart-types'
-import { getTheme } from '../lib/theme'
+import { buildTheme } from '../lib/theme'
 import { computeOpenStatus } from '../lib/hours'
 import { HeroSection } from './HeroSection'
 import { StorySection } from './StorySection'
@@ -14,13 +14,13 @@ interface PublicSitePageProps {
 }
 
 export function PublicSitePage({ site }: PublicSitePageProps) {
-  const theme = getTheme(site.template_id)
+  const { classes: theme, style } = buildTheme(site)
   const locationsBlock = site.blocks.find((b) => b.block_type === 'locations') as ContentBlock<{ locations: { hours: Record<string, string>; timezone: string }[] }> | undefined
   const firstLocation = locationsBlock?.data.locations[0]
   const openStatus = firstLocation ? computeOpenStatus(firstLocation.hours, firstLocation.timezone) : undefined
 
   return (
-    <main className={`${theme.pageBg} min-h-screen`}>
+    <main className={`${theme.pageBg} min-h-screen`} style={style}>
       <a href="#content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:bg-white focus:text-fc-text-primary focus:px-4 focus:py-2">
         Skip to content
       </a>
@@ -33,7 +33,7 @@ export function PublicSitePage({ site }: PublicSitePageProps) {
   )
 }
 
-function renderBlock(block: ContentBlock, theme: ReturnType<typeof getTheme>, openStatus?: ReturnType<typeof computeOpenStatus>) {
+function renderBlock(block: ContentBlock, theme: ReturnType<typeof buildTheme>['classes'], openStatus?: ReturnType<typeof computeOpenStatus>) {
   switch (block.block_type) {
     case 'hero':
       return <HeroSection key={block.id} data={block.data as never} theme={theme} openStatus={openStatus} />

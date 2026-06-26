@@ -25,6 +25,7 @@ def _site_to_public_schema(
         template_id=site_orm.template_id,
         publish_state=site_orm.publish_state,
         seo=site_orm.seo or {},
+        brand_colors=site_orm.brand_colors,
         blocks=[ContentBlockSchema.model_validate(b) for b in blocks_orm],
     )
 

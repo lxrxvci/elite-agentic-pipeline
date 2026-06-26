@@ -19,7 +19,7 @@ def test_get_site(client: TestClient, onboarded):
         headers=onboarded["user"]["headers"],
     )
     assert response.status_code == 200
-    assert response.json()["template_id"] == "banhmi"
+    assert response.json()["template_id"] == "custom"
 
 
 def test_update_site_publish_state(client: TestClient, onboarded):

@@ -1,4 +1,4 @@
-export type TemplateId = 'banhmi' | 'real-indian' | 'mis-abuelos'
+export type TemplateId = 'banhmi' | 'real-indian' | 'mis-abuelos' | 'custom'
 
 export type BlockType =
   | 'hero'
@@ -26,6 +26,12 @@ export interface SeoMeta {
   favicon_url?: string
 }
 
+export interface BrandColors {
+  primary: string
+  secondary: string
+  background: string
+}
+
 export interface Site {
   id: string
   tenant_id: string
@@ -33,6 +39,7 @@ export interface Site {
   template_id: TemplateId
   publish_state: 'draft' | 'published'
   seo?: SeoMeta
+  brand_colors?: BrandColors
   custom_domain?: string | null
   created_at: string
   updated_at: string
@@ -143,6 +150,7 @@ export interface TenantOnboardingRequest {
   business_name: string
   slug: string
   template_id: TemplateId
+  brand_colors: BrandColors
   initial_sources?: IngestionRequest
 }
 
@@ -155,12 +163,14 @@ export interface SiteCreate {
   slug: string
   template_id: TemplateId
   seo?: SeoMeta
+  brand_colors?: BrandColors
 }
 
 export interface SiteUpdate {
   template_id?: TemplateId
   publish_state?: 'draft' | 'published'
   seo?: SeoMeta
+  brand_colors?: BrandColors
   custom_domain?: string | null
 }
 
@@ -229,5 +239,6 @@ export interface PublicSite {
   template_id: TemplateId
   publish_state: 'draft' | 'published'
   seo?: SeoMeta
+  brand_colors?: BrandColors
   blocks: ContentBlock[]
 }

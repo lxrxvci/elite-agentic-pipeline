@@ -7,6 +7,11 @@ const SITE: PublicSite = {
   slug: 'taco-cart',
   template_id: 'banhmi',
   publish_state: 'published',
+  brand_colors: {
+    primary: '#2563eb',
+    secondary: '#f5f5f5',
+    background: '#ffffff',
+  },
   blocks: [
     {
       id: 'b1',

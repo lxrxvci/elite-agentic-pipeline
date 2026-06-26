@@ -30,7 +30,12 @@ class TestOnboarding:
             json={
                 "business_name": "Curry Corner",
                 "slug": "curry-corner",
-                "template_id": "real-indian",
+                "template_id": "custom",
+                "brand_colors": {
+                    "primary": "#e86a33",
+                    "secondary": "#1a1a3e",
+                    "background": "#fff8e1",
+                },
             },
             headers=foodcart_user["headers"],
         )
@@ -38,7 +43,8 @@ class TestOnboarding:
         data = response.json()
         assert data["tenant"]["slug"] == "curry-corner"
         assert data["tenant"]["status"] == "active"
-        assert data["site"]["template_id"] == "real-indian"
+        assert data["site"]["template_id"] == "custom"
+        assert data["site"]["brand_colors"]["primary"] == "#e86a33"
         assert data["site"]["publish_state"] == "draft"
 
     def test_onboard_twice_returns_conflict(self, client: TestClient, onboarded):
@@ -47,7 +53,12 @@ class TestOnboarding:
             json={
                 "business_name": "Another",
                 "slug": "another-slug",
-                "template_id": "mis-abuelos",
+                "template_id": "custom",
+                "brand_colors": {
+                    "primary": "#2563eb",
+                    "secondary": "#f5f5f5",
+                    "background": "#ffffff",
+                },
             },
             headers=onboarded["user"]["headers"],
         )
@@ -62,7 +73,12 @@ class TestOnboarding:
             json={
                 "business_name": "Copycat",
                 "slug": onboarded["tenant"]["slug"],
-                "template_id": "banhmi",
+                "template_id": "custom",
+                "brand_colors": {
+                    "primary": "#2563eb",
+                    "secondary": "#f5f5f5",
+                    "background": "#ffffff",
+                },
             },
             headers=other["headers"],
         )

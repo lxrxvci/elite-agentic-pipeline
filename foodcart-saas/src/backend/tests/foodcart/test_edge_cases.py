@@ -132,7 +132,12 @@ def test_onboarding_with_initial_sources(client: TestClient, seeded_user):
         json={
             "business_name": "Source Truck",
             "slug": "source-truck",
-            "template_id": "banhmi",
+            "template_id": "custom",
+            "brand_colors": {
+                "primary": "#2563eb",
+                "secondary": "#f5f5f5",
+                "background": "#ffffff",
+            },
             "initial_sources": {
                 "website_url": "https://example.com",
                 "social_links": [

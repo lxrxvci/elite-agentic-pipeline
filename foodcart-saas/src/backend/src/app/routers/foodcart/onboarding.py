@@ -100,6 +100,7 @@ def onboard_tenant(
         business_name=payload.business_name,
         slug=normalized_slug,
         template_id=payload.template_id,
+        brand_colors=payload.brand_colors.model_dump(),
     )
     tenant_repo.create(tenant)
 

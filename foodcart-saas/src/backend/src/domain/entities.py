@@ -224,6 +224,7 @@ class Site:
     template_id: str
     publish_state: SitePublishState = SitePublishState.DRAFT
     seo: dict[str, Any] | None = None
+    brand_colors: dict[str, Any] | None = None
     custom_domain: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))

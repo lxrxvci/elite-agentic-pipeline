@@ -547,6 +547,7 @@ class SiteRepository(BaseRepository[Site]):
             template_id=site.template_id,
             publish_state=site.publish_state.value,
             seo=site.seo or {},
+            brand_colors=site.brand_colors,
             custom_domain=site.custom_domain,
         )
         self.session.add(orm)
@@ -565,6 +566,7 @@ class SiteRepository(BaseRepository[Site]):
         orm.template_id = site.template_id
         orm.publish_state = site.publish_state.value
         orm.seo = site.seo or orm.seo
+        orm.brand_colors = site.brand_colors if site.brand_colors is not None else orm.brand_colors
         orm.custom_domain = site.custom_domain
         self.session.flush()
         return site
@@ -590,6 +592,7 @@ class SiteRepository(BaseRepository[Site]):
             template_id=orm.template_id,
             publish_state=SitePublishState(orm.publish_state),
             seo=orm.seo or {},
+            brand_colors=orm.brand_colors,
             custom_domain=orm.custom_domain,
             created_at=orm.created_at,
             updated_at=orm.updated_at,

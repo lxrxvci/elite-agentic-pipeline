@@ -54,6 +54,7 @@ def create_site(
         template_id=payload.template_id,
         publish_state=SitePublishState.DRAFT,
         seo=payload.seo.model_dump() if payload.seo else {},
+        brand_colors=payload.brand_colors.model_dump() if payload.brand_colors else None,
     )
     SiteRepository(db, user.tenant_id).create(site)
     db.commit()
@@ -102,6 +103,8 @@ def update_site(
         site.publish_state = SitePublishState(payload.publish_state)
     if payload.seo is not None:
         site.seo = payload.seo.model_dump()
+    if payload.brand_colors is not None:
+        site.brand_colors = payload.brand_colors.model_dump()
     if payload.custom_domain is not None:
         site.custom_domain = payload.custom_domain
 

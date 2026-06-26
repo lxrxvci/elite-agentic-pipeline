@@ -533,9 +533,11 @@ class TestOnboardingBuilder:
     def test_build_result(self):
         tenant_id = uuid.uuid4()
         user_id = uuid.uuid4()
+        brand_colors = {"primary": "#2563eb", "secondary": "#f5f5f5", "background": "#ffffff"}
         tenant, site = build_onboarding_result(
-            user_id, tenant_id, "Tacos", "tacos", "banhmi"
+            user_id, tenant_id, "Tacos", "tacos", "custom", brand_colors
         )
         assert tenant.slug == "tacos"
         assert site.tenant_id == tenant_id
         assert site.slug == "tacos"
+        assert site.brand_colors == brand_colors

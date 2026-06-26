@@ -143,9 +143,14 @@ def _seed_contract_site() -> None:
                 id=CONTRACT_SITE_ID,
                 tenant_id=CONTRACT_TENANT_ID,
                 slug="contract-bites",
-                template_id="banhmi",
+                template_id="custom",
                 publish_state="published",
                 seo={"title": "Contract Bites", "description": "Tasty contract food"},
+                brand_colors={
+                    "primary": "#2563eb",
+                    "secondary": "#f5f5f5",
+                    "background": "#ffffff",
+                },
             )
             db.add(site)
             block = ContentBlock(

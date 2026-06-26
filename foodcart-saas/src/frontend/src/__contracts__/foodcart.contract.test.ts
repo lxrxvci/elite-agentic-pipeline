@@ -33,9 +33,14 @@ const siteShape = {
   id: uuidMatcher,
   tenant_id: uuidMatcher,
   slug: MatchersV3.string('contract-bites'),
-  template_id: MatchersV3.string('banhmi'),
+  template_id: MatchersV3.string('custom'),
   publish_state: MatchersV3.string('published'),
   seo: MatchersV3.like({ title: 'Contract Bites', description: 'Tasty contract food' }),
+  brand_colors: MatchersV3.like({
+    primary: '#2563eb',
+    secondary: '#f5f5f5',
+    background: '#ffffff',
+  }),
   custom_domain: MatchersV3.nullValue(),
   created_at: isoTimestampMatcher,
   updated_at: isoTimestampMatcher,
@@ -67,7 +72,12 @@ describe('Foodcart API contract', () => {
         builder.jsonBody({
           business_name: 'Contract Bites',
           slug: 'contract-bites',
-          template_id: 'banhmi',
+          template_id: 'custom',
+          brand_colors: {
+            primary: '#2563eb',
+            secondary: '#f5f5f5',
+            background: '#ffffff',
+          },
         })
       })
       .willRespondWith(201, (builder) => {
@@ -87,14 +97,19 @@ describe('Foodcart API contract', () => {
           body: JSON.stringify({
             business_name: 'Contract Bites',
             slug: 'contract-bites',
-            template_id: 'banhmi',
+            template_id: 'custom',
+            brand_colors: {
+              primary: '#2563eb',
+              secondary: '#f5f5f5',
+              background: '#ffffff',
+            },
           }),
         })
 
         expect(response.status).toBe(201)
         const data = await response.json()
         expect(data.tenant.slug).toBe('contract-bites')
-        expect(data.site.template_id).toBe('banhmi')
+        expect(data.site.template_id).toBe('custom')
       })
   })
 
@@ -134,9 +149,14 @@ describe('Foodcart API contract', () => {
         builder.headers({ 'Content-Type': 'application/json' })
         builder.jsonBody({
           slug: MatchersV3.string('contract-bites'),
-          template_id: MatchersV3.string('banhmi'),
+          template_id: MatchersV3.string('custom'),
           publish_state: MatchersV3.string('published'),
           seo: MatchersV3.like({ title: 'Contract Bites' }),
+          brand_colors: MatchersV3.like({
+            primary: '#2563eb',
+            secondary: '#f5f5f5',
+            background: '#ffffff',
+          }),
           blocks: MatchersV3.eachLike(blockShape),
         })
       })

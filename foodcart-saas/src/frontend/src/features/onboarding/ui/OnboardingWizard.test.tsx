@@ -24,7 +24,7 @@ vi.mock('../api/useOnboard', () => ({
 }))
 
 describe('OnboardingWizard', () => {
-  it('advances through steps and selects a template', async () => {
+  it('advances through identity, links, brand, and preview steps', async () => {
     render(<OnboardingWizard />)
     expect(screen.getByText(/Business name/i)).toBeInTheDocument()
 
@@ -33,11 +33,13 @@ describe('OnboardingWizard', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /next/i }))
     expect(screen.getByText(/Google Business Profile/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/DoorDash/i)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /next/i }))
-    expect(screen.getByText(/Banh Mi Fusion/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Primary brand color/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Secondary brand color/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Background brand color/i)).toBeInTheDocument()
 
-    await userEvent.click(screen.getByLabelText(/Banh Mi Fusion/i))
     await userEvent.click(screen.getByRole('button', { name: /next/i }))
     expect(screen.getByText(/Ready to publish/i)).toBeInTheDocument()
   })

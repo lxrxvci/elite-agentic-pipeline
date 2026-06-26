@@ -274,6 +274,9 @@ class Site(Base):
         String(20), nullable=False, default="draft"
     )
     seo: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=dict)
+    brand_colors: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True, default=None
+    )
     custom_domain: Mapped[str | None] = mapped_column(
         String(255), nullable=True, unique=True
     )

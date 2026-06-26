@@ -16,7 +16,12 @@ def onboarded(client: TestClient, foodcart_user):
     payload = {
         "business_name": "Taco Fiesta",
         "slug": "taco-fiesta",
-        "template_id": "banhmi",
+        "template_id": "custom",
+        "brand_colors": {
+            "primary": "#2563eb",
+            "secondary": "#f5f5f5",
+            "background": "#ffffff",
+        },
         "initial_sources": {"website_url": "https://example.com"},
     }
     response = client.post(

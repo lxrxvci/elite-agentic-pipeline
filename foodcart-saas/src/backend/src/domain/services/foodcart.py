@@ -1103,6 +1103,7 @@ def build_onboarding_result(
     business_name: str,
     slug: str,
     template_id: str,
+    brand_colors: dict[str, Any],
 ) -> tuple[FoodcartTenant, Site]:
     tenant = FoodcartTenant(
         id=tenant_id,
@@ -1119,6 +1120,7 @@ def build_onboarding_result(
         template_id=template_id,
         publish_state=SitePublishState.DRAFT,
         seo={"title": business_name, "description": f"Welcome to {business_name}"},
+        brand_colors=brand_colors,
     )
     return tenant, site
 

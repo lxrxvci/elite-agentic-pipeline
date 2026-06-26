@@ -36,6 +36,12 @@ class SeoMetaSchema(BaseModel):
     favicon_url: str | None = None
 
 
+class BrandColorsSchema(BaseModel):
+    primary: str = Field(..., pattern=r"^#[0-9a-fA-F]{6}$")
+    secondary: str = Field(..., pattern=r"^#[0-9a-fA-F]{6}$")
+    background: str = Field(..., pattern=r"^#[0-9a-fA-F]{6}$")
+
+
 class TenantSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -57,6 +63,7 @@ class SiteSchema(BaseModel):
     template_id: str
     publish_state: str
     seo: dict[str, Any] | None = None
+    brand_colors: BrandColorsSchema | None = None
     custom_domain: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -64,8 +71,9 @@ class SiteSchema(BaseModel):
 
 class SiteCreateSchema(BaseModel):
     slug: str = Field(..., min_length=1, max_length=63, pattern=r"^[a-z0-9-]+$")
-    template_id: str = Field(..., pattern=r"^(banhmi|real-indian|mis-abuelos)$")
+    template_id: str = Field("custom", pattern=r"^(banhmi|real-indian|mis-abuelos|custom)$")
     seo: SeoMetaSchema | None = None
+    brand_colors: BrandColorsSchema | None = None
 
     @field_validator("slug")
     @classmethod
@@ -77,9 +85,10 @@ class SiteCreateSchema(BaseModel):
 
 
 class SiteUpdateSchema(BaseModel):
-    template_id: str | None = Field(None, pattern=r"^(banhmi|real-indian|mis-abuelos)$")
+    template_id: str | None = Field(None, pattern=r"^(banhmi|real-indian|mis-abuelos|custom)$")
     publish_state: str | None = Field(None, pattern=r"^(draft|published)$")
     seo: SeoMetaSchema | None = None
+    brand_colors: BrandColorsSchema | None = None
     custom_domain: str | None = Field(None, max_length=255)
 
 
@@ -190,13 +199,15 @@ class PublicSiteSchema(BaseModel):
     template_id: str
     publish_state: str
     seo: dict[str, Any] | None = None
+    brand_colors: BrandColorsSchema | None = None
     blocks: list[ContentBlockSchema]
 
 
 class TenantOnboardingRequestSchema(BaseModel):
     business_name: str = Field(..., min_length=1, max_length=255)
     slug: str = Field(..., min_length=1, max_length=63, pattern=r"^[a-z0-9-]+$")
-    template_id: str = Field(..., pattern=r"^(banhmi|real-indian|mis-abuelos)$")
+    template_id: str = Field("custom", pattern=r"^(banhmi|real-indian|mis-abuelos|custom)$")
+    brand_colors: BrandColorsSchema
     initial_sources: IngestionRequestSchema | None = None
 
     @field_validator("slug")

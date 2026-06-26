@@ -2,14 +2,31 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Card, Field, Input, TemplateSelector, type TemplateOption } from '@/shared/ui'
+import { Button, Card, Field, Input } from '@/shared/ui'
 import { useCheckSlug } from '../api/useCheckSlug'
 import { useOnboard } from '../api/useOnboard'
-import type { TemplateId, IngestionRequest } from '@/shared/api/foodcart-types'
+import type { IngestionRequest, BrandColors } from '@/shared/api/foodcart-types'
 import { OnboardingStepper } from './OnboardingStepper'
-import { TEMPLATES } from '@/features/public-site/lib/templates'
 
-const STEPS = ['Identity', 'Links', 'Template', 'Preview']
+const STEPS = ['Identity', 'Links', 'Brand', 'Preview']
+
+const DEFAULT_BRAND_COLORS: BrandColors = {
+  primary: '#2563eb',
+  secondary: '#f5f5f5',
+  background: '#ffffff',
+}
+
+const DELIVERY_PLATFORMS = [
+  { key: 'doordash', label: 'DoorDash' },
+  { key: 'ubereats', label: 'UberEats' },
+  { key: 'grubhub', label: 'Grubhub' },
+] as const
+
+interface DeliveryLinks {
+  doordash: string
+  ubereats: string
+  grubhub: string
+}
 
 export function OnboardingWizard() {
   const router = useRouter()
@@ -17,8 +34,9 @@ export function OnboardingWizard() {
   const [businessName, setBusinessName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null)
-  const [templateId, setTemplateId] = useState<TemplateId | undefined>()
+  const [brandColors, setBrandColors] = useState<BrandColors>(DEFAULT_BRAND_COLORS)
   const [links, setLinks] = useState<IngestionRequest>({})
+  const [delivery, setDelivery] = useState<DeliveryLinks>({ doordash: '', ubereats: '', grubhub: '' })
   const checkSlug = useCheckSlug()
   const onboard = useOnboard()
 
@@ -48,13 +66,20 @@ export function OnboardingWizard() {
   const handleBack = () => setStep((s) => Math.max(s - 1, 0))
 
   const handlePublish = async () => {
-    if (!businessName || !slug || !templateId) return
+    if (!businessName || !slug) return
+    const orderLinks = DELIVERY_PLATFORMS
+      .map(({ key }) => ({ platform: key, url: delivery[key] }))
+      .filter((link) => link.url)
     try {
       await onboard.mutateAsync({
         business_name: businessName,
         slug,
-        template_id: templateId,
-        initial_sources: links,
+        template_id: 'custom',
+        brand_colors: brandColors,
+        initial_sources: {
+          ...links,
+          order_links: orderLinks.length > 0 ? orderLinks : undefined,
+        },
       })
       router.push('/admin/dashboard')
     } catch {
@@ -64,7 +89,7 @@ export function OnboardingWizard() {
 
   const canProceed = (() => {
     if (step === 0) return businessName.length > 0 && slug.length > 2 && slugAvailable === true
-    if (step === 2) return !!templateId
+    if (step === 2) return !!brandColors.primary && !!brandColors.secondary && !!brandColors.background
     return true
   })()
 
@@ -104,34 +129,76 @@ export function OnboardingWizard() {
             </form>
           )}
           {step === 1 && (
-            <div className="space-y-4">
+            <div className="space-y-6">
               <p className="text-fc-text-secondary">Add links to your existing presence. Everything is optional.</p>
-              {[
-                { key: 'website_url', label: 'Website' },
-                { key: 'menu_url', label: 'Menu URL' },
-                { key: 'google_business_url', label: 'Google Business Profile' },
-                { key: 'yelp_url', label: 'Yelp' },
-              ].map(({ key, label }) => (
-                <Field key={key} id={key} label={label}>
-                  <Input
-                    id={key}
-                    value={(links[key as keyof IngestionRequest] as string) || ''}
-                    onChange={(e) => setLinks((l) => ({ ...l, [key]: e.target.value }))}
-                    placeholder={`https://...`}
-                    type="url"
-                  />
-                </Field>
-              ))}
+              <div className="space-y-4">
+                {[
+                  { key: 'website_url', label: 'Website' },
+                  { key: 'menu_url', label: 'Menu URL' },
+                  { key: 'google_business_url', label: 'Google Business Profile' },
+                  { key: 'yelp_url', label: 'Yelp' },
+                ].map(({ key, label }) => (
+                  <Field key={key} id={key} label={label}>
+                    <Input
+                      id={key}
+                      value={(links[key as keyof IngestionRequest] as string) || ''}
+                      onChange={(e) => setLinks((l) => ({ ...l, [key]: e.target.value }))}
+                      placeholder={`https://...`}
+                      type="url"
+                    />
+                  </Field>
+                ))}
+              </div>
+              <div>
+                <h3 className="font-semibold mb-3">Delivery platforms</h3>
+                <div className="grid md:grid-cols-3 gap-4">
+                  {DELIVERY_PLATFORMS.map(({ key, label }) => (
+                    <Field key={key} id={`delivery-${key}`} label={label}>
+                      <Input
+                        id={`delivery-${key}`}
+                        value={delivery[key]}
+                        onChange={(e) => setDelivery((d) => ({ ...d, [key]: e.target.value }))}
+                        placeholder="https://..."
+                        type="url"
+                      />
+                    </Field>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
           {step === 2 && (
-            <div className="space-y-4">
-              <p className="text-fc-text-secondary">Choose a look that matches your brand.</p>
-              <TemplateSelector
-                templates={TEMPLATES as TemplateOption[]}
-                selectedId={templateId}
-                onSelect={setTemplateId}
-              />
+            <div className="space-y-6">
+              <p className="text-fc-text-secondary">Choose your brand colors. We&apos;ll use them across your public site.</p>
+              <div className="grid md:grid-cols-3 gap-6">
+                {[
+                  { key: 'primary', label: 'Primary', hint: 'Buttons and highlights' },
+                  { key: 'secondary', label: 'Secondary', hint: 'Accent sections' },
+                  { key: 'background', label: 'Background', hint: 'Page background' },
+                ].map(({ key, label, hint }) => {
+                  const colorKey = key as keyof BrandColors
+                  return (
+                    <Field key={key} id={`color-${key}`} label={label} hint={hint}>
+                      <div className="flex items-center gap-3">
+                        <input
+                          id={`color-${key}`}
+                          type="color"
+                          value={brandColors[colorKey]}
+                          onChange={(e) => setBrandColors((c) => ({ ...c, [colorKey]: e.target.value }))}
+                          className="h-12 w-12 rounded-lg border border-fc-neutral-300 p-1 cursor-pointer"
+                          aria-label={`${label} brand color`}
+                        />
+                        <Input
+                          value={brandColors[colorKey]}
+                          onChange={(e) => setBrandColors((c) => ({ ...c, [colorKey]: e.target.value }))}
+                          pattern="^#[0-9a-fA-F]{6}$"
+                          className="flex-1"
+                        />
+                      </div>
+                    </Field>
+                  )
+                })}
+              </div>
             </div>
           )}
           {step === 3 && (
@@ -139,7 +206,18 @@ export function OnboardingWizard() {
               <div className="bg-fc-success/10 text-fc-success-text rounded-xl p-4">
                 <h3 className="font-semibold">Ready to publish</h3>
                 <p className="text-sm mt-1">{businessName} will be live at <strong>{slug}.webagentic.app</strong></p>
-                <p className="text-sm">Template: <strong>{TEMPLATES.find((t) => t.id === templateId)?.name}</strong></p>
+                <div className="flex items-center gap-3 mt-3">
+                  {(['primary', 'secondary', 'background'] as const).map((key) => (
+                    <div key={key} className="flex items-center gap-2 text-sm">
+                      <span
+                        className="inline-block h-5 w-5 rounded-full border border-fc-neutral-300"
+                        style={{ backgroundColor: brandColors[key] }}
+                        aria-hidden="true"
+                      />
+                      <span className="capitalize">{key}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
               {onboard.error && <p className="text-sm text-fc-danger-text" role="alert">{onboard.error.message}</p>}
             </div>
