@@ -6,14 +6,16 @@ const apiOrigin = apiUrl ? new URL(apiUrl).origin : "'self'"
 const clerkOrigin = 'https://clerk.web.agenticpnw.com'
 const clerkAccountsOrigin = 'https://accounts.web.agenticpnw.com'
 const clerkDevOrigin = 'https://*.clerk.accounts.dev'
+const turnstileOrigin = 'https://challenges.cloudflare.com'
 
 const cspHeader = (
   "default-src 'self'; " +
-  `script-src 'self' 'unsafe-inline' ${clerkOrigin} ${clerkDevOrigin}; ` +
+  `script-src 'self' 'unsafe-inline' ${clerkOrigin} ${clerkDevOrigin} ${turnstileOrigin}; ` +
   `style-src 'self' 'unsafe-inline' ${clerkOrigin} ${clerkDevOrigin}; ` +
   `img-src 'self' data: blob: https://img.clerk.com ${clerkOrigin}; ` +
   `font-src 'self' ${clerkOrigin} ${clerkDevOrigin}; ` +
-  `connect-src 'self' ${apiOrigin} ${clerkOrigin} ${clerkAccountsOrigin} ${clerkDevOrigin}; ` +
+  `connect-src 'self' ${apiOrigin} ${clerkOrigin} ${clerkAccountsOrigin} ${clerkDevOrigin} ${turnstileOrigin}; ` +
+  `frame-src 'self' ${turnstileOrigin}; ` +
   "worker-src 'self' blob:; " +
   "frame-ancestors 'none'; " +
   "base-uri 'self'; " +
