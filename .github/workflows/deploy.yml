@@ -346,18 +346,9 @@ jobs:
           url=$(vercel --cwd "$GITHUB_WORKSPACE" --token "$VERCEL_TOKEN" --prod --yes)
           echo "Deployed backend directly to production: $url"
 
-  backend-production-ready:
-    name: Backend production ready
-    needs: [enable-canary, deploy-backend-production]
-    if: always() && !cancelled() && (needs.enable-canary.result == 'success' || needs.deploy-backend-production.result == 'success')
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Confirm backend is live
-        run: echo "Backend production deployment is ready"
-
   deploy-frontend-production:
-    needs: [smoke-staging, backend-production-ready]
+    needs: [smoke-staging, deploy-backend-canary, deploy-backend-production]
+    if: always() && !cancelled() && needs.smoke-staging.result == 'success' && (needs.deploy-backend-canary.result == 'success' || needs.deploy-backend-production.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -514,18 +505,9 @@ jobs:
             --team-id "$VERCEL_TEAM_ID" \
             --percentage 0
 
-  backend-production-final:
-    name: Backend production final
-    needs: [promote-canary, deploy-backend-production]
-    if: always() && !cancelled() && !failure() && (needs.promote-canary.result == 'success' || needs.deploy-backend-production.result == 'success')
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Confirm backend promotion
-        run: echo "Backend production promotion/direct deploy completed"
-
   smoke-production:
-    needs: [backend-production-final, deploy-frontend-production]
+    needs: [promote-canary, deploy-backend-production, deploy-frontend-production]
+    if: always() && !cancelled() && needs.deploy-frontend-production.result == 'success' && (needs.promote-canary.result == 'success' || needs.deploy-backend-production.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
