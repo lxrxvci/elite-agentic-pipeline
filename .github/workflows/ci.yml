@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   PROJECT_DIR: foodcart-saas
@@ -67,7 +68,7 @@ jobs:
 
   e2e-real:
     needs: changes
-    if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true' }}
+    if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/_ci-e2e-real.yml
     with:
       project-dir: foodcart-saas

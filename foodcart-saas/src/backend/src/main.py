@@ -63,6 +63,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Re-initializing logging/tracing here is idempotent. The main purpose is to
     shut down background threads (Unleash poller, OpenTelemetry batch exporter)
     before a serverless invocation ends.
+
+    Database migrations are applied out-of-band (e.g. via Alembic in CI) so the
+    app can start against an already-migrated schema.
     """
     configure_logging(env=settings.env, log_level=settings.log_level)
     configure_tracing()
