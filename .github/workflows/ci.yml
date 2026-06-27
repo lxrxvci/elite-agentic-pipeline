@@ -51,7 +51,7 @@ jobs:
     with:
       project-dir: foodcart-saas
       python-version: "3.12"
-      database-url: postgresql+psycopg://postgres:postgres@localhost:5432/elite_db
+      database-url: postgresql+psycopg://postgres:ci_password@localhost:5432/elite_db
     secrets:
       ci-secret-key: ${{ secrets.CI_SECRET_KEY }}
 

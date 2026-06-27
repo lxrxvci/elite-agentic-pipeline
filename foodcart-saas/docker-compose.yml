@@ -67,7 +67,7 @@ services:
   unleash:
     image: unleashorg/unleash-server:5.12
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/elite_db
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-elite_db}
       DATABASE_SSL: "false"
       INIT_FRONTEND_API_TOKENS: "default:development.unleash-insecure-api-token"
       INIT_CLIENT_API_TOKENS: "default:development.unleash-insecure-api-token"
