@@ -15,10 +15,13 @@ FROM python:3.12-slim AS production
 
 WORKDIR /app
 
+# Create the non-root user before any COPY --chown references it.
+RUN groupadd -r app && useradd -r -g app app
+
 COPY --from=builder --chown=app:app /root/.local /home/app/.local
 COPY --chown=app:app src ./src
 
-RUN groupadd -r app && useradd -r -g app app && chown -R app:app /app
+RUN chown -R app:app /app
 USER app
 
 ENV PYTHONPATH=/app/src

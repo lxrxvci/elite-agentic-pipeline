@@ -13,11 +13,11 @@ from typing import Any
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from redis import Redis
 from sqlalchemy.orm import Session
 
+from app.audit import log_security_event
 from app.auth.clerk import ClerkAuthError, validate_clerk_token
 from app.config import settings
 from app.features import is_feature_enabled
@@ -66,7 +66,6 @@ __all__ = [
 # In a multi-process deployment this should be replaced with Redis.
 _TENANT_QUOTA: dict[tuple[str, str], list[float]] = defaultdict(list)
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
 
 
@@ -128,8 +127,11 @@ def _get_or_create_user_from_claims(
 
     email = claims.get("email", "")
     name = claims.get("name") or claims.get("username") or email.split("@")[0] or "Unknown"
-    tenant_id = uuid.uuid5(uuid.NAMESPACE_URL, f"clerk://user/{clerk_id}")
-    user_id = uuid.uuid5(uuid.NAMESPACE_URL, f"clerk://user/{clerk_id}")
+    # Use cryptographically random UUIDs rather than deriving IDs from the
+    # external clerk_id. Derivable IDs allow account pre-creation / collision
+    # attacks by anyone who knows or can guess another user's Clerk `sub`.
+    tenant_id = uuid.uuid4()
+    user_id = uuid.uuid4()
 
     tenant = db.query(TenantORM).filter(TenantORM.id == tenant_id).first()
     is_new_tenant = tenant is None
@@ -201,6 +203,7 @@ def get_current_user(
     elif settings.env == "development":
         user = _get_user_from_dev_token(db, token)
     else:
+        # Dev tokens are intentionally disabled outside development.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication provider not configured",
@@ -221,6 +224,18 @@ def require_role(*allowed_roles: str) -> Callable[..., CurrentUser]:
 
     def _check_role(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
         if user.role not in allowed_roles:
+            log_security_event(
+                event_type="authorization",
+                actor_id=user.id,
+                action="role_check_failed",
+                resource_type="endpoint",
+                outcome="blocked",
+                details={
+                    "required_roles": list(allowed_roles),
+                    "actual_role": user.role,
+                    "tenant_id": user.tenant_id,
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions",

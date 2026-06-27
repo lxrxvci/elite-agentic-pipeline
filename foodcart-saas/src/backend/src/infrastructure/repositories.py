@@ -103,6 +103,7 @@ class ClientRepository(BaseRepository[Client]):
         orms = (
             self.session.query(models.Client)
             .filter(models.Client.tenant_id == self.tenant_id)
+            .order_by(models.Client.name)
             .offset(offset)
             .limit(limit)
             .all()
@@ -118,6 +119,13 @@ class ClientRepository(BaseRepository[Client]):
             )
             for orm in orms
         ]
+
+    def count(self) -> int:
+        return (
+            self.session.query(models.Client)
+            .filter(models.Client.tenant_id == self.tenant_id)
+            .count()
+        )
 
     def get(self, client_id: uuid.UUID) -> Client | None:
         orm = (
@@ -161,7 +169,7 @@ class ProjectRepository(BaseRepository[Project]):
         )
         if client_id:
             query = query.filter(models.Project.client_id == client_id)
-        orms = query.offset(offset).limit(limit).all()
+        orms = query.order_by(models.Project.name).offset(offset).limit(limit).all()
         return [
             Project(
                 id=orm.id,
@@ -172,6 +180,14 @@ class ProjectRepository(BaseRepository[Project]):
             )
             for orm in orms
         ]
+
+    def count(self, client_id: uuid.UUID | None = None) -> int:
+        query = self.session.query(models.Project).filter(
+            models.Project.tenant_id == self.tenant_id
+        )
+        if client_id:
+            query = query.filter(models.Project.client_id == client_id)
+        return query.count()
 
     def get(self, project_id: uuid.UUID) -> Project | None:
         orm = (
@@ -224,6 +240,23 @@ class TimeEntryRepository(BaseRepository[TimeEntry]):
             query = query.filter(models.TimeEntry.status == status)
         orms = query.order_by(models.TimeEntry.created_at.desc()).offset(offset).limit(limit).all()
         return [self._to_domain(orm) for orm in orms]
+
+    def count(
+        self,
+        client_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+        status: str | None = None,
+    ) -> int:
+        query = self.session.query(models.TimeEntry).filter(
+            models.TimeEntry.tenant_id == self.tenant_id
+        )
+        if client_id:
+            query = query.filter(models.TimeEntry.client_id == client_id)
+        if project_id:
+            query = query.filter(models.TimeEntry.project_id == project_id)
+        if status:
+            query = query.filter(models.TimeEntry.status == status)
+        return query.count()
 
     def get(self, time_entry_id: uuid.UUID) -> TimeEntry | None:
         orm = (
@@ -319,6 +352,18 @@ class InvoiceRepository(BaseRepository[Invoice]):
             query = query.filter(models.Invoice.status == status)
         orms = query.order_by(models.Invoice.created_at.desc()).offset(offset).limit(limit).all()
         return [self._to_domain(orm) for orm in orms]
+
+    def count(
+        self, client_id: uuid.UUID | None = None, status: str | None = None
+    ) -> int:
+        query = self.session.query(models.Invoice).filter(
+            models.Invoice.tenant_id == self.tenant_id
+        )
+        if client_id:
+            query = query.filter(models.Invoice.client_id == client_id)
+        if status:
+            query = query.filter(models.Invoice.status == status)
+        return query.count()
 
     def get(self, invoice_id: uuid.UUID) -> Invoice | None:
         orm = (

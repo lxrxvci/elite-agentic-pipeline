@@ -1,3 +1,4 @@
+import { sanitizeUrl } from '@/shared/lib/sanitizeUrl'
 import type { HeroBlockData } from '@/shared/api/foodcart-types'
 import type { ThemeClasses } from '../lib/theme'
 import type { OpenStatus } from '../lib/hours'
@@ -25,7 +26,7 @@ export function HeroSection({ data, theme, openStatus }: HeroSectionProps) {
           {data.subheadline && <p className="text-lg md:text-xl opacity-90 max-w-md">{data.subheadline}</p>}
           {data.cta_text && (
             <a
-              href={data.cta_url || '#order'}
+              href={sanitizeUrl(data.cta_url) || '#order'}
               className={`inline-flex items-center justify-center rounded-full px-8 py-4 text-sm font-semibold transition-transform hover:-translate-y-0.5 ${theme.buttonPrimaryBg} ${theme.buttonPrimaryText}`}
             >
               {data.cta_text}

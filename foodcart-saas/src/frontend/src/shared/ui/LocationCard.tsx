@@ -1,3 +1,4 @@
+import { sanitizeUrl } from '../lib/sanitizeUrl'
 import { HoursGrid } from './HoursGrid'
 import type { Location } from '../api/foodcart-types'
 
@@ -43,7 +44,7 @@ export function LocationCard({ location, isOpen, statusText, nextStatusText }: L
       </div>
       {location.map_url && (
         <a
-          href={location.map_url}
+          href={sanitizeUrl(location.map_url)}
           target="_blank"
           rel="noreferrer"
           className="text-sm font-semibold uppercase tracking-wider text-fc-terracotta-500 hover:underline"

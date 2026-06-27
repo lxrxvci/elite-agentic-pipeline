@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Button, Card, Field, Input } from '@/shared/ui'
+import { isAllowedUrl } from '@/shared/lib/sanitizeUrl'
 import { useSites } from '../api/useSites'
 import { useBlocks } from '../api/useBlocks'
 import { useUpdateBlock } from '../api/useUpdateBlock'
@@ -21,6 +22,7 @@ export function LinksEditor() {
 
   const [socials, setSocials] = useState<SocialLink[]>([])
   const [orders, setOrders] = useState<OrderLink[]>([])
+  const [errors, setErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (footer) setSocials((footer.data as FooterBlockData).social_links)
@@ -41,7 +43,23 @@ export function LinksEditor() {
     })
   }
 
+  const validate = (): boolean => {
+    const nextErrors: Record<string, string> = {}
+    const check = (items: { platform: string; url: string }[], prefix: string) => {
+      items.forEach((item) => {
+        if (item.url && !isAllowedUrl(item.url)) {
+          nextErrors[`${prefix}-${item.platform}`] = 'URL must use https, mailto, or tel'
+        }
+      })
+    }
+    check(socials, 'social')
+    check(orders, 'order')
+    setErrors(nextErrors)
+    return Object.keys(nextErrors).length === 0
+  }
+
   const save = async () => {
+    if (!validate()) return
     if (footer) {
       const body: ContentBlockCreate = {
         block_type: 'footer',
@@ -69,12 +87,13 @@ export function LinksEditor() {
         <h2 className="font-semibold text-lg mb-4">Social links</h2>
         <div className="grid md:grid-cols-2 gap-4">
           {SOCIAL_PLATFORMS.map((platform) => (
-            <Field key={platform} id={`social-${platform}`} label={platform.charAt(0).toUpperCase() + platform.slice(1)}>
+            <Field key={platform} id={`social-${platform}`} label={platform.charAt(0).toUpperCase() + platform.slice(1)} error={errors[`social-${platform}`]}>
               <Input
                 id={`social-${platform}`}
                 value={socials.find((s) => s.platform === platform)?.url || ''}
                 onChange={(e) => updateSocial(platform, e.target.value)}
                 placeholder="https://..."
+                error={Boolean(errors[`social-${platform}`])}
               />
             </Field>
           ))}
@@ -84,12 +103,13 @@ export function LinksEditor() {
         <h2 className="font-semibold text-lg mb-4">Order links</h2>
         <div className="grid md:grid-cols-2 gap-4">
           {ORDER_PLATFORMS.map((platform) => (
-            <Field key={platform} id={`order-${platform}`} label={platform.charAt(0).toUpperCase() + platform.slice(1)}>
+            <Field key={platform} id={`order-${platform}`} label={platform.charAt(0).toUpperCase() + platform.slice(1)} error={errors[`order-${platform}`]}>
               <Input
                 id={`order-${platform}`}
                 value={orders.find((o) => o.platform === platform)?.url || ''}
                 onChange={(e) => setOrderLink(platform, e.target.value)}
                 placeholder={platform === 'phone' ? '(503) 555-0100' : 'https://...'}
+                error={Boolean(errors[`order-${platform}`])}
               />
             </Field>
           ))}

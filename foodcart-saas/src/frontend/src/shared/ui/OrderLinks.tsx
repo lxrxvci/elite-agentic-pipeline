@@ -1,3 +1,4 @@
+import { sanitizeUrl } from '../lib/sanitizeUrl'
 import type { OrderLink } from '../api/foodcart-types'
 
 const PLATFORM_LABELS: Record<OrderLink['platform'], string> = {
@@ -26,7 +27,7 @@ export function OrderLinks({ links }: OrderLinksProps) {
       {links.map((link) => (
         <li key={link.platform}>
           <a
-            href={link.url}
+            href={sanitizeUrl(link.url)}
             target="_blank"
             rel="noreferrer"
             className={`inline-flex items-center justify-center rounded-full px-6 py-3 text-sm font-semibold transition-transform hover:-translate-y-0.5 ${PLATFORM_COLORS[link.platform]}`}

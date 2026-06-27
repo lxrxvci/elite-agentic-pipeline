@@ -2,9 +2,9 @@
 
 | Attribute | Value |
 |---|---|
-| **Version** | 0.1.0 |
-| **Release** | Cycle 1 — MVP Foundation |
-| **Release date** | 2026-06-25 |
+| **Version** | 0.3.0 |
+| **Release** | Cycle 1 — MVP Foundation + Billing & Custom Domains |
+| **Release date** | 2026-06-27 |
 | **Status** | Deployed to production; progressive rollout in progress |
 | **Owner** | Product Owner |
 | **Deployment docs** | `docs/DEPLOYMENT.md` |
@@ -32,7 +32,15 @@ The release is deployed behind feature flags and will be promoted ring-by-ring (
 - **Admin dashboard** — mobile-first editor to update business info, preview draft changes, and toggle publish/unpublish.
 - **Tenant isolation** — enforced at API and data layers; no cross-tenant read or mutation.
 
-### Bet 2 — Live Open/Closed + Hours Management (GA)
+### Bet 2 — Subscription Billing & Custom Domains (GA)
+
+- **Paddle Billing integration** — `base` plan with monthly ($50) and yearly ($400) intervals, checkout, customer portal, cancel/resume, and webhook reconciliation.
+- **Subscription lifecycle APIs** — `/billing/plans`, `/billing/current`, `/billing/checkout`, `/billing/portal`, `/billing/cancel`, `/billing/resume`, and `/webhooks/paddle`.
+- **Custom domain connection** — owners can connect external domains or purchase domains through the registrar integration.
+- **Domain management APIs** — `/domains/search`, `/domains/check`, `/domains/sites/{site_id}/purchase`, `/sites/{site_id}/domain`, and `/sites/{site_id}/domain/status`.
+- **DNS verification** — automatic verification that a connected domain points to the platform.
+
+### Bet 3 — Live Open/Closed + Hours Management (GA)
 
 - **Timezone-aware hours editor** — day rows, open/closed toggles, copy-across-days, and special-hours overrides for the next 14 days.
 - **Hours import** from Google Business Profile during onboarding, owner-editable at any time.
@@ -62,8 +70,6 @@ The following opportunities are intentionally **not** in Cycle 1 and are queued 
 - **Catering lead capture flow** — static catering section only in Cycle 1.
 - **Direct order links & click-share analytics** — order links are present but not yet instrumented for share analytics.
 - **Multi-location dashboard** — Cycle 1 supports a single location per site.
-- **Custom domain support** — deferred until pricing sensitivity is validated.
-- **Subscription billing & plan tiers** — no billing enforcement in Cycle 1; free pilot only.
 - **Advanced owner analytics dashboard** — basic event instrumentation only.
 - **Native checkout / online ordering, AI-generated social posts, reservations** — iceboxed per roadmap.
 
@@ -77,10 +83,8 @@ The following opportunities are intentionally **not** in Cycle 1 and are queued 
 | 2 | Menu ingestion is limited to structured menu URLs and manual entry. PDF/image menu extraction is **not** supported. | Owners with PDF-only menus must paste or type items. | Explicit manual fallback in onboarding; PDF/image extraction added to discovery queue. |
 | 3 | Catering section is static content. No lead-capture form, notifications, or CRM integration. | Catering inquiries still go to email/phone/social. | Lead-capture flow is the top Cycle 2 candidate after AI assistant. |
 | 4 | Single-location only. Multi-location owners must create one site per location. | Mini-chain segment not served. | Multi-location support queued for Cycle 2 shaping. |
-| 5 | All sites use `*.foodcartsite.com`. Custom domains and SSL are not available. | Platform branding visible on every site. | Custom domains deferred; data-model stubs in place. |
-| 6 | No billing or plan enforcement. Pilot customers use the product for free. | No MRR in Cycle 1. | Pricing-sensitivity survey launching in Cycle 2. |
-| 7 | AI assistant is behind a flag and not exposed to pilots. | No AI differentiation in customer-facing release. | Spike runs in Ring 0; full build planned for Cycle 2 if criteria pass. |
-| 8 | Live hours depend on owner-entered data and Google Business Profile import. No POS integration or weather-based closure automation. | Owners must manually update exceptional closures. | Mobile hours editor target is <60 seconds per update. |
+| 5 | AI assistant is behind a flag and not exposed to pilots. | No AI differentiation in customer-facing release. | Spike runs in Ring 0; full build planned for Cycle 2 if criteria pass. |
+| 6 | Live hours depend on owner-entered data and Google Business Profile import. No POS integration or weather-based closure automation. | Owners must manually update exceptional closures. | Mobile hours editor target is <60 seconds per update. |
 
 ---
 

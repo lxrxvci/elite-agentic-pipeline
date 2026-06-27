@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 
+import { ProtectedRoute } from '@/features/auth/ui/ProtectedRoute'
 import {
   useBillingPlans,
   useCancelSubscription,
@@ -29,7 +30,7 @@ function formatDate(iso: string | null | undefined) {
   })
 }
 
-export default function BillingPage() {
+function BillingPageContent() {
   const [interval, setInterval] = useState<'month' | 'year'>('month')
   const { data: plans, isLoading: plansLoading } = useBillingPlans()
   const { data: subscription, isLoading: subLoading } = useCurrentSubscription()
@@ -208,5 +209,13 @@ function PlanCard({ plan, selected, onSelect, cta, onCheckout, isPending }: Plan
         {isPending ? 'Redirecting…' : cta}
       </button>
     </div>
+  )
+}
+
+export default function BillingPage() {
+  return (
+    <ProtectedRoute>
+      <BillingPageContent />
+    </ProtectedRoute>
   )
 }

@@ -18,7 +18,7 @@ frontend:
 
 contract-tests:
 	cd src/frontend && npm run test:contracts
-	cd src/backend && source .venv/bin/activate && pytest tests/contracts/
+	cd src/backend && .venv/bin/pytest tests/contracts/
 
 e2e-tests:
 	cd src/frontend && npm run test:e2e:real

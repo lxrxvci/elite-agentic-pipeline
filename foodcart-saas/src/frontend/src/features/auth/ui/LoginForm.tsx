@@ -4,13 +4,11 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { apiClient } from '@/shared/api/client'
 import { Button, Input } from '@/shared/ui'
-import { useAuthStore } from '../model/store'
 
 export function LoginForm() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const setAuthenticated = useAuthStore((s) => s.setAuthenticated)
   const router = useRouter()
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -18,11 +16,12 @@ export function LoginForm() {
     setLoading(true)
     setError('')
     try {
+      // The backend sets the session as an httpOnly cookie; the response token
+      // is intentionally not stored in JavaScript-accessible storage.
       await apiClient<{ access_token: string; token_type: string }>('/auth/token', {
         method: 'POST',
         body: JSON.stringify({ email }),
       })
-      setAuthenticated(true)
       router.push('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed')

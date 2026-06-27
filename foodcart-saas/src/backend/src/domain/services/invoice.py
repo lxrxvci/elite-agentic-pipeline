@@ -23,11 +23,15 @@ def create_invoice_from_time_entries(
     if not time_entries:
         raise ValueError("At least one time entry is required")
 
+    projects: set[uuid.UUID] = set()
     for entry in time_entries:
         if entry.tenant_id != tenant_id:
             raise ValueError("All time entries must belong to the same tenant")
         if entry.client_id != client.id:
             raise ValueError("All time entries must belong to the invoice client")
+        projects.add(entry.project_id)
+    if len(projects) > 1:
+        raise ValueError("All time entries must belong to the same project")
 
     currency = client.currency
     rate = client.default_hourly_rate or Decimal("0.00")

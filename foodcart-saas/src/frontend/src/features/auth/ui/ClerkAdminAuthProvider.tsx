@@ -3,7 +3,7 @@
 import { useEffect } from 'react'
 import { useAuth, useUser } from '@clerk/nextjs'
 import { useQuery } from '@tanstack/react-query'
-import { apiClient, setClerkToken } from '@/shared/api/client'
+import { apiClient } from '@/shared/api/client'
 import { useAuthStore } from '../model/store'
 import type { Tenant } from '@/shared/api/foodcart-types'
 
@@ -14,8 +14,8 @@ export function ClerkAdminAuthProvider({ children }: { children: React.ReactNode
   const setLoading = useAuthStore((s) => s.setLoading)
   const setToken = useAuthStore((s) => s.setToken)
 
-  // Sync Clerk session token into the legacy localStorage/token store so
-  // apiClient can read it synchronously, and existing admin UI keeps working.
+  // Sync the short-lived Clerk JWT into memory only so apiClient can attach it
+  // as a Bearer header. It is never persisted to localStorage.
   useEffect(() => {
     if (!isLoaded) return
 
@@ -23,15 +23,12 @@ export function ClerkAdminAuthProvider({ children }: { children: React.ReactNode
       getToken()
         .then((token) => {
           setToken(token)
-          setClerkToken(token)
         })
         .catch(() => {
           setToken(null)
-          setClerkToken(null)
         })
     } else {
       setToken(null)
-      setClerkToken(null)
       setAuthenticated(false)
     }
   }, [isLoaded, isSignedIn, getToken, setToken, setAuthenticated])

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.audit import log_security_event
 from app.dependencies import CurrentUser, get_current_user, get_db
 from app.exceptions import NotFoundError
 from app.schemas_foodcart import (
@@ -106,6 +107,15 @@ def create_checkout(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+    log_security_event(
+        event_type="billing",
+        actor_id=user.id,
+        action="checkout_created",
+        resource_type="tenant",
+        resource_id=tenant.id,
+        outcome="success",
+        details={"interval": payload.interval.value},
+    )
     return CheckoutResponse(checkout_url=url)
 
 
@@ -121,6 +131,14 @@ def create_portal(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+    log_security_event(
+        event_type="billing",
+        actor_id=tenant.id,
+        action="portal_created",
+        resource_type="tenant",
+        resource_id=tenant.id,
+        outcome="success",
+    )
     return PortalResponse(url=url)
 
 
@@ -147,6 +165,14 @@ def cancel_subscription(
     tenant.canceled_at = datetime.now(UTC)
     db.commit()
 
+    log_security_event(
+        event_type="billing",
+        actor_id=tenant.id,
+        action="subscription_canceled",
+        resource_type="tenant",
+        resource_id=tenant.id,
+        outcome="success",
+    )
     return get_current_subscription(tenant)
 
 
@@ -172,4 +198,12 @@ def resume_subscription(
     tenant.canceled_at = None
     db.commit()
 
+    log_security_event(
+        event_type="billing",
+        actor_id=tenant.id,
+        action="subscription_resumed",
+        resource_type="tenant",
+        resource_id=tenant.id,
+        outcome="success",
+    )
     return get_current_subscription(tenant)

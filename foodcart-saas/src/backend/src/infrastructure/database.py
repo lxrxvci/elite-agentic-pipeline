@@ -23,12 +23,12 @@ def _normalize_database_url(url: str) -> str:
     return url
 
 
-DATABASE_URL = _normalize_database_url(
-    os.getenv(
-        "DATABASE_URL",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/elite_db",
-    )
-)
+_raw_database_url = os.getenv("DATABASE_URL")
+if not _raw_database_url:
+    raise RuntimeError("DATABASE_URL environment variable is required")
+if "postgres:postgres@" in _raw_database_url:
+    raise RuntimeError("DATABASE_URL contains default credentials; set a real database URL")
+DATABASE_URL = _normalize_database_url(_raw_database_url)
 
 # Serverless environments (Vercel, Neon pooled connections) should not keep
 # persistent connections. Use NullPool when an external pooler is in front of

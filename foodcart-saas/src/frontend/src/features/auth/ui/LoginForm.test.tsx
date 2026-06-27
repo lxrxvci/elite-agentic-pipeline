@@ -2,7 +2,11 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { LoginForm } from './LoginForm'
-import { useAuthStore } from '../model/store'
+
+const push = vi.fn()
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push }),
+}))
 
 describe('LoginForm', () => {
   beforeEach(() => {
@@ -11,14 +15,14 @@ describe('LoginForm', () => {
       status: 200,
       json: async () => ({ access_token: 'test-token', token_type: 'bearer' }),
     } as Response)
-    useAuthStore.setState({ isAuthenticated: false, isLoading: false })
+    push.mockClear()
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('submits email and sets authenticated state', async () => {
+  it('submits email and redirects to dashboard', async () => {
     render(<LoginForm />)
     await userEvent.type(screen.getByLabelText('Email'), 'dev@example.com')
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
@@ -33,7 +37,7 @@ describe('LoginForm', () => {
         })
       )
     })
-    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/'))
   })
 
   it('displays an error message when sign in fails', async () => {
@@ -46,7 +50,6 @@ describe('LoginForm', () => {
     await waitFor(() => {
       expect(screen.getByText('Network error')).toBeInTheDocument()
     })
-    expect(useAuthStore.getState().isAuthenticated).toBe(false)
   })
 
   it('disables the submit button while loading', async () => {

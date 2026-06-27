@@ -25,6 +25,8 @@ scrape_configs:
       - targets: ['alertmanager:9093']
 
   - job_name: 'pushgateway'
-    honor_labels: true
+    # honor_labels is intentionally disabled. In production the pushgateway must
+    # be protected by authentication/network policies; only then should pushed
+    # job/instance labels be trusted.
     static_configs:
       - targets: ['pushgateway:9091']

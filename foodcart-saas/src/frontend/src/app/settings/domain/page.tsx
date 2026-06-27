@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 
+import { ProtectedRoute } from '@/features/auth/ui/ProtectedRoute'
 import {
   useDomainCheck,
   useDomainPurchase,
@@ -15,7 +16,7 @@ import {
 import { useSites } from '@/features/site/api/useSites'
 import { useCurrentSubscription } from '@/features/billing/api/useBilling'
 
-export default function DomainSettingsPage() {
+function DomainSettingsPageContent() {
   const { data: sites } = useSites()
   const { data: subscription } = useCurrentSubscription()
   const [selectedSiteId, setSelectedSiteId] = useState('')
@@ -231,5 +232,13 @@ export default function DomainSettingsPage() {
         )}
       </section>
     </main>
+  )
+}
+
+export default function DomainSettingsPage() {
+  return (
+    <ProtectedRoute>
+      <DomainSettingsPageContent />
+    </ProtectedRoute>
   )
 }

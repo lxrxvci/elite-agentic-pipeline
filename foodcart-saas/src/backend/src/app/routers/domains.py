@@ -7,6 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.audit import log_security_event
 from app.dependencies import CurrentUser, get_db, require_paid_plan, require_role
 from app.exceptions import NotFoundError, ValidationError
 from app.schemas_foodcart import (
@@ -130,4 +131,13 @@ def purchase_domain(
             detail=str(exc),
         ) from exc
 
+    log_security_event(
+        event_type="domain",
+        actor_id=user.id,
+        action="domain_purchase_initiated",
+        resource_type="site",
+        resource_id=site_id,
+        outcome="success",
+        details={"domain": payload.domain},
+    )
     return DomainPurchaseResponseSchema(**result)

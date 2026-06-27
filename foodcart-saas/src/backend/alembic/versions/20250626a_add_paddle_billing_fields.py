@@ -1,25 +1,24 @@
-"""Add Paddle billing and custom domain fields.
+"""Add Paddle billing fields to foodcart_tenants.
 
-Revision ID: 20250626_add_paddle_billing_and_domain_fields
-Revises: 20250625_add_site_brand_colors
+Revision ID: 20250626a_add_paddle_billing_fields
+Revises: 60f1b16b2c74
 Create Date: 2026-06-26 00:00:00.000000
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "20250626_add_paddle_billing_and_domain_fields"
-down_revision: Union[str, None] = "20250625_add_site_brand_colors"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision: str = "20250626a_add_paddle_billing_fields"
+down_revision: str | None = "60f1b16b2c74"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Paddle Billing columns on foodcart_tenants
     op.add_column(
         "foodcart_tenants",
         sa.Column("paddle_customer_id", sa.String(length=255), nullable=True),
@@ -74,36 +73,8 @@ def upgrade() -> None:
         unique=True,
     )
 
-    # Custom domain lifecycle columns on sites
-    op.add_column(
-        "sites",
-        sa.Column("domain_status", sa.String(length=20), nullable=True),
-    )
-    op.add_column(
-        "sites",
-        sa.Column("domain_provider", sa.String(length=30), nullable=True),
-    )
-    op.add_column(
-        "sites",
-        sa.Column("domain_registered_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "sites",
-        sa.Column("domain_expires_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "sites",
-        sa.Column("domain_paddle_transaction_id", sa.String(length=255), nullable=True),
-    )
-
 
 def downgrade() -> None:
-    op.drop_column("sites", "domain_paddle_transaction_id")
-    op.drop_column("sites", "domain_expires_at")
-    op.drop_column("sites", "domain_registered_at")
-    op.drop_column("sites", "domain_provider")
-    op.drop_column("sites", "domain_status")
-
     op.drop_index(
         op.f("ix_foodcart_tenants_paddle_subscription_id"),
         table_name="foodcart_tenants",
@@ -112,6 +83,7 @@ def downgrade() -> None:
         op.f("ix_foodcart_tenants_paddle_customer_id"),
         table_name="foodcart_tenants",
     )
+
     op.drop_column("foodcart_tenants", "canceled_at")
     op.drop_column("foodcart_tenants", "trial_ends_at")
     op.drop_column("foodcart_tenants", "subscription_current_period_end")

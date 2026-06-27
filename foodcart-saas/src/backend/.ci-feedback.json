@@ -1,11 +1,11 @@
 {
   "status": "collected",
-  "coverage_percent": 95.33,
+  "coverage_percent": 94.93,
   "checks": {
     "tests": {
       "passed": true,
       "returncode": 0,
-      "stdout": "001, 1008-1009, 1016, 1021, 1024-1025, 1029, 1036, 1042-1054, 1058\nsrc/infrastructure/llm/__init__.py          24      0   100%\nsrc/infrastructure/llm/gemini.py            42      0   100%\nsrc/infrastructure/models.py               172      0   100%\n----------------------------------------------------------------------\nTOTAL                                     1543     72    95%\nRequired test coverage of 80.0% reached. Total coverage: 95.33%\n267 passed, 2 xfailed, 1 xpassed, 8 warnings in 24.36s",
+      "stdout": "69\nsrc/infrastructure/llm/__init__.py          31      0   100%\nsrc/infrastructure/llm/bedrock.py           41      0   100%\nsrc/infrastructure/llm/gemini.py            42      6    86%   112, 116, 120, 156-164\nsrc/infrastructure/models.py               193      0   100%\n----------------------------------------------------------------------\nTOTAL                                     1795     91    95%\nRequired test coverage of 80.0% reached. Total coverage: 94.93%\n299 passed, 8 warnings in 16.61s",
       "stderr": ""
     },
     "lint": {
@@ -17,13 +17,13 @@
     "typecheck": {
       "passed": true,
       "returncode": 0,
-      "stdout": "Success: no issues found in 41 source files",
+      "stdout": "Success: no issues found in 50 source files",
       "stderr": ""
     },
     "bandit": {
       "passed": true,
       "returncode": 0,
-      "stdout": "Run started:2026-06-25 10:15:59.779572+00:00\n\nTest results:\n\tNo issues identified.\n\nCode scanned:\n\tTotal lines of code: 5593\n\tTotal lines skipped (#nosec): 0\n\tTotal potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 1\n\nRun metrics:\n\tTotal issues (by severity):\n\t\tUndefined: 0\n\t\tLow: 0\n\t\tMedium: 0\n\t\tHigh: 0\n\tTotal issues (by confidence):\n\t\tUndefined: 0\n\t\tLow: 0\n\t\tMedium: 0\n\t\tHigh: 0\nFiles skipped (0):",
+      "stdout": "Run started:2026-06-27 08:24:15.027365+00:00\n\nTest results:\n\tNo issues identified.\n\nCode scanned:\n\tTotal lines of code: 7413\n\tTotal lines skipped (#nosec): 0\n\tTotal potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 1\n\nRun metrics:\n\tTotal issues (by severity):\n\t\tUndefined: 0\n\t\tLow: 0\n\t\tMedium: 0\n\t\tHigh: 0\n\tTotal issues (by confidence):\n\t\tUndefined: 0\n\t\tLow: 0\n\t\tMedium: 0\n\t\tHigh: 0\nFiles skipped (0):",
       "stderr": "[main]\tINFO\tprofile include tests: None\n[main]\tINFO\tprofile exclude tests: None\n[main]\tINFO\tcli include tests: None\n[main]\tINFO\tcli exclude tests: None\n[main]\tINFO\trunning on Python 3.14.4"
     }
   }

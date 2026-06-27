@@ -15,4 +15,6 @@ storage:
   trace:
     backend: local
     local:
-      path: /tmp/tempo/blocks
+      # Mounted to a named Docker volume so traces survive container restarts.
+      # Production should use GCS/S3 backend storage.
+      path: /var/tempo/blocks

@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     secret_key: str
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
-    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/elite_db"
+    database_url: str
     enabled_features: str = ""
 
     # Feature flag provider. Priority:
@@ -99,6 +99,15 @@ class Settings(BaseSettings):
     def require_clerk_in_production(self) -> Settings:
         if self.env == "production" and not self.clerk_jwks_url:
             raise ValueError("CLERK_JWKS_URL is required in production")
+        return self
+
+    @model_validator(mode="after")
+    def reject_default_database_credentials(self) -> Settings:
+        if "postgres:postgres@" in self.database_url:
+            raise ValueError(
+                "DATABASE_URL contains default credentials; "
+                "set a real database URL via environment"
+            )
         return self
 
 

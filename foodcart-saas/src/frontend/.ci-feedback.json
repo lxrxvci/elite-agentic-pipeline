@@ -4,8 +4,8 @@
     "tests": {
       "passed": true,
       "returncode": 0,
-      "stdout": "              \n  ...artLayout.tsx |     100 |      100 |     100 |     100 |                   \n ...widgets/Header |     100 |      100 |     100 |     100 |                   \n  Header.tsx       |     100 |      100 |     100 |     100 |                   \n ...widgets/Layout |    98.3 |     90.9 |     100 |    98.3 |                   \n  Layout.tsx       |    98.3 |     90.9 |     100 |    98.3 | 27                \n-------------------|---------|----------|---------|---------|-------------------",
-      "stderr": "rnings ...` to show where the warning was created)\n(node:30760) Warning: `--localstorage-file` was provided without a valid path\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:30762) Warning: `--localstorage-file` was provided without a valid path\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:30785) Warning: `--localstorage-file` was provided without a valid path\n(Use `node --trace-warnings ...` to show where the warning was created)"
+      "stdout": "              \n  ...artLayout.tsx |     100 |      100 |     100 |     100 |                   \n ...widgets/Header |     100 |      100 |     100 |     100 |                   \n  Header.tsx       |     100 |      100 |     100 |     100 |                   \n ...widgets/Layout |   95.16 |    83.33 |     100 |   95.16 |                   \n  Layout.tsx       |   95.16 |    83.33 |     100 |   95.16 | 27,33-34          \n-------------------|---------|----------|---------|---------|-------------------",
+      "stderr": ""
     },
     "lint": {
       "passed": true,

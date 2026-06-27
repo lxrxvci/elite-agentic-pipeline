@@ -6,6 +6,7 @@ import os
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("ENV", "development")
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
 
 import uuid  # noqa: E402
 from decimal import Decimal  # noqa: E402
@@ -132,3 +133,17 @@ def seeded_project(db: Session, seeded_user, seeded_client):
     db.add(project)
     db.commit()
     return project
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """Reset in-memory rate limiter storage before each test.
+
+    This prevents tests that happen to call rate-limited endpoints from
+    interfering with each other while still allowing rate-limit tests to
+    exercise the limiter within a single test case.
+    """
+    from app.limiter import limiter
+
+    limiter._storage.reset()
+    yield

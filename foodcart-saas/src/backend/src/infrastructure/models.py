@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -233,6 +234,25 @@ class FoodcartTenant(Base):
     """
 
     __tablename__ = "foodcart_tenants"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'suspended', 'archived')",
+            name="ck_foodcart_tenants_status",
+        ),
+        CheckConstraint(
+            "billing_status IN ('trial', 'active', 'past_due', 'canceled')",
+            name="ck_foodcart_tenants_billing_status",
+        ),
+        CheckConstraint(
+            "billing_interval IS NULL OR billing_interval IN ('month', 'year')",
+            name="ck_foodcart_tenants_billing_interval",
+        ),
+        CheckConstraint(
+            "subscription_status IS NULL OR subscription_status IN "
+            "('trialing', 'active', 'past_due', 'canceled', 'paused')",
+            name="ck_foodcart_tenants_subscription_status",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("tenants.id"), primary_key=True, default=uuid.uuid4
@@ -289,6 +309,24 @@ class FoodcartTenant(Base):
 
 class Site(Base):
     __tablename__ = "sites"
+    __table_args__ = (
+        CheckConstraint(
+            "publish_state IN ('draft', 'published')",
+            name="ck_sites_publish_state",
+        ),
+        CheckConstraint(
+            "template_id IN ('banhmi', 'real-indian', 'mis-abuelos', 'custom')",
+            name="ck_sites_template_id",
+        ),
+        CheckConstraint(
+            "domain_status IS NULL OR domain_status IN ('pending', 'active', 'expired', 'error')",
+            name="ck_sites_domain_status",
+        ),
+        CheckConstraint(
+            "domain_provider IS NULL OR domain_provider IN ('external', 'cloudflare', 'namecheap')",
+            name="ck_sites_domain_provider",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -336,6 +374,13 @@ class Site(Base):
 
 class ContentBlock(Base):
     __tablename__ = "content_blocks"
+    __table_args__ = (
+        CheckConstraint(
+            "block_type IN ('hero', 'story', 'menu', 'locations', "
+            "'catering', 'contact', 'order_links', 'footer')",
+            name="ck_content_blocks_block_type",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     site_id: Mapped[uuid.UUID] = mapped_column(
@@ -361,6 +406,12 @@ class ContentBlock(Base):
 
 class Revision(Base):
     __tablename__ = "revisions"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('manual', 'ai', 'ingestion', 'revert')",
+            name="ck_revisions_source",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     site_id: Mapped[uuid.UUID] = mapped_column(
@@ -382,6 +433,16 @@ class Revision(Base):
 
 class IngestionJob(Base):
     __tablename__ = "ingestion_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "source_type IN ('google_business', 'yelp', 'menu_url', 'website', 'social_links')",
+            name="ck_ingestion_jobs_source_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'failed')",
+            name="ck_ingestion_jobs_status",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     site_id: Mapped[uuid.UUID] = mapped_column(
@@ -412,6 +473,12 @@ class IngestionJob(Base):
 
 class AIRequest(Base):
     __tablename__ = "ai_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('proposed', 'applied', 'rejected', 'failed')",
+            name="ck_ai_requests_status",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(

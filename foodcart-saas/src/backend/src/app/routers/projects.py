@@ -46,9 +46,10 @@ def list_projects(
 ) -> PaginatedResponse:
     repo = ProjectRepository(db, user.tenant_id)
     projects = repo.list(client_id=client_id, limit=limit, offset=offset)
+    total = repo.count(client_id=client_id)
     return PaginatedResponse(
         items=[_to_schema(p) for p in projects],
-        total=len(projects),
+        total=total,
         limit=limit,
         offset=offset,
     )

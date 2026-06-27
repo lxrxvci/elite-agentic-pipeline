@@ -82,6 +82,7 @@ services:
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
     ports:
       - "9090:9090"
     command:
@@ -89,6 +90,12 @@ services:
       - '--storage.tsdb.path=/prometheus'
     depends_on:
       - alertmanager
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   alertmanager:
     image: prom/alertmanager:v0.27.0
@@ -99,21 +106,37 @@ services:
       - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
       - "9093:9093"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9093/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   pushgateway:
     image: prom/pushgateway:v1.9.0
     ports:
       - "9091:9091"
+    restart: unless-stopped
+    # NOTE: In production the pushgateway must be behind authentication and
+    # network policies so only approved batch jobs can push metrics.
 
   tempo:
     image: grafana/tempo:2.5.0
     command: ["-config.file=/etc/tempo.yml"]
     volumes:
       - ./observability/tempo/tempo.yml:/etc/tempo.yml:ro
+      - tempo-data:/var/tempo
     ports:
       - "3200:3200"
       - "4317:4317"
       - "4318:4318"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   loki:
     image: grafana/loki:3.0.0
@@ -121,13 +144,22 @@ services:
       - "3100:3100"
     volumes:
       - ./observability/loki/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
     command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   grafana:
     image: grafana/grafana:11.0.0
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required. Set a strong password in .env.}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
     ports:
       - "3001:3000"
     volumes:
@@ -138,8 +170,17 @@ services:
       - prometheus
       - tempo
       - loki
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
 volumes:
   pgdata:
   redisdata:
   grafana-data:
+  prometheus-data:
+  loki-data:
+  tempo-data:

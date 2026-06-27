@@ -5,17 +5,18 @@ Revises: 20250623_created_by
 Create Date: 2026-06-24 00:00:00.000000
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "20250624_foodcart_cycle1"
-down_revision: Union[str, None] = "20250623_created_by"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "20250623_created_by"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -37,6 +38,14 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("slug"),
+        sa.CheckConstraint(
+            "status IN ('active', 'suspended', 'archived')",
+            name="ck_foodcart_tenants_status",
+        ),
+        sa.CheckConstraint(
+            "billing_status IN ('trial', 'active', 'past_due', 'canceled')",
+            name="ck_foodcart_tenants_billing_status",
+        ),
     )
     op.create_index(
         op.f("ix_foodcart_tenants_owner_user_id"), "foodcart_tenants", ["owner_user_id"], unique=False
@@ -64,6 +73,14 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("custom_domain"),
         sa.UniqueConstraint("slug"),
+        sa.CheckConstraint(
+            "publish_state IN ('draft', 'published')",
+            name="ck_sites_publish_state",
+        ),
+        sa.CheckConstraint(
+            "template_id IN ('banhmi', 'real-indian', 'mis-abuelos', 'custom')",
+            name="ck_sites_template_id",
+        ),
     )
     op.create_index(op.f("ix_sites_slug"), "sites", ["slug"], unique=True)
     op.create_index(op.f("ix_sites_tenant_id"), "sites", ["tenant_id"], unique=False)
@@ -86,6 +103,11 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tenant_id"], ["foodcart_tenants.id"]),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint(
+            "block_type IN ('hero', 'story', 'menu', 'locations', "
+            "'catering', 'contact', 'order_links', 'footer')",
+            name="ck_content_blocks_block_type",
+        ),
     )
     op.create_index(
         op.f("ix_content_blocks_block_type"), "content_blocks", ["block_type"], unique=False
@@ -114,6 +136,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["tenant_id"], ["foodcart_tenants.id"]),
         sa.ForeignKeyConstraint(["triggered_by"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint(
+            "source IN ('manual', 'ai', 'ingestion', 'revert')",
+            name="ck_revisions_source",
+        ),
     )
     op.create_index(op.f("ix_revisions_site_id"), "revisions", ["site_id"], unique=False)
     op.create_index(op.f("ix_revisions_tenant_id"), "revisions", ["tenant_id"], unique=False)
@@ -139,6 +165,14 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tenant_id"], ["foodcart_tenants.id"]),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint(
+            "source_type IN ('google_business', 'yelp', 'menu_url', 'website', 'social_links')",
+            name="ck_ingestion_jobs_source_type",
+        ),
+        sa.CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'failed')",
+            name="ck_ingestion_jobs_status",
+        ),
     )
     op.create_index(
         op.f("ix_ingestion_jobs_site_id"), "ingestion_jobs", ["site_id"], unique=False
@@ -172,6 +206,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["tenant_id"], ["foodcart_tenants.id"]),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint(
+            "status IN ('proposed', 'applied', 'rejected', 'failed')",
+            name="ck_ai_requests_status",
+        ),
     )
     op.create_index(
         op.f("ix_ai_requests_prompt_hash"), "ai_requests", ["prompt_hash"], unique=False

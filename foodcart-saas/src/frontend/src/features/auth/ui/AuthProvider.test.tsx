@@ -3,12 +3,6 @@ import { render, waitFor } from '@/shared/lib/test-utils'
 import { useAuthStore } from '@/features/auth/model/store'
 import { AuthProvider } from './AuthProvider'
 
-vi.mock('@clerk/nextjs', () => ({
-  useAuth: () => {
-    throw new Error('Not inside ClerkProvider')
-  },
-}))
-
 describe('AuthProvider', () => {
   beforeEach(() => {
     global.fetch = vi.fn()
@@ -20,7 +14,6 @@ describe('AuthProvider', () => {
   })
 
   it('sets authenticated when /tenants/me succeeds', async () => {
-    useAuthStore.setState({ token: 'tok' })
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
@@ -38,7 +31,6 @@ describe('AuthProvider', () => {
   })
 
   it('sets unauthenticated when /tenants/me fails', async () => {
-    useAuthStore.setState({ token: 'tok' })
     vi.mocked(fetch).mockResolvedValue({
       ok: false,
       status: 401,

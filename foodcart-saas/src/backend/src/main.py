@@ -45,6 +45,7 @@ from app.routers.foodcart import (
     revisions,
     sites,
 )
+from app.security import csrf_middleware
 from infrastructure.database import ping_database
 
 # Configure logging and tracing at import time so local development, Docker,
@@ -91,18 +92,25 @@ async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONR
 
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-_ALLOWED_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
-    if origin.strip()
-]
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "")
+_ALLOWED_ORIGINS = [origin.strip() for origin in _raw_origins.split(",") if origin.strip()]
+if settings.env == "development" and not _ALLOWED_ORIGINS:
+    _ALLOWED_ORIGINS = ["http://localhost:3000"]
+if settings.env != "development" and not _ALLOWED_ORIGINS:
+    raise RuntimeError("ALLOWED_ORIGINS must be set in non-development environments")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Idempotency-Key",
+        "X-Correlation-Id",
+        "X-CSRF-Token",
+    ],
 )
 
 
@@ -110,6 +118,10 @@ app.add_middleware(
 # and tested in isolation. It adds correlation IDs, structured request logging,
 # and latency histograms.
 app.middleware("http")(observability_middleware)
+
+# CSRF protection for cookie-backed mutations. Bearer-authenticated requests and
+# safe HTTP methods are exempt.
+app.middleware("http")(csrf_middleware)
 
 
 @app.middleware("http")

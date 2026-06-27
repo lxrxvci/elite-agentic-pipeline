@@ -5,8 +5,8 @@ providers:
     orgId: 1
     folder: 'Elite'
     type: file
-    disableDeletion: false
+    disableDeletion: true
     updateIntervalSeconds: 60
-    allowUiUpdates: true
+    allowUiUpdates: false
     options:
       path: /var/lib/grafana/dashboards

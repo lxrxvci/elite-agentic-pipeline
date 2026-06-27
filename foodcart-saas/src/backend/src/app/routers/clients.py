@@ -47,9 +47,10 @@ def list_clients(
 ) -> PaginatedResponse:
     repo = ClientRepository(db, user.tenant_id)
     clients = repo.list(limit=limit, offset=offset)
+    total = repo.count()
     return PaginatedResponse(
         items=[_to_schema(c) for c in clients],
-        total=len(clients),
+        total=total,
         limit=limit,
         offset=offset,
     )

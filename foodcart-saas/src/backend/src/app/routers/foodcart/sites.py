@@ -115,7 +115,16 @@ def update_site(
     if payload.brand_colors is not None:
         site.brand_colors = payload.brand_colors.model_dump()
     if payload.custom_domain is not None:
-        site.custom_domain = payload.custom_domain
+        try:
+            validated_domain = validate_custom_domain(
+                db,
+                payload.custom_domain,
+                expected_site_id=site_id,
+                skip_dns=True,
+            )
+        except DomainValidationError as exc:
+            raise ValidationError(str(exc)) from exc
+        site.custom_domain = validated_domain
 
     repo.update(site)
     db.commit()

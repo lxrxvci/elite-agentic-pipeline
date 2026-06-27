@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.dependencies import (
@@ -78,9 +78,10 @@ def list_invoices(
 ) -> PaginatedResponse:
     repo = InvoiceRepository(db, user.tenant_id)
     invoices = repo.list(client_id=client_id, status=status, limit=limit, offset=offset)
+    total = repo.count(client_id=client_id, status=status)
     return PaginatedResponse(
         items=[_to_schema(inv) for inv in invoices],
-        total=len(invoices),
+        total=total,
         limit=limit,
         offset=offset,
     )
@@ -117,15 +118,21 @@ def create_invoice(
         if entry.status.value != "unbilled":
             raise ConflictError(f"Time entry {entry.id} is not available for invoicing")
 
-    invoice = create_invoice_from_time_entries(
-        tenant_id=user.tenant_id,
-        client=client,
-        time_entries=time_entries,
-        issue_date=payload.issue_date,
-        due_date=payload.due_date,
-        notes=payload.notes,
-        idempotency_key=idempotency_key,
-    )
+    try:
+        invoice = create_invoice_from_time_entries(
+            tenant_id=user.tenant_id,
+            client=client,
+            time_entries=time_entries,
+            issue_date=payload.issue_date,
+            due_date=payload.due_date,
+            notes=payload.notes,
+            idempotency_key=idempotency_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
     invoice.created_by = user.id
     created = invoice_repo.create(invoice)

@@ -11,6 +11,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from domain.services.foodcart import is_valid_slug, normalize_slug
 
+_ALLOWED_URL_SCHEMES = {"https", "mailto", "tel"}
+
+
+def validate_url_scheme(url: str) -> str:
+    """Allow only https, mailto, and tel schemes in user-provided URLs."""
+    if not url:
+        return url
+    scheme = url.split(":", 1)[0].lower()
+    if scheme not in _ALLOWED_URL_SCHEMES:
+        raise ValueError(f"URL scheme '{scheme}' is not allowed; use https, mailto, or tel")
+    return url
+
 
 class SlugCheckRequest(BaseModel):
     slug: str = Field(..., min_length=1, max_length=63, pattern=r"^[a-z0-9-]+$")
@@ -35,6 +47,13 @@ class SeoMetaSchema(BaseModel):
     title: str | None = None
     description: str | None = None
     favicon_url: str | None = None
+
+    @field_validator("favicon_url")
+    @classmethod
+    def validate_favicon_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return validate_url_scheme(v)
 
 
 class BrandColorsSchema(BaseModel):
@@ -163,6 +182,28 @@ class ContentBlockCreateSchema(BaseModel):
     data: dict[str, Any]
     sort_order: int = 0
 
+    @field_validator("data")
+    @classmethod
+    def validate_data_urls(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Validate known URL fields inside block data."""
+        url_keys = {"cta_url", "map_url", "favicon_url", "url"}
+
+        def _check_value(value: Any) -> None:
+            if isinstance(value, str):
+                validate_url_scheme(value)
+            elif isinstance(value, list):
+                for item in value:
+                    _check_value(item)
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    if key in url_keys or key.endswith("_url"):
+                        _check_value(item)
+                    elif isinstance(item, (dict, list)):
+                        _check_value(item)
+
+        _check_value(v)
+        return v
+
 
 class SocialLinkSchema(BaseModel):
     platform: str = Field(
@@ -171,6 +212,11 @@ class SocialLinkSchema(BaseModel):
     )
     url: str
 
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        return validate_url_scheme(v)
+
 
 class OrderLinkSchema(BaseModel):
     platform: str = Field(
@@ -178,6 +224,11 @@ class OrderLinkSchema(BaseModel):
         pattern=r"^(doordash|ubereats|grubhub|website|phone)$",
     )
     url: str
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        return validate_url_scheme(v)
 
 
 class IngestionRequestSchema(BaseModel):

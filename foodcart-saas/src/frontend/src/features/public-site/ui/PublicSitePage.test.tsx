@@ -120,10 +120,10 @@ describe('PublicSitePage', () => {
     render(<PublicSitePage site={maliciousSite} />)
     const cta = screen.getByText('Order now')
     expect(cta.tagName.toLowerCase()).toBe('a')
-    // React 19 blocks javascript: URLs in href attributes and replaces them
-    // with a safe sentinel. This is a defense-in-depth mitigation, but REM-001
-    // should still prevent such URLs from being stored in block data.
-    expect(cta.getAttribute('href')).not.toBe('javascript:alert(document.cookie)')
-    expect(cta.getAttribute('href')).toContain('React has blocked')
+    // Defense-in-depth: the link must not contain the javascript: payload.
+    // It may be sanitized to '#' by safeUrl or to React 19's blocked sentinel.
+    const href = cta.getAttribute('href')
+    expect(href).not.toBe('javascript:alert(document.cookie)')
+    expect(href).not.toContain('javascript:')
   })
 })

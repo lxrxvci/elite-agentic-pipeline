@@ -472,14 +472,25 @@ def _extract_title(html: str) -> str:
     return ""
 
 
-def _fetch_url(url: str) -> dict[str, Any]:
+def _fetch_url(url: str, max_redirects: int = 5) -> dict[str, Any]:
     validate_public_url(url)
+    current_url = url
     try:
-        with httpx.Client(timeout=10, follow_redirects=True) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            text = response.text[:100_000]
-            return {"status_code": response.status_code, "text": text}
+        with httpx.Client(timeout=10, follow_redirects=False) as client:
+            for _ in range(max_redirects + 1):
+                response = client.get(current_url)
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise RuntimeError(f"Redirect from {current_url} missing Location header")
+                    # Resolve relative URLs against the current URL.
+                    current_url = str(response.request.url.join(location))
+                    validate_public_url(current_url)
+                    continue
+                response.raise_for_status()
+                text = response.text[:100_000]
+                return {"status_code": response.status_code, "text": text}
+            raise RuntimeError(f"Too many redirects while fetching {url}")
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Failed to fetch {url}: {exc}") from exc
 

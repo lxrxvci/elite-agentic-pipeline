@@ -1,3 +1,4 @@
+import { sanitizeUrl } from '../lib/sanitizeUrl'
 import type { SocialLink } from '../api/foodcart-types'
 
 const PLATFORM_LABELS: Record<SocialLink['platform'], string> = {
@@ -20,7 +21,7 @@ export function SocialLinks({ links, inverse = false }: SocialLinksProps) {
       {links.map((link) => (
         <li key={link.platform}>
           <a
-            href={link.url}
+            href={sanitizeUrl(link.url)}
             target="_blank"
             rel="noreferrer"
             aria-label={PLATFORM_LABELS[link.platform]}

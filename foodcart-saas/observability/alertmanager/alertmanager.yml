@@ -15,8 +15,18 @@ route:
       receiver: 'pagerduty-critical'
       continue: true
     - match:
+        severity: critical
+      receiver: 'slack-critical'
+      continue: false
+    - match:
         severity: warning
       receiver: 'slack'
+      continue: false
+    # Catch-all fallback for alerts without a matching severity route.
+    - match_re:
+        severity: '.*'
+      receiver: 'slack-fallback'
+      continue: false
 
 receivers:
   - name: 'slack'
@@ -30,6 +40,13 @@ receivers:
     slack_configs:
       - channel: '#incidents'
         title: 'CRITICAL: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }} — {{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+
+  - name: 'slack-fallback'
+    slack_configs:
+      - channel: '#alerts-fallback'
+        title: 'FALLBACK: {{ .GroupLabels.alertname }}'
         text: '{{ range .Alerts }}{{ .Annotations.summary }} — {{ .Annotations.description }}{{ end }}'
         send_resolved: true
 

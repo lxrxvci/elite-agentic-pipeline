@@ -73,9 +73,14 @@ def list_time_entries(
         limit=limit,
         offset=offset,
     )
+    total = repo.count(
+        client_id=client_id,
+        project_id=project_id,
+        status=status,
+    )
     return PaginatedResponse(
         items=[_to_schema(e) for e in entries],
-        total=len(entries),
+        total=total,
         limit=limit,
         offset=offset,
     )

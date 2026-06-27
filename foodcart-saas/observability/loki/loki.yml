@@ -1,4 +1,4 @@
-auth_enabled: false
+auth_enabled: true
 
 server:
   http_listen_port: 3100
@@ -14,7 +14,7 @@ common:
   ring:
     instance_addr: 127.0.0.1
     kvstore:
-      store: inmemory
+      store: memberlist
 
 schema_config:
   configs:
@@ -25,3 +25,7 @@ schema_config:
       index:
         prefix: index_
         period: 24h
+
+# Local development uses filesystem storage with a named Docker volume so logs
+# survive container restarts. Production should use object storage (S3/GCS) and
+# an external identity provider for tenant authentication.

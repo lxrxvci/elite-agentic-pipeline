@@ -1,4 +1,5 @@
 import { CANARY_API_URL_COOKIE } from '../lib/canary'
+import { useAuthStore } from '@/features/auth/model/store'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
@@ -33,16 +34,6 @@ function getApiBaseUrl(): string {
   return getCookieValue(CANARY_API_URL_COOKIE) || API_BASE_URL
 }
 
-function getAuthToken(): string | undefined {
-  if (typeof window === 'undefined') return undefined
-  // Clerk token is injected by the auth provider; fall back to a localStorage debug token in tests
-  try {
-    return window.localStorage.getItem('__fc_clerk_token') || undefined
-  } catch {
-    return undefined
-  }
-}
-
 export async function apiClient<T>(
   path: string,
   options: RequestInit = {}
@@ -50,13 +41,25 @@ export async function apiClient<T>(
   const baseUrl = getApiBaseUrl()
   const url = `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`
 
-  const token = getAuthToken()
+  // Read the short-lived Clerk token from memory (set by ClerkAdminAuthProvider).
+  // Legacy dev auth relies on the httpOnly elite_session cookie instead.
+  const token = typeof window === 'undefined' ? null : useAuthStore.getState().token
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...options.headers as Record<string, string>,
   }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
+  }
+
+  // When using cookie-based auth, include the CSRF token for state-changing requests.
+  const method = (options.method || 'GET').toUpperCase()
+  const mutatingMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+  if (!token && mutatingMethods.has(method)) {
+    const csrfToken = getCookieValue('csrf_token')
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken
+    }
   }
 
   const response = await fetch(url, {
@@ -84,24 +87,13 @@ export async function apiClient<T>(
   return response.json() as Promise<T>
 }
 
-export function setClerkToken(token: string | null) {
-  if (typeof window === 'undefined') return
-  try {
-    if (token) {
-      window.localStorage.setItem('__fc_clerk_token', token)
-    } else {
-      window.localStorage.removeItem('__fc_clerk_token')
-    }
-  } catch {
-    // ignore
-  }
+// Deprecated: the legacy token is no longer persisted in localStorage.
+// Retaining a no-op setter avoids breaking existing call sites until they are updated.
+export function setClerkToken(_token: string | null) {
+  // no-op
 }
 
 export function getClerkToken(): string | null {
   if (typeof window === 'undefined') return null
-  try {
-    return window.localStorage.getItem('__fc_clerk_token')
-  } catch {
-    return null
-  }
+  return useAuthStore.getState().token
 }
