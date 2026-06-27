@@ -44,6 +44,7 @@ from app.routers.foodcart import (
     public,
     revisions,
     sites,
+    uploads,
 )
 from app.security import csrf_middleware
 from infrastructure.database import ping_database
@@ -131,11 +132,23 @@ async def security_headers(request: Request, call_next: Callable[[Request], Any]
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    storage_origin = ""
+    if settings.storage_public_url:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(settings.storage_public_url)
+        storage_origin = f" {parsed.scheme}://{parsed.netloc}"
+    elif settings.storage_endpoint:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(settings.storage_endpoint)
+        storage_origin = f" {parsed.scheme}://{parsed.netloc}"
+
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
+        f"img-src 'self' data:{storage_origin}; "
         "font-src 'self'; "
         "connect-src 'self'; "
         "frame-ancestors 'none'; "
@@ -166,6 +179,7 @@ app.include_router(content.router, prefix="/api/v1")
 app.include_router(ingest.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")
 app.include_router(revisions.router, prefix="/api/v1")
+app.include_router(uploads.router, prefix="/api/v1")
 app.include_router(public.router, prefix="/api/v1")
 app.include_router(billing.router, prefix="/api/v1")
 app.include_router(domains.router, prefix="/api/v1")

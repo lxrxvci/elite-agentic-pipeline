@@ -149,7 +149,42 @@ Every backlog item that reaches "Done" must meet the following:
 
 ---
 
-### 2. AI Website Assistant Full Build
+### 2. Photo-Driven Business Discovery
+
+| Field | Detail |
+|---|---|
+| **Status** | Committed — Cycle 2, Weeks 1–4 |
+| **Outcome** | Owners onboard by snapping a photo of their cart; the platform finds their business and pre-fills the site. |
+| **Customer outcome** | Even faster time-to-publish with less hunting for links. |
+| **Business outcome** | Higher activation and 24-hour publish rate; differentiation vs. URL-only builders. |
+| **Evidence** | `docs/SHAPED_BETS.md` Bet 4; Cycle 1 onboarding drop-off at Links step; natural extension of ingestion strategy. |
+| **Appetite** | 4 weeks (calendar); ~6 engineer-weeks |
+| **Sequencing** | Starts after feature-flag cleanup; builds on Cycle 1 onboarding and ingestion frameworks. SPIKE-006 validates photo→name accuracy in week 1. |
+| **North Star link** | Time to Publish < 10 min; 24-hour Publish Rate > 60% |
+
+#### Acceptance Criteria
+
+- [ ] New onboarding step supports file picker and camera capture.
+- [ ] Images are compressed client-side and uploaded to Cloudflare R2 via presigned URL.
+- [ ] Gemini multimodal adapter extracts business name, cuisine, visible text, and location hints from the photo.
+- [ ] Google Places adapter enriches extracted name with address, phone, hours, website, and GBP URL.
+- [ ] Yelp, menu, and ordering links are discovered from Places/website data via existing ingestion pipeline.
+- [ ] Extracted data pre-populates the onboarding form as editable proposals.
+- [ ] Uploaded photo is used as default hero image with owner toggle to skip/change.
+- [ ] Feature is behind temporary flag `photo-onboarding-v1` with explicit removal ticket.
+- [ ] SPIKE-006: ≥ 70% business-name accuracy on 20+ sample cart photos before full build commitment.
+
+#### Definition of Done
+
+- RFC 0005 and ADR 0008 merged.
+- Backend test coverage ≥ 80%; contract and E2E tests added.
+- `openapi.yaml` updated.
+- Security review completed for upload path, EXIF handling, and PII.
+- Staged rollout behind flag; metrics and SLOs instrumented.
+
+---
+
+### 3. AI Website Assistant Full Build
 
 | Field | Detail |
 |---|---|
@@ -186,7 +221,7 @@ Every backlog item that reaches "Done" must meet the following:
 
 ---
 
-### 3. Analytics Instrumentation & Owner Dashboard
+### 4. Analytics Instrumentation & Owner Dashboard
 
 | Field | Detail |
 |---|---|

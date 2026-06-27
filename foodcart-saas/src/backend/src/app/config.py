@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
 
+    # Google Places API (required for photo-driven business discovery)
+    google_places_api_key: str = ""
+
     # Paddle Billing configuration
     paddle_api_key: str = ""
     paddle_environment: str = "sandbox"  # 'sandbox' | 'production'
@@ -76,6 +79,16 @@ class Settings(BaseSettings):
     cloudflare_api_token: str = ""
     cloudflare_account_id: str = ""
     cloudflare_registrar_enabled: bool = False
+
+    # Object storage configuration (Cloudflare R2 or S3-compatible)
+    storage_endpoint: str = ""  # e.g. https://<account>.r2.cloudflarestorage.com
+    storage_bucket: str = ""
+    storage_access_key_id: str = ""
+    storage_secret_access_key: str = ""
+    storage_region: str = "auto"
+    storage_public_url: str = ""  # optional CDN/public base URL
+    storage_max_upload_mb: int = 10
+    storage_presigned_ttl_seconds: int = 300
 
     model_config = SettingsConfigDict(
         env_file=".env",

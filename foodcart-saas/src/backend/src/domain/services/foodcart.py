@@ -570,6 +570,52 @@ def ingest_social_links(links: list[dict[str, str]]) -> dict[str, Any]:
     }
 
 
+def ingest_photo_vision(storage_key: str, mime_type: str = "image/jpeg") -> dict[str, Any]:
+    """Analyze a stored food-cart photo and return business identity signals."""
+    from infrastructure.llm.vision import analyze_image
+    from infrastructure.storage import fetch_object
+
+    image_bytes = fetch_object(storage_key)
+    extraction = analyze_image(image_bytes, mime_type=mime_type)
+    return {
+        "source_type": IngestionSourceType.PHOTO_VISION.value,
+        "raw_payload": {"storage_key": storage_key, "mime_type": mime_type},
+        "normalized_data": extraction.model_dump(exclude_none=True),
+        "proposed_blocks": [],
+    }
+
+
+def ingest_google_places(
+    business_name: str,
+    location_hints: list[str] | None = None,
+) -> dict[str, Any]:
+    """Search Google Places for a business and return normalized details."""
+    from infrastructure.adapters.google_places import find_business
+
+    place = find_business(name=business_name, location_hints=location_hints or [])
+    if not place:
+        return {
+            "source_type": IngestionSourceType.GOOGLE_PLACES.value,
+            "raw_payload": {"query": business_name, "location_hints": location_hints},
+            "normalized_data": {},
+            "proposed_blocks": [],
+        }
+
+    return {
+        "source_type": IngestionSourceType.GOOGLE_PLACES.value,
+        "raw_payload": place.model_dump(),
+        "normalized_data": {
+            "name": place.name,
+            "address": place.address,
+            "phone": place.phone,
+            "hours": place.hours,
+            "website": place.website,
+            "google_business_url": place.google_maps_url,
+        },
+        "proposed_blocks": [],
+    }
+
+
 def run_ingestion_job(job: IngestionJob) -> IngestionJob:
     job.status = IngestionJobStatus.RUNNING
     try:
@@ -585,6 +631,18 @@ def run_ingestion_job(job: IngestionJob) -> IngestionJob:
             # social_links payload stored as a single URL-encoded list in raw_payload
             links = (job.raw_payload or {}).get("links", []) if job.raw_payload else []
             result = ingest_social_links(links)
+        elif job.source_type == IngestionSourceType.PHOTO_VISION:
+            raw = job.raw_payload or {}
+            result = ingest_photo_vision(
+                storage_key=raw.get("storage_key", job.source_url),
+                mime_type=raw.get("mime_type", "image/jpeg"),
+            )
+        elif job.source_type == IngestionSourceType.GOOGLE_PLACES:
+            raw = job.raw_payload or {}
+            result = ingest_google_places(
+                business_name=raw.get("business_name", job.source_url),
+                location_hints=raw.get("location_hints"),
+            )
         else:
             raise ValueError(f"Unsupported source type: {job.source_type}")
 

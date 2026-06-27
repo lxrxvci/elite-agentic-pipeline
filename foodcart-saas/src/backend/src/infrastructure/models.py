@@ -38,6 +38,7 @@ __all__ = [
     "Revision",
     "IngestionJob",
     "AIRequest",
+    "UploadedImage",
 ]
 
 
@@ -435,7 +436,8 @@ class IngestionJob(Base):
     __tablename__ = "ingestion_jobs"
     __table_args__ = (
         CheckConstraint(
-            "source_type IN ('google_business', 'yelp', 'menu_url', 'website', 'social_links')",
+            "source_type IN ('google_business', 'yelp', 'menu_url', 'website', 'social_links', "
+            "'photo_vision', 'google_places')",
             name="ck_ingestion_jobs_source_type",
         ),
         CheckConstraint(
@@ -501,6 +503,43 @@ class AIRequest(Base):
     )
     applied_revision_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("revisions.id", use_alter=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utc_now,
+        onupdate=_utc_now,
+    )
+
+
+class UploadedImage(Base):
+    __tablename__ = "uploaded_images"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('uploaded', 'processed', 'archived')",
+            name="ck_uploaded_images_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("foodcart_tenants.id"), nullable=False, index=True
+    )
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    public_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(nullable=False, default=0)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="uploaded"
+    )
+    meta: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now

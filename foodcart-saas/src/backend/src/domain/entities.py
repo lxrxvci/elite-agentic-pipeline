@@ -181,6 +181,8 @@ class IngestionSourceType(StrEnum):
     MENU_URL = "menu_url"
     WEBSITE = "website"
     SOCIAL_LINKS = "social_links"
+    PHOTO_VISION = "photo_vision"
+    GOOGLE_PLACES = "google_places"
 
 
 class IngestionJobStatus(StrEnum):
@@ -292,5 +294,20 @@ class AIRequest:
     status: AIRequestStatus
     proposed_patch: list[dict[str, Any]]
     applied_revision_id: uuid.UUID | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass
+class UploadedImage:
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    site_id: uuid.UUID | None
+    storage_key: str
+    public_url: str | None
+    content_type: str
+    size_bytes: int
+    status: str  # 'uploaded', 'processed', 'archived'
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))

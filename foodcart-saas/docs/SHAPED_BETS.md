@@ -232,6 +232,91 @@ This keeps the first cycle de-risked, delivers the core value proposition, and v
 
 ---
 
+## Bet 4 — Photo-Driven Business Discovery (Cycle 2)
+
+### Problem
+
+Even with URL-based ingestion, owners struggle to find and paste every external link during onboarding. A photo of the food cart is the most natural input an owner has — it already contains the business name, signage, cuisine type, and often location clues. Turning that photo into a pre-filled onboarding form reduces friction and makes the "publish before your next shift" promise even faster.
+
+### Appetite
+
+**4 weeks (calendar); ~6 engineer-weeks.** A bounded Cycle 2 bet that builds on the existing onboarding and ingestion foundations.
+
+### Solution Sketch
+
+1. **New onboarding step: "Snap or upload a photo of your cart."**
+   - File picker + camera capture (`capture="environment"`).
+   - Client-side compression and upload to Cloudflare R2 via a presigned URL.
+2. **Backend vision analysis**
+   - Google Gemini (`gemini-2.0-flash`) multimodal input reads the image.
+   - Extracts business name, cuisine type, visible text/URLs, and location hints.
+3. **Business enrichment**
+   - Google Places API searches by extracted name + location hints.
+   - Retrieves address, phone, hours, website, photos, and Google Business Profile URL.
+4. **Link discovery**
+   - Existing ingestion pipeline discovers Yelp, menu, and ordering links from the website/Places data.
+5. **Owner review**
+   - Extracted data pre-populates the existing onboarding form as editable proposals.
+   - Owner confirms or edits before publishing.
+6. **Hero image**
+   - Uploaded photo is used as the default hero image, with a clear toggle to skip or replace it.
+
+### Rabbit Holes
+
+- **Full menu extraction from photos or PDFs** — out of scope; defer to the menu-parser spike.
+- **GPS/EXIF location auto-detection** — out of scope; use visual cues and Places search only.
+- **Real-time image enhancement or AI-generated hero images** — out of scope; use the uploaded photo as-is.
+- **Bi-directional sync back to Google Business Profile** — out of scope; one-way import only.
+
+### No-Gos
+
+- No auto-publish without explicit owner review.
+- No biometric or people recognition.
+- No scraping Google/Yelp against terms of service.
+- No storing raw, unprocessed owner photos indefinitely; archive after processing.
+- No public use of the photo without the owner seeing it in preview first.
+
+### Success Criteria
+
+| Metric | Target | How Measured |
+|---|---|---|
+| Photo upload completion rate | ≥ 70% of onboarding starters | Onboarding funnel events |
+| Business name extraction accuracy | ≥ 80% match owner-verified name | Pilot verification |
+| Address/phone/hours present after photo | ≥ 60% of uploads | Automated audit on publish |
+| Median time to publish | No regression vs. URL-only (< 10 min) | Task-based tests |
+| Owner edits required per photo | ≤ 3 fields | Onboarding analytics |
+| Mobile Core Web Vitals LCP | < 2.5 s | Chrome UX Report / Vercel |
+
+### Technical Feasibility Note (Tech Lead)
+
+| Dimension | Assessment |
+|---|---|
+| **Risks** | R19 — Google Places API quota/cost surprises; R20 — Gemini extraction errors or hallucinations; R21 — object storage abuse or egress costs; R22 — wrong business identity eroding trust; R23 — privacy/PII in uploaded photos. |
+| **Dependencies** | Cloudflare R2 bucket and S3-compatible credentials; Google Places API key and quota; Gemini API key (already configured); existing `IngestionJob` framework; content block schema with `image_url` support; feature-flag infrastructure. |
+| **Unknowns** | Real-world accuracy of business-name extraction from cart photos; coverage of food-cart listings in Google Places; owner tolerance for editing proposed data; serverless timeout risk for image analysis. |
+| **Spike needs** | **SPIKE-006** (photo→business-name accuracy on 20+ sample cart photos) should complete in week 1; if accuracy < 70%, narrow scope to hero-image upload + manual name entry. |
+| **Recommendation** | **BUILD** — strong activation wedge, reuses existing ingestion stack, and is flag-gated. Commit after SPIKE-006 validates ≥ 70% name-extraction accuracy. |
+
+---
+
+## Betting Table — Cycle 2 Recommendation
+
+| Bet | Appetite | Decision | Rationale |
+|---|---|---|---|
+| **Bet 4 — Photo-Driven Business Discovery** | 4 weeks | **Build now** | Directly reduces onboarding friction and time-to-publish; natural extension of Cycle 1 ingestion work; flag-gated and reversible. |
+| **AI Website Assistant Full Build** | 6 weeks | **Build now** | Cycle 1 spikes (SPIKE-001, SPIKE-004, SPIKE-005) assumed passed; builds on content-block model and guardrail architecture. |
+| **Analytics Instrumentation & Owner Dashboard** | 3 weeks | **Build now** | Parallel track; provides metrics needed to validate Bet 4 and AI assistant success. |
+| **Feature Flag Cleanup** | 0.5 weeks | **First commitment** | Required post-release rule; must complete before new flags (`photo-onboarding-v1`) are added. |
+
+### Recommended Cycle 2 Sequence
+
+1. **Week 1:** Feature flag cleanup + SPIKE-006 photo-extraction accuracy validation.
+2. **Weeks 1–2:** Storage, upload endpoint, vision adapter, Places adapter.
+3. **Weeks 2–3:** Onboarding integration and frontend photo step.
+4. **Week 4:** Quality, CI/CD, observability, and staged rollout behind `photo-onboarding-v1`.
+
+---
+
 ## Evidence Traceability
 
 | Bet | Primary OST Opportunities | Evidence |

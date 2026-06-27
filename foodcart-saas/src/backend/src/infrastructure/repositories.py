@@ -31,6 +31,7 @@ from domain.entities import (
     Tenant,
     TimeEntry,
     TimeEntryStatus,
+    UploadedImage,
     User,
 )
 from domain.value_objects import Money
@@ -888,6 +889,96 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
             errors=orm.errors or [],
             raw_payload=orm.raw_payload,
             proposed_blocks=orm.proposed_blocks or [],
+            created_at=orm.created_at,
+            updated_at=orm.updated_at,
+        )
+
+
+class UploadedImageRepository(BaseRepository[UploadedImage]):
+    def list_for_site(
+        self, site_id: uuid.UUID, limit: int = 20, offset: int = 0
+    ) -> builtins.list[UploadedImage]:
+        orms = (
+            self.session.query(models.UploadedImage)
+            .filter(models.UploadedImage.tenant_id == self.tenant_id)
+            .filter(models.UploadedImage.site_id == site_id)
+            .order_by(models.UploadedImage.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return [self._to_domain(orm) for orm in orms]
+
+    def get(self, image_id: uuid.UUID, site_id: uuid.UUID | None = None) -> UploadedImage | None:
+        query = (
+            self.session.query(models.UploadedImage)
+            .filter(models.UploadedImage.tenant_id == self.tenant_id)
+            .filter(models.UploadedImage.id == image_id)
+        )
+        if site_id is not None:
+            query = query.filter(models.UploadedImage.site_id == site_id)
+        orm = query.first()
+        if not orm:
+            return None
+        return self._to_domain(orm)
+
+    def get_by_key(self, storage_key: str) -> UploadedImage | None:
+        orm = (
+            self.session.query(models.UploadedImage)
+            .filter(models.UploadedImage.tenant_id == self.tenant_id)
+            .filter(models.UploadedImage.storage_key == storage_key)
+            .first()
+        )
+        if not orm:
+            return None
+        return self._to_domain(orm)
+
+    def create(self, image: UploadedImage) -> UploadedImage:
+        orm = models.UploadedImage(
+            id=image.id,
+            tenant_id=image.tenant_id,
+            site_id=image.site_id,
+            storage_key=image.storage_key,
+            public_url=image.public_url,
+            content_type=image.content_type,
+            size_bytes=image.size_bytes,
+            status=image.status,
+            meta=image.metadata,
+        )
+        self.session.add(orm)
+        self.session.flush()
+        image.id = orm.id
+        return image
+
+    def update(self, image: UploadedImage) -> UploadedImage:
+        orm = (
+            self.session.query(models.UploadedImage)
+            .filter(models.UploadedImage.tenant_id == self.tenant_id)
+            .filter(models.UploadedImage.id == image.id)
+            .first()
+        )
+        if not orm:
+            raise ValueError("Uploaded image not found")
+        orm.storage_key = image.storage_key
+        orm.public_url = image.public_url
+        orm.content_type = image.content_type
+        orm.size_bytes = image.size_bytes
+        orm.status = image.status
+        orm.meta = image.metadata
+        self.session.flush()
+        return image
+
+    def _to_domain(self, orm: models.UploadedImage) -> UploadedImage:
+        return UploadedImage(
+            id=orm.id,
+            tenant_id=orm.tenant_id,
+            site_id=orm.site_id,
+            storage_key=orm.storage_key,
+            public_url=orm.public_url,
+            content_type=orm.content_type,
+            size_bytes=orm.size_bytes,
+            status=orm.status,
+            metadata=orm.meta or {},
             created_at=orm.created_at,
             updated_at=orm.updated_at,
         )

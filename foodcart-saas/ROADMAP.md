@@ -33,14 +33,22 @@
 
 ## Next (4–12 weeks)
 
-### 4. AI Website Assistant Full Build
+### 4. Photo-Driven Business Discovery
+
+- **Customer outcome:** Owners onboard by snapping a photo of their cart; the platform finds the business and pre-fills name, address, hours, links, and hero image.
+- **Business outcome:** Faster activation, higher 24-hour publish rate, and a differentiated onboarding experience.
+- **Evidence from Cycle 1:** Onboarding drop-off at the Links step; `docs/SHAPED_BETS.md` Bet 4; natural extension of the ingestion strategy defined in ADR 0007 / RFC 0004.
+- **Feasibility:** Medium; requires Cloudflare R2, Google Places API, and Gemini multimodal image analysis, but builds on existing onboarding and ingestion frameworks.
+- **Kano lens:** Exciter / differentiator. Removes the most tedious part of onboarding.
+
+### 5. AI Website Assistant Full Build
 - **Customer outcome:** Owners update menu, hours, hero, and story by typing plain English — with every change previewed, approved, and revertible.
 - **Business outcome:** Differentiation in a crowded builder market; target AI Edit Adoption >35% of active owners in 30 days and AI-assisted 30-day retention +20 pp over manual-only owners.
 - **Evidence from Cycle 1:** `docs/SHAPED_BETS.md` Bet 3; interview synthesis shows 6/9 owners fear "breaking something" with AI but want faster updates; SPIKE-004 and SPIKE-005 gates defined in `BACKLOG.md`; Cycle 1 content-block model now provides the schema surface the assistant needs.
 - **Feasibility:** Medium; ADR 0003 architecture and structured-output harness are in place, but cost, latency, and trust UX need validation.
 - **Kano lens:** Exciter / differentiator. The safest AI assistant in the category is a wedge.
 
-### 5. Foundational Owner Analytics Dashboard
+### 6. Foundational Owner Analytics Dashboard
 - **Customer outcome:** Owners see simple, actionable metrics — site views, top CTA clicks, hours-badge impressions — so they know the site is working.
 - **Business outcome:** Improve engagement, justify future pricing, and give the squad data to prioritize.
 - **Evidence from Cycle 1:** `BACKLOG.md` Cycle 2 committed item; interview synthesis shows owners currently use Instagram insights or nothing; North Star WASE requires event instrumentation.
@@ -51,28 +59,28 @@
 
 ## Later (12+ weeks)
 
-### 6. Subscription Billing & Plan Tiers
+### 7. Subscription Billing & Plan Tiers
 - **Customer outcome:** Clear, affordable plans that match the value the owner receives.
 - **Business outcome:** Monetize the activated base and establish initial MRR.
 - **Evidence needed:** Pricing sensitivity survey with 10+ owners; free-to-paid conversion baseline from foundational analytics.
 - **Feasibility:** Medium; Stripe integration, plan enforcement, and usage metering.
 - **Kano lens:** Must-have for business viability; not a customer exciter.
 
-### 7. Custom Domain & White-Label Branding
+### 8. Custom Domain & White-Label Branding
 - **Customer outcome:** The site feels fully owned by the restaurant (e.g., `www.banhmifusion.com`).
 - **Business outcome:** Unlock higher willingness-to-pay and reduce visible platform branding.
 - **Evidence needed:** ≥20% of Pro customers request or expect custom domains; shaped bet with DNS/SSL/edge-config feasibility.
 - **Feasibility:** Medium-high; DNS, SSL, and edge config.
 - **Kano lens:** Exciter for established businesses; must-have for premium tier.
 
-### 8. Advanced Analytics & Performance Insights
+### 9. Advanced Analytics & Performance Insights
 - **Customer outcome:** Owners understand which menu items and traffic sources drive orders.
 - **Business outcome:** Increase engagement and reduce churn by proving ROI.
 - **Evidence needed:** Owners' willingness to pay for metrics beyond basic views/clicks; data from foundational dashboard.
 - **Feasibility:** Medium; aggregate event pipeline, dashboards, weekly email summaries.
 - **Kano lens:** Exciter if insights are actionable.
 
-### 9. Multi-Location Support
+### 10. Multi-Location Support
 - **Customer outcome:** A 2–3 location business manages all locations from one dashboard with consistent branding and per-location hours/menus.
 - **Business outcome:** Expand ICP to growing mini-chains; unlock Growth tier pricing.
 - **Evidence needed:** Validate with 2–3 mini-chain owners that location inconsistency is a real pain worth paying for.
