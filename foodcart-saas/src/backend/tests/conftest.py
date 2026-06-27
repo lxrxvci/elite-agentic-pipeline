@@ -13,7 +13,7 @@ from decimal import Decimal  # noqa: E402
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
 from app.dependencies import create_access_token  # noqa: E402
@@ -46,7 +46,14 @@ app.dependency_overrides[get_db] = override_get_db
 def setup_database():
     Base.metadata.create_all(bind=engine)
     yield
-    Base.metadata.drop_all(bind=engine)
+    if engine.dialect.name == "postgresql":
+        # Drop/create the public schema to cleanly remove tables with circular
+        # foreign keys that SQLAlchemy's drop_all cannot tear down reliably.
+        with engine.begin() as conn:
+            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            conn.execute(text("CREATE SCHEMA public"))
+    else:
+        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture()
