@@ -424,7 +424,10 @@ class Revision(Base):
     triggered_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     source: Mapped[str] = mapped_column(String(20), nullable=False)
     ai_request_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("ai_requests.id", use_alter=True), nullable=True
+        ForeignKey(
+            "ai_requests.id", use_alter=True, name="fk_revisions_ai_request_id"
+        ),
+        nullable=True,
     )
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -502,7 +505,10 @@ class AIRequest(Base):
         JSON, nullable=False, default=list
     )
     applied_revision_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("revisions.id", use_alter=True), nullable=True
+        ForeignKey(
+            "revisions.id", use_alter=True, name="fk_ai_requests_applied_revision_id"
+        ),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now

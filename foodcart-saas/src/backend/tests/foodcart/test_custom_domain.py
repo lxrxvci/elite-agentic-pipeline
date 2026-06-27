@@ -72,6 +72,8 @@ def published_site(db: Session, domain_tenant: dict[str, Any]):
         brand_colors={"primary": "#2563eb", "secondary": "#f5f5f5", "background": "#ffffff"},
     )
     db.add(site)
+    db.flush()
+
     block = ContentBlock(
         id=uuid.uuid4(),
         site_id=site.id,

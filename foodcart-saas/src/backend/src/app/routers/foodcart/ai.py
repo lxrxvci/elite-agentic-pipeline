@@ -20,7 +20,7 @@ from app.schemas_foodcart import (
     RevisionSchema,
 )
 from domain.entities import AIRequest, AIRequestStatus, Revision, RevisionSource
-from domain.services.foodcart import apply_patch_operations
+from domain.services.foodcart import _sanitize_prompt, apply_patch_operations
 from infrastructure.llm import LLMProvider
 from infrastructure.repositories import (
     AIRequestRepository,
@@ -53,8 +53,9 @@ def propose_change(
     _ensure_site_owned(site_id, user.tenant_id, db)
     blocks = ContentBlockRepository(db, user.tenant_id).list_for_site(site_id)
     provider = _get_llm_provider()
+    sanitized_prompt = _sanitize_prompt(payload.prompt)
     preview = provider.generate_change_preview(
-        prompt=payload.prompt,
+        prompt=sanitized_prompt,
         blocks=blocks,
         tenant_id=user.tenant_id,
         site_id=site_id,
@@ -65,8 +66,8 @@ def propose_change(
         tenant_id=user.tenant_id,
         site_id=site_id,
         user_id=user.id,
-        prompt=payload.prompt,
-        prompt_hash=hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest(),
+        prompt=sanitized_prompt,
+        prompt_hash=hashlib.sha256(sanitized_prompt.encode("utf-8")).hexdigest(),
         model=provider.model_name,
         status=AIRequestStatus.PROPOSED if preview.in_scope else AIRequestStatus.FAILED,
         proposed_patch=[op.model_dump() for op in preview.operations],
