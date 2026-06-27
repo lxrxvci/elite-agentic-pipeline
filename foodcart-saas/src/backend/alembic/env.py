@@ -1,4 +1,6 @@
 """Alembic environment configuration."""
+# Revision IDs can exceed the legacy 32-character limit, so the
+# alembic_version table column is widened to varchar(64) in migrations.
 
 from logging.config import fileConfig
 
