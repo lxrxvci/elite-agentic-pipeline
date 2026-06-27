@@ -131,7 +131,9 @@ def upgrade() -> None:
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
         ),
-        sa.ForeignKeyConstraint(["ai_request_id"], ["ai_requests.id"], use_alter=True),
+        sa.ForeignKeyConstraint(
+            ["ai_request_id"], ["ai_requests.id"], use_alter=True, name="fk_revisions_ai_request_id"
+        ),
         sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"]),
         sa.ForeignKeyConstraint(["triggered_by"], ["users.id"]),
@@ -200,7 +202,10 @@ def upgrade() -> None:
             "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
         ),
         sa.ForeignKeyConstraint(
-            ["applied_revision_id"], ["revisions.id"], use_alter=True
+            ["applied_revision_id"],
+            ["revisions.id"],
+            use_alter=True,
+            name="fk_ai_requests_applied_revision_id",
         ),
         sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"]),
