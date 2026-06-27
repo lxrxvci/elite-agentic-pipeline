@@ -6,9 +6,12 @@ import { Button, Card, Field, Input } from '@/shared/ui'
 import { useCheckSlug } from '../api/useCheckSlug'
 import { useOnboard } from '../api/useOnboard'
 import type { IngestionRequest, BrandColors } from '@/shared/api/foodcart-types'
+import { isFeatureEnabled } from '@/shared/lib/features'
 import { OnboardingStepper } from './OnboardingStepper'
+import { PhotoUploadStep } from './PhotoUploadStep'
 
-const STEPS = ['Identity', 'Links', 'Brand', 'Preview']
+const DEFAULT_STEPS = ['Identity', 'Links', 'Brand', 'Preview']
+const PHOTO_STEPS = ['Identity', 'Photo', 'Links', 'Brand', 'Preview']
 
 const DEFAULT_BRAND_COLORS: BrandColors = {
   primary: '#2563eb',
@@ -37,8 +40,12 @@ export function OnboardingWizard() {
   const [brandColors, setBrandColors] = useState<BrandColors>(DEFAULT_BRAND_COLORS)
   const [links, setLinks] = useState<IngestionRequest>({})
   const [delivery, setDelivery] = useState<DeliveryLinks>({ doordash: '', ubereats: '', grubhub: '' })
+  const [photoImageId, setPhotoImageId] = useState<string | null>(null)
   const checkSlug = useCheckSlug()
   const onboard = useOnboard()
+
+  const photoEnabled = isFeatureEnabled('photo-onboarding-v1')
+  const steps = photoEnabled ? PHOTO_STEPS : DEFAULT_STEPS
 
   const validateSlug = async (value: string) => {
     const normalized = value.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 63)
@@ -56,11 +63,11 @@ export function OnboardingWizard() {
   }
 
   const handleNext = () => {
-    if (step === STEPS.length - 1) {
+    if (step === steps.length - 1) {
       handlePublish()
       return
     }
-    setStep((s) => Math.min(s + 1, STEPS.length - 1))
+    setStep((s) => Math.min(s + 1, steps.length - 1))
   }
 
   const handleBack = () => setStep((s) => Math.max(s - 1, 0))
@@ -80,6 +87,7 @@ export function OnboardingWizard() {
           ...links,
           order_links: orderLinks.length > 0 ? orderLinks : undefined,
         },
+        photo_image_id: photoImageId ?? undefined,
       })
       router.push('/admin/dashboard')
     } catch {
@@ -87,9 +95,10 @@ export function OnboardingWizard() {
     }
   }
 
+  const brandStepIndex = photoEnabled ? 3 : 2
   const canProceed = (() => {
     if (step === 0) return businessName.length > 0 && slug.length > 2 && slugAvailable === true
-    if (step === 2) return !!brandColors.primary && !!brandColors.secondary && !!brandColors.background
+    if (step === brandStepIndex) return !!brandColors.primary && !!brandColors.secondary && !!brandColors.background
     return true
   })()
 
@@ -98,7 +107,7 @@ export function OnboardingWizard() {
       <div className="max-w-3xl mx-auto">
         <Card className="p-6 md:p-10">
           <div className="mb-8">
-            <OnboardingStepper steps={STEPS} current={step} />
+            <OnboardingStepper steps={steps} current={step} />
           </div>
           {step === 0 && (
             <form className="space-y-6" onSubmit={(e) => { e.preventDefault(); handleNext() }}>
@@ -128,7 +137,18 @@ export function OnboardingWizard() {
               </Field>
             </form>
           )}
-          {step === 1 && (
+          {photoEnabled && step === 1 && (
+            <PhotoUploadStep
+              onPhotoUploaded={(imageId) => {
+                setPhotoImageId(imageId)
+              }}
+              onSkip={() => {
+                setPhotoImageId(null)
+              }}
+            />
+          )}
+
+          {((photoEnabled && step === 2) || (!photoEnabled && step === 1)) && (
             <div className="space-y-6">
               <p className="text-fc-text-secondary">Add links to your existing presence. Everything is optional.</p>
               <div className="space-y-4">
@@ -167,7 +187,7 @@ export function OnboardingWizard() {
               </div>
             </div>
           )}
-          {step === 2 && (
+          {((photoEnabled && step === 3) || (!photoEnabled && step === 2)) && (
             <div className="space-y-6">
               <p className="text-fc-text-secondary">Choose your brand colors. We&apos;ll use them across your public site.</p>
               <div className="grid md:grid-cols-3 gap-6">
@@ -201,7 +221,7 @@ export function OnboardingWizard() {
               </div>
             </div>
           )}
-          {step === 3 && (
+          {((photoEnabled && step === 4) || (!photoEnabled && step === 3)) && (
             <div className="space-y-6">
               <div className="bg-fc-success/10 text-fc-success-text rounded-xl p-4">
                 <h3 className="font-semibold">Ready to publish</h3>
@@ -225,7 +245,7 @@ export function OnboardingWizard() {
           <div className="flex items-center justify-between mt-10">
             <Button variant="ghost" onClick={handleBack} disabled={step === 0}>Back</Button>
             <Button onClick={handleNext} loading={onboard.isPending || checkSlug.isPending} disabled={!canProceed}>
-              {step === STEPS.length - 1 ? 'Publish now' : 'Next'}
+              {step === steps.length - 1 ? 'Publish now' : 'Next'}
             </Button>
           </div>
         </Card>

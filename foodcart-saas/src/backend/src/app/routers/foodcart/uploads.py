@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.dependencies import CurrentUser, get_db, require_role
-from app.features import is_feature_enabled
+from app.features import PHOTO_ONBOARDING_FLAG, is_feature_enabled
+from app.observability import get_metrics_provider
 from app.schemas_foodcart import ErrorSchema
 from domain.entities import UploadedImage
 from infrastructure import storage
@@ -48,63 +49,71 @@ def create_presigned_upload(
     user: CurrentUser = Depends(require_role("owner", "editor")),
     db: Session = Depends(get_db),
 ) -> PresignedUploadResponse:
-    if not is_feature_enabled("photo-onboarding-v1"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Photo onboarding is not enabled",
-        )
-
-    if not storage.is_storage_configured():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Object storage is not configured",
-        )
+    metrics = get_metrics_provider()
+    metrics.observe_upload(status="initiated", tenant_id=str(user.tenant_id))
 
     try:
-        storage.validate_upload_request(payload.content_type, payload.size_bytes)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        if not is_feature_enabled(PHOTO_ONBOARDING_FLAG):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Photo onboarding is not enabled",
+            )
 
-    storage_key = storage.generate_upload_key(
-        tenant_id=user.tenant_id,
-        site_id=payload.site_id,
-        content_type=payload.content_type,
-    )
+        if not storage.is_storage_configured():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Object storage is not configured",
+            )
 
-    try:
-        presigned = storage.create_presigned_upload_url(
+        try:
+            storage.validate_upload_request(payload.content_type, payload.size_bytes)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+
+        storage_key = storage.generate_upload_key(
+            tenant_id=user.tenant_id,
+            site_id=payload.site_id,
+            content_type=payload.content_type,
+        )
+
+        try:
+            presigned = storage.create_presigned_upload_url(
+                storage_key=storage_key,
+                content_type=payload.content_type,
+                size_bytes=payload.size_bytes,
+                metadata={"tenant_id": str(user.tenant_id)},
+            )
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
+        image = UploadedImage(
+            id=uuid.uuid4(),
+            tenant_id=user.tenant_id,
+            site_id=payload.site_id,
             storage_key=storage_key,
+            public_url=presigned["public_url"],
             content_type=payload.content_type,
             size_bytes=payload.size_bytes,
-            metadata={"tenant_id": str(user.tenant_id)},
+            status="uploaded",
+            metadata={"source": "onboarding"},
         )
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
+        UploadedImageRepository(db, user.tenant_id).create(image)
 
-    image = UploadedImage(
-        id=uuid.uuid4(),
-        tenant_id=user.tenant_id,
-        site_id=payload.site_id,
-        storage_key=storage_key,
-        public_url=presigned["public_url"],
-        content_type=payload.content_type,
-        size_bytes=payload.size_bytes,
-        status="uploaded",
-        metadata={"source": "onboarding"},
-    )
-    UploadedImageRepository(db, user.tenant_id).create(image)
-
-    return PresignedUploadResponse(
-        upload_url=presigned["upload_url"],
-        fields=presigned["fields"],
-        storage_key=storage_key,
-        public_url=presigned["public_url"],
-        image_id=image.id,
-        expires_in=presigned["expires_in"],
-    )
+        metrics.observe_upload(status="success", tenant_id=str(user.tenant_id))
+        return PresignedUploadResponse(
+            upload_url=presigned["upload_url"],
+            fields=presigned["fields"],
+            storage_key=storage_key,
+            public_url=presigned["public_url"],
+            image_id=image.id,
+            expires_in=presigned["expires_in"],
+        )
+    except Exception:
+        metrics.observe_upload(status="failed", tenant_id=str(user.tenant_id))
+        raise

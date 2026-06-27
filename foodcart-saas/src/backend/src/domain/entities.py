@@ -307,7 +307,7 @@ class UploadedImage:
     public_url: str | None
     content_type: str
     size_bytes: int
-    status: str  # 'uploaded', 'processed', 'archived'
+    status: str  # 'uploaded', 'processing', 'processed', 'failed'
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))

@@ -308,6 +308,7 @@ class TenantOnboardingRequestSchema(BaseModel):
     template_id: str = Field("custom", pattern=r"^(banhmi|real-indian|mis-abuelos|custom)$")
     brand_colors: BrandColorsSchema
     initial_sources: IngestionRequestSchema | None = None
+    photo_image_id: UUID | None = None
 
     @field_validator("slug")
     @classmethod

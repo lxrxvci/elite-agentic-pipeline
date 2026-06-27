@@ -48,6 +48,20 @@ The release is deployed behind feature flags and will be promoted ring-by-ring (
 - **Location block** — address, phone, map link, and optional "find us" note for rotating carts.
 - **Cache invalidation** when hours change, verified through ISR.
 
+### Bet 4 — Photo-driven Business Discovery (flagged preview)
+
+- **Photo upload step** in the onboarding wizard lets owners upload a photo of
+  their storefront, truck, menu, or business card.
+- **Presigned uploads** to Cloudflare R2 via `POST /api/v1/uploads/presigned`.
+- **Vision extraction** with Google Gemini parses business name, cuisine, hours,
+  phone, address, and web/social/order links.
+- **Places enrichment** with Google Places API (New) fills in missing details
+  and cross-checks extracted values.
+- **Graceful fallback** to manual entry when extraction confidence is low or any
+  downstream call fails.
+- **Full observability**: Prometheus counters/histograms, OpenTelemetry spans,
+  structured logs, Grafana dashboards, and frontend RUM telemetry events.
+
 ---
 
 ## What is behind feature flags
@@ -57,6 +71,7 @@ The release is deployed behind feature flags and will be promoted ring-by-ring (
 | `ai-assistant-spike` | **Internal only / OFF by default** | AI Website Assistant is a spike in Cycle 1, not a customer-facing release. It is gated to internal Ring 0 users only so the team can validate prompt → `ChangePreview` → approve/reject flows without exposing customers to guardrail risk. |
 | `onboarding-v1` | **ON for Ring 0–3** | New onboarding flow; will be removed once fully GA. |
 | `live-hours-v1` | **ON for Ring 0–3** | Live hours badge and editor; will be removed once fully GA. |
+| `photo-onboarding-v1` | **ON for Ring 0, pending Ring 1** | Photo-driven onboarding. Requires object storage credentials, `GEMINI_API_KEY`, and Google Places API key. Progressive rollout after Ring 0 validation. |
 
 > **Flag cleanup deadline:** all Cycle 1 GA flags must be removed within 30 days of Ring 3 promotion (target 2026-07-25). See `BACKLOG.md` → "Feature Flag Cleanup."
 
@@ -85,6 +100,8 @@ The following opportunities are intentionally **not** in Cycle 1 and are queued 
 | 4 | Single-location only. Multi-location owners must create one site per location. | Mini-chain segment not served. | Multi-location support queued for Cycle 2 shaping. |
 | 5 | AI assistant is behind a flag and not exposed to pilots. | No AI differentiation in customer-facing release. | Spike runs in Ring 0; full build planned for Cycle 2 if criteria pass. |
 | 6 | Live hours depend on owner-entered data and Google Business Profile import. No POS integration or weather-based closure automation. | Owners must manually update exceptional closures. | Mobile hours editor target is <60 seconds per update. |
+| 7 | Frontend telemetry events are ingested at `POST /api/v1/telemetry` and counted in `elite_telemetry_events_total`. | None — RUM events are now logged and measured. | Monitor event volume and consider sampling if cardinality becomes high. |
+| 8 | New `deploy.yml`, `pr-environment.yml`, and Terraform storage modules are code-complete but not yet exercised with real cloud secrets. | Pipelines cannot run end-to-end until GitHub/AWS/Vercel secrets are configured. | Populate secrets using `.env.github-secrets.template` and `scripts/bootstrap_deploy_config.py`, then run a dry deploy. |
 
 ---
 
@@ -111,6 +128,9 @@ Cycle 1 is measured against:
 - **Owner brand-match rating:** ≥ 70% "good or great" on post-publish micro-survey.
 - **Trust:** 0 wrong-hours complaints in first 30 days of pilot.
 - **Performance:** Mobile LCP < 2.5 s; p95 API latency < 300 ms; error rate < 0.1%.
+- **Photo upload success rate** ≥ 99%.
+- **Photo enrichment success rate** ≥ 95%.
+- **Vision p95 latency** < 5 s; **Places p95 latency** < 5 s.
 
 See `METRICS.md` and `docs/SLOs.md` for full definitions, dashboards, and alert thresholds.
 

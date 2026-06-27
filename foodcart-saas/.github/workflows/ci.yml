@@ -40,6 +40,12 @@ jobs:
           SECRET_KEY: ci-secret-key
           ENV: development
           DATABASE_URL: sqlite:///./ci_test.db
+          ENABLED_FEATURES: photo-onboarding-v1
+          STORAGE_ENDPOINT: http://localhost:9000
+          STORAGE_BUCKET: foodcart-uploads
+          STORAGE_ACCESS_KEY_ID: test
+          STORAGE_SECRET_ACCESS_KEY: test
+          STORAGE_PUBLIC_URL: http://localhost:9000
         run: pytest -q --cov --cov-report=xml
 
       - name: Upload coverage
@@ -73,6 +79,8 @@ jobs:
         run: npm run lint
 
       - name: Test
+        env:
+          NEXT_PUBLIC_ENABLED_FEATURES: photo-onboarding-v1
         run: npm run test:ci
 
       - name: Upload coverage

@@ -12,15 +12,16 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'json'],
+      include: ['src/**/*'],
       thresholds: {
         // Ratchet: raise these as more tests are added. Baseline dropped
         // temporarily while the Foodcart frontend scaffold is being built out;
         // target is to return to ≥80% diff coverage on new code.
-        // Current baseline (Phase 1 remediation): ~63% lines/statements, ~74% functions.
-        statements: 62,
-        branches: 78,
-        functions: 74,
-        lines: 62,
+        // Current baseline (Phase 5 onboarding tests): ~64% lines/statements, ~75% functions.
+        statements: 63,
+        branches: 79,
+        functions: 75,
+        lines: 63,
       },
     },
   },

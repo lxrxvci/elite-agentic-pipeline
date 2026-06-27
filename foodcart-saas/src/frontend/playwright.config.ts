@@ -27,7 +27,7 @@ export default defineConfig({
     timeout: 120000,
     env: {
       NEXT_PUBLIC_API_URL: 'http://localhost:8000/api/v1',
-      NEXT_PUBLIC_ENABLED_FEATURES: 'time-capture.quick-entry,time-capture.live-timer',
+      NEXT_PUBLIC_ENABLED_FEATURES: 'time-capture.quick-entry,time-capture.live-timer,photo-onboarding-v1',
     },
   },
 })

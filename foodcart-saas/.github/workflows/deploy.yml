@@ -1,0 +1,459 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI, Security, Contract Tests]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+      sha: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Verify upstream workflows succeeded
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          check_workflow() {
+            local file="$1"
+            local name="$2"
+            local conclusion
+            conclusion=$(gh api "repos/${{ github.repository }}/actions/workflows/${file}/runs?head_sha=${SHA}&branch=main&per_page=1" --jq '.workflow_runs[0].conclusion')
+            if [ "$conclusion" != "success" ]; then
+              echo "${name} did not succeed for ${SHA}: ${conclusion}"
+              exit 1
+            fi
+            echo "${name}: ${conclusion}"
+          }
+
+          check_workflow "ci.yml" "CI"
+          check_workflow "security.yml" "Security"
+          check_workflow "contract-tests.yml" "Contract Tests"
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+  migrate-staging:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
+    environment: staging
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: src/backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run Alembic migrations on staging
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: alembic upgrade head
+
+  deploy-backend-staging:
+    needs: migrate-staging
+    environment: staging
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Deploy backend to staging
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND_STAGING }}
+        run: vercel --prod --yes
+
+  deploy-frontend-staging:
+    needs: deploy-backend-staging
+    environment: staging
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Deploy frontend to staging
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND_STAGING }}
+        run: vercel --prod --yes
+
+  smoke-test-staging:
+    needs: [deploy-backend-staging, deploy-frontend-staging]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Smoke test staging
+        run: |
+          curl -fsS "${{ vars.STAGING_BACKEND_URL }}/health"
+          curl -fsS "${{ vars.STAGING_FRONTEND_URL }}"
+
+  migrate-production:
+    needs: smoke-test-staging
+    environment: production
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: src/backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run Alembic migrations on production
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: alembic upgrade head
+
+  deploy-backend-canary:
+    needs: migrate-production
+    environment: production
+    runs-on: ubuntu-latest
+    outputs:
+      canary-url: ${{ steps.deploy.outputs.canary-url }}
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Deploy backend canary
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND_CANARY }}
+        run: |
+          url=$(vercel --prod --yes | tail -n 1)
+          echo "canary-url=${url}" >> "$GITHUB_OUTPUT"
+          echo "Canary URL: ${url}"
+
+  set-canary:
+    needs: deploy-backend-canary
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx
+
+      - name: Set canary to 5%
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_EDGE_CONFIG_ID: ${{ secrets.VERCEL_EDGE_CONFIG_ID }}
+        run: |
+          python scripts/set_canary.py \
+            --percentage 5 \
+            --require-healthy \
+            --check-url "${{ needs.deploy-backend-canary.outputs.canary-url }}/health" \
+            --api-url "${{ needs.deploy-backend-canary.outputs.canary-url }}/api/v1"
+
+  deploy-frontend-production:
+    needs: set-canary
+    environment: production
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Deploy frontend to production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
+        run: vercel --prod --yes
+
+  canary-analysis:
+    needs: deploy-frontend-production
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run canary analysis
+        run: |
+          python scripts/canary_analysis.py \
+            --url "${{ vars.PRODUCTION_BACKEND_URL }}/health" \
+            --canary-url "${{ needs.deploy-backend-canary.outputs.canary-url }}/health" \
+            --recommend --output-json
+
+  slo-check-canary:
+    needs: canary-analysis
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run SLO check on canary window
+        env:
+          PROMETHEUS_URL: ${{ vars.PROMETHEUS_URL }}
+        run: |
+          python scripts/slo_check.py \
+            --window 5m \
+            --recommend --output-json
+
+  promote-canary:
+    needs: slo-check-canary
+    environment: production
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Deploy backend to production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
+        run: vercel --prod --yes
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx
+
+      - name: Disable canary routing
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_EDGE_CONFIG_ID: ${{ secrets.VERCEL_EDGE_CONFIG_ID }}
+        run: python scripts/set_canary.py --percentage 0
+
+  smoke-test-production:
+    needs: promote-canary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Smoke test production
+        run: |
+          curl -fsS "${{ vars.PRODUCTION_BACKEND_URL }}/health"
+          curl -fsS "${{ vars.PRODUCTION_FRONTEND_URL }}"
+
+  slo-check-production:
+    needs: smoke-test-production
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run final SLO check
+        env:
+          PROMETHEUS_URL: ${{ vars.PROMETHEUS_URL }}
+        run: |
+          python scripts/slo_check.py \
+            --window 5m \
+            --recommend --output-json
+
+  tag-release:
+    needs: slo-check-production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Create release candidate tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          short_sha=$(git rev-parse --short ${{ needs.gate.outputs.sha }})
+          tag="release-${short_sha}-${{ github.run_number }}"
+          git tag "$tag" ${{ needs.gate.outputs.sha }}
+          git push origin "$tag"
+
+  rollback-on-failure:
+    needs: [gate, canary-analysis, slo-check-canary, smoke-test-production, slo-check-production, tag-release]
+    if: failure() && (needs.canary-analysis.result == 'failure' || needs.slo-check-canary.result == 'failure' || needs.smoke-test-production.result == 'failure' || needs.slo-check-production.result == 'failure')
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx
+
+      - name: Disable canary routing
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_EDGE_CONFIG_ID: ${{ secrets.VERCEL_EDGE_CONFIG_ID }}
+        run: python scripts/set_canary.py --percentage 0
+
+      - name: Rollback backend
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_BACKEND }}
+        run: |
+          url=$(vercel list --limit=20 --json | jq -r '[.[] | select(.state == "READY" and .target == "production")][1].url')
+          echo "Rolling back backend to ${url}"
+          vercel rollback "https://${url}" --yes
+
+      - name: Rollback frontend
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
+        run: |
+          url=$(vercel list --limit=20 --json | jq -r '[.[] | select(.state == "READY" and .target == "production")][1].url')
+          echo "Rolling back frontend to ${url}"
+          vercel rollback "https://${url}" --yes
+
+      - name: Verify production health after rollback
+        run: |
+          curl -fsS "${{ vars.PRODUCTION_BACKEND_URL }}/health"
+          curl -fsS "${{ vars.PRODUCTION_FRONTEND_URL }}"

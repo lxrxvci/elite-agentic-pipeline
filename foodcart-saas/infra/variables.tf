@@ -48,3 +48,27 @@ variable "redis_node_type" {
   type        = string
   default     = "cache.t3.micro"
 }
+
+variable "storage_bucket_name" {
+  description = "Name of the S3 bucket used for uploaded images"
+  type        = string
+  default     = ""
+}
+
+variable "frontend_staging_origin" {
+  description = "Frontend origin URL for the staging environment used in S3 CORS"
+  type        = string
+  default     = ""
+}
+
+variable "frontend_production_origin" {
+  description = "Frontend origin URL for the production environment used in S3 CORS"
+  type        = string
+  default     = ""
+}
+
+variable "enable_storage" {
+  description = "Whether to create the S3 storage bucket for photo uploads"
+  type        = bool
+  default     = true
+}

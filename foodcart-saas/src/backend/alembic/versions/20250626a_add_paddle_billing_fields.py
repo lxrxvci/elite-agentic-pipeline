@@ -19,6 +19,18 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # The default alembic_version.version_num column is VARCHAR(32). Some
+    # revision identifiers in this project are longer, so widen the column
+    # before Alembic tries to record the new revision id.
+    if op.get_context().dialect.name == "postgresql":
+        op.alter_column(
+            "alembic_version",
+            "version_num",
+            existing_type=sa.String(length=32),
+            type_=sa.String(length=64),
+            existing_nullable=False,
+        )
+
     op.add_column(
         "foodcart_tenants",
         sa.Column("paddle_customer_id", sa.String(length=255), nullable=True),

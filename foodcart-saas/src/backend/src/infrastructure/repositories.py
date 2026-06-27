@@ -959,6 +959,7 @@ class UploadedImageRepository(BaseRepository[UploadedImage]):
         )
         if not orm:
             raise ValueError("Uploaded image not found")
+        orm.site_id = image.site_id
         orm.storage_key = image.storage_key
         orm.public_url = image.public_url
         orm.content_type = image.content_type

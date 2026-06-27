@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from typing import Any
 
 import httpx
+from opentelemetry import trace
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
-from app.observability import get_logger
+from app.observability import get_logger, get_metrics_provider
 
 logger = get_logger(__name__)
+tracer = trace.get_tracer(__name__)
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 _DEFAULT_MODEL = "gemini-2.0-flash"
@@ -117,22 +120,50 @@ def analyze_image(
     """
     key = api_key or settings.gemini_api_key
     if not key:
-        logger.warning("gemini_vision_no_api_key")
+        logger.warning("vision_analysis_failed", reason="no_api_key", model=model)
         return VisionExtraction()
 
     encoded = base64.b64encode(image_bytes).decode("utf-8")
     url = f"{_GEMINI_BASE_URL}/models/{model}:generateContent?key={key}"
     body = _build_vision_request(encoded, mime_type)
+    metrics = get_metrics_provider()
 
-    try:
-        with httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
-            response = client.post(url, json=body)
-            response.raise_for_status()
-            return _parse_vision_response(response.json())
-    except Exception as exc:
-        logger.warning(
-            "gemini_vision_failed",
-            error_type=type(exc).__name__,
+    with tracer.start_as_current_span("vision.analyze_image") as span:
+        span.set_attribute("model", model)
+        span.set_attribute("mime_type", mime_type)
+        logger.info(
+            "vision_analysis_started",
             model=model,
+            mime_type=mime_type,
         )
-        return VisionExtraction()
+        start = time.perf_counter()
+
+        try:
+            with httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
+                response = client.post(url, json=body)
+                response.raise_for_status()
+                extraction = _parse_vision_response(response.json())
+                span.set_attribute("business_name_found", extraction.business_name is not None)
+                logger.info(
+                    "vision_analysis_succeeded",
+                    model=model,
+                    mime_type=mime_type,
+                    business_name=extraction.business_name,
+                    confidence=extraction.confidence,
+                )
+                return extraction
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
+            logger.warning(
+                "vision_analysis_failed",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                model=model,
+                mime_type=mime_type,
+            )
+            return VisionExtraction()
+        finally:
+            duration = time.perf_counter() - start
+            metrics.observe_photo_vision_duration(duration)
+            metrics.observe_ai_duration(duration)

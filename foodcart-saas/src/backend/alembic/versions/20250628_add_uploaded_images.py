@@ -62,7 +62,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.CheckConstraint(
-            "status IN ('uploaded', 'processed', 'archived')",
+            "status IN ('uploaded', 'processing', 'processed', 'failed')",
             name="ck_uploaded_images_status",
         ),
     )

@@ -161,6 +161,21 @@ export interface TenantOnboardingRequest {
   template_id: TemplateId
   brand_colors: BrandColors
   initial_sources?: IngestionRequest
+  photo_image_id?: string
+}
+
+export interface PresignedUploadRequest {
+  content_type: string
+  size_bytes: number
+}
+
+export interface PresignedUploadResponse {
+  upload_url: string
+  fields: Record<string, string>
+  storage_key: string
+  public_url: string
+  image_id: string
+  expires_in: number
 }
 
 export interface TenantOnboardingResponse {

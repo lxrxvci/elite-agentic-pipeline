@@ -32,3 +32,63 @@ groups:
         annotations:
           summary: "Elite backend is down"
           description: "The backend health endpoint has been unreachable for more than 1 minute."
+
+      - alert: HighUploadFailureRate
+        expr: |
+          (
+            rate(elite_uploads_total{status="failed"}[5m])
+            /
+            rate(elite_uploads_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High photo upload failure rate"
+          description: "Photo upload failure rate is above 5% for more than 5 minutes."
+
+      - alert: HighPhotoEnrichmentFailureRate
+        expr: |
+          (
+            rate(elite_photo_enrichment_total{status="failed"}[5m])
+            /
+            rate(elite_photo_enrichment_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High photo enrichment failure rate"
+          description: "Photo enrichment failure rate is above 5% for more than 5 minutes."
+
+      - alert: VisionLatencyHigh
+        expr: histogram_quantile(0.95, rate(elite_photo_vision_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Vision API latency is high"
+          description: "Vision p95 latency is above 5 seconds for more than 5 minutes."
+
+      - alert: PlacesLatencyHigh
+        expr: histogram_quantile(0.95, rate(elite_photo_places_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Places API latency is high"
+          description: "Places p95 latency is above 5 seconds for more than 5 minutes."
+
+      - alert: OnboardingCompletionDrop
+        expr: |
+          (
+            rate(elite_onboarding_completions_total{photo_enabled="true"}[5m])
+            /
+            rate(elite_onboarding_completions_total[5m])
+          ) < 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Photo onboarding completion rate dropped"
+          description: "Less than 50% of onboarding completions include a photo for more than 5 minutes."

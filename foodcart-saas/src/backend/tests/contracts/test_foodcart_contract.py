@@ -9,6 +9,8 @@ import time
 import uuid
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 import uvicorn
@@ -18,6 +20,7 @@ from sqlalchemy import create_engine
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("ENV", "development")
 
+from app.features import PHOTO_ONBOARDING_FLAG  # noqa: E402
 from infrastructure.database import Base, SessionLocal, get_db  # noqa: E402
 from infrastructure.models import ContentBlock, FoodcartTenant, Site, Tenant, User  # noqa: E402
 from main import app  # noqa: E402
@@ -181,6 +184,47 @@ def _setup_site(**_kwargs: object) -> None:
     _seed_contract_site()
 
 
+_photo_upload_patchers: list[Any] = []
+
+
+def _setup_photo_upload(**_kwargs: object) -> None:
+    """Provider state: photo onboarding is enabled and storage is configured."""
+    _seed_contract_user()
+
+    def _enabled(flag_key: str, context: dict[str, object] | None = None) -> bool:
+        return flag_key == PHOTO_ONBOARDING_FLAG
+
+    # Patch feature flag and storage helpers so the endpoint returns a stable
+    # contract response without requiring real R2 credentials. Patchers are
+    # kept alive for the duration of verification and stopped in the test's
+    # finally block to avoid leaking mutated global state to later tests.
+    import infrastructure.storage as storage_module
+    from app.routers.foodcart import uploads as uploads_router
+
+    for p in _photo_upload_patchers:
+        p.stop()
+    _photo_upload_patchers.clear()
+
+    _photo_upload_patchers.extend(
+        [
+            patch.object(storage_module, "is_storage_configured", return_value=True),
+            patch.object(
+                storage_module,
+                "create_presigned_upload_url",
+                return_value={
+                    "upload_url": "https://example.r2.cloudflarestorage.com/test-bucket",
+                    "fields": {"key": "value"},
+                    "public_url": "https://cdn.example.com/contract-upload-key",
+                    "expires_in": 300,
+                },
+            ),
+            patch.object(uploads_router, "is_feature_enabled", _enabled),
+        ]
+    )
+    for p in _photo_upload_patchers:
+        p.start()
+
+
 @pytest.mark.skipif(not list(PACTS_DIR.glob("*.json")), reason="No foodcart pact contracts found")
 def test_foodcart_provider() -> None:
     with _running_backend() as base_url:
@@ -192,9 +236,14 @@ def test_foodcart_provider() -> None:
             {
                 "an authenticated owner exists": _setup_auth,
                 "a tenant and published site exist": _setup_site,
+                "photo onboarding is enabled and storage is configured": _setup_photo_upload,
             }
         )
         try:
             verifier.verify()
         except RuntimeError as exc:
             pytest.fail(f"Foodcart Pact provider verification failed: {exc}")
+        finally:
+            for p in _photo_upload_patchers:
+                p.stop()
+            _photo_upload_patchers.clear()

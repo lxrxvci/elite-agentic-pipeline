@@ -45,6 +45,21 @@ output "github_actions_role_arn" {
   value       = aws_iam_role.github_actions.arn
 }
 
+output "storage_bucket_name" {
+  description = "Name of the S3 bucket for uploaded images"
+  value       = var.enable_storage ? aws_s3_bucket.foodcart_uploads[0].id : null
+}
+
+output "storage_bucket_arn" {
+  description = "ARN of the S3 bucket for uploaded images"
+  value       = var.enable_storage ? aws_s3_bucket.foodcart_uploads[0].arn : null
+}
+
+output "storage_iam_policy_arn" {
+  description = "ARN of the IAM policy granting access to the uploads bucket"
+  value       = var.enable_storage ? aws_iam_policy.foodcart_uploads[0].arn : null
+}
+
 output "preview_bucket" {
   description = "Name of the ephemeral S3 bucket created for the current preview workspace"
   value       = var.enable_pr_environments && terraform.workspace != "default" ? aws_s3_bucket.preview[0].id : null

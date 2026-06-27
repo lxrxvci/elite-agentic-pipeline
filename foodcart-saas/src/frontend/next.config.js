@@ -8,11 +8,22 @@ const clerkAccountsOrigin = 'https://accounts.web.agenticpnw.com'
 const clerkDevOrigin = 'https://*.clerk.accounts.dev'
 const turnstileOrigin = 'https://challenges.cloudflare.com'
 
+const storagePublicUrl = process.env.NEXT_PUBLIC_STORAGE_PUBLIC_URL
+let storageImgOrigin = ''
+if (storagePublicUrl) {
+  try {
+    storageImgOrigin = new URL(storagePublicUrl).origin
+  } catch {
+    // eslint-disable-next-line no-console
+    console.warn('Invalid NEXT_PUBLIC_STORAGE_PUBLIC_URL:', storagePublicUrl)
+  }
+}
+
 const cspHeader = (
   "default-src 'self'; " +
   `script-src 'self' 'unsafe-inline' ${clerkOrigin} ${clerkDevOrigin} ${turnstileOrigin}; ` +
   `style-src 'self' 'unsafe-inline' ${clerkOrigin} ${clerkDevOrigin}; ` +
-  `img-src 'self' data: blob: https://img.clerk.com ${clerkOrigin}; ` +
+  `img-src 'self' data: blob: https://img.clerk.com ${clerkOrigin}${storageImgOrigin ? ` ${storageImgOrigin}` : ''}; ` +
   `font-src 'self' ${clerkOrigin} ${clerkDevOrigin}; ` +
   `connect-src 'self' ${apiOrigin} ${clerkOrigin} ${clerkAccountsOrigin} ${clerkDevOrigin} ${turnstileOrigin}; ` +
   `frame-src 'self' ${turnstileOrigin}; ` +
@@ -27,6 +38,10 @@ const nextConfig = {
   outputFileTracingRoot: __dirname,
   images: {
     formats: ['image/avif', 'image/webp'],
+  },
+
+  experimental: {
+    instrumentationHook: true,
   },
 
   async headers() {

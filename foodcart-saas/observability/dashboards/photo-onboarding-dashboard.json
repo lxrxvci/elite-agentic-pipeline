@@ -1,0 +1,136 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Photo Onboarding",
+    "tags": ["elite", "photo", "onboarding"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Upload Funnel",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(elite_uploads_total[5m])",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Onboarding Completions",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(elite_onboarding_completions_total{photo_enabled=\"true\"}[5m])",
+            "legendFormat": "with photo"
+          },
+          {
+            "expr": "rate(elite_onboarding_completions_total{photo_enabled=\"false\"}[5m])",
+            "legendFormat": "without photo"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+      },
+      {
+        "id": 3,
+        "title": "Upload Success Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "1 - (rate(elite_uploads_total{status=\"failed\"}[5m]) / rate(elite_uploads_total[5m]))",
+            "legendFormat": "success rate"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 8 }
+      },
+      {
+        "id": 4,
+        "title": "Photo Enrichment Success Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "1 - (rate(elite_photo_enrichment_total{status=\"failed\"}[5m]) / rate(elite_photo_enrichment_total[5m]))",
+            "legendFormat": "success rate"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 8 }
+      },
+      {
+        "id": 5,
+        "title": "Enrichment Success / Failure",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(elite_photo_enrichment_total{status=\"success\"}[5m])",
+            "legendFormat": "success"
+          },
+          {
+            "expr": "rate(elite_photo_enrichment_total{status=\"failed\"}[5m])",
+            "legendFormat": "failed"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 6,
+        "title": "Vision p95 Latency",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(elite_photo_vision_duration_seconds_bucket[5m]))",
+            "legendFormat": "vision p95"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+      },
+      {
+        "id": 7,
+        "title": "Places p95 Latency",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(elite_photo_places_duration_seconds_bucket[5m]))",
+            "legendFormat": "places p95"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+      },
+      {
+        "id": 8,
+        "title": "AI Request Latency",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(elite_photo_ai_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(elite_photo_ai_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(elite_photo_ai_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 }
+      },
+      {
+        "id": 9,
+        "title": "Frontend Telemetry Events",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(elite_telemetry_events_total[5m])",
+            "legendFormat": "{{event}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 }
+      }
+    ],
+    "time": { "from": "now-1h", "to": "now" },
+    "schemaVersion": 36
+  }
+}

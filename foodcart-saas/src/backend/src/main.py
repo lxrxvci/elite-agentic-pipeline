@@ -32,6 +32,7 @@ from app.routers import (
     invoices,
     me,
     projects,
+    telemetry,
     time_entries,
     vitals,
     webhooks,
@@ -172,6 +173,7 @@ app.include_router(projects.router, prefix="/api/v1")
 app.include_router(time_entries.router, prefix="/api/v1")
 app.include_router(invoices.router, prefix="/api/v1")
 app.include_router(vitals.router, prefix="/api/v1")
+app.include_router(telemetry.router, prefix="/api/v1")
 
 app.include_router(onboarding.router, prefix="/api/v1")
 app.include_router(sites.router, prefix="/api/v1")

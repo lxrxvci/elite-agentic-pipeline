@@ -67,6 +67,42 @@ production environment (`foodcartsite.com` and `*.foodcartsite.com`).
 | Measurement | OpenTelemetry traces on `/api/v1/foodcart/ai/...` endpoints |
 | Alert threshold | p95 > 10s for 5 minutes |
 
+### Photo Onboarding
+
+| Field | Value |
+|---|---|
+| SLI | Upload success rate: ratio of successful photo uploads to total upload attempts |
+| SLO | ≥ 99% over 30 days |
+| Error budget | ≤ 1% of upload attempts may fail |
+| Measurement | `elite_uploads_total` Prometheus counter by `status` |
+| Alert threshold | Failure rate > 5% for 5 minutes |
+
+| Field | Value |
+|---|---|
+| SLI | Photo enrichment success rate: ratio of successful enrichments to total enrichment attempts |
+| SLO | ≥ 95% over 30 days |
+| Error budget | ≤ 5% of enrichment attempts may fail |
+| Measurement | `elite_photo_enrichment_total` Prometheus counter by `status` |
+| Alert threshold | Failure rate > 5% for 5 minutes |
+
+| Field | Value |
+|---|---|
+| SLI | Vision API p95 latency for photo analysis requests |
+| SLO | p95 < 5s over 30 days |
+| Error budget | p95 may exceed 5s for no more than 0.1% of 5-minute windows |
+| Measurement | `elite_photo_vision_duration_seconds_bucket` Prometheus histogram |
+| Alert threshold | p95 > 5s for 5 minutes |
+
+| Field | Value |
+|---|---|
+| SLI | Onboarding completion rate with photo enabled relative to total onboarding completions |
+| SLO | ≥ manual flow baseline (photo flow must not convert materially lower than the non-photo flow) |
+| Error budget | Photo completion rate may lag the manual baseline by ≤ 5 percentage points |
+| Measurement | `elite_onboarding_completions_total` Prometheus counter by `photo_enabled` |
+| Alert threshold | Photo share of completions < 50% for 5 minutes |
+
+**Rationale:** Photo onboarding is a new high-value flow that reduces manual data entry. The upload success SLO protects users from a broken first impression, the enrichment SLO tolerates transient AI/Places service issues while ensuring most uploads still produce value, and the latency SLO keeps the experience responsive. The completion-rate SLO ensures the photo flow is competitive with the existing manual onboarding baseline.
+
 ### Traffic (Golden Signal)
 
 | Field | Value |

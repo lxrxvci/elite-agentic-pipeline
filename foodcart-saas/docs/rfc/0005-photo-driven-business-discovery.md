@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-06-27 |
 | Author | Tech Lead |
 
@@ -22,8 +22,12 @@ Add a "Photo" step to the onboarding wizard between Identity and Links (flag-gat
 
 - File picker for existing images.
 - Camera capture on mobile (`capture="environment"`).
-- Client-side compression to ≤ 2 MB / 1920 px on the longest edge.
-- Upload to Cloudflare R2 via a tenant-scoped presigned URL.
+- Drag-and-drop file selection.
+- Client-side compression to ≤ 2 MB / 1920 px on the longest edge via HTMLCanvasElement.
+- Upload to Cloudflare R2 via a tenant-scoped presigned URL (`POST /api/v1/uploads/presigned`).
+- Preview, retry, and skip actions.
+
+The wizard becomes a 5-step flow when the flag is on: Identity → Photo → Links → Brand → Preview.
 
 ### 2. Object storage
 
@@ -58,12 +62,16 @@ Add a "Photo" step to the onboarding wizard between Identity and Links (flag-gat
 ### 5. Ingestion pipeline integration
 
 - Extend `IngestionSourceType` with `PHOTO_VISION` and `GOOGLE_PLACES`.
-- During onboarding:
-  1. Create `UploadedImage` record.
-  2. Run `PHOTO_VISION` ingestion job → `VisionExtraction`.
-  3. Run `GOOGLE_PLACES` ingestion job using `VisionExtraction.business_name` + location hints → `PlaceDetails`.
-  4. Run existing ingestion jobs (`WEBSITE`, `MENU_URL`, etc.) using the website from PlaceDetails.
-  5. Merge normalized data into default content blocks as starting values.
+- During onboarding (`POST /api/v1/tenants/onboard`):
+  1. Accept optional `photo_image_id` in `TenantOnboardingRequestSchema` when `photo-onboarding-v1` is enabled.
+  2. Validate the uploaded image exists, belongs to the tenant, and is in `uploaded` status.
+  3. Update the image to `processing` and attach it to the newly created site.
+  4. Run `PHOTO_VISION` ingestion job → `VisionExtraction`.
+  5. If `business_name` is extracted, run `GOOGLE_PLACES` ingestion job using `VisionExtraction.business_name` + location hints → `PlaceDetails`.
+  6. Merge normalized data into default content blocks as starting values (business name → hero headline, phone/address → contact block, hours → locations block).
+  7. Set the uploaded photo as the hero `image_url`.
+  8. Mark the image as `processed` on success or `failed` if enrichment fails; onboarding always continues.
+  9. Run existing ingestion jobs (`WEBSITE`, `MENU_URL`, etc.) from `initial_sources` afterwards, allowing explicit sources to supplement or override photo-derived data.
 - Proposals are surfaced in the onboarding form for owner review/edit before publish.
 
 ### 6. Hero image default
@@ -116,3 +124,22 @@ Add a "Photo" step to the onboarding wizard between Identity and Links (flag-gat
 ## Timeline
 
 Cycle 2, Weeks 1–4. See `docs/SHAPED_BETS.md` Bet 4 and `BACKLOG.md` for detailed phasing.
+
+## Implementation status
+
+- ✅ Phase 1 — Platform & Storage (R2 presigned URLs, `UploadedImage` table)
+- ✅ Phase 2 — Vision & Places adapters (`infrastructure/llm/vision.py`, `infrastructure/adapters/google_places.py`)
+- ✅ Phase 3 — Onboarding integration (`/tenants/onboard` accepts `photo_image_id`)
+- ✅ Phase 4 — Frontend photo step (`PhotoUploadStep` in onboarding wizard)
+- ✅ Phase 5 — Observability, metrics, and CI/CD polish
+  - Backend metrics: `elite_uploads_total`, `elite_onboarding_completions_total`, `elite_photo_enrichment_total`, `elite_photo_vision_duration_seconds`, `elite_photo_places_duration_seconds`, `elite_ai_request_duration_seconds`.
+  - Frontend telemetry: `telemetry.send` with upload/onboarding/error events; Next.js instrumentation hook enabled; CSP `img-src` includes storage CDN origin.
+  - Dashboards & alerts: `observability/dashboards/photo-onboarding-dashboard.json`, updated `api-dashboard.json`, new Prometheus alerts for upload/enrichment failure and latency.
+  - CI/CD: `.github/workflows/deploy.yml` (staging → production canary), `.github/workflows/pr-environment.yml`, feature flag and storage env vars wired in CI.
+  - Infrastructure: Terraform S3 bucket + IAM policy for object storage.
+  - Tests: upload contract test, backend observability assertions, frontend telemetry tests.
+
+## Deployment notes
+
+- Cloudflare R2 bucket must be configured with CORS rules allowing `POST` and `GET` from the frontend origin so direct browser uploads and hero-image loading work.
+- The backend CSP `img-src` directive already includes the storage CDN origin.

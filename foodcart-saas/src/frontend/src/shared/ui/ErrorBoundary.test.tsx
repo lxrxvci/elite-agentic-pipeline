@@ -1,6 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi, afterAll } from 'vitest'
+import { trackError } from '@/shared/lib/telemetry'
 import { ErrorBoundary } from './ErrorBoundary'
+
+vi.mock('@/shared/lib/telemetry', () => ({
+  trackError: vi.fn(),
+}))
 
 const Thrower = ({ message }: { message: string }) => {
   throw new Error(message)
@@ -30,6 +35,7 @@ describe('ErrorBoundary', () => {
     )
     expect(screen.getByText('Something went wrong')).toBeInTheDocument()
     expect(consoleError).toHaveBeenCalled()
+    expect(trackError).toHaveBeenCalledWith(expect.any(Error), expect.any(Object))
   })
 
   it('renders custom fallback when provided', () => {

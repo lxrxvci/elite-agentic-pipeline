@@ -13,6 +13,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+PHOTO_ONBOARDING_FLAG = "photo-onboarding-v1"
+
 _unleash_client: Any | None = None
 _managed_flags_cache: dict[str, bool] | None = None
 _managed_flags_fetched_at: float = 0.0

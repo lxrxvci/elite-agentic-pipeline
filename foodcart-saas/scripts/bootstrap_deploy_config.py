@@ -116,6 +116,9 @@ def main() -> int:
     vercel_project_id_backend_staging = _prompt_required(
         "VERCEL_PROJECT_ID_BACKEND_STAGING"
     )
+    vercel_project_id_backend_canary = _prompt_required(
+        "VERCEL_PROJECT_ID_BACKEND_CANARY"
+    )
     vercel_project_id_frontend = _prompt_required(
         "VERCEL_PROJECT_ID_FRONTEND (production frontend)"
     )
@@ -135,6 +138,19 @@ def main() -> int:
 
     print("\n--- AI assistant secrets ---")
     gemini_api_key = _prompt_secret("GEMINI_API_KEY")
+
+    print("\n--- Object storage secrets (optional) ---")
+    storage_endpoint = _prompt_optional("STORAGE_ENDPOINT")
+    storage_bucket = _prompt_optional("STORAGE_BUCKET")
+    storage_access_key_id = _prompt_optional("STORAGE_ACCESS_KEY_ID")
+    storage_secret_access_key = _prompt_optional("STORAGE_SECRET_ACCESS_KEY")
+    storage_public_url = _prompt_optional("STORAGE_PUBLIC_URL")
+
+    print("\n--- Feature flags ---")
+    enabled_features = _prompt_optional("ENABLED_FEATURES") or "photo-onboarding-v1"
+    next_public_enabled_features = (
+        _prompt_optional("NEXT_PUBLIC_ENABLED_FEATURES") or enabled_features
+    )
 
     print("\n--- Optional secrets ---")
     dora_pushgateway_username = _prompt_optional("DORA_PUSHGATEWAY_USERNAME")
@@ -170,6 +186,7 @@ def main() -> int:
         ("VERCEL_PROJECT_ID_FRONTEND", vercel_project_id_frontend),
         ("VERCEL_PROJECT_ID_FRONTEND_STAGING", vercel_project_id_frontend_staging),
         ("VERCEL_EDGE_CONFIG_ID", vercel_edge_config_id),
+        ("VERCEL_PROJECT_ID_BACKEND_CANARY", vercel_project_id_backend_canary),
         ("STAGING_DATABASE_URL", staging_database_url),
         ("PRODUCTION_DATABASE_URL", production_database_url),
         ("GEMINI_API_KEY", gemini_api_key),
@@ -184,6 +201,16 @@ def main() -> int:
         secrets_to_set.append(("SLACK_WEBHOOK_URL", slack_webhook_url))
     if pagerduty_integration_key:
         secrets_to_set.append(("PAGERDUTY_INTEGRATION_KEY", pagerduty_integration_key))
+    if storage_endpoint:
+        secrets_to_set.append(("STORAGE_ENDPOINT", storage_endpoint))
+    if storage_bucket:
+        secrets_to_set.append(("STORAGE_BUCKET", storage_bucket))
+    if storage_access_key_id:
+        secrets_to_set.append(("STORAGE_ACCESS_KEY_ID", storage_access_key_id))
+    if storage_secret_access_key:
+        secrets_to_set.append(("STORAGE_SECRET_ACCESS_KEY", storage_secret_access_key))
+    if storage_public_url:
+        secrets_to_set.append(("STORAGE_PUBLIC_URL", storage_public_url))
     for name, value in secrets_to_set:
         _set_secret(name, value)
 
@@ -207,6 +234,8 @@ def main() -> int:
         ("STAGING_FRONTEND_URL", staging_frontend_url),
         ("PRODUCTION_BACKEND_URL", production_backend_url),
         ("PRODUCTION_FRONTEND_URL", production_frontend_url),
+        ("ENABLED_FEATURES", enabled_features),
+        ("NEXT_PUBLIC_ENABLED_FEATURES", next_public_enabled_features),
     ]
     for name, value in variables:
         _set_variable(name, value)
@@ -228,7 +257,8 @@ def main() -> int:
     print("   Settings → Environments, with required reviewers and wait timers.")
     print("2. In each Vercel project, set DATABASE_URL, SECRET_KEY, ENV,")
     print("   ALLOWED_ORIGINS, REDIS_URL, OTEL_EXPORTER_OTLP_ENDPOINT/HEADERS,")
-    print("   GEMINI_API_KEY, GEMINI_MODEL, and Clerk OIDC credentials if applicable.")
+    print("   GEMINI_API_KEY, GEMINI_MODEL, STORAGE_ENDPOINT/BUCKET/KEYS,")
+    print("   ENABLED_FEATURES, NEXT_PUBLIC_ENABLED_FEATURES, and Clerk OIDC credentials if applicable.")
     print("3. Configure Alertmanager receivers with SLACK_WEBHOOK_URL and")
     print("   PAGERDUTY_INTEGRATION_KEY in your hosted Alertmanager instance.")
     print("4. Push to main and verify CI → Security → Contract Tests → Deploy.")

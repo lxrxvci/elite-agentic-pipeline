@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 import httpx
+from opentelemetry import trace
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.observability import get_logger
+from app.observability import get_logger, get_metrics_provider
 
 logger = get_logger(__name__)
+tracer = trace.get_tracer(__name__)
 
 _PLACES_BASE_URL = "https://places.googleapis.com/v1"
 _TIMEOUT_SECONDS = 15.0
@@ -137,37 +140,44 @@ def search_places(
     """Search Google Places by text query and return top results."""
     key = api_key or settings.google_places_api_key
     if not key:
-        logger.warning("google_places_no_api_key")
+        logger.warning("google_places_no_api_key", query=query)
         return []
 
-    url = f"{_PLACES_BASE_URL}/places:searchText"
-    body: dict[str, Any] = {"textQuery": query}
-    if location_bias:
-        body["locationBias"] = {"text": location_bias}
+    with tracer.start_as_current_span("places.search_places") as span:
+        span.set_attribute("query", query)
+        span.set_attribute("has_location_bias", location_bias is not None)
 
-    params = {
-        "fields": ",".join(_DEFAULT_FIELDS),
-    }
+        url = f"{_PLACES_BASE_URL}/places:searchText"
+        body: dict[str, Any] = {"textQuery": query}
+        if location_bias:
+            body["locationBias"] = {"text": location_bias}
 
-    try:
-        with httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
-            response = client.post(
-                url,
-                params=params,
-                json=body,
-                headers=_headers(key),
+        params = {
+            "fields": ",".join(_DEFAULT_FIELDS),
+        }
+
+        try:
+            with httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
+                response = client.post(
+                    url,
+                    params=params,
+                    json=body,
+                    headers=_headers(key),
+                )
+                response.raise_for_status()
+                data = response.json()
+                places = data.get("places", [])
+                span.set_attribute("result_count", len(places))
+                return [_parse_place(p) for p in places]
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
+            logger.warning(
+                "google_places_search_failed",
+                error_type=type(exc).__name__,
+                query=query,
             )
-            response.raise_for_status()
-            data = response.json()
-            places = data.get("places", [])
-            return [_parse_place(p) for p in places]
-    except Exception as exc:
-        logger.warning(
-            "google_places_search_failed",
-            error_type=type(exc).__name__,
-            query=query,
-        )
-        return []
+            return []
 
 
 def get_place_details(
@@ -177,26 +187,33 @@ def get_place_details(
     """Fetch details for a specific Google Place ID."""
     key = api_key or settings.google_places_api_key
     if not key:
-        logger.warning("google_places_no_api_key")
+        logger.warning("google_places_no_api_key", place_id=place_id)
         return None
 
-    url = f"{_PLACES_BASE_URL}/places/{place_id}"
-    params = {
-        "fields": ",".join(_DEFAULT_FIELDS),
-    }
+    with tracer.start_as_current_span("places.get_place_details") as span:
+        span.set_attribute("place_id", place_id)
 
-    try:
-        with httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
-            response = client.get(url, params=params, headers=_headers(key))
-            response.raise_for_status()
-            return _parse_place(response.json())
-    except Exception as exc:
-        logger.warning(
-            "google_places_details_failed",
-            error_type=type(exc).__name__,
-            place_id=place_id,
-        )
-        return None
+        url = f"{_PLACES_BASE_URL}/places/{place_id}"
+        params = {
+            "fields": ",".join(_DEFAULT_FIELDS),
+        }
+
+        try:
+            with httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
+                response = client.get(url, params=params, headers=_headers(key))
+                response.raise_for_status()
+                result = _parse_place(response.json())
+                span.set_attribute("place_name", result.name)
+                return result
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
+            logger.warning(
+                "google_places_details_failed",
+                error_type=type(exc).__name__,
+                place_id=place_id,
+            )
+            return None
 
 
 def find_business(
@@ -205,14 +222,21 @@ def find_business(
     api_key: str | None = None,
 ) -> PlaceDetails | None:
     """Find the best-matching place for a business name + optional location."""
+    metrics = get_metrics_provider()
     query = name
     location_bias = ", ".join(location_hints) if location_hints else None
-    results = search_places(query=query, location_bias=location_bias, api_key=api_key)
-    if not results:
-        return None
-    # Prefer result whose name contains the queried name (case-insensitive).
-    lowered_name = name.lower()
-    for result in results:
-        if lowered_name in result.name.lower() or result.name.lower() in lowered_name:
-            return result
-    return results[0]
+    start = time.perf_counter()
+
+    try:
+        results = search_places(query=query, location_bias=location_bias, api_key=api_key)
+        if not results:
+            return None
+        # Prefer result whose name contains the queried name (case-insensitive).
+        lowered_name = name.lower()
+        for result in results:
+            if lowered_name in result.name.lower() or result.name.lower() in lowered_name:
+                return result
+        return results[0]
+    finally:
+        duration = time.perf_counter() - start
+        metrics.observe_photo_places_duration(duration)

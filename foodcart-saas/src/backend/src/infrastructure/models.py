@@ -519,7 +519,7 @@ class UploadedImage(Base):
     __tablename__ = "uploaded_images"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('uploaded', 'processed', 'archived')",
+            "status IN ('uploaded', 'processing', 'processed', 'failed')",
             name="ck_uploaded_images_status",
         ),
     )

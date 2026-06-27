@@ -60,6 +60,66 @@
           }
         ],
         "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+      },
+      {
+        "id": 5,
+        "title": "Photo Upload Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(elite_uploads_total[5m])",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+      },
+      {
+        "id": 6,
+        "title": "Photo Upload Success Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "1 - (rate(elite_uploads_total{status=\"failed\"}[5m]) / rate(elite_uploads_total[5m]))",
+            "legendFormat": "upload success rate"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+      },
+      {
+        "id": 7,
+        "title": "Photo Enrichment Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(elite_photo_enrichment_total[5m])",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }
+      },
+      {
+        "id": 8,
+        "title": "Vision p95 Latency",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(elite_photo_vision_duration_seconds_bucket[5m]))",
+            "legendFormat": "vision p95"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }
+      },
+      {
+        "id": 9,
+        "title": "Places p95 Latency",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(elite_photo_places_duration_seconds_bucket[5m]))",
+            "legendFormat": "places p95"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 }
       }
     ],
     "time": { "from": "now-1h", "to": "now" },

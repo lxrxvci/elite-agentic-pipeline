@@ -124,6 +124,108 @@ resource "aws_iam_role_policy_attachment" "github_actions" {
   policy_arn = each.value
 }
 
+# Object storage for tenant photo uploads.
+resource "aws_s3_bucket" "foodcart_uploads" {
+  count = var.enable_storage ? 1 : 0
+
+  #checkov:skip=CKV_AWS_18:Access logging is deferred to a future hardening phase.
+  #checkov:skip=CKV_AWS_144:Cross-region replication is deferred to a future hardening phase.
+  #checkov:skip=CKV2_AWS_62:Event notifications are deferred to a future hardening phase.
+  #checkov:skip=CKV2_AWS_61:Object lifecycle is deferred to a future hardening phase.
+  bucket = var.storage_bucket_name
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "foodcart_uploads" {
+  count = var.enable_storage ? 1 : 0
+
+  bucket = aws_s3_bucket.foodcart_uploads[0].id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "foodcart_uploads" {
+  count = var.enable_storage ? 1 : 0
+
+  bucket = aws_s3_bucket.foodcart_uploads[0].id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_cors_configuration" "foodcart_uploads" {
+  count = var.enable_storage ? 1 : 0
+
+  bucket = aws_s3_bucket.foodcart_uploads[0].id
+
+  cors_rule {
+    allowed_methods = ["GET", "POST"]
+    allowed_origins = compact([
+      var.frontend_staging_origin,
+      var.frontend_production_origin,
+    ])
+    allowed_headers = ["*"]
+    max_age_seconds = 3000
+  }
+}
+
+data "aws_iam_policy_document" "foodcart_uploads" {
+  count = var.enable_storage ? 1 : 0
+
+  statement {
+    sid    = "AllowGitHubActionsUploads"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+    ]
+    resources = [
+      aws_s3_bucket.foodcart_uploads[0].arn,
+      "${aws_s3_bucket.foodcart_uploads[0].arn}/*",
+    ]
+  }
+}
+
+resource "aws_iam_policy" "foodcart_uploads" {
+  count = var.enable_storage ? 1 : 0
+
+  name        = "${var.project_name}-foodcart-uploads"
+  description = "Allow GitHub Actions to upload and retrieve objects in the foodcart uploads bucket"
+  policy      = data.aws_iam_policy_document.foodcart_uploads[0].json
+}
+
+resource "aws_iam_role_policy_attachment" "foodcart_uploads" {
+  count = var.enable_storage ? 1 : 0
+
+  role       = aws_iam_role.github_actions.name
+  policy_arn = aws_iam_policy.foodcart_uploads[0].arn
+}
+
+resource "aws_secretsmanager_secret" "foodcart_uploads" {
+  count = var.enable_storage ? 1 : 0
+
+  name        = "${var.project_name}/storage-uploads"
+  description = "S3 storage configuration for foodcart photo uploads"
+
+  #checkov:skip=CKV_AWS_149:AWS managed KMS key (aws/secretsmanager) is acceptable for this secret.
+  #checkov:skip=CKV2_AWS_57:Automatic rotation is managed outside Terraform via the runbook.
+}
+
+resource "aws_secretsmanager_secret_version" "foodcart_uploads" {
+  count = var.enable_storage ? 1 : 0
+
+  secret_id = aws_secretsmanager_secret.foodcart_uploads[0].id
+  secret_string = jsonencode({
+    bucket_name = aws_s3_bucket.foodcart_uploads[0].id
+    bucket_arn  = aws_s3_bucket.foodcart_uploads[0].arn
+    region      = var.aws_region
+  })
+}
+
 # ElastiCache Redis for cross-process rate limiting and tenant quotas.
 resource "aws_security_group" "redis" {
   name_prefix = "${var.project_name}-redis-"

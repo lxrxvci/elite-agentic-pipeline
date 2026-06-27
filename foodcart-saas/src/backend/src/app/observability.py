@@ -60,6 +60,32 @@ class NoopMetricsProvider:
     def increment(self, name: str, tenant_id: str) -> None:
         return None
 
+    def observe_upload(self, status: str, tenant_id: str) -> None:
+        return None
+
+    def observe_onboarding_completion(
+        self,
+        photo_enabled: str,
+        photo_used: str,
+        tenant_id: str,
+    ) -> None:
+        return None
+
+    def observe_photo_enrichment(self, status: str) -> None:
+        return None
+
+    def observe_photo_vision_duration(self, seconds: float) -> None:
+        return None
+
+    def observe_photo_places_duration(self, seconds: float) -> None:
+        return None
+
+    def observe_ai_duration(self, seconds: float) -> None:
+        return None
+
+    def observe_telemetry(self, event: str) -> None:
+        return None
+
 
 class PrometheusMetricsProvider:
     """In-process Prometheus counters/histograms for local development."""
@@ -82,11 +108,53 @@ class PrometheusMetricsProvider:
         ["tenant_id"],
     )
 
+    UPLOADS_COUNTER = Counter(
+        "elite_uploads_total",
+        "Total number of upload requests",
+        ["status", "tenant_id"],
+    )
+
+    ONBOARDING_COMPLETIONS_COUNTER = Counter(
+        "elite_onboarding_completions_total",
+        "Total number of completed tenant onboardings",
+        ["photo_enabled", "photo_used", "tenant_id"],
+    )
+
+    PHOTO_ENRICHMENT_COUNTER = Counter(
+        "elite_photo_enrichment_total",
+        "Total number of photo enrichment runs",
+        ["status"],
+    )
+
     REQUEST_LATENCY = Histogram(
         "elite_request_duration_seconds",
         "HTTP request latency in seconds",
         ["method", "path", "status_code"],
         buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+    )
+
+    PHOTO_VISION_DURATION = Histogram(
+        "elite_photo_vision_duration_seconds",
+        "Photo vision analysis latency in seconds",
+        buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+    )
+
+    PHOTO_PLACES_DURATION = Histogram(
+        "elite_photo_places_duration_seconds",
+        "Google Places enrichment latency in seconds",
+        buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+    )
+
+    AI_REQUEST_DURATION = Histogram(
+        "elite_ai_request_duration_seconds",
+        "AI request latency in seconds",
+        buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+    )
+
+    TELEMETRY_COUNTER = Counter(
+        "elite_telemetry_events_total",
+        "Total number of frontend telemetry events received",
+        ["event"],
     )
 
     def observe_request_latency(
@@ -106,6 +174,39 @@ class PrometheusMetricsProvider:
         counter = getattr(self, f"{name.upper()}_COUNTER", None)
         if counter is not None:
             counter.labels(tenant_id=str(tenant_id)).inc()
+
+    def observe_upload(self, status: str, tenant_id: str) -> None:
+        self.UPLOADS_COUNTER.labels(
+            status=status,
+            tenant_id=str(tenant_id),
+        ).inc()
+
+    def observe_onboarding_completion(
+        self,
+        photo_enabled: str,
+        photo_used: str,
+        tenant_id: str,
+    ) -> None:
+        self.ONBOARDING_COMPLETIONS_COUNTER.labels(
+            photo_enabled=photo_enabled,
+            photo_used=photo_used,
+            tenant_id=str(tenant_id),
+        ).inc()
+
+    def observe_photo_enrichment(self, status: str) -> None:
+        self.PHOTO_ENRICHMENT_COUNTER.labels(status=status).inc()
+
+    def observe_photo_vision_duration(self, seconds: float) -> None:
+        self.PHOTO_VISION_DURATION.observe(seconds)
+
+    def observe_photo_places_duration(self, seconds: float) -> None:
+        self.PHOTO_PLACES_DURATION.observe(seconds)
+
+    def observe_ai_duration(self, seconds: float) -> None:
+        self.AI_REQUEST_DURATION.observe(seconds)
+
+    def observe_telemetry(self, event: str) -> None:
+        self.TELEMETRY_COUNTER.labels(event=event).inc()
 
 
 def _parse_headers(header_string: str) -> dict[str, str]:
@@ -154,9 +255,37 @@ class OtelMetricsProvider:
             "elite_invoices_created_total",
             description="Total number of invoices created",
         )
+        self._uploads_counter = meter.create_counter(
+            "elite_uploads_total",
+            description="Total number of upload requests",
+        )
+        self._onboarding_completions_counter = meter.create_counter(
+            "elite_onboarding_completions_total",
+            description="Total number of completed tenant onboardings",
+        )
+        self._photo_enrichment_counter = meter.create_counter(
+            "elite_photo_enrichment_total",
+            description="Total number of photo enrichment runs",
+        )
         self._request_latency = meter.create_histogram(
             "elite_request_duration_seconds",
             description="HTTP request latency in seconds",
+        )
+        self._photo_vision_duration = meter.create_histogram(
+            "elite_photo_vision_duration_seconds",
+            description="Photo vision analysis latency in seconds",
+        )
+        self._photo_places_duration = meter.create_histogram(
+            "elite_photo_places_duration_seconds",
+            description="Google Places enrichment latency in seconds",
+        )
+        self._ai_request_duration = meter.create_histogram(
+            "elite_ai_request_duration_seconds",
+            description="AI request latency in seconds",
+        )
+        self._telemetry_counter = meter.create_counter(
+            "elite_telemetry_events_total",
+            description="Total number of frontend telemetry events received",
         )
 
     def observe_request_latency(
@@ -175,6 +304,42 @@ class OtelMetricsProvider:
         counter = getattr(self, f"_{name}_counter", None)
         if counter is not None:
             counter.add(1, {"tenant_id": str(tenant_id)})
+
+    def observe_upload(self, status: str, tenant_id: str) -> None:
+        self._uploads_counter.add(
+            1,
+            {"status": status, "tenant_id": str(tenant_id)},
+        )
+
+    def observe_onboarding_completion(
+        self,
+        photo_enabled: str,
+        photo_used: str,
+        tenant_id: str,
+    ) -> None:
+        self._onboarding_completions_counter.add(
+            1,
+            {
+                "photo_enabled": photo_enabled,
+                "photo_used": photo_used,
+                "tenant_id": str(tenant_id),
+            },
+        )
+
+    def observe_photo_enrichment(self, status: str) -> None:
+        self._photo_enrichment_counter.add(1, {"status": status})
+
+    def observe_photo_vision_duration(self, seconds: float) -> None:
+        self._photo_vision_duration.record(seconds)
+
+    def observe_photo_places_duration(self, seconds: float) -> None:
+        self._photo_places_duration.record(seconds)
+
+    def observe_ai_duration(self, seconds: float) -> None:
+        self._ai_request_duration.record(seconds)
+
+    def observe_telemetry(self, event: str) -> None:
+        self._telemetry_counter.add(1, {"event": event})
 
 
 _metrics_provider: PrometheusMetricsProvider | OtelMetricsProvider | NoopMetricsProvider | None = (

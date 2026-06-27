@@ -199,3 +199,121 @@ def test_observability_middleware_is_wired_in_main_app() -> None:
         response = client.get("/health")
     assert response.status_code == 200
     assert "x-correlation-id" in response.headers
+
+
+class TestPrometheusMetricsProvider:
+    def test_increment_keeps_backward_compatibility(self) -> None:
+        provider = observability.PrometheusMetricsProvider()
+        # Smoke test: increment should not raise and should update the counter.
+        provider.increment("login", tenant_id="tenant-1")
+
+    def test_observe_upload_records_status_labels(self) -> None:
+        provider = observability.PrometheusMetricsProvider()
+        with patch.object(provider.UPLOADS_COUNTER, "labels") as mock_labels:
+            provider.observe_upload(status="initiated", tenant_id="tenant-1")
+            mock_labels.assert_called_once_with(status="initiated", tenant_id="tenant-1")
+            mock_labels.return_value.inc.assert_called_once_with()
+
+    def test_observe_onboarding_completion_records_labels(self) -> None:
+        provider = observability.PrometheusMetricsProvider()
+        with patch.object(provider.ONBOARDING_COMPLETIONS_COUNTER, "labels") as mock_labels:
+            provider.observe_onboarding_completion(
+                photo_enabled="true", photo_used="uploaded", tenant_id="tenant-1"
+            )
+            mock_labels.assert_called_once_with(
+                photo_enabled="true",
+                photo_used="uploaded",
+                tenant_id="tenant-1",
+            )
+            mock_labels.return_value.inc.assert_called_once_with()
+
+    def test_observe_photo_enrichment_records_status(self) -> None:
+        provider = observability.PrometheusMetricsProvider()
+        with patch.object(provider.PHOTO_ENRICHMENT_COUNTER, "labels") as mock_labels:
+            provider.observe_photo_enrichment("success")
+            mock_labels.assert_called_once_with(status="success")
+            mock_labels.return_value.inc.assert_called_once_with()
+
+    def test_observe_durations_record_histograms(self) -> None:
+        provider = observability.PrometheusMetricsProvider()
+        for histogram, value in [
+            (provider.PHOTO_VISION_DURATION, 0.123),
+            (provider.PHOTO_PLACES_DURATION, 0.234),
+            (provider.AI_REQUEST_DURATION, 0.345),
+        ]:
+            with patch.object(histogram, "observe") as mock_observe:
+                if histogram is provider.PHOTO_VISION_DURATION:
+                    provider.observe_photo_vision_duration(value)
+                elif histogram is provider.PHOTO_PLACES_DURATION:
+                    provider.observe_photo_places_duration(value)
+                else:
+                    provider.observe_ai_duration(value)
+                mock_observe.assert_called_once_with(value)
+
+
+class TestOtelMetricsProvider:
+    def test_photo_observability_methods_record_on_otel_counters(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            observability.settings, "otel_exporter_otlp_endpoint", "https://otlp.example.com"
+        )
+        monkeypatch.setattr(observability.settings, "otel_exporter_otlp_headers", "")
+        observability._metrics_provider = None
+
+        with patch("app.observability.metrics.set_meter_provider"):
+            provider = observability.OtelMetricsProvider()
+
+        patchers = [
+            patch.object(provider, "_uploads_counter"),
+            patch.object(provider, "_onboarding_completions_counter"),
+            patch.object(provider, "_photo_enrichment_counter"),
+            patch.object(provider, "_photo_vision_duration"),
+            patch.object(provider, "_photo_places_duration"),
+            patch.object(provider, "_ai_request_duration"),
+        ]
+        mocks = [p.start() for p in patchers]
+
+        try:
+            provider.observe_upload(status="initiated", tenant_id="tenant-1")
+            mocks[0].add.assert_called_once_with(
+                1, {"status": "initiated", "tenant_id": "tenant-1"}
+            )
+
+            provider.observe_onboarding_completion(
+                photo_enabled="true", photo_used="uploaded", tenant_id="tenant-1"
+            )
+            mocks[1].add.assert_called_once_with(
+                1,
+                {
+                    "photo_enabled": "true",
+                    "photo_used": "uploaded",
+                    "tenant_id": "tenant-1",
+                },
+            )
+
+            provider.observe_photo_enrichment("success")
+            mocks[2].add.assert_called_once_with(1, {"status": "success"})
+
+            provider.observe_photo_vision_duration(0.123)
+            mocks[3].record.assert_called_once_with(0.123)
+
+            provider.observe_photo_places_duration(0.234)
+            mocks[4].record.assert_called_once_with(0.234)
+
+            provider.observe_ai_duration(0.345)
+            mocks[5].record.assert_called_once_with(0.345)
+        finally:
+            for p in patchers:
+                p.stop()
+
+
+class TestNoopMetricsProvider:
+    def test_photo_observability_methods_are_no_ops(self) -> None:
+        provider = observability.NoopMetricsProvider()
+        provider.observe_upload(status="initiated", tenant_id="tenant-1")
+        provider.observe_onboarding_completion(
+            photo_enabled="true", photo_used="uploaded", tenant_id="tenant-1"
+        )
+        provider.observe_photo_enrichment("success")
+        provider.observe_photo_vision_duration(0.1)
+        provider.observe_photo_places_duration(0.1)
+        provider.observe_ai_duration(0.1)

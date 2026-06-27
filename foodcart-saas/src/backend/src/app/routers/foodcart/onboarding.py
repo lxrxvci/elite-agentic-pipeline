@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.dependencies import CurrentUser, get_current_user, get_db, require_role
 from app.exceptions import ConflictError
+from app.features import PHOTO_ONBOARDING_FLAG, is_feature_enabled
+from app.observability import get_logger, get_metrics_provider
 from app.schemas_foodcart import (
     ErrorSchema,
     SiteSchema,
@@ -20,9 +22,11 @@ from app.schemas_foodcart import (
     TenantSchema,
 )
 from domain.entities import (
+    ContentBlock,
     IngestionJob,
     IngestionJobStatus,
     IngestionSourceType,
+    UploadedImage,
 )
 from domain.services.foodcart import (
     build_onboarding_result,
@@ -32,13 +36,16 @@ from domain.services.foodcart import (
     run_ingestion_job,
     suggest_slugs,
 )
-from infrastructure import models
+from infrastructure import models, storage
 from infrastructure.repositories import (
     ContentBlockRepository,
     FoodcartTenantRepository,
     IngestionJobRepository,
     SiteRepository,
+    UploadedImageRepository,
 )
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/tenants", tags=["Onboarding"])
 
@@ -76,6 +83,127 @@ def check_slug(
     )
 
 
+def _load_and_validate_photo(
+    db: Session,
+    tenant_id: uuid.UUID,
+    photo_image_id: uuid.UUID | None,
+) -> UploadedImage | None:
+    """Return the uploaded photo if it exists, is owned, and is ready for onboarding."""
+    if not photo_image_id:
+        return None
+
+    if not is_feature_enabled(PHOTO_ONBOARDING_FLAG):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Photo-driven onboarding is not enabled",
+        )
+
+    image = UploadedImageRepository(db, tenant_id).get(photo_image_id)
+    if not image:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded image not found",
+        )
+    if image.status != "uploaded":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Uploaded image is not available for onboarding (status: {image.status})",
+        )
+    return image
+
+
+def _enrich_from_photo(
+    db: Session,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    image: UploadedImage,
+    blocks: list[ContentBlock],
+) -> None:
+    """Run vision + Places enrichment and use the photo as the hero image.
+
+    On any failure the image is marked ``failed`` but onboarding continues.
+    """
+    metrics = get_metrics_provider()
+    image_repo = UploadedImageRepository(db, tenant_id)
+    image.site_id = site_id
+    image.status = "processing"
+    image_repo.update(image)
+
+    logger.info(
+        "photo_enrichment_started",
+        tenant_id=str(tenant_id),
+        site_id=str(site_id),
+        image_id=str(image.id),
+    )
+
+    try:
+        if not storage.is_storage_configured():
+            raise RuntimeError("Object storage is not configured")
+
+        job_repo = IngestionJobRepository(db, tenant_id)
+        vision_job = IngestionJob(
+            id=uuid.uuid4(),
+            site_id=site_id,
+            tenant_id=tenant_id,
+            source_type=IngestionSourceType.PHOTO_VISION,
+            source_url=image.storage_key,
+            status=IngestionJobStatus.PENDING,
+            raw_payload={"storage_key": image.storage_key, "mime_type": image.content_type},
+        )
+        job_repo.create(vision_job)
+        run_ingestion_job(vision_job)
+        job_repo.update(vision_job)
+        if vision_job.normalized_data:
+            merge_ingestion_into_blocks(blocks, vision_job.normalized_data)
+
+        vision_data = vision_job.normalized_data or {}
+        business_name = vision_data.get("business_name")
+        if business_name:
+            places_job = IngestionJob(
+                id=uuid.uuid4(),
+                site_id=site_id,
+                tenant_id=tenant_id,
+                source_type=IngestionSourceType.GOOGLE_PLACES,
+                source_url=business_name,
+                status=IngestionJobStatus.PENDING,
+                raw_payload={
+                    "business_name": business_name,
+                    "location_hints": vision_data.get("location_hints"),
+                },
+            )
+            job_repo.create(places_job)
+            run_ingestion_job(places_job)
+            job_repo.update(places_job)
+            if places_job.normalized_data:
+                merge_ingestion_into_blocks(blocks, places_job.normalized_data)
+
+        for block in blocks:
+            if block.block_type.value == "hero" and image.public_url:
+                block.data["image_url"] = image.public_url
+
+        image.status = "processed"
+        logger.info(
+            "photo_enrichment_succeeded",
+            tenant_id=str(tenant_id),
+            site_id=str(site_id),
+            image_id=str(image.id),
+        )
+        metrics.observe_photo_enrichment(status="success")
+    except Exception as exc:
+        logger.warning(
+            "photo_enrichment_failed",
+            error_type=type(exc).__name__,
+            error=str(exc),
+            tenant_id=str(tenant_id),
+            site_id=str(site_id),
+            image_id=str(image.id),
+        )
+        metrics.observe_photo_enrichment(status="failed")
+        image.status = "failed"
+    finally:
+        image_repo.update(image)
+
+
 @router.post(
     "/onboard",
     response_model=TenantOnboardingResponseSchema,
@@ -93,6 +221,8 @@ def onboard_tenant(
     normalized_slug = normalize_slug(payload.slug)
     if FoodcartTenantRepository(db, user.tenant_id).get_by_slug(normalized_slug):
         raise ConflictError("Slug is already taken")
+
+    photo_image = _load_and_validate_photo(db, user.tenant_id, payload.photo_image_id)
 
     tenant, site = build_onboarding_result(
         user_id=user.id,
@@ -112,6 +242,22 @@ def onboard_tenant(
         business_name=payload.business_name,
         site_id=site.id,
         tenant_id=user.tenant_id,
+    )
+
+    if photo_image is not None:
+        _enrich_from_photo(db, user.tenant_id, site.id, photo_image, blocks)
+
+    metrics = get_metrics_provider()
+    photo_enabled = is_feature_enabled(PHOTO_ONBOARDING_FLAG)
+    photo_used = (
+        "uploaded"
+        if photo_image is not None
+        else ("skipped" if photo_enabled else "none")
+    )
+    metrics.observe_onboarding_completion(
+        photo_enabled=str(photo_enabled),
+        photo_used=photo_used,
+        tenant_id=str(user.tenant_id),
     )
 
     ingestion_jobs: list[IngestionJob] = []

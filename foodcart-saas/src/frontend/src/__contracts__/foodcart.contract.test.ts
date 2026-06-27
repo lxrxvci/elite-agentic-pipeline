@@ -169,4 +169,52 @@ describe('Foodcart API contract', () => {
         expect(data.blocks).toBeDefined()
       })
   })
+
+  it('creates a presigned upload URL for a foodcart photo', async () => {
+    await provider
+      .addInteraction()
+      .given('photo onboarding is enabled and storage is configured')
+      .uponReceiving('a request for a presigned upload URL')
+      .withRequest('POST', '/api/v1/uploads/presigned', (builder) => {
+        builder.headers({
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${TEST_TOKEN}`,
+        })
+        builder.jsonBody({
+          content_type: 'image/jpeg',
+          size_bytes: 1024,
+        })
+      })
+      .willRespondWith(201, (builder) => {
+        builder.headers({ 'Content-Type': 'application/json' })
+        builder.jsonBody({
+          upload_url: MatchersV3.string('https://example.r2.cloudflarestorage.com/test-bucket'),
+          fields: MatchersV3.like({ key: 'value' }),
+          storage_key: MatchersV3.string('contract-upload-key'),
+          public_url: MatchersV3.string('https://cdn.example.com/contract-upload-key'),
+          image_id: uuidMatcher,
+          expires_in: MatchersV3.integer(300),
+        })
+      })
+      .executeTest(async (mockServer) => {
+        const response = await fetch(`${mockServer.url}/api/v1/uploads/presigned`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${TEST_TOKEN}`,
+          },
+          body: JSON.stringify({
+            content_type: 'image/jpeg',
+            size_bytes: 1024,
+          }),
+        })
+
+        expect(response.status).toBe(201)
+        const data = await response.json()
+        expect(data.upload_url).toBeDefined()
+        expect(data.public_url).toBeDefined()
+        expect(data.image_id).toBeDefined()
+        expect(data.expires_in).toBeDefined()
+      })
+  })
 })

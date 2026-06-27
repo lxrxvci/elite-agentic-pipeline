@@ -1,6 +1,7 @@
 'use client'
 
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { trackError } from '@/shared/lib/telemetry'
 
 interface Props {
   children: ReactNode
@@ -25,7 +26,7 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     // eslint-disable-next-line no-console
     console.error('[ErrorBoundary]', error, errorInfo)
-    // In a production setup this is where Sentry or another RUM tool would be notified.
+    trackError(error, errorInfo)
   }
 
   render() {
