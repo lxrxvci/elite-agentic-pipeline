@@ -331,7 +331,7 @@ class Site(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("foodcart_tenants.id"), nullable=False, index=True
+        ForeignKey("tenants.id"), nullable=False, index=True
     )
     slug: Mapped[str] = mapped_column(
         String(63), nullable=False, unique=True, index=True
@@ -388,7 +388,7 @@ class ContentBlock(Base):
         ForeignKey("sites.id", ondelete="CASCADE"), nullable=False, index=True
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("foodcart_tenants.id"), nullable=False, index=True
+        ForeignKey("tenants.id"), nullable=False, index=True
     )
     block_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     schema_version: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -419,7 +419,7 @@ class Revision(Base):
         ForeignKey("sites.id", ondelete="CASCADE"), nullable=False, index=True
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("foodcart_tenants.id"), nullable=False, index=True
+        ForeignKey("tenants.id"), nullable=False, index=True
     )
     triggered_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     source: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -451,7 +451,7 @@ class IngestionJob(Base):
         ForeignKey("sites.id", ondelete="CASCADE"), nullable=False, index=True
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("foodcart_tenants.id"), nullable=False, index=True
+        ForeignKey("tenants.id"), nullable=False, index=True
     )
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     source_url: Mapped[str] = mapped_column(String(2048), nullable=False)
@@ -484,7 +484,7 @@ class AIRequest(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("foodcart_tenants.id"), nullable=False, index=True
+        ForeignKey("tenants.id"), nullable=False, index=True
     )
     site_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sites.id", ondelete="CASCADE"), nullable=False, index=True
@@ -526,7 +526,7 @@ class UploadedImage(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("foodcart_tenants.id"), nullable=False, index=True
+        ForeignKey("tenants.id"), nullable=False, index=True
     )
     site_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("sites.id", ondelete="SET NULL"), nullable=True, index=True

@@ -25,7 +25,7 @@ def upgrade() -> None:
         sa.Column(
             "tenant_id",
             sa.UUID(),
-            sa.ForeignKey("foodcart_tenants.id"),
+            sa.ForeignKey("tenants.id"),
             nullable=False,
             index=True,
         ),

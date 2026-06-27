@@ -69,7 +69,7 @@ def upgrade() -> None:
         sa.Column(
             "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
         ),
-        sa.ForeignKeyConstraint(["tenant_id"], ["foodcart_tenants.id"]),
+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("custom_domain"),
         sa.UniqueConstraint("slug"),
@@ -101,7 +101,7 @@ def upgrade() -> None:
             "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
         ),
         sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["tenant_id"], ["foodcart_tenants.id"]),
+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.CheckConstraint(
             "block_type IN ('hero', 'story', 'menu', 'locations', "
@@ -133,7 +133,7 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["ai_request_id"], ["ai_requests.id"], use_alter=True),
         sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["tenant_id"], ["foodcart_tenants.id"]),
+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"]),
         sa.ForeignKeyConstraint(["triggered_by"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.CheckConstraint(
@@ -163,7 +163,7 @@ def upgrade() -> None:
             "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
         ),
         sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["tenant_id"], ["foodcart_tenants.id"]),
+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.CheckConstraint(
             "source_type IN ('google_business', 'yelp', 'menu_url', 'website', 'social_links')",
@@ -203,7 +203,7 @@ def upgrade() -> None:
             ["applied_revision_id"], ["revisions.id"], use_alter=True
         ),
         sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["tenant_id"], ["foodcart_tenants.id"]),
+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"]),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.CheckConstraint(
