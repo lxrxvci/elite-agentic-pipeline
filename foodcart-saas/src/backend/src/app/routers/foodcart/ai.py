@@ -53,6 +53,7 @@ def propose_change(
     _ensure_site_owned(site_id, user.tenant_id, db)
     blocks = ContentBlockRepository(db, user.tenant_id).list_for_site(site_id)
     provider = _get_llm_provider()
+    # PostgreSQL rejects NUL bytes in text columns, so sanitize before storing.
     sanitized_prompt = _sanitize_prompt(payload.prompt)
     preview = provider.generate_change_preview(
         prompt=sanitized_prompt,
