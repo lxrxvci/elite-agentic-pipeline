@@ -40,7 +40,7 @@ jobs:
 
       - name: Run database migrations
         working-directory: ${{ inputs.project-dir }}
-        run: docker compose exec -T backend bash -c "cd /app/src && alembic upgrade head"
+        run: docker compose exec -T backend alembic upgrade head
 
       - uses: actions/setup-node@v4
         with:

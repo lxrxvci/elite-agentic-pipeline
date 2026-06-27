@@ -20,6 +20,8 @@ RUN groupadd -r app && useradd -r -g app app
 
 COPY --from=builder --chown=app:app /root/.local /home/app/.local
 COPY --chown=app:app src ./src
+COPY --chown=app:app alembic.ini ./alembic.ini
+COPY --chown=app:app alembic ./alembic
 
 RUN chown -R app:app /app
 USER app
