@@ -18,15 +18,14 @@ jobs:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5hY2NvdW50cy5kZXYk
       CLERK_SECRET_KEY: sk_test_ci
       NEXT_PUBLIC_ENABLED_FEATURES: photo-onboarding-v1
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      DB_PASSWORD: ci_password
+      GRAFANA_ADMIN_PASSWORD: ci-grafana-password
     steps:
       - uses: actions/checkout@v4
 
       - name: Start backend services
         working-directory: ${{ inputs.project-dir }}
-        env:
-          SECRET_KEY: ci-test-secret-key-not-for-production
-          DB_PASSWORD: ci_password
-          GRAFANA_ADMIN_PASSWORD: ci-grafana-password
         run: |
           docker compose up -d backend
           for i in {1..30}; do
