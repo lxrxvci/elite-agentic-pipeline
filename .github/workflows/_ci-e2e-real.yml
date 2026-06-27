@@ -15,7 +15,7 @@ jobs:
   e2e-real:
     runs-on: ubuntu-latest
     env:
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ci
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5hY2NvdW50cy5kZXYk
       CLERK_SECRET_KEY: sk_test_ci
       NEXT_PUBLIC_ENABLED_FEATURES: photo-onboarding-v1
     steps:

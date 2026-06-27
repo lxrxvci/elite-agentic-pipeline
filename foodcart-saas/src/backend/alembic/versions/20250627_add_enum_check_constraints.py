@@ -7,6 +7,7 @@ Create Date: 2026-06-27 00:00:00.000000
 """
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -89,9 +90,13 @@ _CONSTRAINTS = [
 
 def upgrade() -> None:
     for table, name, condition in _CONSTRAINTS:
-        op.create_check_constraint(name, table, condition)
+        op.execute(
+            sa.text(
+                f"ALTER TABLE {table} ADD CONSTRAINT IF NOT EXISTS {name} CHECK ({condition})"
+            )
+        )
 
 
 def downgrade() -> None:
     for table, name, _condition in reversed(_CONSTRAINTS):
-        op.drop_constraint(name, table, type_="check")
+        op.execute(sa.text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}"))
