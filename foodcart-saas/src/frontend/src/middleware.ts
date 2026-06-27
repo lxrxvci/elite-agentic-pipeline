@@ -19,18 +19,34 @@ const isProtectedAdminRoute = createRouteMatcher([
   '/admin/onboarding(.*)',
 ])
 
-export default clerkMiddleware(async (auth, request) => {
-  if (isProtectedAdminRoute(request)) {
-    await auth.protect()
-  }
+// The committed example key is validly formatted but points to a non-existent
+// Clerk instance, so it cannot complete the dev-browser handshake. Treat it as
+// disabled to keep CI and local dev servers (which use the example key) from
+// redirecting every request to a 404 handshake URL.
+const PLACEHOLDER_CLERK_KEY = 'pk_test_ZXhhbXBsZS5hY2NvdW50cy5kZXYk'
+const isClerkEnabled =
+  Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) &&
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY !== PLACEHOLDER_CLERK_KEY &&
+  process.env.CLERK_DISABLED !== 'true'
 
+async function applicationMiddleware(request: NextRequest): Promise<NextResponse> {
   const customDomainRewrite = await customDomainMiddleware(request)
   if (customDomainRewrite) {
     return customDomainRewrite
   }
 
   return canaryMiddleware(request)
-})
+}
+
+export default isClerkEnabled
+  ? clerkMiddleware(async (auth, request) => {
+      if (isProtectedAdminRoute(request)) {
+        await auth.protect()
+      }
+
+      return applicationMiddleware(request)
+    })
+  : applicationMiddleware
 
 /**
  * Host-based routing for custom domains.

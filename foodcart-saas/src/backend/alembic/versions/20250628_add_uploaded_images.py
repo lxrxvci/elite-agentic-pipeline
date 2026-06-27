@@ -8,8 +8,8 @@ Create Date: 2026-06-28 00:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "20250628_add_uploaded_images"
@@ -42,8 +42,8 @@ def upgrade() -> None:
         sa.Column("size_bytes", sa.Integer(), nullable=False, default=0),
         sa.Column("status", sa.String(20), nullable=False, default="uploaded"),
         sa.Column(
-            "metadata",
-            postgresql.JSONB() if op.get_context().dialect.name == "postgresql" else sa.JSON(),
+            "meta",
+            sa.JSON(),
             nullable=False,
             default=dict,
         ),

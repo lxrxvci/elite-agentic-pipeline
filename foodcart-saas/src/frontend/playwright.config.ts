@@ -21,13 +21,15 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run build && npm run start',
+    command: 'npm run build && node .next/standalone/server.js',
     url: 'http://localhost:3000',
     reuseExistingServer: true,
-    timeout: 120000,
+    timeout: 180000,
     env: {
       NEXT_PUBLIC_API_URL: 'http://localhost:8000/api/v1',
       NEXT_PUBLIC_ENABLED_FEATURES: 'time-capture.quick-entry,time-capture.live-timer,photo-onboarding-v1',
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'pk_test_ZXhhbXBsZS5hY2NvdW50cy5kZXYk',
+      CLERK_SECRET_KEY: 'sk_test_ci',
     },
   },
 })

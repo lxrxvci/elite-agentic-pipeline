@@ -37,6 +37,7 @@ def domain_tenant(db: Session):
         role="owner",
     )
     db.add(user)
+    db.flush()
 
     foodcart = FoodcartTenant(
         id=tenant.id,
