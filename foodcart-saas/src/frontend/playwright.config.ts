@@ -22,7 +22,7 @@ export default defineConfig({
   ],
   // next start is incompatible with output: 'standalone', so launch the standalone server.
   webServer: {
-    command: 'npm run build && node .next/standalone/server.js',
+    command: "npm run build && cp -R .next/static .next/standalone/.next/ && node .next/standalone/server.js",
     url: 'http://localhost:3000',
     reuseExistingServer: true,
     timeout: 180000,
