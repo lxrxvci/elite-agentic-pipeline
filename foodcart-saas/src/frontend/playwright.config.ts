@@ -31,6 +31,7 @@ export default defineConfig({
       NEXT_PUBLIC_ENABLED_FEATURES: 'time-capture.quick-entry,time-capture.live-timer,photo-onboarding-v1',
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'pk_test_ZXhhbXBsZS5hY2NvdW50cy5kZXYk',
       CLERK_SECRET_KEY: 'sk_test_ci',
+      CLERK_DISABLED: 'true',
     },
   },
 })
