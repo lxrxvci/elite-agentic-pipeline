@@ -24,6 +24,9 @@ test.describe('full user journey against real backend', () => {
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
     await page.getByLabel('Email').fill(email)
     await page.getByRole('button', { name: 'Sign in' }).click()
+
+    // The form redirects to the marketing landing page after a successful login.
+    await expect(page).toHaveURL('/', { timeout: 10000 })
     await expect(page.getByRole('heading', { name: 'You cook.' })).toBeVisible()
 
     // Use the session cookie to onboard a Foodcart tenant/site via the API.

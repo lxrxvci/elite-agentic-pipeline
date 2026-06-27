@@ -58,7 +58,7 @@ const blockShape = {
   updated_at: isoTimestampMatcher,
 }
 
-describe('Foodcart API contract', () => {
+describe.sequential('Foodcart API contract', () => {
   it('onboards a new tenant and site', async () => {
     await provider
       .addInteraction()

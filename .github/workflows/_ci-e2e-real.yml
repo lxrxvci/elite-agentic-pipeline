@@ -61,8 +61,19 @@ jobs:
         working-directory: ${{ inputs.project-dir }}/src/frontend
         run: npm run test:e2e:real
 
+      - name: Dump backend logs
+        if: failure()
+        working-directory: ${{ inputs.project-dir }}
+        run: docker compose logs backend
+
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: e2e-real-report
           path: ${{ inputs.project-dir }}/src/frontend/playwright-report
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-real-test-results
+          path: ${{ inputs.project-dir }}/src/frontend/test-results
