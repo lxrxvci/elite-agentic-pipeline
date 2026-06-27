@@ -20,6 +20,7 @@ export default defineConfig({
       dependencies: [],
     },
   ],
+  // next start is incompatible with output: 'standalone', so launch the standalone server.
   webServer: {
     command: 'npm run build && node .next/standalone/server.js',
     url: 'http://localhost:3000',
