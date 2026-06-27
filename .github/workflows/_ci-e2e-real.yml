@@ -26,6 +26,7 @@ jobs:
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
           DB_PASSWORD: ci_password
+          GRAFANA_ADMIN_PASSWORD: ci-grafana-password
         run: |
           docker compose up -d backend
           for i in {1..30}; do
