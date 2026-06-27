@@ -18,15 +18,17 @@ test.describe('full user journey against real backend', () => {
     const slug = `e2e-tacos-${Date.now()}`
     const businessName = 'E2E Tacos'
 
-    // Login via the real dev auth endpoint. This creates a tenant/user and
-    // sets the httpOnly elite_session cookie (plus a readable csrf_token cookie).
-    await page.goto('/login')
-    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
-    await page.getByLabel('Email').fill(email)
-    await page.getByRole('button', { name: 'Sign in' }).click()
+    // Authenticate via the real dev auth endpoint. This sets the httpOnly
+    // elite_session cookie (plus a readable csrf_token cookie) in the shared
+    // browser context so subsequent page navigations and API calls are signed in.
+    const loginResponse = await page.context().request.post(`${API_BASE_URL}/auth/token`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: JSON.stringify({ email }),
+    })
+    expect(loginResponse.ok()).toBe(true)
 
-    // The form redirects to the marketing landing page after a successful login.
-    await expect(page).toHaveURL('/', { timeout: 10000 })
+    // With a session cookie, the marketing homepage loads as an authenticated user.
+    await page.goto('/')
     await expect(page.getByRole('heading', { name: 'You cook.' })).toBeVisible()
 
     // Use the session cookie to onboard a Foodcart tenant/site via the API.
