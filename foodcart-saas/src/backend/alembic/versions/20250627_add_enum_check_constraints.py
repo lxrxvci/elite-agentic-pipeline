@@ -92,11 +92,42 @@ def upgrade() -> None:
     for table, name, condition in _CONSTRAINTS:
         op.execute(
             sa.text(
-                f"ALTER TABLE {table} ADD CONSTRAINT IF NOT EXISTS {name} CHECK ({condition})"
+                f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE constraint_name = '{name}'
+                          AND table_name = '{table}'
+                    ) THEN
+                        ALTER TABLE {table}
+                        ADD CONSTRAINT {name}
+                        CHECK ({condition});
+                    END IF;
+                END $$;
+                """
             )
         )
 
 
 def downgrade() -> None:
     for table, name, _condition in reversed(_CONSTRAINTS):
-        op.execute(sa.text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}"))
+        op.execute(
+            sa.text(
+                f"""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE constraint_name = '{name}'
+                          AND table_name = '{table}'
+                    ) THEN
+                        ALTER TABLE {table}
+                        DROP CONSTRAINT {name};
+                    END IF;
+                END $$;
+                """
+            )
+        )
