@@ -39,6 +39,10 @@ jobs:
           done
           curl -fsS --retry 10 --retry-delay 3 http://localhost:8000/health
 
+      - name: Run database migrations
+        working-directory: ${{ inputs.project-dir }}
+        run: docker compose exec -T backend bash -c "cd /app/src && alembic upgrade head"
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
