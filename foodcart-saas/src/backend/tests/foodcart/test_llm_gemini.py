@@ -17,11 +17,15 @@ def _make_blocks():
 
 
 class TestLLMProviderDispatch:
-    def test_uses_stub_without_api_key(self):
+    def test_uses_stub_without_api_key(self, monkeypatch):
+        monkeypatch.setattr(settings, "bedrock_enabled", False)
+        monkeypatch.setattr(settings, "gemini_api_key", "")
         provider = LLMProvider(settings)
         assert provider.model_name == "stub"
 
-    def test_stub_backend_generates_preview(self):
+    def test_stub_backend_generates_preview(self, monkeypatch):
+        monkeypatch.setattr(settings, "bedrock_enabled", False)
+        monkeypatch.setattr(settings, "gemini_api_key", "")
         provider = LLMProvider(settings)
         blocks = _make_blocks()
         preview = provider.generate_change_preview(
@@ -31,6 +35,7 @@ class TestLLMProviderDispatch:
         assert any(op.path == "/blocks/hero/data/headline" for op in preview.operations)
 
     def test_uses_gemini_with_api_key(self, monkeypatch):
+        monkeypatch.setattr(settings, "bedrock_enabled", False)
         monkeypatch.setattr(settings, "gemini_api_key", "fake-key")
         monkeypatch.setattr(settings, "gemini_model", "gemini-2.0-flash")
         provider = LLMProvider(settings)
@@ -171,6 +176,7 @@ class TestGeminiAdapter:
 
 class TestGeminiRequestBody:
     def test_request_includes_system_prompt_and_json_mode(self, monkeypatch):
+        monkeypatch.setattr(settings, "bedrock_enabled", False)
         monkeypatch.setattr(settings, "gemini_api_key", "fake-key")
         provider = LLMProvider(settings)
         blocks = _make_blocks()

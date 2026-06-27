@@ -47,7 +47,7 @@ The assistant may only perform mutations that map to the Content context block s
 
 ### 2. Structured Output Only
 
-The assistant supports multiple LLM backends. The default production provider is **Google Gemini** (model `gemini-2.0-flash` or an environment-specific override). When no API key is configured, the backend falls back to a deterministic local stub. The LLM returns JSON that conforms to one of two Pydantic schemas:
+The assistant supports multiple LLM backends. The default production provider is **Google Gemini** (model `gemini-2.0-flash` or an environment-specific override). **Amazon Bedrock** (e.g. Anthropic Claude 3.5 Sonnet) may be enabled instead to take advantage of existing AWS credits or IAM-based credentials. When no backend is configured, the assistant falls back to a deterministic local stub. The LLM returns JSON that conforms to one of two Pydantic schemas:
 
 - `ChangePreview`: human-readable summary, list of `PatchOperation`, confidence score, and a flag if the request is out of scope.
 - `PatchOperation`: `{ op: "replace" | "add" | "remove", path: "/blocks/{block_id}/...", value: any }`.

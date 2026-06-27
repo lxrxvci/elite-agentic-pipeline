@@ -45,8 +45,12 @@ class Settings(BaseSettings):
     tenant_quota_limit: int = 100
     tenant_quota_window: int = 60
 
-    # LLM provider configuration. Gemini is the default production provider.
-    # When no API key is set, the assistant falls back to a deterministic stub.
+    # LLM provider configuration.
+    # Priority: Bedrock (when enabled) > Gemini (when API key set) > deterministic stub.
+    # AWS credentials are loaded from the environment/IMDS; no API key is required here.
+    bedrock_enabled: bool = False
+    bedrock_region: str = "us-east-1"
+    bedrock_model_id: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
 
@@ -73,7 +77,11 @@ class Settings(BaseSettings):
     cloudflare_account_id: str = ""
     cloudflare_registrar_enabled: bool = False
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     @model_validator(mode="after")
     def reject_default_secret_in_production(self) -> Settings:
