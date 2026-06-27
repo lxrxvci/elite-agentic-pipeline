@@ -124,44 +124,73 @@ resource "aws_iam_role_policy_attachment" "github_actions" {
   policy_arn = each.value
 }
 
+data "aws_caller_identity" "current" {}
+
 # Object storage for tenant photo uploads.
 resource "aws_s3_bucket" "foodcart_uploads" {
   count = var.enable_storage ? 1 : 0
 
+  bucket = var.storage_bucket_name
+
   #checkov:skip=CKV_AWS_144:Cross-region replication is deferred to a future hardening phase.
   #checkov:skip=CKV2_AWS_62:Event notifications are deferred to a future hardening phase.
-  bucket = var.storage_bucket_name
+  #checkov:skip=CKV2_AWS_6:Public access is blocked via aws_s3_bucket_public_access_block (count-indexed graph edges are not evaluated by Checkov).
+
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm     = "aws:kms"
+        kms_master_key_id = aws_kms_key.foodcart_uploads[0].arn
+      }
+      bucket_key_enabled = true
+    }
+  }
+
+  versioning {
+    enabled = true
+  }
+
+  logging {
+    target_bucket = aws_s3_bucket.foodcart_uploads_logs[0].id
+    target_prefix = "access-logs/"
+  }
+
+  lifecycle_rule {
+    id      = "uploads-transition-and-cleanup"
+    enabled = true
+    prefix  = ""
+
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+
+    transition {
+      days          = 90
+      storage_class = "GLACIER_IR"
+    }
+
+    noncurrent_version_transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+
+    noncurrent_version_expiration {
+      days = 365
+    }
+
+    abort_incomplete_multipart_upload_days = 7
+  }
 }
 
 resource "aws_kms_key" "foodcart_uploads" {
   count = var.enable_storage ? 1 : 0
 
+  #checkov:skip=CKV2_AWS_64:Key policy is attached via aws_kms_key_policy resource (Checkov does not resolve count-indexed graph edges for this rule).
   description             = "KMS key for encrypting the ${var.project_name} uploads bucket"
   deletion_window_in_days = 7
   enable_key_rotation     = true
   multi_region            = false
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "foodcart_uploads" {
-  count = var.enable_storage ? 1 : 0
-
-  bucket = aws_s3_bucket.foodcart_uploads[0].id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.foodcart_uploads[0].arn
-    }
-    bucket_key_enabled = true
-  }
-}
-
-resource "aws_s3_bucket_versioning" "foodcart_uploads" {
-  count = var.enable_storage ? 1 : 0
-
-  bucket = aws_s3_bucket.foodcart_uploads[0].id
-  versioning_configuration {
-    status = "Enabled"
-  }
 }
 
 resource "aws_s3_bucket_public_access_block" "foodcart_uploads" {
@@ -191,73 +220,40 @@ resource "aws_s3_bucket_cors_configuration" "foodcart_uploads" {
   }
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "foodcart_uploads" {
-  count = var.enable_storage ? 1 : 0
-
-  bucket = aws_s3_bucket.foodcart_uploads[0].id
-
-  rule {
-    id     = "uploads-transition-and-cleanup"
-    status = "Enabled"
-
-    filter {
-      prefix = ""
-    }
-
-    transition {
-      days          = 30
-      storage_class = "STANDARD_IA"
-    }
-
-    transition {
-      days          = 90
-      storage_class = "GLACIER_IR"
-    }
-
-    noncurrent_version_transition {
-      noncurrent_days = 30
-      storage_class   = "STANDARD_IA"
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 365
-    }
-
-    abort_incomplete_multipart_upload {
-      days_after_initiation = 7
-    }
-  }
-}
-
 # Server access log destination for the uploads bucket.
 resource "aws_s3_bucket" "foodcart_uploads_logs" {
   count = var.enable_storage ? 1 : 0
 
-  bucket = "${aws_s3_bucket.foodcart_uploads[0].id}-logs"
+  bucket = "${var.storage_bucket_name}-logs"
 
   #checkov:skip=CKV_AWS_145:S3 server access logs cannot be delivered to buckets that use SSE-KMS; SSE-S3 is used.
   #checkov:skip=CKV_AWS_18:Access logging for the log bucket itself is not required.
   #checkov:skip=CKV_AWS_144:Cross-region replication is deferred for the log bucket.
   #checkov:skip=CKV2_AWS_62:Event notifications are deferred for the log bucket.
-}
+  #checkov:skip=CKV2_AWS_6:Public access is blocked via aws_s3_bucket_public_access_block (count-indexed graph edges are not evaluated by Checkov).
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "foodcart_uploads_logs" {
-  count = var.enable_storage ? 1 : 0
-
-  bucket = aws_s3_bucket.foodcart_uploads_logs[0].id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm = "AES256"
+      }
     }
   }
-}
 
-resource "aws_s3_bucket_versioning" "foodcart_uploads_logs" {
-  count = var.enable_storage ? 1 : 0
+  versioning {
+    enabled = true
+  }
 
-  bucket = aws_s3_bucket.foodcart_uploads_logs[0].id
-  versioning_configuration {
-    status = "Enabled"
+  lifecycle_rule {
+    id      = "expire-access-logs"
+    enabled = true
+    prefix  = ""
+
+    expiration {
+      days = 90
+    }
+
+    abort_incomplete_multipart_upload_days = 7
   }
 }
 
@@ -272,36 +268,44 @@ resource "aws_s3_bucket_public_access_block" "foodcart_uploads_logs" {
   restrict_public_buckets = true
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "foodcart_uploads_logs" {
-  count = var.enable_storage ? 1 : 0
-
-  bucket = aws_s3_bucket.foodcart_uploads_logs[0].id
-
-  rule {
-    id     = "expire-access-logs"
-    status = "Enabled"
-
-    filter {
-      prefix = ""
+data "aws_iam_policy_document" "kms_uploads" {
+  statement {
+    sid    = "Enable IAM User Permissions"
+    effect = "Allow"
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
     }
+    actions   = ["kms:*"]
+    resources = [aws_kms_key.foodcart_uploads[0].arn]
+  }
 
-    expiration {
-      days = 90
+  statement {
+    sid    = "Allow S3 service for bucket encryption"
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
     }
-
-    abort_incomplete_multipart_upload {
-      days_after_initiation = 7
+    actions = [
+      "kms:Encrypt",
+      "kms:Decrypt",
+      "kms:GenerateDataKey*",
+    ]
+    resources = [aws_kms_key.foodcart_uploads[0].arn]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:CallerAccount"
+      values   = [data.aws_caller_identity.current.account_id]
     }
   }
 }
 
-resource "aws_s3_bucket_logging" "foodcart_uploads" {
+resource "aws_kms_key_policy" "foodcart_uploads" {
   count = var.enable_storage ? 1 : 0
 
-  bucket = aws_s3_bucket.foodcart_uploads[0].id
-
-  target_bucket = aws_s3_bucket.foodcart_uploads_logs[0].id
-  target_prefix = "access-logs/"
+  key_id = aws_kms_key.foodcart_uploads[0].id
+  policy = data.aws_iam_policy_document.kms_uploads.json
 }
 
 data "aws_iam_policy_document" "foodcart_uploads" {
