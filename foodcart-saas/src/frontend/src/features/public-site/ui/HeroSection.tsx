@@ -23,7 +23,9 @@ export function HeroSection({ data, theme, openStatus }: HeroSectionProps) {
           <h1 className="font-display text-display-xl uppercase leading-none">
             {data.headline}
           </h1>
-          {data.subheadline && <p className="text-lg md:text-xl opacity-90 max-w-md">{data.subheadline}</p>}
+          {(data.subheadline || data.tagline) && (
+            <p className="text-lg md:text-xl opacity-90 max-w-md">{data.subheadline || data.tagline}</p>
+          )}
           {data.cta_text && (
             <a
               href={sanitizeUrl(data.cta_url) || '#order'}

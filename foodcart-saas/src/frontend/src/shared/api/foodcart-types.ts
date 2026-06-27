@@ -102,6 +102,7 @@ export interface Location {
 export interface HeroBlockData {
   headline: string
   subheadline?: string
+  tagline?: string
   cta_text?: string
   cta_url?: string
   image_url?: string
