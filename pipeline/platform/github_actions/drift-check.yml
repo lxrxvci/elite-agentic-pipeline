@@ -7,10 +7,10 @@ on:
     branches: [main]
 
 env:
-  PROJECT_DIR: example_project
+  PROJECT_DIR: firmos
 
 jobs:
   drift-check:
     uses: ./.github/workflows/_drift-check.yml
     with:
-      project-dir: example_project
+      project-dir: firmos
