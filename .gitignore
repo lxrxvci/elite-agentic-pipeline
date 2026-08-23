@@ -55,3 +55,7 @@ Thumbs.db
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
+
+# Credential files — never commit
+.env.github-secrets
+neon-redis.md
