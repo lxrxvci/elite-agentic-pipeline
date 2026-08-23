@@ -14,10 +14,9 @@ const API_BASE_URL = process.env.REAL_API_URL || 'http://localhost:8000/api/v1'
 test.describe('full user journey against real backend', () => {
   test.use({ baseURL: 'http://localhost:3000' })
 
-  // FIXME(pre-existing): this journey has never passed in CI — it requires the
-// full backend stack (Postgres + Redis) wired into the e2e job. Tracked in
-// issue #1. Quarantined so quality gates stay meaningful until fixed.
-test.fixme('login → client → project → time → invoice → payment', async ({ page }) => {
+  // Requires the full backend stack (Postgres + Redis) — provisioned in
+// _ci-e2e-real.yml via docker compose (db, redis, backend).
+test('login → client → project → time → invoice → payment', async ({ page }) => {
     const email = `e2e-${Date.now()}@example.com`
 
     // Login via the real dev auth endpoint.
