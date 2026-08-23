@@ -7,7 +7,8 @@ import { Button } from '@/shared/ui'
 import { apiClient } from '@/shared/api/client'
 
 const navItems = [
-  { href: '/', label: 'Dashboard' },
+  
+  { href: '/workstation', label: 'Workstation' },
   { href: '/time-tracker', label: 'Time tracker' },
   { href: '/invoices', label: 'Invoices' },
   { href: '/clients', label: 'Clients' },

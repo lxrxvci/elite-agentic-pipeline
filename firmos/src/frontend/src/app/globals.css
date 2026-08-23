@@ -2,12 +2,92 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * FirmOS Design System — semantic oklch tokens
+ * See docs/DESIGN_MANDATE.md. Status color language is a contract:
+ * one meaning = one token = identical on every surface. Never color alone.
+ */
+
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-rgb: 255, 255, 255;
+  /* Brand — bookkeeping teal (nod to #007B7F), perceptually uniform */
+  --firm-brand: oklch(0.55 0.11 190);
+  --firm-brand-strong: oklch(0.47 0.11 190);
+  --firm-brand-soft: oklch(0.95 0.03 190);
+
+  /* Surfaces — cool paper, layered */
+  --firm-bg: oklch(0.977 0.003 240);
+  --firm-surface: oklch(1 0 0);
+  --firm-surface-2: oklch(0.955 0.004 240);
+  --firm-border: oklch(0.91 0.005 240);
+  --firm-border-strong: oklch(0.84 0.008 240);
+
+  /* Text */
+  --firm-text: oklch(0.22 0.01 250);
+  --firm-text-2: oklch(0.48 0.015 250);
+  --firm-text-3: oklch(0.62 0.012 250);
+
+  /* ── STATUS LANGUAGE (the contract) ─────────────────────────── */
+  --status-overdue: oklch(0.52 0.2 27);          /* on fire        */
+  --status-overdue-bg: oklch(0.96 0.03 27);
+  --status-due-soon: oklch(0.72 0.15 78);        /* act this week  */
+  --status-due-soon-bg: oklch(0.97 0.04 85);
+  --status-on-track: oklch(0.58 0.13 158);       /* healthy        */
+  --status-on-track-bg: oklch(0.96 0.035 158);
+  --status-deferred: oklch(0.53 0.17 305);       /* parked on purpose */
+  --status-deferred-bg: oklch(0.96 0.03 305);
+  --status-waiting-client: oklch(0.55 0.13 247); /* blocked on client */
+  --status-waiting-client-bg: oklch(0.955 0.03 247);
+  --status-on-hold: oklch(0.55 0.02 255);        /* paused/archive */
+  --status-on-hold-bg: oklch(0.955 0.005 255);
+
+  /* Financial data accents */
+  --money-positive: oklch(0.58 0.13 158);
+  --money-negative: oklch(0.52 0.2 27);
+}
+
+[data-theme='dark'] {
+  --firm-brand: oklch(0.72 0.11 190);
+  --firm-brand-strong: oklch(0.8 0.1 190);
+  --firm-brand-soft: oklch(0.28 0.05 190);
+
+  --firm-bg: oklch(0.17 0.012 250);
+  --firm-surface: oklch(0.215 0.014 250);
+  --firm-surface-2: oklch(0.25 0.016 250);
+  --firm-border: oklch(0.31 0.018 250);
+  --firm-border-strong: oklch(0.4 0.02 250);
+
+  --firm-text: oklch(0.93 0.008 250);
+  --firm-text-2: oklch(0.72 0.012 250);
+  --firm-text-3: oklch(0.58 0.014 250);
+
+  --status-overdue: oklch(0.68 0.19 27);
+  --status-overdue-bg: oklch(0.3 0.07 27);
+  --status-due-soon: oklch(0.8 0.14 82);
+  --status-due-soon-bg: oklch(0.32 0.06 80);
+  --status-on-track: oklch(0.74 0.13 160);
+  --status-on-track-bg: oklch(0.29 0.05 160);
+  --status-deferred: oklch(0.7 0.15 305);
+  --status-deferred-bg: oklch(0.3 0.06 305);
+  --status-waiting-client: oklch(0.71 0.12 245);
+  --status-waiting-client-bg: oklch(0.3 0.05 245);
+  --status-on-hold: oklch(0.62 0.015 255);
+  --status-on-hold-bg: oklch(0.28 0.01 255);
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: rgb(var(--background-rgb));
+  color: var(--firm-text);
+  background: var(--firm-bg);
 }
+
+@layer utilities {
+  /* Financial figures always align: use everywhere money renders */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+  .focus-ring {
+    outline: 2px solid var(--firm-brand);
+    outline-offset: 2px;
+  }
+}
+

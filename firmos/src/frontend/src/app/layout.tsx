@@ -10,8 +10,8 @@ import { WebVitalsInit } from '@/shared/ui/WebVitalsInit'
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
-  title: 'Elite — Freelancer Dashboard',
-  description: 'Track time, invoice clients, and get paid faster.',
+  title: 'FirmOS — Bookkeeping Firm OS',
+  description: 'The AI-native operating system for bookkeeping firms.',
 }
 
 export default function RootLayout({
