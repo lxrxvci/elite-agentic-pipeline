@@ -16,7 +16,7 @@ const cspHeader = (
 )
 
 const nextConfig = {
-  output: 'standalone',
+  // standalone output breaks Vercel builds (nft tracing); not needed there
   images: {
     formats: ['image/avif', 'image/webp'],
   },
