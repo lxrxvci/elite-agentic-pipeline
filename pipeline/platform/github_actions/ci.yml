@@ -78,6 +78,7 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' }}
     permissions:
       contents: write
+      actions: read
     uses: ./.github/workflows/dora-metrics.yml
     with:
       project-dir: firmos
