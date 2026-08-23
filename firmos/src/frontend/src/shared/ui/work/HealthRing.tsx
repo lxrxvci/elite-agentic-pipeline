@@ -17,14 +17,15 @@ export function HealthRing({
 }) {
   const r = (size - 6) / 2
   const c = 2 * Math.PI * r
-  const filled = (Math.max(0, Math.min(100, score)) / 100) * c
+  const clamped = Math.max(0, Math.min(100, score))
+  const filled = (clamped / 100) * c
   const colorVar = `var(--status-${status.replace('_', '-')})`
 
   return (
     <div
       className="relative inline-flex items-center justify-center"
       role="img"
-      aria-label={`Client health ${score} of 100`}
+      aria-label={`Client health ${clamped} of 100`}
       style={{ width: size, height: size }}
     >
       <svg width={size} height={size} className="-rotate-90">
@@ -48,7 +49,7 @@ export function HealthRing({
         />
       </svg>
       <span className="tnum absolute text-[11px] font-bold" style={{ color: colorVar }}>
-        {score}
+        {clamped}
       </span>
     </div>
   )
