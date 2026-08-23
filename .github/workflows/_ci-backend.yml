@@ -6,7 +6,7 @@ on:
       project-dir:
         required: false
         type: string
-        default: foodcart-saas
+        default: firmos
       python-version:
         required: true
         type: string
@@ -29,7 +29,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ci_password
+          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: elite_db
         ports:
           - 5432:5432

@@ -6,7 +6,7 @@ on:
       project-dir:
         required: false
         type: string
-        default: example_project
+        default: firmos
   workflow_dispatch:
   schedule:
     - cron: '0 8 * * 1'
@@ -22,7 +22,7 @@ jobs:
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
       - name: Run load tests
-        working-directory: ${{ inputs.project-dir || 'example_project' }}
+        working-directory: ${{ inputs.project-dir || 'firmos' }}
         run: k6 run tests/perf/load.js
         env:
           BASE_URL: ${{ env.BASE_URL }}

@@ -6,7 +6,7 @@ on:
       project-dir:
         required: false
         type: string
-        default: foodcart-saas
+        default: firmos
       node-version:
         required: true
         type: string
@@ -17,10 +17,6 @@ jobs:
     defaults:
       run:
         working-directory: ${{ inputs.project-dir }}/src/frontend
-    env:
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5hY2NvdW50cy5kZXYk
-      CLERK_SECRET_KEY: sk_test_ci
-      NEXT_PUBLIC_ENABLED_FEATURES: photo-onboarding-v1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

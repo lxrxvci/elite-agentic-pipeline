@@ -6,7 +6,7 @@ on:
       project-dir:
         required: false
         type: string
-        default: foodcart-saas
+        default: firmos
       node-version:
         required: true
         type: string
@@ -14,19 +14,13 @@ on:
 jobs:
   e2e-real:
     runs-on: ubuntu-latest
-    env:
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5hY2NvdW50cy5kZXYk
-      CLERK_SECRET_KEY: sk_test_ci
-      CLERK_DISABLED: 'true'
-      NEXT_PUBLIC_ENABLED_FEATURES: photo-onboarding-v1
-      SECRET_KEY: ci-test-secret-key-not-for-production
-      DB_PASSWORD: ci_password
-      GRAFANA_ADMIN_PASSWORD: ci-grafana-password
     steps:
       - uses: actions/checkout@v4
 
       - name: Start backend services
         working-directory: ${{ inputs.project-dir }}
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
         run: |
           docker compose up -d backend
           for i in {1..30}; do
@@ -38,10 +32,6 @@ jobs:
             sleep 2
           done
           curl -fsS --retry 10 --retry-delay 3 http://localhost:8000/health
-
-      - name: Run database migrations
-        working-directory: ${{ inputs.project-dir }}
-        run: docker compose exec -T backend alembic upgrade head
 
       - uses: actions/setup-node@v4
         with:
@@ -61,19 +51,8 @@ jobs:
         working-directory: ${{ inputs.project-dir }}/src/frontend
         run: npm run test:e2e:real
 
-      - name: Dump backend logs
-        if: failure()
-        working-directory: ${{ inputs.project-dir }}
-        run: docker compose logs backend
-
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: e2e-real-report
           path: ${{ inputs.project-dir }}/src/frontend/playwright-report
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: e2e-real-test-results
-          path: ${{ inputs.project-dir }}/src/frontend/test-results

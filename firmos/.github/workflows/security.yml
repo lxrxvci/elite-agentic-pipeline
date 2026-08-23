@@ -1,0 +1,24 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_call:
+
+env:
+  PROJECT_DIR: example_project
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  scan:
+    uses: ./.github/workflows/_security-scan.yml
+    with:
+      project-dir: example_project

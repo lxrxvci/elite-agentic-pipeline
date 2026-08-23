@@ -5,10 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
 
 env:
-  PROJECT_DIR: foodcart-saas
+  PROJECT_DIR: firmos
 
 jobs:
   changes:
@@ -42,7 +41,7 @@ jobs:
     if: ${{ needs.changes.outputs.frontend == 'true' }}
     uses: ./.github/workflows/_ci-frontend.yml
     with:
-      project-dir: foodcart-saas
+      project-dir: firmos
       node-version: "20"
 
   backend:
@@ -50,9 +49,9 @@ jobs:
     if: ${{ needs.changes.outputs.backend == 'true' }}
     uses: ./.github/workflows/_ci-backend.yml
     with:
-      project-dir: foodcart-saas
+      project-dir: firmos
       python-version: "3.12"
-      database-url: postgresql+psycopg://postgres:ci_password@localhost:5432/elite_db
+      database-url: postgresql+psycopg://postgres:postgres@localhost:5432/elite_db
     secrets:
       ci-secret-key: ${{ secrets.CI_SECRET_KEY }}
 
@@ -64,14 +63,14 @@ jobs:
       id-token: write
     uses: ./.github/workflows/_ci-infra.yml
     with:
-      project-dir: foodcart-saas
+      project-dir: firmos
 
   e2e-real:
     needs: changes
-    if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.backend == 'true' }}
     uses: ./.github/workflows/_ci-e2e-real.yml
     with:
-      project-dir: foodcart-saas
+      project-dir: firmos
       node-version: "20"
 
   dora:
@@ -81,7 +80,7 @@ jobs:
       contents: write
     uses: ./.github/workflows/dora-metrics.yml
     with:
-      project-dir: foodcart-saas
+      project-dir: firmos
 
   pipeline:
     needs: changes

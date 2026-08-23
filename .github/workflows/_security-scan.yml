@@ -6,7 +6,7 @@ on:
       project-dir:
         required: false
         type: string
-        default: foodcart-saas
+        default: firmos
 
 permissions:
   contents: read

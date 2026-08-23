@@ -1,0 +1,11 @@
+{
+  "name": "@firmos/attribution",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FirmOS domain core: accounting-month attribution, due-date semantics (close tiers, catch-up, deferred-until), wall-clock interval math, client health scoring. Ported test-first from Yecny Bookkeeping OS.",
+  "main": "./src/index.ts",
+  "scripts": {
+    "test": "node --test 'test/*.test.ts'"
+  }
+}
