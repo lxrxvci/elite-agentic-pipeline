@@ -22,7 +22,7 @@ jobs:
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
         run: |
-          docker compose up -d backend
+          docker compose up -d db redis backend
           for i in {1..30}; do
             if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
               echo "Backend is healthy"
@@ -32,6 +32,10 @@ jobs:
             sleep 2
           done
           curl -fsS --retry 10 --retry-delay 3 http://localhost:8000/health
+          # Sanity: the dev-login endpoint the E2E journey uses must be live
+          curl -fsS -X POST http://localhost:8000/api/v1/auth/token \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"ci-smoke@example.com"}' | head -c 200
 
       - uses: actions/setup-node@v4
         with:
