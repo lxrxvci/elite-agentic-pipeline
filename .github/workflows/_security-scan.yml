@@ -9,6 +9,7 @@ on:
         default: firmos
 
 permissions:
+  actions: read
   contents: read
   security-events: write
   pull-requests: write
