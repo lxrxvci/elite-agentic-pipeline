@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Button, Input, Modal, useToast } from '@/shared/ui'
+import { Button, Modal, Select, useToast } from '@/shared/ui'
 import { useMarkInvoicePaid } from '../api/useMarkInvoicePaid'
 
 interface RecordPaymentDialogProps {
@@ -10,8 +10,16 @@ interface RecordPaymentDialogProps {
   onClose: () => void
 }
 
+const PAYMENT_METHODS = [
+  { value: 'bank_transfer', label: 'Bank transfer' },
+  { value: 'card', label: 'Card' },
+  { value: 'cash', label: 'Cash' },
+  { value: 'check', label: 'Check' },
+  { value: 'other', label: 'Other' },
+]
+
 export function RecordPaymentDialog({ invoiceId, open, onClose }: RecordPaymentDialogProps) {
-  const [method, setMethod] = useState('Bank transfer')
+  const [method, setMethod] = useState('bank_transfer')
   const markPaid = useMarkInvoicePaid()
   const { toast } = useToast()
 
@@ -43,10 +51,11 @@ export function RecordPaymentDialog({ invoiceId, open, onClose }: RecordPaymentD
   return (
     <Modal open={open} onClose={onClose} title="Record payment" footer={footer}>
       <form id="record-payment-form" onSubmit={handleSubmit} className="space-y-4">
-        <Input
+        <Select
           label="Payment method"
           value={method}
           onChange={(e) => setMethod(e.target.value)}
+          options={PAYMENT_METHODS}
           required
         />
       </form>

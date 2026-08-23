@@ -52,7 +52,7 @@ test('login → client → project → time → invoice → payment', async ({ p
     // Log time
     await page.getByRole('link', { name: 'Time tracker' }).click()
     await expect(page.getByRole('heading', { name: 'Time tracker', exact: true })).toBeVisible()
-    await page.getByRole('button', { name: '+ Log time' }).click()
+    await page.getByRole('button', { name: 'Log time' }).click()
     await expect(page.getByRole('heading', { name: 'Quick time entry' })).toBeVisible()
     await page.getByLabel('Client').selectOption('Acme Corp')
     await page.getByLabel('Project').selectOption('Website Redesign')
@@ -74,12 +74,12 @@ test('login → client → project → time → invoice → payment', async ({ p
     // Invoice detail
     await expect(page).toHaveURL(/\/invoices\/[^/]+$/)
     await expect(page.getByRole('heading', { name: 'USD 100.00' })).toBeVisible()
-    await expect(page.getByText('Sent')).toBeVisible()
+    await expect(page.getByText('Draft')).toBeVisible()  // invoices start as draft; no send action yet
 
     // Record payment
     await page.getByRole('button', { name: 'Record payment' }).click()
     await expect(page.getByRole('heading', { name: 'Record payment' })).toBeVisible()
-    await page.getByLabel('Payment method').fill('Bank transfer')
+    await page.getByLabel('Payment method').selectOption('bank_transfer')
     await page.getByRole('button', { name: 'Mark paid' }).click()
     await expect(page.getByText('Invoice marked as paid')).toBeVisible()
     await expect(page.getByText('Paid', { exact: true })).toBeVisible()
