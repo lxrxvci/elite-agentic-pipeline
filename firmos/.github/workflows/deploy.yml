@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  PROJECT_DIR: example_project
+  PROJECT_DIR: firmos
   NODE_VERSION: "20"
   PYTHON_VERSION: "3.12"
   VERCEL_CLI_VERSION: "54.15.0"

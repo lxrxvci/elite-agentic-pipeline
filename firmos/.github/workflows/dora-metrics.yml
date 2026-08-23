@@ -6,16 +6,17 @@ on:
       project-dir:
         required: false
         type: string
-        default: example_project
+        default: firmos
   workflow_dispatch:
   schedule:
     - cron: '0 9 * * 1'
 
 permissions:
+  actions: read
   contents: write
 
 env:
-  PROJECT_DIR: example_project
+  PROJECT_DIR: firmos
 
 jobs:
   collect:

@@ -10,7 +10,7 @@ on:
     - cron: '0 7 * * 1'
 
 env:
-  PROJECT_DIR: example_project
+  PROJECT_DIR: firmos
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "20"
   DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/elite_db
