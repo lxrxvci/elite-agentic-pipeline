@@ -73,6 +73,7 @@ def dev_token(
             tenant_id=tenant.id,
             email=payload.email,
             name=payload.email.split("@")[0],
+            role="owner",  # first user of a newly provisioned tenant owns it
         )
         db.add(user)
         db.commit()
