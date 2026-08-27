@@ -1,29 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build",
-  "outputDirectory": ".next",
-  "framework": "nextjs",
-  "headers": [
-    {
-      "source": "/:path*",
-      "headers": [
-        {
-          "key": "X-Content-Type-Options",
-          "value": "nosniff"
-        },
-        {
-          "key": "X-Frame-Options",
-          "value": "DENY"
-        },
-        {
-          "key": "Referrer-Policy",
-          "value": "strict-origin-when-cross-origin"
-        },
-        {
-          "key": "Permissions-Policy",
-          "value": "camera=(), microphone=(), geolocation=()"
-        }
-      ]
-    }
+  "crons": [
+    { "path": "/api/cron/recurring", "schedule": "0 11 * * *" },
+    { "path": "/api/cron/materialize", "schedule": "5 11 * * *" },
+    { "path": "/api/cron/resync-recurring", "schedule": "10 11 * * *" },
+    { "path": "/api/cron/overdue-check", "schedule": "0 12 * * *" },
+    { "path": "/api/cron/due-soon-check", "schedule": "0 12 * * *" },
+    { "path": "/api/cron/bank-feed-alerts", "schedule": "0 12 * * *" },
+    { "path": "/api/cron/statement-overdue", "schedule": "30 12 * * *" }
   ]
 }

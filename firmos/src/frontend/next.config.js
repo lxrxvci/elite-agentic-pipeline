@@ -1,7 +1,6 @@
 /** @type {import('next').NextConfig} */
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-const apiOrigin = apiUrl ? new URL(apiUrl).origin : "'self'"
+const path = require('path')
 
 const cspHeader = (
   "default-src 'self'; " +
@@ -9,14 +8,19 @@ const cspHeader = (
   "style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: blob:; " +
   "font-src 'self'; " +
-  `connect-src 'self' ${apiOrigin}; ` +
+  "connect-src 'self'; " +
   "frame-ancestors 'none'; " +
   "base-uri 'self'; " +
   "form-action 'self';"
 )
 
 const nextConfig = {
-  // standalone output breaks Vercel builds (nft tracing); not needed there
+  transpilePackages: ['@firmos/domain'],
+  // @firmos/domain is a file: dep outside this directory (../../packages/domain);
+  // Turbopack must treat the monorepo root as its project root to resolve it.
+  turbopack: {
+    root: path.resolve(__dirname, '../..'),
+  },
   images: {
     formats: ['image/avif', 'image/webp'],
   },

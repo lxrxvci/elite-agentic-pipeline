@@ -1,5 +1,5 @@
 /**
- * FirmOS Work Status Badge — THE status color contract.
+ * FirmOS Work Status Badge - THE status color contract.
  * One meaning = one token = identical on every surface (docs/DESIGN_MANDATE.md §2).
  * Never color alone: every badge pairs a leading dot with a text label.
  */
@@ -69,7 +69,7 @@ export function WorkStatusBadge({ status, size = 'sm', label }: WorkStatusBadgeP
   )
 }
 
-/** Left-edge status spine for queue rows — the glanceable color signal. */
+/** Left-edge status spine for queue rows - the glanceable color signal. */
 export function StatusSpine({ status }: { status: WorkStatus }) {
   const c = config[status]
   return (

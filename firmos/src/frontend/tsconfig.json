@@ -12,6 +12,7 @@
     "strictNullChecks": true,
     "noImplicitAny": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "ESNext",
     "moduleResolution": "bundler",

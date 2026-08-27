@@ -3,8 +3,8 @@
 import { WorkStatus, workStatusConfig } from './WorkStatusBadge'
 
 /**
- * Client health ring — Yecny's health score made glanceable.
- * Color follows the status contract; the number is the score (0–100).
+ * Client health ring - Yecny's health score made glanceable.
+ * Color follows the status contract; the number is the score (0-100).
  */
 export function HealthRing({
   score,

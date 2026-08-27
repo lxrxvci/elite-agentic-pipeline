@@ -1,20 +1,26 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@import 'tw-animate-css';
 
 /*
- * FirmOS Design System — semantic oklch tokens
+ * FirmOS Design System - semantic oklch tokens (Tailwind v4, CSS-first).
  * See docs/DESIGN_MANDATE.md. Status color language is a contract:
  * one meaning = one token = identical on every surface. Never color alone.
+ *
+ * shadcn/ui semantic vars (--background, --primary, ...) are mapped onto
+ * the firm token system below - the mandate palette wins, never stock zinc.
  */
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  /* Brand — bookkeeping teal (nod to #007B7F), perceptually uniform */
+  --radius: 0.5rem;
+
+  /* Brand - bookkeeping teal (nod to #007B7F), perceptually uniform */
   --firm-brand: oklch(0.55 0.11 190);
   --firm-brand-strong: oklch(0.47 0.11 190);
   --firm-brand-soft: oklch(0.95 0.03 190);
 
-  /* Surfaces — cool paper, layered */
+  /* Surfaces - cool paper, layered */
   --firm-bg: oklch(0.977 0.003 240);
   --firm-surface: oklch(1 0 0);
   --firm-surface-2: oklch(0.955 0.004 240);
@@ -43,9 +49,30 @@
   /* Financial data accents */
   --money-positive: oklch(0.58 0.13 158);
   --money-negative: oklch(0.52 0.2 27);
+
+  /* ── shadcn/ui semantic layer, mapped onto the firm tokens ──── */
+  --background: var(--firm-bg);
+  --foreground: var(--firm-text);
+  --card: var(--firm-surface);
+  --card-foreground: var(--firm-text);
+  --popover: var(--firm-surface);
+  --popover-foreground: var(--firm-text);
+  --primary: var(--firm-brand);
+  --primary-foreground: oklch(0.99 0.002 190);
+  --secondary: var(--firm-surface-2);
+  --secondary-foreground: var(--firm-text);
+  --muted: var(--firm-surface-2);
+  --muted-foreground: var(--firm-text-2);
+  --accent: var(--firm-brand-soft);
+  --accent-foreground: var(--firm-brand-strong);
+  --destructive: var(--status-overdue);
+  --destructive-foreground: oklch(0.99 0.002 27);
+  --border: var(--firm-border);
+  --input: var(--firm-border-strong);
+  --ring: var(--firm-brand);
 }
 
-[data-theme='dark'] {
+.dark {
   --firm-brand: oklch(0.72 0.11 190);
   --firm-brand-strong: oklch(0.8 0.1 190);
   --firm-brand-soft: oklch(0.28 0.05 190);
@@ -72,22 +99,102 @@
   --status-waiting-client-bg: oklch(0.3 0.05 245);
   --status-on-hold: oklch(0.62 0.015 255);
   --status-on-hold-bg: oklch(0.28 0.01 255);
+
+  /* shadcn overrides where the firm-token mapping alone is not enough */
+  --primary-foreground: oklch(0.16 0.03 190);
+  --destructive-foreground: oklch(0.97 0.01 27);
 }
 
-body {
-  color: var(--firm-text);
-  background: var(--firm-bg);
+@theme inline {
+  /* shadcn/ui semantic colors */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* FirmOS semantic system - CSS-var backed so dark mode is free */
+  --color-firm-brand: var(--firm-brand);
+  --color-firm-brand-strong: var(--firm-brand-strong);
+  --color-firm-brand-soft: var(--firm-brand-soft);
+  --color-firm-bg: var(--firm-bg);
+  --color-firm-surface: var(--firm-surface);
+  --color-firm-surface-2: var(--firm-surface-2);
+  --color-firm-border: var(--firm-border);
+  --color-firm-border-strong: var(--firm-border-strong);
+  --color-firm-text: var(--firm-text);
+  --color-firm-text-2: var(--firm-text-2);
+  --color-firm-text-3: var(--firm-text-3);
+
+  /* Status language - consumed by shared/ui/work (WorkStatusBadge, HealthRing) */
+  --color-status-overdue: var(--status-overdue);
+  --color-status-overdue-bg: var(--status-overdue-bg);
+  --color-status-due-soon: var(--status-due-soon);
+  --color-status-due-soon-bg: var(--status-due-soon-bg);
+  --color-status-on-track: var(--status-on-track);
+  --color-status-on-track-bg: var(--status-on-track-bg);
+  --color-status-deferred: var(--status-deferred);
+  --color-status-deferred-bg: var(--status-deferred-bg);
+  --color-status-waiting-client: var(--status-waiting-client);
+  --color-status-waiting-client-bg: var(--status-waiting-client-bg);
+  --color-status-on-hold: var(--status-on-hold);
+  --color-status-on-hold-bg: var(--status-on-hold-bg);
+
+  --color-money-positive: var(--money-positive);
+  --color-money-negative: var(--money-negative);
+
+  /* Type - Inter for data-dense UI, Plus Jakarta Sans for display/headings */
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-jakarta), var(--font-inter), system-ui, sans-serif;
+
+  /* Radii derived from one --radius knob (4/8px grid) */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
-@layer utilities {
-  /* Financial figures always align: use everywhere money renders */
-  .tnum {
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: 'tnum';
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
-  .focus-ring {
-    outline: 2px solid var(--firm-brand);
-    outline-offset: 2px;
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  /* Motion with restraint (docs/DESIGN_MANDATE.md §2) */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
+/* Financial figures always align: use everywhere money renders */
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+@utility focus-ring {
+  outline: 2px solid var(--firm-brand);
+  outline-offset: 2px;
+}

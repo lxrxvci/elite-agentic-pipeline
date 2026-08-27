@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "client_reports_client_name_period_unique" ON "client_reports" USING btree ("client_id","name","attributed_year","attributed_month");

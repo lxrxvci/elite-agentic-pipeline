@@ -1,111 +1,59 @@
-import { get } from '@vercel/edge-config'
-import type { NextRequest } from 'next/server'
-import { NextResponse } from 'next/server'
-
-import {
-  CANARY_API_URL_COOKIE,
-  CANARY_BUCKET_COOKIE,
-  type CanaryConfig,
-  appendCanaryToConnectSrc,
-  getCanaryApiOrigin,
-} from './shared/lib/canary'
-
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Edge middleware for percentage-based canary traffic splitting.
+ * Fast cookie-presence gate (ADR-0005). This is intentionally NOT a session
+ * validation - DB-backed validation happens in server components / guards
+ * (src/server/auth/guards.ts). The middleware only decides whether a login
+ * round-trip is needed at all.
  *
- * Reads the `canary` object from Vercel Edge Config. When a request falls in
- * the canary bucket it is either rewritten to the canary deployment URL (when
- * configured) or tagged with the `x-elite-canary` response header. A stable
- * cookie bucket keeps users pinned to the same variant for the duration of the
- * canary window.
- *
- * When `canary.apiUrl` is set, canary-bucket users also receive an
- * `elite-canary-api-url` cookie so the client API layer can direct requests to
- * the backend canary. The response CSP is patched to allow that origin in
- * `connect-src`.
+ * Note: the (app) route group is invisible in the URL, so protection is
+ * expressed by exclusion - everything except /login, /portal/login, the
+ * auth API, and Next.js internals requires the session cookie.
  */
-export async function middleware(request: NextRequest) {
-  let canary: CanaryConfig | undefined
-  try {
-    canary = await get<CanaryConfig>('canary')
-  } catch {
-    // Edge Config is not configured; pass through normally.
-    return clearCanaryApiCookieIfPresent(request)
-  }
+const SESSION_COOKIES = ["better-auth.session_token", "__Secure-better-auth.session_token"];
 
-  if (!canary || canary.percentage <= 0) {
-    return clearCanaryApiCookieIfPresent(request)
-  }
-
-  // Use an existing cookie bucket when available so a given user stays pinned.
-  let bucket = request.cookies.get(CANARY_BUCKET_COOKIE)?.value
-  if (!bucket) {
-    bucket = Math.random().toString()
-  }
-
-  const isCanary = parseFloat(bucket) * 100 < canary.percentage
-  if (!isCanary) {
-    const response = NextResponse.next()
-    setBucketCookie(request, response, bucket)
-    return clearCanaryApiCookieIfPresent(request, response)
-  }
-
-  let response: NextResponse
-  if (canary.deploymentUrl) {
-    const url = new URL(request.nextUrl.pathname + request.nextUrl.search, canary.deploymentUrl)
-    response = NextResponse.rewrite(url)
-  } else {
-    response = NextResponse.next()
-  }
-
-  response.headers.set('x-elite-canary', 'true')
-  setBucketCookie(request, response, bucket)
-
-  if (canary.apiUrl) {
-    const origin = getCanaryApiOrigin(canary.apiUrl)
-    response.cookies.set(CANARY_API_URL_COOKIE, canary.apiUrl, {
-      maxAge: COOKIE_MAX_AGE,
-      secure: request.nextUrl.protocol === 'https:',
-      sameSite: 'strict',
-      path: '/',
-    })
-    if (origin) {
-      const existingCsp = response.headers.get('Content-Security-Policy')
-      const patchedCsp = appendCanaryToConnectSrc(existingCsp, origin)
-      if (patchedCsp) {
-        response.headers.set('Content-Security-Policy', patchedCsp)
-      }
-    }
-  }
-
-  return response
+function hasSessionCookie(request: NextRequest): boolean {
+  return SESSION_COOKIES.some((name) => request.cookies.has(name));
 }
 
-function setBucketCookie(request: NextRequest, response: NextResponse, bucket: string) {
-  response.cookies.set(CANARY_BUCKET_COOKIE, bucket, {
-    maxAge: COOKIE_MAX_AGE,
-    secure: request.nextUrl.protocol === 'https:',
-    sameSite: 'strict',
-    path: '/',
-  })
-}
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const authed = hasSessionCookie(request);
 
-function clearCanaryApiCookieIfPresent(
-  request: NextRequest,
-  response?: NextResponse
-): NextResponse {
-  const res = response ?? NextResponse.next()
-  if (request.cookies.has(CANARY_API_URL_COOKIE)) {
-    res.cookies.set(CANARY_API_URL_COOKIE, '', {
-      maxAge: 0,
-      path: '/',
-    })
+  if (pathname === "/login") {
+    if (authed) return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.next();
   }
-  return res
+
+  // §12 portal sign-in: public like /login. Already-signed-in portal users
+  // are bounced to /portal by the page itself (staff stay put - the portal
+  // layout 404s staff roles).
+  if (pathname === "/portal/login") {
+    return NextResponse.next();
+  }
+
+  // Dev-only magic-link retrieval; the route itself refuses outside dev.
+  if (pathname.startsWith("/portal/api/")) {
+    return NextResponse.next();
+  }
+
+  if (!authed) {
+    const isPortal = pathname === "/portal" || pathname.startsWith("/portal/");
+    const login = new URL(isPortal ? "/portal/login" : "/login", request.url);
+    if (pathname !== "/") login.searchParams.set("next", pathname);
+    return NextResponse.redirect(login);
+  }
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/vitals).*)'],
-}
+  matcher: [
+    /*
+     * Everything except:
+     *  api/auth  (Better Auth endpoints - must be reachable while logged out)
+     *  _next/*   (static assets, image optimizer)
+     *  files with an extension (favicon.ico, etc.)
+     */
+    "/((?!api/auth|_next|.*\\..*).*)",
+  ],
+};

@@ -1,10 +1,5 @@
-import { ProtectedRoute } from '@/features/auth/ui/ProtectedRoute'
-import { DashboardPage } from '@/page-views/dashboard'
+import { redirect } from 'next/navigation'
 
 export default function Home() {
-  return (
-    <ProtectedRoute>
-      <DashboardPage />
-    </ProtectedRoute>
-  )
+  redirect('/workstation')
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "clients" ADD COLUMN "work_day_of_week" smallint;

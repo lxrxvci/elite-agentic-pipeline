@@ -1,18 +1,24 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import { Inter, Plus_Jakarta_Sans } from 'next/font/google'
 import './globals.css'
-import { QueryProvider } from './providers'
-import { ToastProvider } from '@/shared/ui'
-import { Layout } from '@/widgets/Layout/Layout'
-import { ErrorBoundary } from '@/shared/ui/ErrorBoundary'
-import { WebVitalsInit } from '@/shared/ui/WebVitalsInit'
+
+import { Toaster } from '@/components/ui/sonner'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
+const jakarta = Plus_Jakarta_Sans({ subsets: ['latin'], variable: '--font-jakarta' })
 
 export const metadata: Metadata = {
-  title: 'FirmOS — Bookkeeping Firm OS',
-  description: 'The AI-native operating system for bookkeeping firms.',
+  title: 'FirmOS - Bookkeeping Firm OS',
+  description: 'Practice-management OS for a bookkeeping firm.',
 }
+
+/*
+ * No-FOUC theme bootstrap - runs before first paint. Mirrors
+ * resolveTheme() in src/shared/lib/theme.ts: explicit localStorage
+ * choice wins, otherwise follow prefers-color-scheme.
+ * CSP allows inline scripts (script-src 'unsafe-inline').
+ */
+const themeBootstrap = `(function(){try{var t=localStorage.getItem('firmos-theme');var d=t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.toggle('dark',d)}catch(e){}})()`
 
 export default function RootLayout({
   children,
@@ -20,18 +26,13 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.variable} font-sans`}>
-        <ErrorBoundary>
-          <QueryProvider>
-            <ToastProvider>
-              <Layout>
-                <WebVitalsInit />
-                {children}
-              </Layout>
-            </ToastProvider>
-          </QueryProvider>
-        </ErrorBoundary>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+      </head>
+      <body className={`${inter.variable} ${jakarta.variable} font-sans`}>
+        {children}
+        <Toaster />
       </body>
     </html>
   )

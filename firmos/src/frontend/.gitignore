@@ -1,1 +1,4 @@
 .vercel
+screenshots/
+# Local document storage root (src/server/storage.ts, default driver).
+.firmos-docs/
