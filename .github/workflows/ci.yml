@@ -64,6 +64,11 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: firmos/src/frontend/package-lock.json
+      - name: Vendored domain copy is in sync
+        run: |
+          chmod +x firmos/scripts/*.sh
+          firmos/scripts/check-domain-sync.sh
+        working-directory: ${{ github.workspace }}
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
