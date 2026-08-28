@@ -79,14 +79,15 @@ test('statements: defer popover persists server-side, badge after reload', async
   await expect(rowByName().getByText(/Deferred until/)).toHaveCount(0, { timeout: 15_000 })
 })
 
-// REPRO (product bug, left failing on purpose): statements-queue.tsx holds
-// rows in useState(initialRows) and DeferPopover only calls router.refresh(),
-// so the deferred badge does NOT update until a full reload (verified
-// 2026-08-27: server persisted the deferral while the row badge stayed
-// stale for 15s+). The upload path patches rows in place via onUploaded;
-// the defer path has no onChanged wired. Expected correct behavior below.
-test.fixme('statements: defer popover sets the badge without a reload', async ({ page }) => {
+// Regression cover: the defer path reloads the queue in place via onChanged
+// (the badge used to stay stale until a full page reload).
+test('statements: defer popover sets the badge without a reload', async ({ page }) => {
   const firstRow = page.getByTestId('statement-queue-row').first()
+  // The deferral clears the overdue flag, which re-orders the queue - track
+  // the row by account name, not position.
+  const accountName = await firstRow.locator('td').nth(2).locator('span').first().innerText()
+  const rowByName = () =>
+    page.getByTestId('statement-queue-row').filter({ hasText: accountName })
   await firstRow.getByTestId('defer-trigger').click()
   const popover = page.getByTestId('defer-popover')
   const input = popover.locator('input[type="date"]')
@@ -95,7 +96,13 @@ test.fixme('statements: defer popover sets the badge without a reload', async ({
   until.setDate(until.getDate() + 7)
   await input.fill(until.toISOString().slice(0, 10))
   await popover.getByTestId('defer-submit').click()
-  await expect(firstRow.getByText(/Deferred until/)).toBeVisible({ timeout: 15_000 })
+  // No reload: the badge appears in place via the queue's onChanged reload.
+  await expect(rowByName().getByText(/Deferred until/)).toBeVisible({ timeout: 15_000 })
+
+  // Clean up: clear the deferral so the shared queue is left as found.
+  await rowByName().getByTestId('defer-trigger').click()
+  await page.getByTestId('defer-popover').getByRole('button', { name: 'Clear' }).click()
+  await expect(rowByName().getByText(/Deferred until/)).toHaveCount(0, { timeout: 15_000 })
 })
 
 test('statements @uploads: upload a statement from a grid cell', async ({ page }) => {

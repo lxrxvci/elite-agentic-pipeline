@@ -25,6 +25,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
+  getStatementQueueAction,
   getStatementsGridAction,
   markTransactionsDownloadedAction,
 } from '@/server/actions/statements'
@@ -102,6 +103,14 @@ export function StatementsQueue({ rows: initialRows, txRows, today, canManageSta
   const overdueCount = rows.filter((r) => r.status.isOverdue).length
   const missingTotal = rows.reduce((n, r) => n + r.status.missingCount, 0)
   const filtersActive = clientFilter !== 'all' || overdueOnly || needsAttention
+
+  async function reload() {
+    const res = await getStatementQueueAction()
+    if (res.ok) {
+      setRows(res.data)
+      setGrids({})
+    }
+  }
 
   async function ensureGrid(clientId: number): Promise<StatementsGrid | null> {
     const cached = grids[clientId]
@@ -374,6 +383,7 @@ export function StatementsQueue({ rows: initialRows, txRows, today, canManageSta
                                 accountName={row.accountName}
                                 deferredUntil={row.status.deferredUntil}
                                 today={today}
+                                onChanged={() => void reload()}
                               />
                             </>
                           )}

@@ -160,7 +160,7 @@ test('clients: properties tab on the real-estate client', async ({ page }) => {
 // unclickable (pointer interception verified 2026-08-27, see
 // test-results-live/.../test-failed-1.png from that run: the second tab row
 // is visibly clipped by the panel). Expected correct behavior below.
-test.fixme('clients: wrapped second-row tabs stay clickable at 1280px', async ({ page }) => {
+test('clients: wrapped second-row tabs stay clickable at 1280px', async ({ page }) => {
   await page.goto('/clients')
   await page.getByLabel('Search clients').fill('Riverstone')
   await page.getByTestId('client-row').filter({ hasText: 'Riverstone Property Group' }).click()

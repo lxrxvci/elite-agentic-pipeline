@@ -70,7 +70,7 @@ interface ClientDetailTabsProps {
 export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel }: ClientDetailTabsProps) {
   return (
     <Tabs defaultValue={defaultTab ?? 'overview'}>
-      <TabsList className="h-9 flex-wrap">
+      <TabsList className="h-auto flex-wrap">
         <TabsTrigger value="overview">Overview</TabsTrigger>
         <TabsTrigger value="work">
           Work
