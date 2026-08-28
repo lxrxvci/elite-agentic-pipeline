@@ -50,10 +50,13 @@ export const config = {
   matcher: [
     /*
      * Everything except:
-     *  api/auth  (Better Auth endpoints - must be reachable while logged out)
-     *  _next/*   (static assets, image optimizer)
+     *  api/auth             (Better Auth endpoints - must be reachable while logged out)
+     *  api/cron             (Vercel Cron - bearer-token guarded in the route)
+     *  api/documents        (streamed downloads - role-guarded in the route)
+     *  api/chat-attachments (streamed attachments - membership-guarded in the route)
+     *  _next/*              (static assets, image optimizer)
      *  files with an extension (favicon.ico, etc.)
      */
-    "/((?!api/auth|_next|.*\\..*).*)",
+    "/((?!api/auth|api/cron|api/documents|api/chat-attachments|_next|.*\\..*).*)",
   ],
 };

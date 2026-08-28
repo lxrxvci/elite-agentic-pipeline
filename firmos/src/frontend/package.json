@@ -17,6 +17,7 @@
     "test:server": "vitest run -c vitest.server.config.ts",
     "db:seed": "tsx src/server/seed.ts",
     "test:e2e": "playwright test",
+    "test:live": "playwright test -c playwright.live.config.ts",
     "shots": "tsx scripts/screenshot.ts",
     "sync:domain": "../../scripts/sync-domain.sh"
   },
