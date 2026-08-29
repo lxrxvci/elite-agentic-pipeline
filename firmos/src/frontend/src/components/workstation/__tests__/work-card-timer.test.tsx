@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getClockStatusAction, startTaskTimerAction, stopTaskTimerAction } from '@/server/actions/time'
+import { __resetClockStatusForTests } from '@/shared/lib/clock-status'
 import type { ClockStatus } from '@/server/time-tracking'
 import type { WorkCard } from '@/server/queue'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -65,8 +66,17 @@ function renderRow(card: WorkCard) {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  __resetClockStatusForTests()
   mockStatus.mockResolvedValue({ ok: true, data: status({}) })
 })
+
+const RUNNING_TIMER = {
+  entryId: 7,
+  taskId: 42,
+  taskTitle: 'Reconcile August',
+  startedAt: new Date().toISOString(),
+  elapsedMinutes: 0,
+}
 
 describe('WorkCardRow task timer', () => {
   it('renders the timer toggle only on task-kind cards', async () => {
@@ -82,20 +92,11 @@ describe('WorkCardRow task timer', () => {
   })
 
   it('starts the timer and reflects the running state from the server', async () => {
-    mockStart.mockResolvedValue({
-      ok: true,
-      data: status({
-        openTaskTimers: [
-          {
-            entryId: 7,
-            taskId: 42,
-            taskTitle: 'Reconcile August',
-            startedAt: new Date().toISOString(),
-            elapsedMinutes: 0,
-          },
-        ],
-      }),
-    })
+    mockStart.mockResolvedValue({ ok: true, data: status({}) })
+    // Mount reads empty timers; the post-toggle refresh reads them running.
+    mockStatus
+      .mockResolvedValueOnce({ ok: true, data: status({}) })
+      .mockResolvedValue({ ok: true, data: status({ openTaskTimers: [RUNNING_TIMER] }) })
     renderRow(taskCard())
     const toggle = await screen.findByTestId('task-timer-toggle')
     expect(toggle).toHaveAttribute('data-running', 'false')
@@ -109,20 +110,10 @@ describe('WorkCardRow task timer', () => {
   })
 
   it('stops a running timer', async () => {
-    mockStatus.mockResolvedValue({
-      ok: true,
-      data: status({
-        openTaskTimers: [
-          {
-            entryId: 7,
-            taskId: 42,
-            taskTitle: 'Reconcile August',
-            startedAt: new Date().toISOString(),
-            elapsedMinutes: 4,
-          },
-        ],
-      }),
-    })
+    // Mount reads the running timer; the post-toggle refresh reads none.
+    mockStatus
+      .mockResolvedValueOnce({ ok: true, data: status({ openTaskTimers: [RUNNING_TIMER] }) })
+      .mockResolvedValue({ ok: true, data: status({}) })
     mockStop.mockResolvedValue({ ok: true, data: status({}) })
     renderRow(taskCard())
 

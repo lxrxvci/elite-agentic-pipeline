@@ -5,6 +5,7 @@ import { Check, FileText, Landmark, Lock, RefreshCw, SquareCheck, Timer } from '
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { refreshClockStatus, useClockStatus } from '@/shared/lib/clock-status'
 import { dayLabel, dueAging, periodLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 import { StatusSpine, WorkStatusBadge, type WorkStatus } from '@/shared/ui/work'
@@ -55,23 +56,9 @@ export function TaskTimerToggle({
   /** Keyboard-selected rows reveal the idle toggle, matching the complete action. */
   revealed: boolean
 }) {
-  const [running, setRunning] = React.useState(false)
+  const clock = useClockStatus()
+  const running = clock?.openTaskTimers.some((t) => t.taskId === taskId) ?? false
   const [busy, setBusy] = React.useState(false)
-
-  React.useEffect(() => {
-    let cancelled = false
-    void import('@/server/actions/time')
-      .then((m) => m.getClockStatusAction())
-      .then((r) => {
-        if (!cancelled && r.ok) {
-          setRunning(r.data.openTaskTimers.some((t) => t.taskId === taskId))
-        }
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [taskId])
 
   async function toggle(e: React.MouseEvent) {
     e.stopPropagation()
@@ -80,13 +67,10 @@ export function TaskTimerToggle({
     try {
       const m = await import('@/server/actions/time')
       const result = running ? await m.stopTaskTimerAction(taskId) : await m.startTaskTimerAction(taskId)
-      if (result.ok) {
-        setRunning(result.data.openTaskTimers.some((t) => t.taskId === taskId))
-      } else {
-        // e.g. 409 "already has a running timer" - resync from the server.
-        const status = await m.getClockStatusAction()
-        if (status.ok) setRunning(status.data.openTaskTimers.some((t) => t.taskId === taskId))
-      }
+      // Whether it applied or the server rejected it (409), resync everyone
+      // from the shared store instead of a per-card status read.
+      void result
+      await refreshClockStatus()
     } catch {
       // no server reach in tests; leave state as-is
     } finally {
