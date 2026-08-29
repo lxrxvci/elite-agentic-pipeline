@@ -14,8 +14,11 @@ if (!connectionString) {
 }
 
 // Global memoization avoids exhausting connections under Next.js dev reloads.
+// prepare: false is required behind PgBouncer transaction pooling (Neon's
+// pooler): named prepared statements cannot survive connection reuse, and
+// without this some queries intermittently hang instead of erroring.
 const globalForDb = globalThis as unknown as { __firmosPg?: postgres.Sql };
-const client = globalForDb.__firmosPg ?? postgres(connectionString);
+const client = globalForDb.__firmosPg ?? postgres(connectionString, { prepare: false });
 if (process.env.NODE_ENV !== "production") globalForDb.__firmosPg = client;
 
 export const db = drizzle(client, { schema });
