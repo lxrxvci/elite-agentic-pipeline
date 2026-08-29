@@ -11,13 +11,17 @@ vi.mock('@/server/actions/work', () => ({
   completeWorkCard: vi.fn().mockResolvedValue({ ok: true }),
 }))
 
-// Saved views persist server-side now; keep jsdom off the DB layer.
-vi.mock('@/server/actions/saved-views', () => ({
-  listSavedViewsAction: vi.fn().mockResolvedValue({ ok: true, data: [] }),
-  saveSavedViewAction: vi.fn(),
-  deleteSavedViewAction: vi.fn(),
-  importSavedViewsAction: vi.fn().mockResolvedValue({ ok: true, data: { imported: 0 } }),
-}))
+// The saved-views seam talks to /api/saved-views over fetch; return an empty
+// list so jsdom never issues a real request.
+vi.stubGlobal(
+  'fetch',
+  vi.fn(async () =>
+    new Response(JSON.stringify({ ok: true, data: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  ),
+)
 
 // This jsdom build ships window.localStorage as a plain object - install a
 // minimal in-memory Storage so the work-day preference persists.

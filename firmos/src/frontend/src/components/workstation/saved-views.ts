@@ -1,22 +1,36 @@
-import {
-  deleteSavedViewAction,
-  importSavedViewsAction,
-  listSavedViewsAction,
-  saveSavedViewAction,
-} from '@/server/actions/saved-views'
-import type {
-  SavedViewContext,
-  SavedViewRecord,
-  WorkstationViewFilters,
-} from '@/server/saved-views'
+import type { SavedViewContext, WorkstationViewFilters } from '@/server/saved-views'
+
+/**
+ * Record shape returned by the REST routes (mirrors the engine's record).
+ */
+interface SavedViewRecord {
+  id: number
+  name: string
+  context: string
+  filters: WorkstationViewFilters
+  position: number
+}
+
+type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
+
+async function api<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
+  try {
+    const res = await fetch(path, init)
+    return (await res.json()) as ApiResult<T>
+  } catch {
+    // Network failure or a non-JSON body - callers treat this like a server
+    // error envelope and fall back per the migration-on-read contract.
+    return { ok: false, error: 'The saved-views service could not be reached.' }
+  }
+}
 
 /**
  * Saved views - Karbon-style "filter, save, come back".
  *
  * ──────────────────────── PERSISTENCE SEAM ────────────────────────
- * All saved-view storage goes through this module. Views now persist in the
- * saved_views table via the server actions above (per user, synced across
- * browsers). Callers never touch storage directly.
+ * All saved-view storage goes through this module. Views persist in the
+ * saved_views table via the /api/saved-views route handlers (per user,
+ * synced across browsers). Callers never touch storage directly.
  *
  * MIGRATE-ON-READ: views saved before the DB swap live in localStorage under
  * LEGACY_STORAGE_KEY. On the first successful read where the DB has no views
@@ -114,7 +128,7 @@ function toFilters(view: SavedView): WorkstationViewFilters {
  * chips still render instead of vanishing.
  */
 export async function loadSavedViews(): Promise<SavedView[]> {
-  const result = await listSavedViewsAction(CONTEXT)
+  const result = await api<SavedViewRecord[]>(`/api/saved-views?context=${CONTEXT}`)
   if (!result.ok) return readLegacyViews()
   if (result.data.length > 0) {
     dropLegacyViews()
@@ -122,13 +136,17 @@ export async function loadSavedViews(): Promise<SavedView[]> {
   }
   const legacy = readLegacyViews()
   if (legacy.length === 0) return []
-  const imported = await importSavedViewsAction(
-    CONTEXT,
-    legacy.map((v) => ({ name: v.name, filters: toFilters(v) })),
-  )
+  const imported = await api<{ imported: number }>('/api/saved-views', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      context: CONTEXT,
+      views: legacy.map((v) => ({ name: v.name, filters: toFilters(v) })),
+    }),
+  })
   if (!imported.ok) return legacy
   dropLegacyViews()
-  const reloaded = await listSavedViewsAction(CONTEXT)
+  const reloaded = await api<SavedViewRecord[]>(`/api/saved-views?context=${CONTEXT}`)
   return reloaded.ok ? reloaded.data.map(fromRecord) : legacy
 }
 
@@ -140,14 +158,21 @@ export async function loadSavedViews(): Promise<SavedView[]> {
 export async function saveSavedView(views: SavedView[], view: SavedView): Promise<SavedView[]> {
   const name = view.name.trim()
   if (!name) return views
-  const result = await saveSavedViewAction(CONTEXT, name, toFilters({ ...view, name }))
+  const result = await api<SavedViewRecord>('/api/saved-views', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context: CONTEXT, name, filters: toFilters({ ...view, name }) }),
+  })
   if (!result.ok) throw new Error(result.error)
   return [...views, fromRecord(result.data)]
 }
 
 /** Delete by name; throws the server's message on failure. */
 export async function deleteSavedView(views: SavedView[], name: string): Promise<SavedView[]> {
-  const result = await deleteSavedViewAction(CONTEXT, name)
+  const result = await api<{ deleted: true }>(
+    `/api/saved-views/${encodeURIComponent(name)}?context=${CONTEXT}`,
+    { method: 'DELETE' },
+  )
   if (!result.ok) throw new Error(result.error)
   return views.filter((v) => v.name !== name)
 }

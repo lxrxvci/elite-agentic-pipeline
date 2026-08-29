@@ -1,12 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  deleteSavedViewAction,
-  importSavedViewsAction,
-  listSavedViewsAction,
-  saveSavedViewAction,
-} from '@/server/actions/saved-views'
-import type { SavedViewRecord, WorkstationViewFilters } from '@/server/saved-views'
+import type { WorkstationViewFilters } from '@/server/saved-views'
 
 import {
   deleteSavedView,
@@ -15,17 +9,36 @@ import {
   type SavedView,
 } from '../saved-views'
 
-vi.mock('@/server/actions/saved-views', () => ({
-  listSavedViewsAction: vi.fn(),
-  saveSavedViewAction: vi.fn(),
-  deleteSavedViewAction: vi.fn(),
-  importSavedViewsAction: vi.fn(),
-}))
+/**
+ * The seam talks to /api/saved-views over plain fetch (route handlers), so
+ * these tests mock global.fetch with the routes' { ok, data } / { ok: false,
+ * error } envelopes. No server modules are imported - jsdom stays off the DB.
+ */
 
-const mockList = vi.mocked(listSavedViewsAction)
-const mockSave = vi.mocked(saveSavedViewAction)
-const mockDelete = vi.mocked(deleteSavedViewAction)
-const mockImport = vi.mocked(importSavedViewsAction)
+const mockFetch = vi.fn()
+
+interface SavedViewRecord {
+  id: number
+  name: string
+  context: string
+  filters: WorkstationViewFilters
+  position: number
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function ok<T>(data: T): Response {
+  return jsonResponse({ ok: true, data })
+}
+
+function err(error: string): Response {
+  return jsonResponse({ ok: false, error })
+}
 
 const LEGACY_KEY = 'firmos.workstation.savedViews.v1'
 
@@ -51,6 +64,7 @@ function storageStub(): Storage {
 
 beforeAll(() => {
   Object.defineProperty(window, 'localStorage', { value: storageStub(), configurable: true })
+  vi.stubGlobal('fetch', mockFetch)
 })
 
 const FILTERS: WorkstationViewFilters = {
@@ -69,73 +83,95 @@ function record(id: number, name: string, filters: WorkstationViewFilters = FILT
 
 beforeEach(() => {
   window.localStorage.clear()
-  vi.clearAllMocks()
+  mockFetch.mockReset()
 })
 
-describe('saved-views client module (server-backed seam)', () => {
+describe('saved-views client module (REST seam)', () => {
   it('loads views from the DB and drops the legacy localStorage copy', async () => {
     window.localStorage.setItem(LEGACY_KEY, JSON.stringify([VIEW]))
-    mockList.mockResolvedValue({ ok: true, data: [record(1, 'DB view')] })
+    mockFetch.mockResolvedValue(ok([record(1, 'DB view')]))
 
     const views = await loadSavedViews()
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(mockFetch).toHaveBeenCalledWith('/api/saved-views?context=workstation', undefined)
     expect(views.map((v) => v.name)).toEqual(['DB view'])
-    expect(mockImport).not.toHaveBeenCalled()
     expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull()
   })
 
   it('migrates the legacy localStorage copy once when the DB is empty', async () => {
     window.localStorage.setItem(LEGACY_KEY, JSON.stringify([VIEW, { ...VIEW, name: 'Second' }]))
-    mockList
-      .mockResolvedValueOnce({ ok: true, data: [] }) // pre-import read
-      .mockResolvedValueOnce({ ok: true, data: [record(1, 'My overdue'), record(2, 'Second')] })
-    mockImport.mockResolvedValue({ ok: true, data: { imported: 2 } })
+    mockFetch
+      .mockResolvedValueOnce(ok([])) // pre-import read
+      .mockResolvedValueOnce(ok({ imported: 2 }))
+      .mockResolvedValueOnce(ok([record(1, 'My overdue'), record(2, 'Second')]))
 
     const views = await loadSavedViews()
-    expect(mockImport).toHaveBeenCalledWith('workstation', [
-      { name: 'My overdue', filters: FILTERS },
-      { name: 'Second', filters: FILTERS },
-    ])
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+    const importCall = mockFetch.mock.calls[1]
+    expect(importCall[0]).toBe('/api/saved-views')
+    expect(importCall[1]?.method).toBe('POST')
+    expect(JSON.parse(String(importCall[1]?.body))).toEqual({
+      context: 'workstation',
+      views: [
+        { name: 'My overdue', filters: FILTERS },
+        { name: 'Second', filters: FILTERS },
+      ],
+    })
     expect(views.map((v) => v.name)).toEqual(['My overdue', 'Second'])
     expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull()
   })
 
   it('returns empty without importing when neither store has views', async () => {
-    mockList.mockResolvedValue({ ok: true, data: [] })
+    mockFetch.mockResolvedValue(ok([]))
     expect(await loadSavedViews()).toEqual([])
-    expect(mockImport).not.toHaveBeenCalled()
+    expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 
   it('falls back to the legacy copy when the server read fails', async () => {
     window.localStorage.setItem(LEGACY_KEY, JSON.stringify([VIEW]))
-    mockList.mockResolvedValue({ ok: false, error: 'offline' })
+    mockFetch.mockResolvedValue(err('offline'))
     const views = await loadSavedViews()
     expect(views.map((v) => v.name)).toEqual(['My overdue'])
     // The legacy copy survives a failed read so a later load can migrate it.
     expect(window.localStorage.getItem(LEGACY_KEY)).not.toBeNull()
   })
 
+  it('falls back to the legacy copy when fetch rejects outright', async () => {
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify([VIEW]))
+    mockFetch.mockRejectedValue(new TypeError('Failed to fetch'))
+    const views = await loadSavedViews()
+    expect(views.map((v) => v.name)).toEqual(['My overdue'])
+    expect(window.localStorage.getItem(LEGACY_KEY)).not.toBeNull()
+  })
+
   it('saves a view and appends it to the list', async () => {
-    mockSave.mockResolvedValue({ ok: true, data: record(3, 'New view') })
+    mockFetch.mockResolvedValue(ok(record(3, 'New view')))
     const next = await saveSavedView([VIEW], { ...VIEW, name: '  New view  ' })
-    expect(mockSave).toHaveBeenCalledWith('workstation', 'New view', FILTERS)
+    const call = mockFetch.mock.calls[0]
+    expect(call[0]).toBe('/api/saved-views')
+    expect(JSON.parse(String(call[1]?.body))).toEqual({
+      context: 'workstation',
+      name: 'New view',
+      filters: FILTERS,
+    })
     expect(next.map((v) => v.name)).toEqual(['My overdue', 'New view'])
   })
 
   it('throws the server conflict message on a duplicate name', async () => {
-    mockSave.mockResolvedValue({
-      ok: false,
-      error: 'A view named "My overdue" already exists - pick another name.',
-    })
+    mockFetch.mockResolvedValue(err('A view named "My overdue" already exists - pick another name.'))
     await expect(saveSavedView([], VIEW)).rejects.toThrow('already exists')
   })
 
   it('deletes by name and surfaces server failures', async () => {
-    mockDelete.mockResolvedValue({ ok: true, data: { deleted: true } })
+    mockFetch.mockResolvedValue(ok({ deleted: true }))
     const next = await deleteSavedView([VIEW, { ...VIEW, name: 'Other' }], 'My overdue')
-    expect(mockDelete).toHaveBeenCalledWith('workstation', 'My overdue')
+    expect(mockFetch).toHaveBeenCalledWith(
+      `/api/saved-views/${encodeURIComponent('My overdue')}?context=workstation`,
+      { method: 'DELETE' },
+    )
     expect(next.map((v) => v.name)).toEqual(['Other'])
 
-    mockDelete.mockResolvedValue({ ok: false, error: 'No view named "Ghost".' })
+    mockFetch.mockResolvedValue(err('No view named "Ghost".'))
     await expect(deleteSavedView([], 'Ghost')).rejects.toThrow('No view named')
   })
 })

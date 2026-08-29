@@ -13,32 +13,35 @@ vi.mock('@/server/actions/work', () => ({
   completeWorkCard: vi.fn(),
 }))
 
-// Saved views persist server-side now; an in-memory store keeps these tests
-// focused on the queue. (The module's own seam tests mock the same actions.)
-vi.mock('@/server/actions/saved-views', () => {
-  let seq = 0
-  let store: { id: number; name: string; context: string; filters: unknown; position: number }[] = []
-  return {
-    __resetSavedViews: () => {
-      store = []
-    },
-    listSavedViewsAction: vi.fn(async () => ({ ok: true as const, data: store })),
-    saveSavedViewAction: vi.fn(async (_context: string, name: string, filters: unknown) => {
-      if (store.some((v) => v.name.toLowerCase() === name.toLowerCase())) {
-        return { ok: false as const, error: `A view named "${name}" already exists - pick another name.` }
-      }
-      seq += 1
-      const record = { id: seq, name, context: 'workstation', filters, position: seq }
-      store = [...store, record]
-      return { ok: true as const, data: record }
-    }),
-    deleteSavedViewAction: vi.fn(async (_context: string, name: string) => {
-      store = store.filter((v) => v.name !== name)
-      return { ok: true as const, data: { deleted: true as const } }
-    }),
-    importSavedViewsAction: vi.fn(async () => ({ ok: true as const, data: { imported: 0 } })),
+// The saved-views seam talks to /api/saved-views over fetch; stub a minimal
+// in-memory REST surface so these tests stay focused on the queue.
+const savedViewsStore: { id: number; name: string; context: string; filters: unknown; position: number }[] = []
+let savedViewSeq = 0
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+}
+const fetchStub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+  if (url.startsWith('/api/saved-views/') && init?.method === 'DELETE') {
+    const name = decodeURIComponent(url.slice('/api/saved-views/'.length, url.indexOf('?')))
+    const idx = savedViewsStore.findIndex((v) => v.name === name)
+    if (idx >= 0) savedViewsStore.splice(idx, 1)
+    return jsonResponse({ ok: true, data: { deleted: true } })
   }
+  if (url.startsWith('/api/saved-views') && init?.method === 'POST') {
+    const body = JSON.parse(String(init.body))
+    if (Array.isArray(body.views)) return jsonResponse({ ok: true, data: { imported: 0 } })
+    if (savedViewsStore.some((v) => v.name.toLowerCase() === String(body.name).toLowerCase())) {
+      return jsonResponse({ ok: false, error: `A view named "${body.name}" already exists - pick another name.` })
+    }
+    savedViewSeq += 1
+    const record = { id: savedViewSeq, name: body.name, context: body.context, filters: body.filters, position: savedViewSeq }
+    savedViewsStore.push(record)
+    return jsonResponse({ ok: true, data: record })
+  }
+  return jsonResponse({ ok: true, data: [...savedViewsStore] })
 })
+vi.stubGlobal('fetch', fetchStub)
 
 const mockComplete = vi.mocked(completeWorkCard)
 
@@ -110,6 +113,8 @@ function renderQueue() {
 beforeEach(() => {
   window.sessionStorage.clear()
   window.localStorage.clear()
+  savedViewsStore.length = 0
+  fetchStub.mockClear()
   Element.prototype.scrollIntoView = vi.fn()
   mockComplete.mockReset()
   mockComplete.mockResolvedValue({ ok: true })
