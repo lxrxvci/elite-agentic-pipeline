@@ -23,7 +23,7 @@ test('money: generate month (idempotent), open, send, mark paid, QBO CSV', async
   await page.getByTestId('generate-run-button').click()
   await page.getByTestId('generate-run-dialog').getByRole('button', { name: /Run for/ }).click()
   await expect(
-    page.locator('[data-sonner-toast]').getByText(/billing run complete/),
+    page.getByTestId('generate-run-result'),
   ).toBeVisible({ timeout: 60_000 })
   // The run ends in router.refresh(): the fresh rows arriving prove the
   // refresh has landed. Clicking run 2 before that races the remount and
@@ -34,9 +34,9 @@ test('money: generate month (idempotent), open, send, mark paid, QBO CSV', async
   // ── Run 2: idempotent - clients already invoiced are skipped ──
   await page.getByTestId('generate-run-button').click()
   await page.getByTestId('generate-run-dialog').getByRole('button', { name: /Run for/ }).click()
-  await expect(
-    page.locator('[data-sonner-toast]').last().getByText(/0 created/),
-  ).toBeVisible({ timeout: 60_000 })
+  const secondResult = page.getByTestId('generate-run-result')
+  await expect(secondResult).toBeVisible({ timeout: 60_000 })
+  await expect(secondResult.getByTestId('run-created')).toContainText('0', { timeout: 15_000 })
   await page.waitForLoadState('networkidle')
 
   // ── Open the first draft: lines render, due Net 15 ──

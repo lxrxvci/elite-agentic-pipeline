@@ -13,8 +13,9 @@ import { LIVE_PASSWORD, PORTAL, STAFF, loginAs, logout } from './helpers'
 test.describe('auth', () => {
   test('staff login happy path and logout', async ({ page }) => {
     await loginAs(page, STAFF.owner)
-    await expect(page).toHaveURL(/\/$/)
-    await expect(page.getByRole('heading', { name: 'Workstation' })).toBeVisible()
+    // Owner lands on the Firm Progression Board (role-based landing).
+    await expect(page).toHaveURL(/\/progress$/)
+    await expect(page.getByRole('heading', { name: 'Progress' })).toBeVisible()
 
     await logout(page)
     await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible()
