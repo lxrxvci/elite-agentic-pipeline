@@ -126,6 +126,16 @@ function blobToken(): string | undefined {
  */
 async function blobDriver(): Promise<StorageDriver> {
   const { put, get, del, head } = await import("@vercel/blob");
+  const wrap = <A extends unknown[], R>(fn: (...args: A) => Promise<R>, op: string) =>
+    async (...args: A): Promise<R> => {
+      try {
+        return await fn(...args);
+      } catch (error) {
+        console.error(`[storage] blob ${op} failed:`, error);
+        throw error;
+      }
+    };
+  const putW = wrap(put, "put");
   return {
     async put(relPath, bytes) {
       await put(relPath, Buffer.from(bytes), {
