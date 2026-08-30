@@ -41,7 +41,7 @@ export const STREAM_KIND: Record<YearGridStream, WorkCardKind> = {
   tasks: 'task',
 }
 
-const STREAM_LABEL: Record<YearGridStream, string> = {
+export const STREAM_LABEL: Record<YearGridStream, string> = {
   bank_feeds: 'Bank feeds',
   reconciliations: 'Reconciliations',
   reports: 'Reports',

@@ -60,7 +60,7 @@ async function login(page: Page): Promise<void> {
   await page.getByLabel(/email/i).fill(EMAIL);
   await page.getByLabel(/password/i).fill(PASSWORD);
   await page.getByRole("button", { name: /sign in|log in/i }).click();
-  await page.waitForURL(/workstation/, { timeout: 15_000 });
+  await page.waitForURL(/workstation|progress/, { timeout: 15_000 });
 }
 
 async function setTheme(page: Page, theme: "light" | "dark"): Promise<void> {

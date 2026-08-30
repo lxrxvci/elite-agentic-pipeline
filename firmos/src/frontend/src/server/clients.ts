@@ -10,6 +10,7 @@ import {
   type ClientWorkState,
   type HealthRow,
   type HealthStatus,
+  type LocalDate,
 } from "@firmos/domain";
 
 import { db } from "@/db";
@@ -26,7 +27,7 @@ import {
 } from "@/db/schema";
 
 import { requireRole, requireStaff } from "./auth/guards";
-import { catchupOf, toDomainClient } from "./domain-adapters";
+import { catchupOf, toDomainClient, type ClientRow } from "./domain-adapters";
 import { localToday } from "./dates";
 import { getFirmProfitability } from "./profitability";
 import { getUnifiedQueue, type WorkCard } from "./queue";
@@ -98,7 +99,69 @@ function refOf(row: UserNameRow | undefined): StaffRef | null {
   };
 }
 
+export { refOf as staffRefOf };
+
 const OPEN_TASK_STATUSES = ["completed", "cancelled"] as const;
+
+/** The raw work rows a health summary is scored from (all states, not just open). */
+export interface HealthSourceRows {
+  feeds: {
+    completedAt: Date | null;
+    dueDate: string | null;
+    waitingOnClient: boolean;
+    deferredUntil: string | null;
+  }[];
+  recons: { completedAt: Date | null; dueDate: string | null; waitingOnClient: boolean }[];
+  reports: { completedAt: Date | null; dueDate: string | null }[];
+  openTasks: { status: string; dueDate: string | null }[];
+}
+
+/**
+ * The §21 health summary for one client: categories are bank feeds,
+ * reconciliations, and reports (waiting-on-client rows, deferred feeds, and
+ * pre-catch-up periods never count toward a category), plus the overdue
+ * non-category task penalty. Returns null for on-hold clients - pausing
+ * must never punish the score (§5). Shared by the clients list and the
+ * progression board so the ring can never disagree between surfaces.
+ */
+export function healthSummaryFromRows(
+  client: ClientRow,
+  rows: HealthSourceRows,
+  today: LocalDate,
+): ClientHealthSummary | null {
+  if (!countsForScoring(toDomainClient(client))) return null;
+
+  const catchup = catchupOf(client);
+  const toHealthRow = (r: {
+    completedAt: Date | null;
+    dueDate: string | null;
+    waitingOnClient?: boolean;
+    deferredUntil?: string | null;
+  }): HealthRow => ({
+    completed: r.completedAt != null,
+    due_date: r.dueDate ? parseLocalDate(r.dueDate) : null,
+    waiting_on_client: r.waitingOnClient ?? false,
+    deferred_until: r.deferredUntil ? parseLocalDate(r.deferredUntil) : null,
+  });
+
+  const categories = [
+    { name: "bank_feeds", rows: rows.feeds.map(toHealthRow), opts: { catchupDate: catchup ?? undefined } },
+    { name: "reconciliations", rows: rows.recons.map(toHealthRow), opts: {} },
+    { name: "reports", rows: rows.reports.map(toHealthRow), opts: {} },
+  ].map((cat) => {
+    const completion = categoryCompletion(cat.rows, cat.opts);
+    return { name: cat.name, applicable: completion != null, completion: completion ?? 0 };
+  });
+
+  const overdueTaskCount = rows.openTasks.filter(
+    (t) =>
+      t.status !== "waiting_on_client" &&
+      t.dueDate != null &&
+      compareLocalDate(parseLocalDate(t.dueDate), today) < 0,
+  ).length;
+
+  return clientHealthScore(categories, overdueTaskCount);
+}
 
 /**
  * The /clients list: every client with staff, lifecycle state, open-work
@@ -140,54 +203,21 @@ export async function listClients(): Promise<ClientList> {
     const state = clientWorkState(domain);
     const scored = countsForScoring(domain);
 
-    const feeds = (feedsByClient.get(c.id) ?? []).filter((r) => r.completedAt == null);
-    const recons = (reconsByClient.get(c.id) ?? []).filter((r) => r.completedAt == null);
-    const reports = (reportsByClient.get(c.id) ?? []).filter((r) => r.completedAt == null);
+    const allFeeds = feedsByClient.get(c.id) ?? [];
+    const allRecons = reconsByClient.get(c.id) ?? [];
+    const allReports = reportsByClient.get(c.id) ?? [];
     const openTasks = tasksByClient.get(c.id) ?? [];
 
-    let health: ClientHealthSummary | null = null;
-    let openWorkCount = 0;
-    if (scored) {
-      openWorkCount = feeds.length + recons.length + reports.length + openTasks.length;
+    const feeds = allFeeds.filter((r) => r.completedAt == null);
+    const recons = allRecons.filter((r) => r.completedAt == null);
+    const reports = allReports.filter((r) => r.completedAt == null);
 
-      // §21: categories are bank feeds, reconciliations, reports; the penalty
-      // counts overdue non-category tasks. Health rows carry every row of the
-      // category (complete or not) so the completion % has a denominator.
-      const catchup = catchupOf(c);
-      const toHealthRow = (r: {
-        completedAt: Date | null;
-        dueDate: string | null;
-        waitingOnClient?: boolean;
-        deferredUntil?: string | null;
-      }): HealthRow => ({
-        completed: r.completedAt != null,
-        due_date: r.dueDate ? parseLocalDate(r.dueDate) : null,
-        waiting_on_client: r.waitingOnClient ?? false,
-        deferred_until: r.deferredUntil ? parseLocalDate(r.deferredUntil) : null,
-      });
-
-      const allFeeds = feedsByClient.get(c.id) ?? [];
-      const allRecons = reconsByClient.get(c.id) ?? [];
-      const allReports = reportsByClient.get(c.id) ?? [];
-
-      const categories = [
-        { name: "bank_feeds", rows: allFeeds.map(toHealthRow), opts: { catchupDate: catchup ?? undefined } },
-        { name: "reconciliations", rows: allRecons.map(toHealthRow), opts: {} },
-        { name: "reports", rows: allReports.map(toHealthRow), opts: {} },
-      ].map((cat) => {
-        const completion = categoryCompletion(cat.rows, cat.opts);
-        return { name: cat.name, applicable: completion != null, completion: completion ?? 0 };
-      });
-
-      const overdueTaskCount = openTasks.filter(
-        (t) =>
-          t.status !== "waiting_on_client" &&
-          t.dueDate != null &&
-          compareLocalDate(parseLocalDate(t.dueDate), today) < 0,
-      ).length;
-
-      health = clientHealthScore(categories, overdueTaskCount);
-    }
+    const openWorkCount = scored ? feeds.length + recons.length + reports.length + openTasks.length : 0;
+    const health = healthSummaryFromRows(
+      c,
+      { feeds: allFeeds, recons: allRecons, reports: allReports, openTasks },
+      today,
+    );
 
     return {
       id: c.id,

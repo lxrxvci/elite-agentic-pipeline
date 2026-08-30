@@ -4,6 +4,7 @@ import {
   FileText,
   FolderKanban,
   LayoutDashboard,
+  LayoutGrid,
   MessagesSquare,
   Receipt,
   ShieldCheck,
@@ -26,6 +27,7 @@ export interface NavItem {
 /** Primary surfaces, in mandated order. Admin lives separately at the bottom. */
 export const NAV_ITEMS: NavItem[] = [
   { title: 'Workstation', href: '/workstation', icon: LayoutDashboard },
+  { title: 'Progress', href: '/progress', icon: LayoutGrid },
   { title: 'Messages', href: '/messages', icon: MessagesSquare },
   { title: 'Clients', href: '/clients', icon: Users },
   { title: 'Client Intake', href: '/intake', icon: UserPlus },

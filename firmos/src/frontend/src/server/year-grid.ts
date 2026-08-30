@@ -107,7 +107,7 @@ export interface ClientYearGrid {
 }
 
 /** Normalized row the cell-state machine scores. */
-interface GridWorkRow {
+export interface GridWorkRow {
   period: Month;
   completed: boolean;
   waiting: boolean;
@@ -128,7 +128,7 @@ export function columnMonthFor(attributedMonth: number, cadenceMonths: number[])
 }
 
 /** The source months a column aggregates (Q1 -> [1,2,3]; monthly -> [m]). */
-function coveredMonths(columnIndex: number, cadenceMonths: number[]): number[] {
+export function coveredMonths(columnIndex: number, cadenceMonths: number[]): number[] {
   const end = cadenceMonths[columnIndex];
   const start = columnIndex === 0 ? 1 : cadenceMonths[columnIndex - 1] + 1;
   const months: number[] = [];
@@ -160,7 +160,7 @@ function isFuturePeriod(period: Month, today: LocalDate): boolean {
  *  5. period has not started                   -> not_due
  *  6. open work, nothing overdue yet           -> in_progress
  */
-function scoreCell(rows: GridWorkRow[], period: Month, today: LocalDate): YearGridCellState {
+export function scoreCell(rows: GridWorkRow[], period: Month, today: LocalDate): YearGridCellState {
   if (rows.length === 0) return "no_work";
   const settled = (r: GridWorkRow) =>
     // isSettled only null-checks completed_at; the boolean is the truth.
@@ -174,7 +174,7 @@ function scoreCell(rows: GridWorkRow[], period: Month, today: LocalDate): YearGr
   return "in_progress";
 }
 
-function countCell(
+export function countCell(
   stream: YearGridStream,
   period: Month,
   months: number[],
@@ -200,6 +200,101 @@ const ON_HOLD_NOTES: Partial<Record<ClientWorkState, string>> = {
   paused: "Client is paused. The grid is frozen: nothing accrues and nothing counts while paused.",
   inactive: "Client is inactive. Historical work stays on the record; nothing new generates.",
 };
+
+// ── Shared row normalization (per-client grid + firm progression board) ──
+
+type FeedRow = typeof weeklyBankFeeds.$inferSelect;
+type ReconRow = typeof accountReconciliations.$inferSelect;
+type ReportRow = typeof clientReports.$inferSelect;
+type TaskRow = typeof tasks.$inferSelect;
+
+/** Weekly feed rows roll up into their attributed month (queue.ts feedPeriod). */
+export function feedToGridRow(r: FeedRow): GridWorkRow {
+  return {
+    period: workPeriodForRow({
+      attributed_year: r.attributedYear,
+      attributed_month: r.attributedMonth,
+      due_date: r.dueDate,
+    }),
+    completed: r.completedAt != null,
+    waiting: r.waitingOnClient,
+    dueDate: r.dueDate,
+    deferredUntil: r.deferredUntil,
+  };
+}
+
+export function reconToGridRow(r: ReconRow): GridWorkRow {
+  return {
+    period: { year: r.attributedYear, month: r.attributedMonth },
+    completed: r.completedAt != null,
+    waiting: r.waitingOnClient,
+    dueDate: r.dueDate,
+    deferredUntil: null,
+  };
+}
+
+export function reportToGridRow(r: ReportRow): GridWorkRow {
+  return {
+    period: { year: r.attributedYear, month: r.attributedMonth },
+    completed: r.completedAt != null,
+    waiting: false,
+    dueDate: r.dueDate,
+    deferredUntil: null,
+  };
+}
+
+/**
+ * Queue parity (queue.ts taskPeriod): stored period wins, then due-date
+ * derivation, then the current work period for due-less ad-hoc tasks.
+ */
+export function taskToGridRow(t: TaskRow, today: LocalDate): GridWorkRow {
+  let period: Month;
+  if (t.attributedYear != null && t.attributedMonth != null) {
+    period = { year: t.attributedYear, month: t.attributedMonth };
+  } else if (t.dueDate != null) {
+    period = workPeriodForRow({
+      attributed_year: t.attributedYear,
+      attributed_month: t.attributedMonth,
+      due_date: t.dueDate,
+      title: t.title,
+    });
+  } else {
+    period = workPeriodForDue(today);
+  }
+  return {
+    period,
+    completed: t.status === "completed",
+    waiting: t.status === "waiting_on_client",
+    dueDate: t.dueDate,
+    deferredUntil: null,
+  };
+}
+
+/**
+ * Bucket one stream's normalized rows into cadence columns (off-cadence
+ * months roll into the column that closes their period) and score each one.
+ */
+export function buildStreamRow(
+  stream: YearGridStream,
+  rows: GridWorkRow[],
+  cadenceMonths: number[],
+  year: number,
+  today: LocalDate,
+): YearGridRow {
+  const buckets = new Map<number, GridWorkRow[]>();
+  for (const row of rows) {
+    const columnMonth = columnMonthFor(row.period.month, cadenceMonths);
+    const list = buckets.get(columnMonth) ?? [];
+    list.push(row);
+    buckets.set(columnMonth, list);
+  }
+  return {
+    stream,
+    cells: cadenceMonths.map((month, i) =>
+      countCell(stream, { year, month }, coveredMonths(i, cadenceMonths), buckets.get(month) ?? [], today),
+    ),
+  };
+}
 
 export async function getClientYearGrid(
   clientId: number,
@@ -271,23 +366,6 @@ export async function getClientYearGrid(
       ),
   ]);
 
-  // Queue parity (queue.ts taskPeriod): stored period wins, then due-date
-  // derivation, then the current work period for due-less ad-hoc tasks.
-  const taskPeriod = (t: (typeof taskRows)[number]): Month => {
-    if (t.attributedYear != null && t.attributedMonth != null) {
-      return { year: t.attributedYear, month: t.attributedMonth };
-    }
-    if (t.dueDate != null) {
-      return workPeriodForRow({
-        attributed_year: t.attributedYear,
-        attributed_month: t.attributedMonth,
-        due_date: t.dueDate,
-        title: t.title,
-      });
-    }
-    return workPeriodForDue(today);
-  };
-
   const rowsByStream: Record<YearGridStream, GridWorkRow[]> = {
     bank_feeds: [],
     reconciliations: [],
@@ -296,66 +374,25 @@ export async function getClientYearGrid(
   };
 
   for (const r of feedRows) {
-    // Weekly rows roll up into their attributed month (queue.ts feedPeriod).
-    const period = workPeriodForRow({
-      attributed_year: r.attributedYear,
-      attributed_month: r.attributedMonth,
-      due_date: r.dueDate,
-    });
-    if (period.year !== year) continue;
-    rowsByStream.bank_feeds.push({
-      period,
-      completed: r.completedAt != null,
-      waiting: r.waitingOnClient,
-      dueDate: r.dueDate,
-      deferredUntil: r.deferredUntil,
-    });
+    const row = feedToGridRow(r);
+    if (row.period.year !== year) continue;
+    rowsByStream.bank_feeds.push(row);
   }
   for (const r of reconRows) {
-    rowsByStream.reconciliations.push({
-      period: { year: r.attributedYear, month: r.attributedMonth },
-      completed: r.completedAt != null,
-      waiting: r.waitingOnClient,
-      dueDate: r.dueDate,
-      deferredUntil: null,
-    });
+    rowsByStream.reconciliations.push(reconToGridRow(r));
   }
   for (const r of reportRows) {
-    rowsByStream.reports.push({
-      period: { year: r.attributedYear, month: r.attributedMonth },
-      completed: r.completedAt != null,
-      waiting: false,
-      dueDate: r.dueDate,
-      deferredUntil: null,
-    });
+    rowsByStream.reports.push(reportToGridRow(r));
   }
   for (const t of taskRows) {
-    const period = taskPeriod(t);
-    if (period.year !== year) continue;
-    rowsByStream.tasks.push({
-      period,
-      completed: t.status === "completed",
-      waiting: t.status === "waiting_on_client",
-      dueDate: t.dueDate,
-      deferredUntil: null,
-    });
+    const row = taskToGridRow(t, today);
+    if (row.period.year !== year) continue;
+    rowsByStream.tasks.push(row);
   }
 
-  const rows: YearGridRow[] = YEAR_GRID_STREAMS.map((stream) => {
-    const buckets = new Map<number, GridWorkRow[]>();
-    for (const row of rowsByStream[stream]) {
-      const columnMonth = columnMonthFor(row.period.month, cadenceMonths);
-      const list = buckets.get(columnMonth) ?? [];
-      list.push(row);
-      buckets.set(columnMonth, list);
-    }
-    return {
-      stream,
-      cells: columns.map((column, i) =>
-        countCell(stream, column, coveredMonths(i, cadenceMonths), buckets.get(column.month) ?? [], today),
-      ),
-    };
-  });
+  const rows: YearGridRow[] = YEAR_GRID_STREAMS.map((stream) =>
+    buildStreamRow(stream, rowsByStream[stream], cadenceMonths, year, today),
+  );
 
   return {
     clientId,
