@@ -68,13 +68,19 @@ test('statements: defer popover persists server-side, badge after reload', async
   await input.fill(untilIso)
   await popover.getByTestId('defer-submit').click()
 
+  // Wait for the in-place badge (the onChanged reload) so the server write
+  // has committed before we navigate; live latency makes this race real.
+  await expect(rowByName().getByText(/Deferred until/)).toBeVisible({ timeout: 15_000 })
+
   // The deferral commits server-side; after a reload the badge renders.
   await page.reload()
   await expect(rowByName().getByText(/Deferred until/)).toBeVisible({ timeout: 15_000 })
 
-  // Clean up: clear the deferral so the shared queue is left as found.
+  // Clean up: clear the deferral so the shared queue is left as found. Wait
+  // for the clear toast (action committed) before reloading, same race as above.
   await rowByName().getByTestId('defer-trigger').click()
   await page.getByTestId('defer-popover').getByRole('button', { name: 'Clear' }).click()
+  await expect(page.getByText(/deferral cleared/)).toBeVisible({ timeout: 15_000 })
   await page.reload()
   await expect(rowByName().getByText(/Deferred until/)).toHaveCount(0, { timeout: 15_000 })
 })

@@ -100,7 +100,7 @@ interface StorageStateCookie {
 function personaCookies(persona: Persona): StorageStateCookie[] {
   const file = authFileFor(persona)
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { cookies: StorageStateCookie[] }
-  return raw.cookies.filter((c) => c.name.startsWith('better-auth'))
+  return raw.cookies.filter((c) => c.name.includes('better-auth'))
 }
 
 /** A request-level Cookie header for a persona (API probes). */
