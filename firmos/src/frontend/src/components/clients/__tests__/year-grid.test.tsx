@@ -326,3 +326,44 @@ describe('ClientWorkTab', () => {
     expect(refreshMock).toHaveBeenCalled()
   })
 })
+
+describe('YearGrid completion glow', () => {
+  it('pulses a green glow once when a mounted cell flips to complete, never on first paint', () => {
+    const base = makeYearGrid()
+    const flipped = makeYearGrid({
+      rows: base.rows.map((r) =>
+        r.stream === 'bank_feeds'
+          ? {
+              ...r,
+              cells: r.cells.map((c) =>
+                c.month === 8 ? { ...c, state: 'complete' as const, total: 4, completed: 4 } : c,
+              ),
+            }
+          : r,
+      ),
+    })
+    const props = {
+      filter: null,
+      onCellClick: () => {},
+      prevYearHref: '#',
+      nextYearHref: '#',
+    }
+    const { rerender } = render(
+      <TooltipProvider>
+        <YearGrid grid={base} {...props} />
+      </TooltipProvider>,
+    )
+    const cell = screen.getByLabelText(/Bank feeds, Aug 2026/)
+    // First paint never celebrates, even for cells already complete.
+    expect(cell.className).not.toContain('motion-safe:shadow-')
+
+    rerender(
+      <TooltipProvider>
+        <YearGrid grid={flipped} {...props} />
+      </TooltipProvider>,
+    )
+    // The flip pulse: glow ring + brightness lift, reduced-motion gated.
+    expect(cell.className).toContain('motion-safe:shadow-[0_0_0_2px_var(--status-on-track),0_0_14px_var(--status-on-track)]')
+    expect(cell.className).toContain('motion-safe:brightness-110')
+  })
+})

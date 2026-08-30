@@ -152,9 +152,11 @@ function StateIcon({ meta }: { meta: CellMeta }) {
 }
 
 export function YearGrid({ grid, filter, onCellClick, prevYearHref, nextYearHref }: YearGridProps) {
-  // Dopamine settle: when a cell flips to complete, pop it briefly. The ref
+  // Dopamine settle: when a cell flips to complete it pulses a green glow
+  // (box-shadow ring + a slight brightness lift) for ~550ms, then eases back
+  // to the steady complete tint via the cell's 200ms transition. The ref
   // seeds on mount so the first paint never animates; only true transitions
-  // into complete (same cell, previously not complete) celebrate.
+  // into complete (same cell, previously not complete) celebrate, once.
   const prevStates = useRef<Map<string, YearGridCellState> | null>(null)
   const [celebrating, setCelebrating] = useState<Set<string>>(new Set())
 
@@ -174,7 +176,7 @@ export function YearGrid({ grid, filter, onCellClick, prevYearHref, nextYearHref
     }
     if (flipped.length === 0) return
     setCelebrating(new Set(flipped))
-    const timer = setTimeout(() => setCelebrating(new Set()), 400)
+    const timer = setTimeout(() => setCelebrating(new Set()), 550)
     return () => clearTimeout(timer)
   }, [grid])
 
@@ -295,7 +297,8 @@ export function YearGrid({ grid, filter, onCellClick, prevYearHref, nextYearHref
                         clickable && 'cursor-pointer hover:ring-1 hover:ring-ring/60',
                         !clickable && 'cursor-default',
                         selected && 'ring-2 ring-ring',
-                        celebratingCell && 'motion-safe:scale-110 motion-safe:ring-2 motion-safe:ring-status-on-track/60',
+                        celebratingCell &&
+                          'motion-safe:shadow-[0_0_0_2px_var(--status-on-track),0_0_14px_var(--status-on-track)] motion-safe:brightness-110',
                       )}
                     >
                       <StateIcon meta={meta} />

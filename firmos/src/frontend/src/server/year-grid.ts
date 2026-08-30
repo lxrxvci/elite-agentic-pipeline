@@ -104,6 +104,8 @@ export interface ClientYearGrid {
   note: string | null;
   columns: Month[];
   rows: YearGridRow[];
+  /** Guided-close stepper state, one entry per column (same order). */
+  closeSteps: CloseSteps[];
 }
 
 /** Normalized row the cell-state machine scores. */
@@ -113,6 +115,69 @@ export interface GridWorkRow {
   waiting: boolean;
   dueDate: string | null;
   deferredUntil: string | null;
+}
+
+// ── Guided close steps (Wave 3: TurboTax-style month close) ──
+
+/**
+ * The four guided close steps, in order. Categorize/Reconcile/Reports map
+ * straight onto streams; Questions is the client's "Client Questions"
+ * recurring task instances inside the tasks stream (title match, §19).
+ */
+export type CloseStepKey = "categorize" | "reconcile" | "questions" | "reports";
+
+export const CLOSE_STEP_ORDER: CloseStepKey[] = [
+  "categorize",
+  "reconcile",
+  "questions",
+  "reports",
+];
+
+export const CLOSE_STEP_LABEL: Record<CloseStepKey, string> = {
+  categorize: "Categorize Transactions",
+  reconcile: "Reconcile Accounts",
+  questions: "Client Questions",
+  reports: "Send Reports",
+};
+
+/** The stream a step reads from (questions filters the tasks stream). */
+const CLOSE_STEP_STREAM: Record<CloseStepKey, YearGridStream> = {
+  categorize: "bank_feeds",
+  reconcile: "reconciliations",
+  questions: "tasks",
+  reports: "reports",
+};
+
+/** Recurring instances keep the rule title verbatim (recurring.ts). */
+export function isClientQuestionsTitle(title: string): boolean {
+  return title.trim().toLowerCase() === "client questions";
+}
+
+export interface CloseStep {
+  key: CloseStepKey;
+  label: string;
+  /** The same 6-state machine the grid cells use - one truth, one language. */
+  state: YearGridCellState;
+  total: number;
+  completed: number;
+  waiting: number;
+  open: number;
+  overdue: number;
+}
+
+export interface CloseSteps {
+  clientId: number;
+  year: number;
+  /** Column month (the cadence month that closes the period). */
+  month: number;
+  /** Source calendar months the column aggregates. */
+  months: number[];
+  /** Firm-local today, ISO-local. */
+  today: string;
+  steps: CloseStep[];
+  /** Steps in the complete state. */
+  doneCount: number;
+  allDone: boolean;
 }
 
 /**
@@ -296,6 +361,142 @@ export function buildStreamRow(
   };
 }
 
+/** The rows one close step scores, attributed into one cadence column. */
+function stepRows(
+  key: CloseStepKey,
+  rowsByStream: Record<YearGridStream, GridWorkRow[]>,
+  questionRows: GridWorkRow[],
+  columnIndex: number,
+  cadenceMonths: number[],
+): GridWorkRow[] {
+  const source = key === "questions" ? questionRows : rowsByStream[CLOSE_STEP_STREAM[key]];
+  const columnMonth = cadenceMonths[columnIndex];
+  return source.filter((row) => columnMonthFor(row.period.month, cadenceMonths) === columnMonth);
+}
+
+/**
+ * The four guided close steps for one cadence column. Every step reuses the
+ * grid's cell-state machine, so a stepper segment can never disagree with
+ * the cell of the stream it summarizes.
+ */
+export function buildCloseSteps(
+  clientId: number,
+  year: number,
+  columnIndex: number,
+  cadenceMonths: number[],
+  rowsByStream: Record<YearGridStream, GridWorkRow[]>,
+  questionRows: GridWorkRow[],
+  today: LocalDate,
+): CloseSteps {
+  const month = cadenceMonths[columnIndex];
+  const period = { year, month };
+  const months = coveredMonths(columnIndex, cadenceMonths);
+  const steps: CloseStep[] = CLOSE_STEP_ORDER.map((key) => {
+    const rows = stepRows(key, rowsByStream, questionRows, columnIndex, cadenceMonths);
+    const counted = countCell(CLOSE_STEP_STREAM[key], period, months, rows, today);
+    return {
+      key,
+      label: CLOSE_STEP_LABEL[key],
+      state: counted.state,
+      total: counted.total,
+      completed: counted.completed,
+      waiting: counted.waiting,
+      open: counted.open,
+      overdue: counted.overdue,
+    };
+  });
+  const doneCount = steps.filter((s) => s.state === "complete").length;
+  return {
+    clientId,
+    year,
+    month,
+    months,
+    today: formatLocalDate(today),
+    steps,
+    doneCount,
+    allDone: doneCount === steps.length,
+  };
+}
+
+/** On-hold clients are never scored (§6.2): every step freezes at not_due. */
+function frozenCloseSteps(
+  clientId: number,
+  year: number,
+  columnIndex: number,
+  cadenceMonths: number[],
+  today: LocalDate,
+): CloseSteps {
+  return buildCloseSteps(
+    clientId,
+    year,
+    columnIndex,
+    cadenceMonths,
+    { bank_feeds: [], reconciliations: [], reports: [], tasks: [] },
+    [],
+    today,
+  );
+}
+
+interface StreamRows {
+  rowsByStream: Record<YearGridStream, GridWorkRow[]>;
+  /** Tasks-stream rows whose title matches the "Client Questions" rule. */
+  questionRows: GridWorkRow[];
+}
+
+/** One batched pass over the four work tables, normalized for the given year. */
+async function loadStreamRows(clientId: number, year: number, today: LocalDate): Promise<StreamRows> {
+  const [feedRows, reconRows, reportRows, taskRows] = await Promise.all([
+    db.select().from(weeklyBankFeeds).where(eq(weeklyBankFeeds.clientId, clientId)),
+    db
+      .select()
+      .from(accountReconciliations)
+      .where(
+        and(
+          eq(accountReconciliations.clientId, clientId),
+          eq(accountReconciliations.attributedYear, year),
+        ),
+      ),
+    db
+      .select()
+      .from(clientReports)
+      .where(and(eq(clientReports.clientId, clientId), eq(clientReports.attributedYear, year))),
+    db
+      .select()
+      .from(tasks)
+      .where(
+        and(eq(tasks.clientId, clientId), isNull(tasks.deletedAt), notInArray(tasks.status, ["cancelled"])),
+      ),
+  ]);
+
+  const rowsByStream: Record<YearGridStream, GridWorkRow[]> = {
+    bank_feeds: [],
+    reconciliations: [],
+    reports: [],
+    tasks: [],
+  };
+  const questionRows: GridWorkRow[] = [];
+
+  for (const r of feedRows) {
+    const row = feedToGridRow(r);
+    if (row.period.year !== year) continue;
+    rowsByStream.bank_feeds.push(row);
+  }
+  for (const r of reconRows) {
+    rowsByStream.reconciliations.push(reconToGridRow(r));
+  }
+  for (const r of reportRows) {
+    rowsByStream.reports.push(reportToGridRow(r));
+  }
+  for (const t of taskRows) {
+    const row = taskToGridRow(t, today);
+    if (row.period.year !== year) continue;
+    rowsByStream.tasks.push(row);
+    if (isClientQuestionsTitle(t.title)) questionRows.push(row);
+  }
+
+  return { rowsByStream, questionRows };
+}
+
 export async function getClientYearGrid(
   clientId: number,
   year: number,
@@ -340,55 +541,11 @@ export async function getClientYearGrid(
         stream,
         cells: columns.map((_, i) => emptyCell(stream, i)),
       })),
+      closeSteps: columns.map((_, i) => frozenCloseSteps(clientId, year, i, cadenceMonths, today)),
     };
   }
 
-  const [feedRows, reconRows, reportRows, taskRows] = await Promise.all([
-    db.select().from(weeklyBankFeeds).where(eq(weeklyBankFeeds.clientId, clientId)),
-    db
-      .select()
-      .from(accountReconciliations)
-      .where(
-        and(
-          eq(accountReconciliations.clientId, clientId),
-          eq(accountReconciliations.attributedYear, year),
-        ),
-      ),
-    db
-      .select()
-      .from(clientReports)
-      .where(and(eq(clientReports.clientId, clientId), eq(clientReports.attributedYear, year))),
-    db
-      .select()
-      .from(tasks)
-      .where(
-        and(eq(tasks.clientId, clientId), isNull(tasks.deletedAt), notInArray(tasks.status, ["cancelled"])),
-      ),
-  ]);
-
-  const rowsByStream: Record<YearGridStream, GridWorkRow[]> = {
-    bank_feeds: [],
-    reconciliations: [],
-    reports: [],
-    tasks: [],
-  };
-
-  for (const r of feedRows) {
-    const row = feedToGridRow(r);
-    if (row.period.year !== year) continue;
-    rowsByStream.bank_feeds.push(row);
-  }
-  for (const r of reconRows) {
-    rowsByStream.reconciliations.push(reconToGridRow(r));
-  }
-  for (const r of reportRows) {
-    rowsByStream.reports.push(reportToGridRow(r));
-  }
-  for (const t of taskRows) {
-    const row = taskToGridRow(t, today);
-    if (row.period.year !== year) continue;
-    rowsByStream.tasks.push(row);
-  }
+  const { rowsByStream, questionRows } = await loadStreamRows(clientId, year, today);
 
   const rows: YearGridRow[] = YEAR_GRID_STREAMS.map((stream) =>
     buildStreamRow(stream, rowsByStream[stream], cadenceMonths, year, today),
@@ -404,5 +561,37 @@ export async function getClientYearGrid(
     note: null,
     columns,
     rows,
+    closeSteps: columns.map((_, i) =>
+      buildCloseSteps(clientId, year, i, cadenceMonths, rowsByStream, questionRows, today),
+    ),
   };
+}
+
+/**
+ * The guided close for one period: the month shown as four ordered steps
+ * (Categorize -> Reconcile -> Questions -> Reports). `month` is any calendar
+ * month; off-cadence inputs roll into the column that closes their period,
+ * so asking for February on a quarterly client returns the Q1 close.
+ */
+export async function getCloseSteps(
+  clientId: number,
+  year: number,
+  month: number,
+  today: LocalDate = localToday(),
+): Promise<CloseSteps | null> {
+  await requireStaff();
+
+  const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1);
+  if (!client) return null;
+
+  const cadenceMonths = reportMonthsForFrequency(client.bookkeepingFrequency);
+  const columnMonth = columnMonthFor(Math.min(Math.max(month, 1), 12), cadenceMonths);
+  const columnIndex = cadenceMonths.indexOf(columnMonth);
+
+  if (isOnHold(toDomainClient(client))) {
+    return frozenCloseSteps(clientId, year, columnIndex, cadenceMonths, today);
+  }
+
+  const { rowsByStream, questionRows } = await loadStreamRows(clientId, year, today);
+  return buildCloseSteps(clientId, year, columnIndex, cadenceMonths, rowsByStream, questionRows, today);
 }

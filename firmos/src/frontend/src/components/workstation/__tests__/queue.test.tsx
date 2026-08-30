@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +8,7 @@ import type { UnifiedQueue, WorkCard } from '@/server/queue'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 import { WorkstationQueue } from '../queue'
+import { WorkCardRow } from '../work-card'
 
 vi.mock('@/server/actions/work', () => ({
   completeWorkCard: vi.fn(),
@@ -242,5 +243,45 @@ describe('WorkstationQueue', () => {
     await user.click(chip)
     expect(screen.queryByText('Close August books')).not.toBeInTheDocument()
     expect(screen.getByText('August management report')).toBeInTheDocument()
+  })
+})
+
+describe('Completion check-draw (Wave 3 dopamine hit)', () => {
+  it('draws the circle-check in the completed strip, motion-safe gated', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await user.keyboard('e')
+
+    const strip = await screen.findByTestId('completed-strip')
+    const draw = within(strip).getByTestId('check-draw')
+    const strokes = [...draw.querySelectorAll('circle, path')]
+    expect(strokes).toHaveLength(2)
+    // The draw animation only exists under the motion-safe variant; the
+    // resting stroke state is fully drawn, so reduced motion is a no-op.
+    for (const stroke of strokes) {
+      expect(stroke.getAttribute('class')).toContain('motion-safe:animate-')
+      expect(stroke.getAttribute('stroke-dashoffset')).toBe('0')
+    }
+  })
+
+  it('swaps the work-card complete button to the drawing check on click', async () => {
+    const user = userEvent.setup()
+    const onComplete = vi.fn()
+    render(
+      <TooltipProvider>
+        <WorkCardRow
+          card={card({ kind: 'task', id: 9, status: 'due_today', title: 'Categorize Transactions' })}
+          today="2026-08-23"
+          selected
+          onSelect={() => {}}
+          onComplete={onComplete}
+        />
+      </TooltipProvider>,
+    )
+    const button = screen.getByRole('button', { name: 'Complete: Categorize Transactions' })
+    expect(within(button).queryByTestId('check-draw')).not.toBeInTheDocument()
+    await user.click(button)
+    expect(onComplete).toHaveBeenCalled()
+    expect(within(button).getByTestId('check-draw')).toBeInTheDocument()
   })
 })

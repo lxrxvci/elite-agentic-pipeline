@@ -1,5 +1,12 @@
 import type { ClientBilling, ClientDetail, ClientListRow, ClientWork } from '@/server/clients'
-import type { ClientYearGrid, YearGridCell, YearGridCellState, YearGridStream } from '@/server/year-grid'
+import type {
+  ClientYearGrid,
+  CloseStep,
+  CloseSteps,
+  YearGridCell,
+  YearGridCellState,
+  YearGridStream,
+} from '@/server/year-grid'
 
 /**
  * Fixtures mirroring the dev seed (src/server/seed.ts): six clients chosen
@@ -24,6 +31,7 @@ export const seedListRows: ClientListRow[] = [
     manager: dana,
     bookkeeper: jorge,
     openWorkCount: 14,
+    closeStreak: 3,
     health: { score: 92, status: 'in_progress' },
   },
   {
@@ -37,6 +45,7 @@ export const seedListRows: ClientListRow[] = [
     manager: dana,
     bookkeeper: sofia,
     openWorkCount: 9,
+    closeStreak: 0,
     health: { score: 60, status: 'overdue' },
   },
   {
@@ -50,6 +59,7 @@ export const seedListRows: ClientListRow[] = [
     manager: priya,
     bookkeeper: jorge,
     openWorkCount: 4,
+    closeStreak: 0,
     health: { score: 100, status: 'up_to_date' },
   },
   {
@@ -63,6 +73,7 @@ export const seedListRows: ClientListRow[] = [
     manager: priya,
     bookkeeper: sofia,
     openWorkCount: 0,
+    closeStreak: 0,
     health: { score: 100, status: 'up_to_date' },
   },
   {
@@ -76,6 +87,7 @@ export const seedListRows: ClientListRow[] = [
     manager: dana,
     bookkeeper: jorge,
     openWorkCount: 0,
+    closeStreak: 0,
     health: null,
   },
   {
@@ -89,6 +101,7 @@ export const seedListRows: ClientListRow[] = [
     manager: priya,
     bookkeeper: sofia,
     openWorkCount: 2,
+    closeStreak: 0,
     health: { score: 100, status: 'up_to_date' },
   },
 ]
@@ -155,6 +168,69 @@ export function makeWork(overrides: Partial<ClientWork> = {}): ClientWork {
   }
 }
 
+/** Zeroed close-step fixture: four guided steps, all not_due by default. */
+export function makeCloseSteps(
+  month: number,
+  overrides: Partial<CloseSteps> = {},
+  steps?: CloseStep[],
+): CloseSteps {
+  const defaultSteps: CloseStep[] = (
+    [
+      ['categorize', 'Categorize Transactions'],
+      ['reconcile', 'Reconcile Accounts'],
+      ['questions', 'Client Questions'],
+      ['reports', 'Send Reports'],
+    ] as const
+  ).map(([key, label]) => ({
+    key,
+    label,
+    state: 'not_due',
+    total: 0,
+    completed: 0,
+    waiting: 0,
+    open: 0,
+    overdue: 0,
+  }))
+  const finalSteps = steps ?? defaultSteps
+  const doneCount = finalSteps.filter((s) => s.state === 'complete').length
+  return {
+    clientId: 1,
+    year: 2026,
+    month,
+    months: [month],
+    today: '2026-08-23',
+    steps: finalSteps,
+    doneCount,
+    allDone: doneCount === finalSteps.length,
+    ...overrides,
+  }
+}
+
+/** One close-step fixture with an explicit state and counts. */
+export function makeCloseStep(
+  key: CloseStep['key'],
+  state: YearGridCellState,
+  counts: Partial<Pick<CloseStep, 'total' | 'completed' | 'waiting' | 'open' | 'overdue'>> = {},
+): CloseStep {
+  const labels: Record<CloseStep['key'], string> = {
+    categorize: 'Categorize Transactions',
+    reconcile: 'Reconcile Accounts',
+    questions: 'Client Questions',
+    reports: 'Send Reports',
+  }
+  return {
+    key,
+    label: labels[key],
+    state,
+    total: 0,
+    completed: 0,
+    waiting: 0,
+    open: 0,
+    overdue: 0,
+    ...counts,
+  }
+}
+
 /** Monthly-cadence year grid fixture: 12 columns, 4 streams, all not_due by default. */
 export function makeYearGrid(overrides: Partial<ClientYearGrid> = {}): ClientYearGrid {
   const columns = Array.from({ length: 12 }, (_, i) => ({ year: 2026, month: i + 1 }))
@@ -188,6 +264,7 @@ export function makeYearGrid(overrides: Partial<ClientYearGrid> = {}): ClientYea
       stream,
       cells: columns.map((c) => cell(stream, c.month)),
     })),
+    closeSteps: columns.map((c) => makeCloseSteps(c.month)),
     ...overrides,
   }
 }

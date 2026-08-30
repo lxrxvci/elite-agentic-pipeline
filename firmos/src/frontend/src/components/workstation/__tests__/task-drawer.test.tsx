@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { addTaskNoteAction, getTaskDetailAction, setSubtaskCompletedAction } from '@/server/actions/tasks'
+import { getCloseStepsAction } from '@/server/actions/close-steps'
 import type { TaskDetail } from '@/server/task-detail'
+import type { CloseSteps } from '@/server/year-grid'
 
 import { TaskDrawer } from '../task-drawer'
 
@@ -20,6 +22,11 @@ vi.mock('@/server/actions/tasks', () => ({
   getTaskDetailAction: vi.fn(),
   setSubtaskCompletedAction: vi.fn(),
   addTaskNoteAction: vi.fn(),
+}))
+
+// The month-close context strip dynamic-imports this action.
+vi.mock('@/server/actions/close-steps', () => ({
+  getCloseStepsAction: vi.fn(),
 }))
 
 // The drawer reuses the card's timer toggle, which dynamic-imports these.
@@ -167,5 +174,75 @@ describe('TaskDrawer', () => {
     renderDrawer()
     const button = await screen.findByTestId('drawer-complete-toggle')
     expect(button).toHaveTextContent('Re-open task')
+  })
+})
+
+describe('TaskDrawer month-close context', () => {
+  const mockCloseSteps = vi.mocked(getCloseStepsAction)
+
+  function closeStepsFixture(): CloseSteps {
+    const steps = (
+      [
+        ['categorize', 'Categorize Transactions', 'complete'],
+        ['reconcile', 'Reconcile Accounts', 'complete'],
+        ['questions', 'Client Questions', 'in_progress'],
+        ['reports', 'Send Reports', 'not_due'],
+      ] as const
+    ).map(([key, label, state]) => ({
+      key,
+      label,
+      state,
+      total: 2,
+      completed: state === 'complete' ? 2 : 0,
+      waiting: 0,
+      open: state === 'complete' ? 0 : 2,
+      overdue: 0,
+    }))
+    return {
+      clientId: 1,
+      year: 2026,
+      month: 8,
+      months: [8],
+      today: '2026-08-15',
+      steps,
+      doneCount: 2,
+      allDone: false,
+    }
+  }
+
+  it('shows the month stepper for a recurring close-step task, with its step highlighted', async () => {
+    mockCloseSteps.mockResolvedValue({ ok: true, data: closeStepsFixture() })
+    render(
+      <TaskDrawer
+        taskId={42}
+        open={true}
+        closeContext={{ clientId: 1, year: 2026, month: 8, title: 'Client Questions' }}
+        onOpenChange={() => {}}
+        onToggleComplete={() => {}}
+      />,
+    )
+    const strip = await screen.findByTestId('drawer-close-steps')
+    expect(mockCloseSteps).toHaveBeenCalledWith(1, 2026, 8)
+    expect(strip).toHaveTextContent('Month close - Aug 2026')
+    const segments = strip.querySelectorAll('[data-testid="close-step"]')
+    expect(segments).toHaveLength(4)
+    // The open task's own step carries the context ring.
+    const questions = strip.querySelector('[data-step="questions"]')!
+    expect(questions.querySelector('span')!.className).toContain('ring-2')
+  })
+
+  it('stays hidden for tasks that are not close steps', async () => {
+    render(
+      <TaskDrawer
+        taskId={42}
+        open={true}
+        closeContext={{ clientId: 1, year: 2026, month: 8, title: 'Weekly deposit review' }}
+        onOpenChange={() => {}}
+        onToggleComplete={() => {}}
+      />,
+    )
+    expect(await screen.findByTestId('task-drawer-title')).toBeInTheDocument()
+    expect(mockCloseSteps).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('drawer-close-steps')).not.toBeInTheDocument()
   })
 })

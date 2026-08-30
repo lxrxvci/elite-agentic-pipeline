@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowDown, ArrowUp, ArrowUpDown, Search, Users } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Search, Users } from 'lucide-react'
 import type { ClientWorkState } from '@firmos/domain'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -327,16 +327,29 @@ export function ClientsTable({ rows, canSeeRates = false }: ClientsTableProps) {
                   className="h-12 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
                   <TableCell className="px-4 py-0">
-                    <div className="flex min-w-0 flex-col justify-center">
-                      <span className="truncate text-sm font-medium text-foreground">
-                        {row.dbaName ?? row.legalName}
-                      </span>
-                      {row.dbaName && (
-                        <span className="truncate text-xs text-muted-foreground">{row.legalName}</span>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="flex min-w-0 flex-col justify-center">
+                        <span className="truncate text-sm font-medium text-foreground">
+                          {row.dbaName ?? row.legalName}
+                        </span>
+                        {row.dbaName && (
+                          <span className="truncate text-xs text-muted-foreground">{row.legalName}</span>
+                        )}
+                      </div>
+                      {/* Close streak (Progress board language): earned marker
+                          only - 3+ closed periods in a row, icon + count,
+                          never color alone. */}
+                      {row.closeStreak >= 3 && (
+                        <span
+                          data-testid="streak-badge"
+                          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-status-on-track-bg px-1.5 py-0.5 text-[10px] font-semibold text-status-on-track"
+                        >
+                          <Check className="h-2.5 w-2.5" aria-hidden />
+                          <span className="tnum">{row.closeStreak}</span> in a row
+                        </span>
                       )}
                     </div>
-                  </TableCell>
-                  <TableCell className="px-3 py-0">
+                  </TableCell>                  <TableCell className="px-3 py-0">
                     <ClientStateChip state={row.state} />
                   </TableCell>
                   <TableCell className="px-3 py-0">

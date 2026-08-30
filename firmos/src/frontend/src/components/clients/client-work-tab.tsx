@@ -10,16 +10,18 @@ import type { ClientWork } from '@/server/clients'
 import type { WorkCard } from '@/server/queue'
 
 import { ClientWorkList, type WorkCellFilter } from './client-work-list'
+import { CloseStepper } from './close-stepper'
 import { YearGrid, type YearGridFilter } from './year-grid'
 import type { ClientYearGrid } from '@/server/year-grid'
 
 /**
- * The client Work tab: the year progress grid on top, the open-work list
- * below. Clicking a grid cell filters the list to that stream + period
- * (drill-down); clicking it again clears the filter. Both read the same
- * attribution rules, so a cell and its rows can never disagree. Completing
- * a row optimistically removes it and refreshes the server payload - when
- * that flips a cell to complete, the grid celebrates the transition.
+ * The client Work tab: the guided close stepper and the year progress grid
+ * on top, the open-work list below. Clicking a grid cell filters the list to
+ * that stream + period (drill-down); clicking it again clears the filter.
+ * Both read the same attribution rules, so a cell and its rows can never
+ * disagree. Completing a row optimistically removes it and refreshes the
+ * server payload - when that flips a cell to complete, the grid celebrates
+ * the transition.
  */
 
 function WorkEmptyState({ work }: { work: ClientWork }) {
@@ -104,6 +106,8 @@ export function ClientWorkTab({ work, grid, prevYearHref, nextYearHref }: Client
 
   return (
     <div className="space-y-4">
+      <CloseStepper grid={grid} prevYearHref={prevYearHref} nextYearHref={nextYearHref} />
+
       <YearGrid
         grid={grid}
         filter={filter}

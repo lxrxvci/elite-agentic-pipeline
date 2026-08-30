@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookmarkPlus,
-  CircleCheck,
   Keyboard,
   Search,
   Undo2,
@@ -33,6 +32,7 @@ import {
   type BucketFilter,
   type SavedView,
 } from './saved-views'
+import { CheckDraw } from './check-draw'
 import { TaskDrawer } from './task-drawer'
 import {
   KIND_META,
@@ -892,7 +892,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
                           key={workCardKey(entry.card)}
                           className="flex h-9 animate-in fade-in items-center gap-2 bg-status-on-track-bg/30 px-4 pl-5 text-xs text-muted-foreground duration-150"
                         >
-                          <CircleCheck className="h-3.5 w-3.5 shrink-0 text-status-on-track" aria-hidden />
+                          <CheckDraw className="h-3.5 w-3.5 shrink-0 text-status-on-track" />
                           <span className="min-w-0 flex-1 truncate">
                             Completed - {entry.card.title}
                           </span>
@@ -920,6 +920,16 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
       <TaskDrawer
         taskId={drawerCard?.kind === 'task' ? drawerCard.id : null}
         open={drawerCard != null}
+        closeContext={
+          drawerCard
+            ? {
+                clientId: drawerCard.clientId,
+                year: drawerCard.attributedYear,
+                month: drawerCard.attributedMonth,
+                title: drawerCard.title,
+              }
+            : null
+        }
         onOpenChange={(open) => {
           if (!open) setDrawerCard(null)
         }}

@@ -7,6 +7,7 @@ import {
   countsForScoring,
   formatLocalDate,
   parseLocalDate,
+  reportMonthsForFrequency,
   type ClientWorkState,
   type HealthRow,
   type HealthStatus,
@@ -30,7 +31,18 @@ import { requireRole, requireStaff } from "./auth/guards";
 import { catchupOf, toDomainClient, type ClientRow } from "./domain-adapters";
 import { localToday } from "./dates";
 import { getFirmProfitability } from "./profitability";
+import { aggregateStreamCells, closeStreak, type ProgressionCell } from "./progression";
 import { getUnifiedQueue, type WorkCard } from "./queue";
+import {
+  YEAR_GRID_STREAMS,
+  buildStreamRow,
+  feedToGridRow,
+  reconToGridRow,
+  reportToGridRow,
+  taskToGridRow,
+  type GridWorkRow,
+  type YearGridStream,
+} from "./year-grid";
 
 /**
  * Clients surface reads (staff-only). Every function guards with
@@ -69,6 +81,9 @@ export interface ClientListRow {
   bookkeeper: StaffRef | null;
   /** Open work rows across all four kinds; 0 for on-hold clients (frozen). */
   openWorkCount: number;
+  /** Consecutive closed periods this year (shared closeStreak engine); 0 for
+   *  on-hold clients. Rendered as a pill when >= 3. */
+  closeStreak: number;
   /** null for on-hold clients - pausing must never punish the score (§5). */
   health: ClientHealthSummary | null;
   /**
@@ -100,8 +115,6 @@ function refOf(row: UserNameRow | undefined): StaffRef | null {
 }
 
 export { refOf as staffRefOf };
-
-const OPEN_TASK_STATUSES = ["completed", "cancelled"] as const;
 
 /** The raw work rows a health summary is scored from (all states, not just open). */
 export interface HealthSourceRows {
@@ -164,6 +177,56 @@ export function healthSummaryFromRows(
 }
 
 /**
+ * Close streak for the /clients row marker: the SAME helpers the Progress
+ * board uses (year-grid stream scoring -> aggregateStreamCells ->
+ * closeStreak), computed from the already-batched rows so the list adds no
+ * per-client queries. Streaks only span the current year.
+ */
+function closeStreakForClient(
+  client: ClientRow,
+  rows: {
+    feeds: (typeof weeklyBankFeeds.$inferSelect)[];
+    recons: (typeof accountReconciliations.$inferSelect)[];
+    reports: (typeof clientReports.$inferSelect)[];
+    tasks: (typeof tasks.$inferSelect)[];
+  },
+  year: number,
+  today: LocalDate,
+): number {
+  const cadenceMonths = reportMonthsForFrequency(client.bookkeepingFrequency);
+  const rowsByStream: Record<YearGridStream, GridWorkRow[]> = {
+    bank_feeds: [],
+    reconciliations: [],
+    reports: [],
+    tasks: [],
+  };
+  for (const r of rows.feeds) {
+    const row = feedToGridRow(r);
+    if (row.period.year === year) rowsByStream.bank_feeds.push(row);
+  }
+  for (const r of rows.recons) {
+    if (r.attributedYear === year) rowsByStream.reconciliations.push(reconToGridRow(r));
+  }
+  for (const r of rows.reports) {
+    if (r.attributedYear === year) rowsByStream.reports.push(reportToGridRow(r));
+  }
+  for (const t of rows.tasks) {
+    const row = taskToGridRow(t, today);
+    if (row.period.year === year) rowsByStream.tasks.push(row);
+  }
+  const streamRows = YEAR_GRID_STREAMS.map((stream) =>
+    buildStreamRow(stream, rowsByStream[stream], cadenceMonths, year, today),
+  );
+  const cells: ProgressionCell[] = cadenceMonths.map((month, i) => ({
+    month,
+    onCadence: true,
+    state: aggregateStreamCells(streamRows.map((r) => r.cells[i])),
+    streams: [],
+  }));
+  return closeStreak(cells);
+}
+
+/**
  * The /clients list: every client with staff, lifecycle state, open-work
  * counts, and a domain-computed health summary. Six batched queries total -
  * no per-client round-trips.
@@ -178,10 +241,12 @@ export async function listClients(): Promise<ClientList> {
     db.select().from(weeklyBankFeeds),
     db.select().from(accountReconciliations),
     db.select().from(clientReports),
+    // Completed rows ride along for the close-streak read; open counts and
+    // health filter them back out in memory.
     db
       .select()
       .from(tasks)
-      .where(and(isNull(tasks.deletedAt), notInArray(tasks.status, [...OPEN_TASK_STATUSES]))),
+      .where(and(isNull(tasks.deletedAt), notInArray(tasks.status, ["cancelled"]))),
   ]);
 
   const userById = new Map(userRows.map((u) => [u.id, u]));
@@ -206,7 +271,8 @@ export async function listClients(): Promise<ClientList> {
     const allFeeds = feedsByClient.get(c.id) ?? [];
     const allRecons = reconsByClient.get(c.id) ?? [];
     const allReports = reportsByClient.get(c.id) ?? [];
-    const openTasks = tasksByClient.get(c.id) ?? [];
+    const allTasks = tasksByClient.get(c.id) ?? [];
+    const openTasks = allTasks.filter((t) => t.status !== "completed");
 
     const feeds = allFeeds.filter((r) => r.completedAt == null);
     const recons = allRecons.filter((r) => r.completedAt == null);
@@ -218,6 +284,14 @@ export async function listClients(): Promise<ClientList> {
       { feeds: allFeeds, recons: allRecons, reports: allReports, openTasks },
       today,
     );
+    const streak = scored
+      ? closeStreakForClient(
+          c,
+          { feeds: allFeeds, recons: allRecons, reports: allReports, tasks: allTasks },
+          today.year,
+          today,
+        )
+      : 0;
 
     return {
       id: c.id,
@@ -230,6 +304,7 @@ export async function listClients(): Promise<ClientList> {
       manager: c.managerId != null ? refOf(userById.get(c.managerId)) : null,
       bookkeeper: c.bookkeeperId != null ? refOf(userById.get(c.bookkeeperId)) : null,
       openWorkCount,
+      closeStreak: streak,
       health,
     };
   });

@@ -12,6 +12,8 @@ import { cn } from '@/shared/lib/utils'
 import { StatusSpine, WorkStatusBadge, type WorkStatus } from '@/shared/ui/work'
 import type { QueueBucket, WorkCard, WorkCardKind } from '@/server/queue'
 
+import { CheckDraw } from './check-draw'
+
 /** Stable identity for a card across buckets and optimistic transitions. */
 export function workCardKey(card: Pick<WorkCard, 'kind' | 'id'>): string {
   return `${card.kind}:${card.id}`
@@ -162,6 +164,10 @@ export const WorkCardRow = React.memo(function WorkCardRow({
   const kindStyle = KIND_STYLE[card.kind]
   const aging = dueAging(card.dueDate, today)
   const gated = card.status === 'gated'
+  // Completing transition: swap the static check for the self-drawing one.
+  // The state change itself is instant (optimistic removal); the draw is
+  // pure garnish for the frames the button stays mounted.
+  const [completing, setCompleting] = React.useState(false)
 
   const badge = <WorkStatusBadge status={status} label={label} />
 
@@ -288,16 +294,25 @@ export const WorkCardRow = React.memo(function WorkCardRow({
         type="button"
         onClick={(e) => {
           e.stopPropagation()
+          setCompleting(true)
           onComplete(card)
         }}
         aria-label={`Complete: ${card.title}`}
         title="Complete (E)"
         className={cn(
           'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-all duration-150 hover:border-status-on-track hover:bg-status-on-track-bg hover:text-status-on-track focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+          completing
+            ? 'border-status-on-track bg-status-on-track-bg text-status-on-track opacity-100'
+            : selected
+              ? 'opacity-100'
+              : 'opacity-0 group-hover:opacity-100',
         )}
       >
-        <Check className="h-4 w-4" aria-hidden />
+        {completing ? (
+          <CheckDraw className="h-4 w-4" />
+        ) : (
+          <Check className="h-4 w-4" aria-hidden />
+        )}
       </button>
     </article>
   )

@@ -145,3 +145,22 @@ describe('ClientsTable', () => {
     expect(screen.getAllByText('-')).toHaveLength(5)
   })
 })
+
+describe('ClientsTable close streaks', () => {
+  it('shows the streak pill only on rows with 3+ closed periods in a row', () => {
+    renderTable()
+    const badges = screen.getAllByTestId('streak-badge')
+    expect(badges).toHaveLength(1)
+    expect(badges[0]).toHaveTextContent('3 in a row')
+    // The pill sits on the streaking client's row.
+    const harborline = screen
+      .getAllByTestId('client-row')
+      .find((r) => r.getAttribute('data-client-id') === '1')!
+    expect(within(harborline).getByTestId('streak-badge')).toBeInTheDocument()
+  })
+
+  it('renders no pill below the 3-period threshold', () => {
+    renderTable(seedListRows.map((r) => ({ ...r, closeStreak: 2 })))
+    expect(screen.queryByTestId('streak-badge')).not.toBeInTheDocument()
+  })
+})

@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { BookOpen, ExternalLink, ListChecks, MessageSquare, StickyNote, Video } from 'lucide-react'
+import { BookOpen, CalendarCheck, ExternalLink, ListChecks, MessageSquare, StickyNote, Video } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -9,9 +9,11 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
+import { CloseStepSegments, closeStepTitleKey } from '@/components/clients/close-stepper'
 import type { TaskDetail, TaskDetailSop } from '@/server/task-detail'
+import type { CloseStepKey, CloseSteps } from '@/server/year-grid'
 import { avatarStyle } from '@/shared/lib/avatar-hue'
-import { dueAging, periodLabel, stampLabel } from '@/shared/lib/date-display'
+import { dueAging, monthLabel, periodLabel, stampLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 import { WorkStatusBadge, type WorkStatus } from '@/shared/ui/work'
 
@@ -127,16 +129,52 @@ interface TaskDrawerProps {
   /** The task-kind card id; null closes the drawer. */
   taskId: number | null
   open: boolean
+  /** The card the drawer opened from: client + period + title, used to show
+   *  the guided-close stepper in context for recurring close-step tasks. */
+  closeContext?: {
+    clientId: number
+    year: number | null
+    month: number | null
+    title: string
+  } | null
   onOpenChange: (open: boolean) => void
   /** Complete/re-open delegates to the queue's optimistic mutation. */
   onToggleComplete: (completed: boolean) => void
 }
 
-export function TaskDrawer({ taskId, open, onOpenChange, onToggleComplete }: TaskDrawerProps) {
+export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, onToggleComplete }: TaskDrawerProps) {
   const [detail, setDetail] = React.useState<TaskDetail | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [noteDraft, setNoteDraft] = React.useState('')
   const [busy, setBusy] = React.useState(false)
+  const [closeSteps, setCloseSteps] = React.useState<CloseSteps | null>(null)
+
+  // Month-close context: only recurring close-step tasks (Categorize /
+  // Reconcile / Client Questions / Send Reports) get the stepper strip.
+  const ctxClientId = closeContext?.clientId ?? null
+  const ctxYear = closeContext?.year ?? null
+  const ctxMonth = closeContext?.month ?? null
+  const stepKey: CloseStepKey | null = closeContext ? closeStepTitleKey(closeContext.title) : null
+
+  React.useEffect(() => {
+    setCloseSteps(null)
+    if (!open || stepKey == null || ctxClientId == null || ctxYear == null || ctxMonth == null) return
+    let cancelled = false
+    void (async () => {
+      try {
+        // Dynamic import: the actions module pulls in @/db, and drawer jsdom
+        // tests render without a database (same seam as the detail read).
+        const m = await import('@/server/actions/close-steps')
+        const res = await m.getCloseStepsAction(ctxClientId, ctxYear, ctxMonth)
+        if (!cancelled && res.ok) setCloseSteps(res.data)
+      } catch {
+        // No server reach in tests; the context strip simply stays hidden.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, stepKey, ctxClientId, ctxYear, ctxMonth])
 
   const refresh = React.useCallback(async (id: number) => {
     // Dynamic import: the actions module pulls in @/db, and queue/drawer
@@ -275,6 +313,22 @@ export function TaskDrawer({ taskId, open, onOpenChange, onToggleComplete }: Tas
             </SheetHeader>
 
             <div className="flex-1 space-y-5 overflow-y-auto p-5">
+              {closeSteps != null && stepKey != null && (
+                <section aria-label="Month close" className="space-y-2" data-testid="drawer-close-steps">
+                  <SectionHeading icon={CalendarCheck}>
+                    Month close - {monthLabel(closeSteps.year, closeSteps.month)}
+                  </SectionHeading>
+                  <div className="rounded-lg border border-border bg-card p-3">
+                    <CloseStepSegments steps={closeSteps.steps} currentKey={stepKey} />
+                    {closeSteps.allDone && (
+                      <p className="mt-2 text-center text-[11px] font-medium text-status-on-track">
+                        Books closed for {monthLabel(closeSteps.year, closeSteps.month)}
+                      </p>
+                    )}
+                  </div>
+                </section>
+              )}
+
               {task.description && (
                 <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{task.description}</p>
               )}
