@@ -68,9 +68,20 @@ test.describe.serial('portal', () => {
 
     // ── Waiting on you renders the seeded parked bank feed ──
     await expect(page.getByRole('heading', { name: 'Waiting on you' })).toBeVisible()
+    const waitingItem = page.getByTestId('waiting-on-you-item').first()
     await expect(
-      page.getByTestId('waiting-on-you-item').getByText('Waiting on July bank statements from the client.'),
+      waitingItem.getByText('Waiting on July bank statements from the client.'),
     ).toBeVisible()
+    // Wave 4: kind identity chip (type color + label) on the waiting card.
+    await expect(waitingItem).toHaveAttribute('data-kind', /bank_feed|reconciliation/)
+
+    // Wave 4: the client's own year grid, same cell language as staff.
+    await expect(page.getByRole('heading', { name: 'Where your books stand' })).toBeVisible()
+    await expect(page.getByTestId('portal-year-progress')).toBeVisible()
+    // Blue Spruce has can_view_tasks off: no tasks stream row.
+    await expect(
+      page.getByTestId('portal-year-progress').locator('[data-stream="tasks"]'),
+    ).toHaveCount(0)
 
     // Blue Spruce has can_upload_docs off: no upload affordance anywhere.
     await page.goto('/portal/documents')
@@ -87,6 +98,10 @@ test.describe.serial('portal', () => {
     // Harborline has nothing parked on the client: the celebration state.
     await page.goto('/portal')
     await expect(page.getByText("You're all caught up")).toBeVisible()
+    // Harborline has can_view_tasks on: the grid shows all four streams.
+    await expect(
+      page.getByTestId('portal-year-progress').locator('[data-stream="tasks"]').first(),
+    ).toBeVisible()
 
     // ── Upload a receipt ──
     await page.goto('/portal/documents')

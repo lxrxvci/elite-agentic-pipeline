@@ -61,11 +61,11 @@ describe('PortalStatementsGrid', () => {
     expect(screen.getByLabelText('Jun 2026: Uploaded. Download statement.')).toBeInTheDocument()
     expect(screen.getAllByLabelText(/Missing/)).not.toHaveLength(0)
     expect(screen.getByLabelText('Aug 2026: Deferred')).toBeInTheDocument()
-    expect(screen.getByLabelText('Aug 2026: Not due yet')).toBeInTheDocument()
-    expect(screen.getByLabelText('May 2026: Before start')).toBeInTheDocument()
+    expect(screen.getByLabelText('Aug 2026: Not yet released')).toBeInTheDocument()
+    expect(screen.getByLabelText('May 2026: Before tracking start')).toBeInTheDocument()
 
     const legend = screen.getByRole('list', { name: 'Grid legend' })
-    for (const label of ['Uploaded', 'Missing', 'Deferred', 'Not due yet', 'Before start']) {
+    for (const label of ['Uploaded', 'Missing', 'Deferred', 'Not yet released', 'Before tracking start']) {
       expect(legend).toHaveTextContent(label)
     }
   })

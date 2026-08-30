@@ -1,26 +1,12 @@
 import type { QueueBucket } from '@/server/queue'
-import type { StatementCellState } from '@/server/statements'
 import type { WorkStatus } from '@/shared/ui/work'
 
 /**
  * Portal status mapping - the 6-token status language, one meaning per
  * token, identical on every surface (docs/DESIGN_MANDATE.md). Color never
- * travels alone: every consumer pairs these with a text label.
+ * travels alone: every consumer pairs these with a text label. Statement
+ * cells use the shared staff cell-meta (components/statements/cell-meta).
  */
-
-export interface StatementCellMeta {
-  /** 'neutral' renders without a status color (before-start is absence, not a state). */
-  status: WorkStatus | 'neutral'
-  label: string
-}
-
-export const STATEMENT_CELL_META: Record<StatementCellState, StatementCellMeta> = {
-  uploaded: { status: 'on_track', label: 'Uploaded' },
-  missing: { status: 'overdue', label: 'Missing' },
-  deferred: { status: 'deferred', label: 'Deferred' },
-  future: { status: 'on_hold', label: 'Not due yet' },
-  before_start: { status: 'neutral', label: 'Before start' },
-}
 
 export const BUCKET_META: Record<QueueBucket, { status: WorkStatus; label: string }> = {
   overdue: { status: 'overdue', label: 'Overdue' },

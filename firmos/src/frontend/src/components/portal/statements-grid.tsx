@@ -2,15 +2,7 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  AlertCircle,
-  CalendarClock,
-  Check,
-  Loader2,
-  Minus,
-  Pause,
-  Upload,
-} from 'lucide-react'
+import { Loader2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -24,32 +16,24 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { uploadPortalStatement } from '@/server/actions/portal-documents'
-import type { StatementGridCell, StatementsGrid } from '@/server/statements'
+import type { StatementCellState, StatementGridCell, StatementsGrid } from '@/server/statements'
+import { CELL_META, CELL_STATES } from '@/components/statements/cell-meta'
 import { monthLabel } from '@/shared/lib/date-display'
-
-import { STATEMENT_CELL_META } from './status'
+import { cn } from '@/shared/lib/utils'
 
 /**
  * Portal statements grid (HANDOFF §12, §14): per-account by-month cells in
- * the five §14 states, same cell discipline as staff - uploaded, missing,
- * deferred, future, before-start - mapped onto the 6-token status language
- * with a visible month label on every cell (never color alone) and a legend
- * below. Click-to-upload exists only when can_upload_docs is granted; the
- * server action re-checks the capability and the account's ownership.
+ * the five §14 states, rendered with the EXACT cell language the staff
+ * statements grid uses (shared cell-meta: same tints, icons, and labels -
+ * never color alone). Click-to-upload exists only when can_upload_docs is
+ * granted; the server action re-checks the capability and the account's
+ * ownership.
  */
 
 interface CellTarget {
   accountId: number
   accountName: string
   cell: StatementGridCell
-}
-
-const CELL_STATE_CLASSES: Record<string, string> = {
-  uploaded: 'border-transparent bg-status-on-track-bg text-status-on-track',
-  missing: 'border-transparent bg-status-overdue-bg text-status-overdue',
-  deferred: 'border-transparent bg-status-deferred-bg text-status-deferred',
-  future: 'border-transparent bg-status-on-hold-bg text-status-on-hold',
-  before_start: 'border-dashed border-border bg-transparent text-muted-foreground',
 }
 
 function shortMonth(year: number, month: number): string {
@@ -60,20 +44,13 @@ function cellKey(year: number, month: number): string {
   return `${year}-${month}`
 }
 
-function CellIcon({ state, canUpload }: { state: string; canUpload: boolean }) {
+function CellIcon({ state, canUpload }: { state: StatementCellState; canUpload: boolean }) {
   const cls = 'h-3.5 w-3.5'
-  switch (state) {
-    case 'uploaded':
-      return <Check aria-hidden className={cls} />
-    case 'missing':
-      return canUpload ? <Upload aria-hidden className={cls} /> : <AlertCircle aria-hidden className={cls} />
-    case 'deferred':
-      return <Pause aria-hidden className={cls} />
-    case 'future':
-      return <CalendarClock aria-hidden className={cls} />
-    default:
-      return <Minus aria-hidden className={cls} />
-  }
+  // The one portal-only affordance: an uploadable missing cell shows the
+  // upload icon instead of the staff alert glyph.
+  if (state === 'missing' && canUpload) return <Upload aria-hidden className={cls} />
+  const Icon = CELL_META[state].Icon
+  return <Icon aria-hidden className={cls} />
 }
 
 export function PortalStatementsGrid({
@@ -147,9 +124,9 @@ export function PortalStatementsGrid({
   }
 
   function renderCell(accountId: number, accountName: string, cell: StatementGridCell) {
-    const meta = STATEMENT_CELL_META[cell.state]
+    const meta = CELL_META[cell.state]
     const label = `${monthLabel(cell.year, cell.month)}: ${meta.label}`
-    const className = `flex h-14 w-16 flex-col items-center justify-center gap-0.5 rounded-md border text-[11px] font-medium ${CELL_STATE_CLASSES[cell.state]}`
+    const className = `flex h-14 w-16 flex-col items-center justify-center gap-0.5 rounded-md border text-[11px] font-medium ${meta.classes}`
 
     if (cell.state === 'uploaded' && cell.documentId != null) {
       return (
@@ -257,15 +234,20 @@ export function PortalStatementsGrid({
       })}
 
       <ul aria-label="Grid legend" className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-muted-foreground">
-        {(Object.keys(STATEMENT_CELL_META) as (keyof typeof STATEMENT_CELL_META)[]).map((state) => (
-          <li key={state} className="flex items-center gap-1.5">
-            <span
-              aria-hidden
-              className={`inline-block h-3 w-3 rounded-sm border ${CELL_STATE_CLASSES[state]}`}
-            />
-            {STATEMENT_CELL_META[state].label}
-          </li>
-        ))}
+        {CELL_STATES.map((state) => {
+          const meta = CELL_META[state]
+          return (
+            <li key={state} className="flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className={cn('flex h-3 w-3 items-center justify-center rounded-sm border', meta.classes)}
+              >
+                <meta.Icon aria-hidden className="h-2 w-2" />
+              </span>
+              {meta.label}
+            </li>
+          )
+        })}
       </ul>
 
       <Dialog open={target != null} onOpenChange={(open) => !open && setTarget(null)}>

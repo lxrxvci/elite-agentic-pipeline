@@ -503,7 +503,19 @@ export async function getClientYearGrid(
   today: LocalDate = localToday(),
 ): Promise<ClientYearGrid | null> {
   await requireStaff();
+  return buildClientYearGrid(clientId, year, today);
+}
 
+/**
+ * The grid computation with no role guard. Callers own authorization: the
+ * staff surface goes through getClientYearGrid (requireStaff), the portal
+ * surface through src/server/portal-progress.ts (acting-client membership).
+ */
+export async function buildClientYearGrid(
+  clientId: number,
+  year: number,
+  today: LocalDate = localToday(),
+): Promise<ClientYearGrid | null> {
   const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1);
   if (!client) return null;
 

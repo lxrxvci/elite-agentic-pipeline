@@ -1,19 +1,26 @@
+'use client'
+
 import Link from 'next/link'
-import { CheckCircle2, FileUp, Inbox, Landmark, ReceiptText, Scale } from 'lucide-react'
+import { CheckCircle2, FileUp, Inbox, ReceiptText } from 'lucide-react'
 
 import type { WaitingOnYouItem } from '@/server/portal'
+import type { ClientYearGrid, YearGridStream } from '@/server/year-grid'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { KIND_META, KIND_STYLE } from '@/components/workstation/work-card'
 import { WorkStatusBadge } from '@/shared/ui/work'
 import { monthLabel } from '@/shared/lib/date-display'
+import { cn } from '@/shared/lib/utils'
 
 import { formatInstant } from './format'
+import { PortalYearProgress } from './year-progress'
 
 /**
- * Portal home (HANDOFF §12 "waiting on client"). The lead surface is the
- * list of work parked on the client - bank feeds and reconciliations
- * exposing ONLY the client-facing note - plus a compact status summary
- * (open requests, recent uploads). An empty list is a celebration, not an
- * error.
+ * Portal home (HANDOFF §12 "waiting on client", Wave 4 progress parity). The
+ * lead surface is the client's own year grid - the same cell language staff
+ * see, read-only - with the guided close stepper for the current period.
+ * Below it: the list of work parked on the client with kind-colored
+ * identity chips, plus a compact status summary (open requests, recent
+ * uploads). An empty waiting list is a celebration, not an error.
  */
 
 export interface RecentUpload {
@@ -30,21 +37,41 @@ interface PortalHomeViewProps {
   recentUploads: RecentUpload[]
   /** Non-draft invoices visible to the portal (§12 read-only list). */
   invoiceCount: number
+  /** The acting client's own year grid (engine truth, read-only). */
+  progressGrid: ClientYearGrid | null
+  /** Streams the acting account may see (tasks row needs can_view_tasks). */
+  progressStreams: YearGridStream[]
 }
 
 function WaitingRow({ item }: { item: WaitingOnYouItem }) {
-  const Icon = item.kind === 'bank_feed' ? Landmark : Scale
+  const kind = KIND_META[item.kind]
+  const kindStyle = KIND_STYLE[item.kind]
   return (
     <li
       data-testid="waiting-on-you-item"
+      data-kind={item.kind}
       className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3"
     >
-      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-status-waiting-client-bg">
-        <Icon aria-hidden className="h-4 w-4 text-status-waiting-client" />
+      <span
+        className={cn(
+          'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
+          kindStyle.chip,
+        )}
+      >
+        <kind.Icon aria-hidden className="h-4 w-4" />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm font-medium text-foreground">{item.title}</p>
+          <span
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium',
+              kindStyle.chip,
+            )}
+          >
+            <kind.Icon aria-hidden className="h-3 w-3" />
+            {kind.label}
+          </span>
           {item.attributedYear != null && item.attributedMonth != null && (
             <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
               {monthLabel(item.attributedYear, item.attributedMonth)}
@@ -69,6 +96,8 @@ export function PortalHomeView({
   openRequestCount,
   recentUploads,
   invoiceCount,
+  progressGrid,
+  progressStreams,
 }: PortalHomeViewProps) {
   return (
     <div className="flex flex-col gap-6">
@@ -78,6 +107,15 @@ export function PortalHomeView({
           Here is where things stand with {clientName}.
         </p>
       </div>
+
+      {progressGrid && (
+        <PortalYearProgress
+          grid={progressGrid}
+          streams={progressStreams}
+          prevYearHref={`/portal?year=${progressGrid.year - 1}`}
+          nextYearHref={`/portal?year=${progressGrid.year + 1}`}
+        />
+      )}
 
       <section aria-labelledby="waiting-on-you-heading">
         <div className="mb-3 flex items-center justify-between">
