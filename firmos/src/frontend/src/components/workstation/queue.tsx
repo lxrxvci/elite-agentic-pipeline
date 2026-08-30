@@ -34,7 +34,12 @@ import {
   type SavedView,
 } from './saved-views'
 import { TaskDrawer } from './task-drawer'
-import { KIND_META, WorkCardRow, workCardKey } from './work-card'
+import {
+  KIND_META,
+  KIND_STYLE,
+  WorkCardRow,
+  workCardKey,
+} from './work-card'
 import {
   defaultWorkDay,
   loadWorkDay,
@@ -69,6 +74,16 @@ const BUCKET_TITLES: Record<QueueBucket, string> = {
   waiting_on_client: 'Waiting on client',
   deferred: 'Deferred',
   gated: 'Gated',
+}
+
+/** Section header chip: the bucket's status token, dot + label, never color alone. */
+const BUCKET_CHIP: Record<QueueBucket, string> = {
+  overdue: 'bg-status-overdue-bg text-status-overdue',
+  due_today: 'bg-status-due-soon-bg text-status-due-soon',
+  upcoming: 'bg-status-on-track-bg text-status-on-track',
+  waiting_on_client: 'bg-status-waiting-client-bg text-status-waiting-client',
+  deferred: 'bg-status-deferred-bg text-status-deferred',
+  gated: 'bg-status-on-hold-bg text-status-on-hold',
 }
 
 const BUCKET_EMPTY: Record<QueueBucket, string> = {
@@ -171,7 +186,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
   const assigneeById = useMemo(
     // Store the row-prop object itself so memoized rows see a stable
     // reference across unrelated re-renders (cursor moves, popover toggles).
-    () => new Map(assignees.map((a) => [a.id, { name: a.name, initials: a.initials }])),
+    () => new Map(assignees.map((a) => [a.id, { id: a.id, name: a.name, initials: a.initials }])),
     [assignees],
   )
 
@@ -442,11 +457,35 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
     }
   }
 
-  const statChips: { bucket: QueueBucket; label: string; tone: string }[] = [
-    { bucket: 'overdue', label: 'Overdue', tone: 'text-status-overdue' },
-    { bucket: 'due_today', label: 'Due today', tone: 'text-status-due-soon' },
-    { bucket: 'upcoming', label: 'Upcoming', tone: 'text-status-on-track' },
-    { bucket: 'waiting_on_client', label: 'Waiting on client', tone: 'text-status-waiting-client' },
+  // KPI chips: a nonzero count tints the whole card surface in the bucket's
+  // status token and the figure takes the status fg (state = color, larger
+  // display-font figure = the page hero). Zero stays neutral so an empty
+  // bucket never shouts.
+  const statChips: { bucket: QueueBucket; label: string; fg: string; surface: string }[] = [
+    {
+      bucket: 'overdue',
+      label: 'Overdue',
+      fg: 'text-status-overdue',
+      surface: 'border-status-overdue/40 bg-status-overdue-bg',
+    },
+    {
+      bucket: 'due_today',
+      label: 'Due today',
+      fg: 'text-status-due-soon',
+      surface: 'border-status-due-soon/40 bg-status-due-soon-bg',
+    },
+    {
+      bucket: 'upcoming',
+      label: 'Upcoming',
+      fg: 'text-status-on-track',
+      surface: 'border-status-on-track/40 bg-status-on-track-bg',
+    },
+    {
+      bucket: 'waiting_on_client',
+      label: 'Waiting on client',
+      fg: 'text-status-waiting-client',
+      surface: 'border-status-waiting-client/40 bg-status-waiting-client-bg',
+    },
   ]
 
   const bucketTabs: { key: BucketFilter; label: string; count: number }[] = [
@@ -508,26 +547,38 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
         </Popover>
       </div>
 
-      {/* KPI stat chips - status colors only, tabular numerals */}
+      {/* KPI stat chips - tinted by status when nonzero, display-font hero figure */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {statChips.map((s) => (
-          <button
-            key={s.bucket}
-            type="button"
-            onClick={() => {
-              setBucketFilter(bucketFilter === s.bucket ? 'all' : s.bucket)
-              setRawCursor(0)
-            }}
-            aria-pressed={bucketFilter === s.bucket}
-            className={cn(
-              'rounded-lg border border-border bg-card px-4 py-2.5 text-left transition-colors duration-150 hover:border-ring/40',
-              bucketFilter === s.bucket && 'border-ring/60 ring-1 ring-ring/30',
-            )}
-          >
-            <div className={cn('tnum text-xl font-bold leading-none', s.tone)}>{counts[s.bucket]}</div>
-            <div className="mt-1 text-[11px] font-medium text-muted-foreground">{s.label}</div>
-          </button>
-        ))}
+        {statChips.map((s) => {
+          const n = counts[s.bucket]
+          const nonzero = n > 0
+          return (
+            <button
+              key={s.bucket}
+              type="button"
+              onClick={() => {
+                setBucketFilter(bucketFilter === s.bucket ? 'all' : s.bucket)
+                setRawCursor(0)
+              }}
+              aria-pressed={bucketFilter === s.bucket}
+              className={cn(
+                'rounded-lg border px-4 py-2.5 text-left transition-colors duration-150 hover:border-ring/40',
+                nonzero ? s.surface : 'border-border bg-card',
+                bucketFilter === s.bucket && 'border-ring/60 ring-1 ring-ring/30',
+              )}
+            >
+              <div
+                className={cn(
+                  'tnum font-display text-2xl font-bold leading-none',
+                  nonzero ? s.fg : 'text-muted-foreground',
+                )}
+              >
+                {n}
+              </div>
+              <div className="mt-1 text-[11px] font-medium text-muted-foreground">{s.label}</div>
+            </button>
+          )
+        })}
       </div>
 
       {/* Work-day chips - the owner's daily client rotation (call notes) */}
@@ -631,7 +682,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
                 className={cn(
                   'flex h-8 w-8 items-center justify-center rounded-md border transition-colors duration-150',
                   active
-                    ? 'border-ring/50 bg-accent text-accent-foreground'
+                    ? KIND_STYLE[k].toggle
                     : 'border-border text-muted-foreground hover:text-foreground',
                 )}
               >
@@ -800,9 +851,17 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
             const strip = activeCompleted.filter((e) => e.card.status === bucket)
             return (
               <section key={bucket} aria-label={BUCKET_TITLES[bucket]}>
-                <h2 className="mb-1.5 flex items-baseline gap-2 px-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  {BUCKET_TITLES[bucket]}
-                  <span className="tnum font-semibold">{rows.length}</span>
+                <h2 className="mb-1.5 flex items-baseline gap-2 px-1">
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider',
+                      BUCKET_CHIP[bucket],
+                    )}
+                  >
+                    <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />
+                    {BUCKET_TITLES[bucket]}
+                    <span className="tnum font-semibold">{rows.length}</span>
+                  </span>
                 </h2>
                 <div className="overflow-hidden rounded-xl border border-border bg-card">
                   {rows.length === 0 && (

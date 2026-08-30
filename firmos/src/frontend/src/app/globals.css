@@ -35,20 +35,50 @@
   /* ── STATUS LANGUAGE (the contract) ─────────────────────────── */
   --status-overdue: oklch(0.52 0.2 27);          /* on fire        */
   --status-overdue-bg: oklch(0.96 0.03 27);
-  --status-due-soon: oklch(0.72 0.15 78);        /* act this week  */
+  --status-due-soon: oklch(0.54 0.13 75);        /* act this week  */
   --status-due-soon-bg: oklch(0.97 0.04 85);
-  --status-on-track: oklch(0.58 0.13 158);       /* healthy        */
+  --status-on-track: oklch(0.5 0.12 158);        /* healthy        */
   --status-on-track-bg: oklch(0.96 0.035 158);
   --status-deferred: oklch(0.53 0.17 305);       /* parked on purpose */
   --status-deferred-bg: oklch(0.96 0.03 305);
-  --status-waiting-client: oklch(0.55 0.13 247); /* blocked on client */
+  --status-waiting-client: oklch(0.52 0.13 247); /* blocked on client */
   --status-waiting-client-bg: oklch(0.955 0.03 247);
-  --status-on-hold: oklch(0.55 0.02 255);        /* paused/archive */
+  --status-on-hold: oklch(0.5 0.02 255);         /* paused/archive */
   --status-on-hold-bg: oklch(0.955 0.005 255);
 
   /* Financial data accents */
   --money-positive: oklch(0.58 0.13 158);
   --money-negative: oklch(0.52 0.2 27);
+  /* AA-safe money figure for dense tables (heroes use money-positive) */
+  --money-strong: oklch(0.47 0.12 158);
+
+  /* ── WORK-KIND IDENTITY (type language, not state) ──────────── */
+  --kind-bank-feed: oklch(0.48 0.11 175);
+  --kind-bank-feed-bg: oklch(0.955 0.03 175);
+  --kind-reconciliation: oklch(0.5 0.15 290);
+  --kind-reconciliation-bg: oklch(0.96 0.03 290);
+  --kind-report: oklch(0.48 0.13 230);
+  --kind-report-bg: oklch(0.955 0.025 230);
+  --kind-task: oklch(0.47 0.02 255);
+  --kind-task-bg: oklch(0.95 0.008 255);
+
+  /* Avatar identity hues - deterministic per person (shared/lib/avatar-hue) */
+  --avatar-1-fg: oklch(0.44 0.11 25);
+  --avatar-1-bg: oklch(0.92 0.05 25);
+  --avatar-2-fg: oklch(0.44 0.11 60);
+  --avatar-2-bg: oklch(0.92 0.05 60);
+  --avatar-3-fg: oklch(0.44 0.11 145);
+  --avatar-3-bg: oklch(0.92 0.05 145);
+  --avatar-4-fg: oklch(0.44 0.11 190);
+  --avatar-4-bg: oklch(0.92 0.05 190);
+  --avatar-5-fg: oklch(0.44 0.11 235);
+  --avatar-5-bg: oklch(0.92 0.05 235);
+  --avatar-6-fg: oklch(0.44 0.11 275);
+  --avatar-6-bg: oklch(0.92 0.05 275);
+  --avatar-7-fg: oklch(0.44 0.11 315);
+  --avatar-7-bg: oklch(0.92 0.05 315);
+  --avatar-8-fg: oklch(0.44 0.11 340);
+  --avatar-8-bg: oklch(0.92 0.05 340);
 
   /* ── shadcn/ui semantic layer, mapped onto the firm tokens ──── */
   --background: var(--firm-bg);
@@ -87,7 +117,7 @@
   --firm-text-2: oklch(0.72 0.012 250);
   --firm-text-3: oklch(0.58 0.014 250);
 
-  --status-overdue: oklch(0.68 0.19 27);
+  --status-overdue: oklch(0.7 0.19 27);
   --status-overdue-bg: oklch(0.3 0.07 27);
   --status-due-soon: oklch(0.8 0.14 82);
   --status-due-soon-bg: oklch(0.32 0.06 80);
@@ -97,8 +127,36 @@
   --status-deferred-bg: oklch(0.3 0.06 305);
   --status-waiting-client: oklch(0.71 0.12 245);
   --status-waiting-client-bg: oklch(0.3 0.05 245);
-  --status-on-hold: oklch(0.62 0.015 255);
+  --status-on-hold: oklch(0.66 0.015 255);
   --status-on-hold-bg: oklch(0.28 0.01 255);
+
+  --money-strong: oklch(0.8 0.12 160);
+
+  --kind-bank-feed: oklch(0.78 0.1 175);
+  --kind-bank-feed-bg: oklch(0.3 0.045 175);
+  --kind-reconciliation: oklch(0.76 0.13 290);
+  --kind-reconciliation-bg: oklch(0.31 0.06 290);
+  --kind-report: oklch(0.76 0.11 230);
+  --kind-report-bg: oklch(0.3 0.05 230);
+  --kind-task: oklch(0.74 0.015 255);
+  --kind-task-bg: oklch(0.29 0.012 255);
+
+  --avatar-1-fg: oklch(0.87 0.07 25);
+  --avatar-1-bg: oklch(0.33 0.06 25);
+  --avatar-2-fg: oklch(0.87 0.07 60);
+  --avatar-2-bg: oklch(0.33 0.06 60);
+  --avatar-3-fg: oklch(0.87 0.07 145);
+  --avatar-3-bg: oklch(0.33 0.06 145);
+  --avatar-4-fg: oklch(0.87 0.07 190);
+  --avatar-4-bg: oklch(0.33 0.06 190);
+  --avatar-5-fg: oklch(0.87 0.07 235);
+  --avatar-5-bg: oklch(0.33 0.06 235);
+  --avatar-6-fg: oklch(0.87 0.07 275);
+  --avatar-6-bg: oklch(0.33 0.06 275);
+  --avatar-7-fg: oklch(0.87 0.07 315);
+  --avatar-7-bg: oklch(0.33 0.06 315);
+  --avatar-8-fg: oklch(0.87 0.07 340);
+  --avatar-8-bg: oklch(0.33 0.06 340);
 
   /* shadcn overrides where the firm-token mapping alone is not enough */
   --primary-foreground: oklch(0.16 0.03 190);
@@ -156,6 +214,17 @@
 
   --color-money-positive: var(--money-positive);
   --color-money-negative: var(--money-negative);
+  --color-money-strong: var(--money-strong);
+
+  /* Work-kind identity - consumed via KIND_STYLE (work-card.tsx) */
+  --color-kind-bank-feed: var(--kind-bank-feed);
+  --color-kind-bank-feed-bg: var(--kind-bank-feed-bg);
+  --color-kind-reconciliation: var(--kind-reconciliation);
+  --color-kind-reconciliation-bg: var(--kind-reconciliation-bg);
+  --color-kind-report: var(--kind-report);
+  --color-kind-report-bg: var(--kind-report-bg);
+  --color-kind-task: var(--kind-task);
+  --color-kind-task-bg: var(--kind-task-bg);
 
   /* Type - Inter for data-dense UI, Plus Jakarta Sans for display/headings */
   --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;

@@ -1,6 +1,7 @@
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { StaffRef } from '@/server/clients'
+import { avatarStyle } from '@/shared/lib/avatar-hue'
 
 /**
  * Profile-header staff cluster. Assigned staff render as initial avatars;
@@ -15,7 +16,7 @@ function HeaderAvatar({ person, role }: { person: StaffRef; role: string }) {
       <TooltipTrigger asChild>
         <span className="inline-flex items-center gap-1.5">
           <Avatar className="h-7 w-7">
-            <AvatarFallback className="bg-accent text-[11px] font-semibold text-accent-foreground">
+            <AvatarFallback className="text-[11px] font-semibold" style={avatarStyle(person.id)}>
               <span className="sr-only">{`${role}: ${person.name}`}</span>
               <span aria-hidden>{person.initials}</span>
             </AvatarFallback>

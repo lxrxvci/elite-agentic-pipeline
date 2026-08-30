@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 import { Check, Lock } from 'lucide-react'
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { KIND_META } from '@/components/workstation/work-card'
+import { KIND_META, KIND_STYLE } from '@/components/workstation/work-card'
 import type { QueueBucket, WorkCard, WorkCardKind } from '@/server/queue'
 import { dayLabel, dueAging, periodLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
@@ -109,6 +109,7 @@ export function ClientWorkList({ rows, today, cellFilter = null, onComplete }: C
             {group.rows.map((card) => {
               const { status, label } = BUCKET_STATUS[card.status]
               const { Icon, label: kindLabel } = KIND_META[card.kind]
+              const kindStyle = KIND_STYLE[card.kind]
               const aging = dueAging(card.dueDate, today)
               const gated = card.status === 'gated'
               const badge = <WorkStatusBadge status={status} label={label} />
@@ -130,14 +131,22 @@ export function ClientWorkList({ rows, today, cellFilter = null, onComplete }: C
                     role="img"
                     aria-label={kindLabel}
                     title={kindLabel}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
+                    className={cn(
+                      'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
+                      kindStyle.chip,
+                    )}
                   >
                     <Icon className="h-3.5 w-3.5" aria-hidden />
                   </span>
 
                   <div className="flex min-w-0 flex-1 items-baseline gap-2">
                     <span className="truncate text-sm font-medium text-foreground">{card.title}</span>
-                    <span className="tnum shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <span
+                      className={cn(
+                        'tnum shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                        kindStyle.chip,
+                      )}
+                    >
                       {periodLabel(card.attributedYear, card.attributedMonth)}
                     </span>
                   </div>

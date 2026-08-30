@@ -49,8 +49,11 @@ function TotalsRow({ label, value, strong }: { label: string; value: string; str
       </dt>
       <dd
         className={cn(
-          'tnum text-sm',
-          strong ? 'font-bold text-foreground' : 'font-medium text-foreground',
+          'tnum',
+          strong
+            ? 'font-display text-lg font-bold tracking-tight'
+            : 'text-sm font-medium text-foreground',
+          strong && !negative && 'text-money-strong',
           negative && 'text-money-negative',
         )}
       >
@@ -256,7 +259,12 @@ export default async function InvoiceDetailPage({
               <TableCell colSpan={4} className="px-4 py-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Total
               </TableCell>
-              <TableCell className="tnum px-4 py-0 text-right text-sm font-bold text-foreground">
+              <TableCell
+                className={cn(
+                  'tnum px-4 py-0 text-right text-sm font-bold',
+                  invoice.total.startsWith('-') ? 'text-money-negative' : 'text-money-strong',
+                )}
+              >
                 {moneyLabel(invoice.total)}
               </TableCell>
             </TableRow>

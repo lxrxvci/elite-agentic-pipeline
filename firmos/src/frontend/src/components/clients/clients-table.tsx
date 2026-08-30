@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ClientListRow, StaffRef } from '@/server/clients'
+import { avatarStyle } from '@/shared/lib/avatar-hue'
 import { cn } from '@/shared/lib/utils'
 import { HealthRing } from '@/shared/ui/work'
 import type { WorkStatus } from '@/shared/ui/work'
@@ -68,7 +69,7 @@ function StaffAvatar({ person, role }: { person: StaffRef; role: string }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <Avatar className="h-6 w-6">
-          <AvatarFallback className="bg-accent text-[10px] font-semibold text-accent-foreground">
+          <AvatarFallback className="text-[10px] font-semibold" style={avatarStyle(person.id)}>
             <span className="sr-only">{`${role}: ${person.name}`}</span>
             <span aria-hidden>{person.initials}</span>
           </AvatarFallback>
@@ -76,6 +77,25 @@ function StaffAvatar({ person, role }: { person: StaffRef; role: string }) {
       </TooltipTrigger>
       <TooltipContent>{`${role}: ${person.name}`}</TooltipContent>
     </Tooltip>
+  )
+}
+
+/**
+ * Health cell: the ring is the hero number of the row. Extremes (at-risk
+ * overdue, or 90+ fully healthy) get a subtly larger ring on a status-tinted
+ * disc so the spectrum reads peripherally down the column.
+ */
+function HealthCell({ score, status }: { score: number; status: WorkStatus }) {
+  const extreme = status === 'overdue' || score >= 90
+  return (
+    <span
+      className={cn(
+        'inline-flex rounded-full p-0.5',
+        extreme && (status === 'overdue' ? 'bg-status-overdue-bg' : 'bg-status-on-track-bg'),
+      )}
+    >
+      <HealthRing score={score} status={status} size={extreme ? 34 : 30} />
+    </span>
   )
 }
 
@@ -357,10 +377,9 @@ export function ClientsTable({ rows, canSeeRates = false }: ClientsTableProps) {
                   <TableCell className="px-4 py-0">
                     <div className="flex items-center justify-end">
                       {row.health ? (
-                        <HealthRing
+                        <HealthCell
                           score={row.health.score}
                           status={HEALTH_STATUS[row.health.status]}
-                          size={30}
                         />
                       ) : (
                         <Tooltip>

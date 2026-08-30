@@ -22,7 +22,7 @@ import type {
 } from '@/server/year-grid'
 import { monthLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
-import { KIND_META } from '@/components/workstation/work-card'
+import { KIND_META, KIND_STYLE } from '@/components/workstation/work-card'
 
 /**
  * The per-client year progress grid: streams as rows, cadence periods as
@@ -241,7 +241,12 @@ export function YearGrid({ grid, filter, onCellClick, prevYearHref, nextYearHref
               key={`${row.stream}-label`}
               className="flex items-center gap-1.5 pr-2 text-xs font-medium text-muted-foreground"
             >
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted">
+              <span
+                className={cn(
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded-md',
+                  KIND_STYLE[STREAM_KIND[row.stream]].chip,
+                )}
+              >
                 <Icon className="h-3 w-3" aria-hidden />
               </span>
               <span className="truncate">{STREAM_LABEL[row.stream]}</span>

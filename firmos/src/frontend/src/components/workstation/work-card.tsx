@@ -6,6 +6,7 @@ import { Check, FileText, Landmark, Lock, RefreshCw, SquareCheck, Timer } from '
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { refreshClockStatus, useClockStatus } from '@/shared/lib/clock-status'
+import { avatarStyle } from '@/shared/lib/avatar-hue'
 import { dayLabel, dueAging, periodLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 import { StatusSpine, WorkStatusBadge, type WorkStatus } from '@/shared/ui/work'
@@ -23,6 +24,31 @@ export const KIND_META: Record<WorkCardKind, { label: string; Icon: typeof Landm
   task: { label: 'Task', Icon: SquareCheck },
 }
 
+/**
+ * Work-kind identity colors (mandate: color means state OR identity). The
+ * kind hue marks TYPE everywhere a work item appears - icon chips, period
+ * chips, filter toggles, year-grid rows - while the 6 status tokens keep
+ * meaning state. Always paired with the kind icon, never color alone.
+ */
+export const KIND_STYLE: Record<WorkCardKind, { chip: string; toggle: string }> = {
+  bank_feed: {
+    chip: 'bg-kind-bank-feed-bg text-kind-bank-feed',
+    toggle: 'border-kind-bank-feed bg-kind-bank-feed-bg text-kind-bank-feed',
+  },
+  reconciliation: {
+    chip: 'bg-kind-reconciliation-bg text-kind-reconciliation',
+    toggle: 'border-kind-reconciliation bg-kind-reconciliation-bg text-kind-reconciliation',
+  },
+  report: {
+    chip: 'bg-kind-report-bg text-kind-report',
+    toggle: 'border-kind-report bg-kind-report-bg text-kind-report',
+  },
+  task: {
+    chip: 'bg-kind-task-bg text-kind-task',
+    toggle: 'border-kind-task bg-kind-task-bg text-kind-task',
+  },
+}
+
 /** Bucket → the 6-token status language (one meaning = one token, mandate §2). */
 const BUCKET_STATUS: Record<QueueBucket, { status: WorkStatus; label: string }> = {
   overdue: { status: 'overdue', label: 'Overdue' },
@@ -34,6 +60,7 @@ const BUCKET_STATUS: Record<QueueBucket, { status: WorkStatus; label: string }> 
 }
 
 export interface AssigneeInfo {
+  id: number
   name: string
   initials: string
 }
@@ -132,6 +159,7 @@ export const WorkCardRow = React.memo(function WorkCardRow({
 }: WorkCardRowProps) {
   const { status, label } = BUCKET_STATUS[card.status]
   const { Icon, label: kindLabel } = KIND_META[card.kind]
+  const kindStyle = KIND_STYLE[card.kind]
   const aging = dueAging(card.dueDate, today)
   const gated = card.status === 'gated'
 
@@ -161,14 +189,22 @@ export const WorkCardRow = React.memo(function WorkCardRow({
         role="img"
         aria-label={kindLabel}
         title={kindLabel}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
+        className={cn(
+          'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
+          kindStyle.chip,
+        )}
       >
         <Icon className="h-3.5 w-3.5" aria-hidden />
       </span>
 
       <div className="flex min-w-0 flex-1 items-baseline gap-2">
         <span className="truncate text-sm font-medium text-foreground">{card.title}</span>
-        <span className="tnum shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <span
+          className={cn(
+            'tnum shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+            kindStyle.chip,
+          )}
+        >
           {periodLabel(card.attributedYear, card.attributedMonth)}
         </span>
       </div>
@@ -232,7 +268,10 @@ export const WorkCardRow = React.memo(function WorkCardRow({
 
       {assignee ? (
         <Avatar className="h-6 w-6 shrink-0">
-          <AvatarFallback className="bg-accent text-[10px] font-semibold text-accent-foreground">
+          <AvatarFallback
+            className="text-[10px] font-semibold"
+            style={avatarStyle(assignee.id)}
+          >
             <span className="sr-only">{assignee.name}</span>
             <span aria-hidden>{assignee.initials}</span>
           </AvatarFallback>

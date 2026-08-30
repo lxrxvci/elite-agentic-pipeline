@@ -4,6 +4,7 @@ import { ClipboardList } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import type { OnboardingChecklistRow } from '@/server/clients'
+import { avatarStyle } from '@/shared/lib/avatar-hue'
 import { dueAging } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 import { WorkStatusBadge, type WorkStatus } from '@/shared/ui/work'
@@ -101,7 +102,10 @@ export function OnboardingPanel({ rows, today }: OnboardingPanelProps) {
               </span>
               {row.assignee ? (
                 <Avatar className="h-6 w-6 shrink-0">
-                  <AvatarFallback className="bg-accent text-[10px] font-semibold text-accent-foreground">
+                  <AvatarFallback
+                    className="text-[10px] font-semibold"
+                    style={avatarStyle(row.assignee.id)}
+                  >
                     <span className="sr-only">{row.assignee.name}</span>
                     <span aria-hidden>{row.assignee.initials}</span>
                   </AvatarFallback>

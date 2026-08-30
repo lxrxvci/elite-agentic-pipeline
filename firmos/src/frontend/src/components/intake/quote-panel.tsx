@@ -95,7 +95,7 @@ export function QuotePanel({ quote, loading }: { quote: Quote | null; loading: b
               key={amount ?? 'none'}
               data-testid="quote-amount"
               className={cn(
-                'tnum fi-price-pop font-display text-2xl font-bold tracking-tight',
+                'tnum fi-price-pop font-display text-3xl font-bold tracking-tight',
                 amount && amount > 0 ? 'text-money-positive' : 'text-muted-foreground',
               )}
             >
@@ -147,7 +147,7 @@ export function QuotePanel({ quote, loading }: { quote: Quote | null; loading: b
           <div className="mt-2 hidden border-t border-border pt-2 lg:block" data-testid="retroactive-summary">
             <p className="flex items-baseline justify-between gap-3 text-xs">
               <span className="text-muted-foreground">Retroactive cleanup</span>
-              <span className="tnum shrink-0 font-medium text-foreground">
+              <span className="tnum shrink-0 font-bold text-money-strong">
                 {formatMoney(retro.total)} one-time
               </span>
             </p>

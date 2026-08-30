@@ -186,7 +186,7 @@ export function BillingPanel({ billing, clientId, invoices }: BillingPanelProps)
                 <TableCell colSpan={4} className="px-4 py-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Monthly total
                 </TableCell>
-                <TableCell className="tnum px-4 py-0 text-right text-sm font-bold text-foreground">
+                <TableCell className="tnum px-4 py-0 text-right text-sm font-bold text-money-strong">
                   {moneyLabel(billing.monthlyTotal)}
                 </TableCell>
               </TableRow>

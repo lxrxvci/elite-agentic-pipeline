@@ -40,7 +40,10 @@ The scaffold's generic Tailwind-palette tokens are placeholders. The design stag
 | `--status-deferred` | Deferred-until active | violet family (distinct from "not due yet") |
 | `--status-waiting-client` | Blocked on client input | cyan/blue family |
 | `--status-on-hold` | Paused/archived | neutral gray |
-Plus brand accent (bookkeeping-firm friendly teal-green region), light+dark themes, and a `data-status` attribute contract so badges render from one component everywhere.
+| `--kind-bank-feed` / `--kind-reconciliation` / `--kind-report` / `--kind-task` | Work-TYPE identity (not state) | teal / violet / blue / neutral slate; fg+bg pairs, always paired with the kind icon |
+| `--money-positive` / `--money-negative` / `--money-strong` | Financial figures | heroes use money-positive; dense-table totals use the AA-strong variant; negatives always keep the minus sign plus a text label |
+| `--avatar-1..8-fg/bg` | Person identity | deterministic per-user hue (hash of user id) from a safe 8-hue oklch set |
+Plus brand accent (bookkeeping-firm friendly teal-green region), light+dark themes, and a `data-status` attribute contract so badges render from one component everywhere. Color only ever means state (status tokens), type (kind tokens), identity (avatar hues), or money (money accents) - never decoration.
 
 ## 4. How compliance is verified (gates)
 

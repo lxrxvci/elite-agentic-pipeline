@@ -156,7 +156,7 @@ export function PayrollTable({ calc }: PayrollTableProps) {
                         <span className="text-muted-foreground">-</span>
                       )}
                     </TableCell>
-                    <TableCell className="tnum text-right text-sm font-medium">
+                    <TableCell className="tnum text-right text-sm font-bold text-money-strong">
                       {moneyLabel(r.totalPay)}
                     </TableCell>
                   </TableRow>
@@ -211,7 +211,9 @@ export function PayrollTable({ calc }: PayrollTableProps) {
               <TableCell className="tnum text-right text-sm">
                 {moneyLabel(totals.commission)}
               </TableCell>
-              <TableCell className="tnum text-right text-sm">{moneyLabel(totals.pay)}</TableCell>
+              <TableCell className="tnum text-right text-sm font-bold text-money-strong">
+                {moneyLabel(totals.pay)}
+              </TableCell>
             </TableRow>
           )}
         </TableBody>

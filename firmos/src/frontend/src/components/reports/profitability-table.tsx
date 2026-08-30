@@ -38,9 +38,16 @@ export function marginLabel(margin: number): string {
 
 function MarginCell({ margin }: { margin: number | null }) {
   if (margin == null) return <span className="text-xs text-muted-foreground">-</span>
+  // Negative margins get the danger fg; the figure keeps its minus sign and
+  // the "Negative" badge is the text label (never color alone).
+  const negative = margin < 0
   return (
     <span className="inline-flex items-center justify-end gap-2">
-      <span className="tnum text-sm font-medium text-foreground">{margin.toFixed(1)}%</span>
+      <span
+        className={`tnum text-sm font-semibold ${negative ? 'text-money-negative' : 'text-foreground'}`}
+      >
+        {margin.toFixed(1)}%
+      </span>
       <WorkStatusBadge status={marginStatus(margin)} label={marginLabel(margin)} />
     </span>
   )
@@ -90,7 +97,7 @@ export function ProfitabilityTable({ rows }: { rows: ClientProfitability[] }) {
             <TableCell className="tnum text-right text-sm text-muted-foreground">
               {formatHours(row.hoursWorked * 60)}
             </TableCell>
-            <TableCell className="tnum text-right text-sm font-medium">
+            <TableCell className="tnum text-right text-sm font-semibold text-money-strong">
               {row.effectiveHourlyRate != null ? (
                 `${moneyLabel(row.effectiveHourlyRate)}/hr`
               ) : (

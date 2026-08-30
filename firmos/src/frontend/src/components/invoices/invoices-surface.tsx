@@ -129,7 +129,7 @@ export function InvoicesSurface({
             <span className="tnum font-semibold text-foreground">{rows.length}</span> invoice
             {rows.length === 1 ? '' : 's'} for {monthLabel(year, month)}
             {' · '}
-            <span className="tnum font-semibold text-foreground">{moneyLabel(outstanding)}</span>{' '}
+            <span className="tnum text-sm font-bold text-money-strong">{moneyLabel(outstanding)}</span>{' '}
             outstanding
           </p>
         </div>

@@ -10,11 +10,12 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import type { TaskDetail, TaskDetailSop } from '@/server/task-detail'
+import { avatarStyle } from '@/shared/lib/avatar-hue'
 import { dueAging, periodLabel, stampLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 import { WorkStatusBadge, type WorkStatus } from '@/shared/ui/work'
 
-import { TaskTimerToggle } from './work-card'
+import { KIND_META, KIND_STYLE, TaskTimerToggle } from './work-card'
 
 /**
  * Task detail drawer (owner call notes: "each task has potential to have an
@@ -222,8 +223,22 @@ export function TaskDrawer({ taskId, open, onOpenChange, onToggleComplete }: Tas
           <>
             <SheetHeader className="gap-2 border-b border-border p-5 pr-10">
               <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold',
+                    KIND_STYLE.task.chip,
+                  )}
+                >
+                  <KIND_META.task.Icon className="h-3 w-3" aria-hidden />
+                  {KIND_META.task.label}
+                </span>
                 <WorkStatusBadge status={badge.status} label={badge.label} />
-                <span className="tnum rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <span
+                  className={cn(
+                    'tnum rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                    KIND_STYLE.task.chip,
+                  )}
+                >
                   {periodLabel(task.attributedYear, task.attributedMonth)}
                 </span>
               </div>
@@ -244,7 +259,10 @@ export function TaskDrawer({ taskId, open, onOpenChange, onToggleComplete }: Tas
                   {task.assigneeName && (
                     <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                       <Avatar className="h-4 w-4">
-                        <AvatarFallback className="bg-accent text-[8px] font-semibold text-accent-foreground">
+                        <AvatarFallback
+                          className="text-[8px] font-semibold"
+                          style={task.assigneeId != null ? avatarStyle(task.assigneeId) : undefined}
+                        >
                           <span className="sr-only">{task.assigneeName}</span>
                           <span aria-hidden>{assigneeInitials}</span>
                         </AvatarFallback>

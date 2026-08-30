@@ -275,7 +275,12 @@ export function InvoicesTable({ rows, year, month, today }: InvoicesTableProps) 
                   <TableCell className="px-3 py-0">
                     <InvoiceStatusChip status={row.status} />
                   </TableCell>
-                  <TableCell className="tnum px-3 py-0 text-right text-sm font-semibold text-foreground">
+                  <TableCell
+                    className={cn(
+                      'tnum px-3 py-0 text-right text-sm font-bold',
+                      row.total.startsWith('-') ? 'text-money-negative' : 'text-money-strong',
+                    )}
+                  >
                     {moneyLabel(row.total)}
                   </TableCell>
                   <TableCell className="px-3 py-0">
