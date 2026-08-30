@@ -40,6 +40,7 @@ function treeWith(docs: Partial<DocumentTree['documentsByGroup']['receipts'][num
         attributedYear: null,
         attributedMonth: null,
         statementDate: null,
+        endingBalance: null,
         folderId: null,
         uploadedById: 9,
         fileName: `receipt-${i + 1}.pdf`,

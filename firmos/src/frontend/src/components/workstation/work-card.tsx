@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { Check, FileText, Landmark, Lock, RefreshCw, SquareCheck, Timer } from 'lucide-react'
 
+import { moneyLabel } from '@/components/clients/format'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { refreshClockStatus, useClockStatus } from '@/shared/lib/clock-status'
@@ -222,17 +223,29 @@ export const WorkCardRow = React.memo(function WorkCardRow({
       {/* Reconciliation readiness (owner call notes: statement in + feeds
           done = ready to reconcile). Informational only - completion is
           never blocked. The "Ready" badge uses the on_track token with the
-          required dot+label pair; the waiting notes are muted metadata. */}
+          required dot+label pair; the waiting notes are muted metadata. The
+          statement's ending balance sits next to it (money accent, tnum) so
+          the reconcile flow reads "statement balance, then reconcile". */}
       {card.kind === 'reconciliation' && card.readyToReconcile != null && (
         card.readyToReconcile ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex shrink-0 cursor-help" data-testid="recon-ready-badge">
-                <WorkStatusBadge status="on_track" label="Ready" />
+          <span className="inline-flex shrink-0 items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex cursor-help" data-testid="recon-ready-badge">
+                  <WorkStatusBadge status="on_track" label="Ready" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>Statement uploaded and bank feeds complete.</TooltipContent>
+            </Tooltip>
+            {card.statementBalance != null && (
+              <span
+                className="tnum text-xs font-semibold text-money-strong"
+                data-testid="recon-statement-balance"
+              >
+                {moneyLabel(card.statementBalance)}
               </span>
-            </TooltipTrigger>
-            <TooltipContent>Statement uploaded and bank feeds complete.</TooltipContent>
-          </Tooltip>
+            )}
+          </span>
         ) : (
           <span
             className="hidden w-28 shrink-0 truncate text-right text-[11px] font-medium text-muted-foreground lg:block"

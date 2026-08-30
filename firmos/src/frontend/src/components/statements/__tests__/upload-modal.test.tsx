@@ -21,6 +21,8 @@ function cell(month: number, state: StatementGridCell['state']): StatementGridCe
     releaseDate: `2026-${String(month).padStart(2, '0')}-28`,
     documentId: null,
     fileName: null,
+    endingBalance: null,
+    statementDate: null,
   }
 }
 
@@ -110,6 +112,53 @@ describe('StatementUploadModal', () => {
     expect(screen.getByText(/Attributed to Mar 2026/)).toBeInTheDocument()
     expect(screen.getByText(/Next: Mar 2026 statement/)).toBeInTheDocument()
     expect(onUploaded).toHaveBeenCalledWith(freshStatus)
+  })
+
+  it('sends the optional ending balance with the upload', async () => {
+    const user = userEvent.setup()
+    mockUpload.mockResolvedValue({
+      ok: true,
+      data: {
+        result: {
+          document: {} as never,
+          period: { year: 2026, month: 2 },
+          storedPath: 'x/y.pdf',
+          updatedInPlace: false,
+        },
+        status: freshStatus,
+      },
+    })
+
+    renderModal()
+    await chooseFile(user)
+    await user.type(screen.getByLabelText(/Ending balance/), '12408.22')
+    await user.click(screen.getByTestId('upload-submit'))
+
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(1))
+    expect(mockUpload.mock.calls[0][0].get('endingBalance')).toBe('12408.22')
+  })
+
+  it('omits the ending balance field when left blank', async () => {
+    const user = userEvent.setup()
+    mockUpload.mockResolvedValue({
+      ok: true,
+      data: {
+        result: {
+          document: {} as never,
+          period: { year: 2026, month: 2 },
+          storedPath: 'x/y.pdf',
+          updatedInPlace: false,
+        },
+        status: freshStatus,
+      },
+    })
+
+    renderModal()
+    await chooseFile(user)
+    await user.click(screen.getByTestId('upload-submit'))
+
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(1))
+    expect(mockUpload.mock.calls[0][0].get('endingBalance')).toBeNull()
   })
 
   it('shows server validation errors verbatim', async () => {

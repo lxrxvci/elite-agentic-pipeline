@@ -74,6 +74,7 @@ export function StatementUploadModal({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selected, setSelected] = useState<{ year: number; month: number } | null>(null)
   const [statementDate, setStatementDate] = useState('')
+  const [endingBalance, setEndingBalance] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -95,6 +96,7 @@ export function StatementUploadModal({
       defaultCell(account)
     setSelected(seed ? { year: seed.year, month: seed.month } : null)
     setStatementDate(seed?.releaseDate ?? '')
+    setEndingBalance('')
     setFile(null)
     setError(null)
     setResult(null)
@@ -123,6 +125,9 @@ export function StatementUploadModal({
       // §29: honored server-side only for the month-end-ambiguous case.
       formData.set('explicitYear', String(selected.year))
       formData.set('explicitMonth', String(selected.month))
+    }
+    if (endingBalance.trim() !== '') {
+      formData.set('endingBalance', endingBalance.trim())
     }
     formData.set('file', file)
     const res = await uploadStatementAction(formData)
@@ -214,6 +219,35 @@ export function StatementUploadModal({
                 disabled={phase === 'submitting'}
                 className="h-8 w-44 text-sm"
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="statement-ending-balance" className="text-xs">
+                Ending balance{' '}
+                <span className="font-normal text-muted-foreground">(optional)</span>
+              </Label>
+              <div className="relative w-44">
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-muted-foreground"
+                >
+                  $
+                </span>
+                <Input
+                  id="statement-ending-balance"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="12408.22"
+                  autoComplete="off"
+                  value={endingBalance}
+                  onChange={(e) => setEndingBalance(e.target.value)}
+                  disabled={phase === 'submitting'}
+                  className="tnum h-8 pl-6 text-sm"
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Shown on the reconciliation card for this month.
+              </p>
             </div>
 
             <div className="space-y-1.5">

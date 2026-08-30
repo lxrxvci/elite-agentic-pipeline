@@ -12,6 +12,8 @@ function cell(partial: Partial<StatementGridCell> & Pick<StatementGridCell, 'mon
     releaseDate: `2026-${String(partial.month).padStart(2, '0')}-28`,
     documentId: null,
     fileName: null,
+    endingBalance: null,
+    statementDate: null,
     ...partial,
   }
 }
@@ -66,6 +68,33 @@ describe('StatementCells', () => {
     const rendered = screen.getAllByTestId('statement-cell')
     expect(rendered[1]).toHaveAttribute('aria-pressed', 'true')
     expect(rendered[0]).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('appends the ending balance and its as-of date to the cell label when present', () => {
+    const withBalance = [
+      cell({
+        month: 1,
+        state: 'uploaded',
+        documentId: 9,
+        fileName: '013126.pdf',
+        endingBalance: '12408.22',
+        statementDate: '2026-01-31',
+      }),
+    ]
+    render(<StatementCells cells={withBalance} />)
+    const rendered = screen.getByTestId('statement-cell')
+    expect(rendered).toHaveAccessibleName(/Balance \$12,408\.22 as of Jan 31, 2026/)
+    expect(rendered).toHaveAttribute('title', expect.stringContaining('Balance $12,408.22'))
+  })
+
+  it('a balance without a statement date falls back to the release date', () => {
+    const withBalance = [
+      cell({ month: 1, state: 'uploaded', endingBalance: '500.00', statementDate: null }),
+    ]
+    render(<StatementCells cells={withBalance} />)
+    expect(screen.getByTestId('statement-cell')).toHaveAccessibleName(
+      /Balance \$500\.00 as of Jan 28, 2026/,
+    )
   })
 })
 

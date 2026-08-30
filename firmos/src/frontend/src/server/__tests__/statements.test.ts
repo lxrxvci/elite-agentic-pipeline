@@ -239,6 +239,39 @@ describe.skipIf(!reachable)("statements engine (DB-backed)", () => {
     expect(row.status.earliestMissingDate).toBe("2026-01-31");
   });
 
+  it("grid cells carry the ending balance and statement date captured at upload", async () => {
+    const blueSpruce = await clientByName("Blue Spruce Landscaping");
+    const mainChecking = await accountByName(blueSpruce.id, "Main Checking");
+    const [mara] = await db.select().from(users).where(eq(users.role, "owner")).limit(1);
+
+    // June's statement exists from the round-trip test above; re-uploading
+    // with a balance updates that row in place.
+    const uploaded = await uploadStatement({
+      accountId: mainChecking.id,
+      uploadedById: mara.id,
+      fileName: "june-with-balance.pdf",
+      mimeType: "application/pdf",
+      bytes: PDF_BYTES,
+      statementDate: "2026-06-30",
+      endingBalance: "12408.22",
+      today: TEST_TODAY,
+    });
+    expect(uploaded.period).toEqual({ year: 2026, month: 6 });
+    expect(uploaded.updatedInPlace).toBe(true);
+
+    const grid = await getStatementsGrid(blueSpruce.id, TEST_TODAY);
+    const accountGrid = grid.accounts.find((a) => a.accountId === mainChecking.id)!;
+    const june = accountGrid.cells.find((c) => c.year === 2026 && c.month === 6)!;
+    expect(june.state).toBe("uploaded");
+    expect(june.endingBalance).toBe("12408.22");
+    expect(june.statementDate).toBe("2026-06-30");
+
+    // Months without a document stay null on both new fields.
+    const july = accountGrid.cells.find((c) => c.year === 2026 && c.month === 7)!;
+    expect(july.endingBalance).toBeNull();
+    expect(july.statementDate).toBeNull();
+  });
+
   it("grid marks months before the account open date as before_start", async () => {
     const blueSpruce = await clientByName("Blue Spruce Landscaping");
     const [inserted] = await db

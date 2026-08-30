@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { uploadPortalStatement } from '@/server/actions/portal-documents'
 import type { StatementCellState, StatementGridCell, StatementsGrid } from '@/server/statements'
+import { fullDateLabel, moneyLabel } from '@/components/clients/format'
 import { CELL_META, CELL_STATES } from '@/components/statements/cell-meta'
 import { monthLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
@@ -126,15 +127,22 @@ export function PortalStatementsGrid({
   function renderCell(accountId: number, accountName: string, cell: StatementGridCell) {
     const meta = CELL_META[cell.state]
     const label = `${monthLabel(cell.year, cell.month)}: ${meta.label}`
+    // The reconcile preview, read-only here: the ending balance the firm
+    // captured when the statement was uploaded.
+    const balanceTip =
+      cell.endingBalance != null
+        ? `Balance ${moneyLabel(cell.endingBalance)} as of ${fullDateLabel(cell.statementDate ?? cell.releaseDate)}`
+        : null
     const className = `flex h-14 w-16 flex-col items-center justify-center gap-0.5 rounded-md border text-[11px] font-medium ${meta.classes}`
 
     if (cell.state === 'uploaded' && cell.documentId != null) {
+      const tip = [cell.fileName ?? label, balanceTip].filter(Boolean).join(' - ')
       return (
         <a
           key={cellKey(cell.year, cell.month)}
           href={`/api/documents/${cell.documentId}`}
           aria-label={`${label}. Download statement.`}
-          title={cell.fileName ?? label}
+          title={tip}
           className={`${className} hover:underline`}
         >
           <CellIcon state={cell.state} canUpload={canUpload} />

@@ -34,10 +34,10 @@ const grid: StatementsGrid = {
       deferredUntil: null,
       closeDate: null,
       cells: [
-        { year: 2026, month: 5, state: 'before_start', releaseDate: '2026-05-31', documentId: null, fileName: null },
-        { year: 2026, month: 6, state: 'uploaded', releaseDate: '2026-06-30', documentId: 42, fileName: '063026.pdf' },
-        { year: 2026, month: 7, state: 'missing', releaseDate: '2026-07-31', documentId: null, fileName: null },
-        { year: 2026, month: 8, state: 'deferred', releaseDate: '2026-08-31', documentId: null, fileName: null },
+        { year: 2026, month: 5, state: 'before_start', releaseDate: '2026-05-31', documentId: null, fileName: null, endingBalance: null, statementDate: null },
+        { year: 2026, month: 6, state: 'uploaded', releaseDate: '2026-06-30', documentId: 42, fileName: '063026.pdf', endingBalance: '12408.22', statementDate: '2026-06-30' },
+        { year: 2026, month: 7, state: 'missing', releaseDate: '2026-07-31', documentId: null, fileName: null, endingBalance: null, statementDate: null },
+        { year: 2026, month: 8, state: 'deferred', releaseDate: '2026-08-31', documentId: null, fileName: null, endingBalance: null, statementDate: null },
       ],
     },
     {
@@ -47,8 +47,8 @@ const grid: StatementsGrid = {
       deferredUntil: null,
       closeDate: null,
       cells: [
-        { year: 2026, month: 7, state: 'missing', releaseDate: '2026-07-20', documentId: null, fileName: null },
-        { year: 2026, month: 8, state: 'future', releaseDate: '2026-08-20', documentId: null, fileName: null },
+        { year: 2026, month: 7, state: 'missing', releaseDate: '2026-07-20', documentId: null, fileName: null, endingBalance: null, statementDate: null },
+        { year: 2026, month: 8, state: 'future', releaseDate: '2026-08-20', documentId: null, fileName: null, endingBalance: null, statementDate: null },
       ],
     },
   ],
@@ -75,6 +75,15 @@ describe('PortalStatementsGrid', () => {
     expect(
       screen.getByRole('link', { name: 'Jun 2026: Uploaded. Download statement.' }),
     ).toHaveAttribute('href', '/api/documents/42')
+  })
+
+  it('the uploaded cell tooltip carries the captured ending balance, read-only', () => {
+    render(<PortalStatementsGrid grid={grid} canUpload={false} />)
+    const cell = screen.getByRole('link', { name: 'Jun 2026: Uploaded. Download statement.' })
+    expect(cell).toHaveAttribute(
+      'title',
+      expect.stringContaining('Balance $12,408.22 as of Jun 30, 2026'),
+    )
   })
 
   it('can_upload_docs on: missing and deferred cells open the upload dialog', async () => {

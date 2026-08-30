@@ -15,21 +15,24 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { generateMonthlyInvoicesAction } from '@/server/actions/invoices'
+import type { GenerateSummary } from '@/server/invoices'
 import { monthLabel } from '@/shared/lib/date-display'
 
 /**
  * The monthly billing run (HANDOFF §6.5). The confirm dialog spells out
- * exactly what the run will do; the result toasts the engine's summary
- * verbatim (created / skipped / empty / failed).
+ * exactly what the run will do; a successful result is handed up for the
+ * on-page result card (Wave 5), failures toast the engine's error verbatim.
  */
 export function GenerateRunButton({
   year,
   month,
   pendingTaskCount,
+  onResult,
 }: {
   year: number
   month: number
   pendingTaskCount: number
+  onResult?: (summary: GenerateSummary) => void
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -44,17 +47,7 @@ export function GenerateRunButton({
       toast.error(res.error)
       return
     }
-    const s = res.data
-    const skipped =
-      s.skippedExisting + s.skippedCadence + s.skippedIneligible + s.skippedNoBilling
-    const parts = [
-      `${s.invoicesCreated} created`,
-      `${skipped} skipped`,
-      `${s.emptySkipped} empty not created`,
-    ]
-    if (s.tasksAttached > 0) parts.push(`${s.tasksAttached} billable tasks attached`)
-    if (s.failures.length > 0) parts.push(`${s.failures.length} failed`)
-    toast.success(`${label} billing run complete`, { description: parts.join(' · ') })
+    onResult?.(res.data)
     setOpen(false)
     router.refresh()
   }

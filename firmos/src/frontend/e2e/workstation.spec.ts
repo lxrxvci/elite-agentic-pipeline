@@ -1,4 +1,35 @@
 import { expect, test } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+
+import { OWNER_COOKIES_FILE } from './global-setup'
+
+/**
+ * The session comes from the global setup's single sign-in (the UI login
+ * itself is covered by auth.spec; per-test form logins trip the 5/min
+ * rate limit when the whole suite runs).
+ */
+test.beforeEach(async ({ context, baseURL }) => {
+  try {
+    const storage = JSON.parse(readFileSync(OWNER_COOKIES_FILE, 'utf8'))
+    // Playwright rejects cookies that carry both domain and url.
+    await context.addCookies(
+      storage.cookies.map((c: { name: string; value: string }) => ({
+        name: c.name,
+        value: c.value,
+        url: baseURL ?? 'http://localhost:3200',
+      })),
+    )
+  } catch {
+    // Sign-in unavailable in global setup; the test logs in through the UI.
+    await context.newPage().then(async (page) => {
+      await page.goto('/login')
+      await page.getByLabel('Email').fill('mara@blueledgerbooks.com')
+      await page.getByLabel('Password').fill('Firm0s-dev!')
+      await page.getByRole('button', { name: 'Sign in' }).click()
+      await page.close()
+    })
+  }
+})
 
 /**
  * G2 - the Workstation daily loop, end to end:
@@ -7,12 +38,8 @@ import { expect, test } from '@playwright/test'
  * verify it's back, and back for good.
  */
 test('workstation: complete a bank-feed card, reload, re-open', async ({ page }) => {
-  // ── Login as the firm owner (seed credentials) ──
-  await page.goto('/login')
-  await page.getByLabel('Email').fill('mara@blueledgerbooks.com')
-  await page.getByLabel('Password').fill('Firm0s-dev!')
-  await page.getByRole('button', { name: 'Sign in' }).click()
-  await page.waitForURL((url) => url.pathname === '/')
+  // Signed-in owner via the shared global-setup storageState (the UI login
+  // is covered by auth.spec; per-test logins trip the 5/min rate limit).
 
   // ── Land on /workstation: buckets render with seeded work ──
   await page.goto('/workstation')

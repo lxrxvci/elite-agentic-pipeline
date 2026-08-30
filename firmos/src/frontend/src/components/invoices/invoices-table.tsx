@@ -48,6 +48,20 @@ const STATUS_LABELS: Record<InvoiceStatus, string> = {
   void: 'Void',
 }
 
+/**
+ * The Total column reads state peripherally (Wave 5): open money is the
+ * money accent, paid is the healthy token, overdue is danger, drafts and
+ * voids stay muted. The status chip right next to it carries the text
+ * label, so the tint is never the only signal.
+ */
+const TOTAL_TONE: Record<InvoiceStatus, string> = {
+  draft: 'font-medium text-muted-foreground',
+  sent: 'font-bold text-money-strong',
+  paid: 'font-bold text-status-on-track',
+  overdue: 'font-bold text-status-overdue',
+  void: 'font-medium text-muted-foreground line-through',
+}
+
 interface InvoicesTableProps {
   rows: InvoiceListRow[]
   year: number
@@ -277,8 +291,8 @@ export function InvoicesTable({ rows, year, month, today }: InvoicesTableProps) 
                   </TableCell>
                   <TableCell
                     className={cn(
-                      'tnum px-3 py-0 text-right text-sm font-bold',
-                      row.total.startsWith('-') ? 'text-money-negative' : 'text-money-strong',
+                      'tnum px-3 py-0 text-right text-sm',
+                      row.total.startsWith('-') ? 'font-bold text-money-negative' : TOTAL_TONE[row.status],
                     )}
                   >
                     {moneyLabel(row.total)}

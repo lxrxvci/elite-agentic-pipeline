@@ -10,6 +10,7 @@ import type { CommissionRow } from '@/server/payroll'
 
 import { CommissionTierBadge } from './commission-tier-badge'
 import { moneyLabel } from './format'
+import { OnTimeProgressBar } from './on-time-progress-bar'
 
 /**
  * Per-bookkeeper commission table (HANDOFF §6.6). Server-rendered: rows
@@ -40,9 +41,15 @@ export function CommissionTable({ rows }: { rows: CommissionRow[] }) {
               <TableCell className="pl-6 text-sm font-medium text-foreground">
                 {r.userName}
               </TableCell>
-              <TableCell className="tnum text-right text-sm">
+              <TableCell className="text-right">
                 {r.onTimePercent != null ? (
-                  `${r.onTimePercent.toFixed(1)}%`
+                  r.usedOverride ? (
+                    // An override bypasses the tiers, so there is no band to
+                    // progress through - the plain % plus the override badge.
+                    <span className="tnum text-sm">{`${r.onTimePercent.toFixed(1)}%`}</span>
+                  ) : (
+                    <OnTimeProgressBar onTimePercent={r.onTimePercent} />
+                  )
                 ) : (
                   <span className="text-muted-foreground">No data</span>
                 )}

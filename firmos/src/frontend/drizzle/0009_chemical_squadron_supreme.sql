@@ -1,0 +1,1 @@
+ALTER TABLE "documents" ADD COLUMN "ending_balance" numeric(12, 2);

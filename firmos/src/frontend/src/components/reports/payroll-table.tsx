@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { ChevronDown, ChevronRight, Download } from 'lucide-react'
+import { ChevronDown, ChevronRight, CalendarDays, Download } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -148,8 +148,12 @@ export function PayrollTable({ calc }: PayrollTableProps) {
                       {r.commission ? (
                         <>
                           {moneyLabel(r.commission.amount)}
-                          <span className="block text-[11px] text-muted-foreground">
-                            pays {dayLabel(r.commission.payoutDate)}
+                          <span className="flex items-center justify-end gap-1 text-[11px] font-medium text-foreground">
+                            <CalendarDays
+                              className="h-3 w-3 text-muted-foreground"
+                              aria-hidden
+                            />
+                            <span className="tnum">{`pays ${dayLabel(r.commission.payoutDate)}`}</span>
                           </span>
                         </>
                       ) : (

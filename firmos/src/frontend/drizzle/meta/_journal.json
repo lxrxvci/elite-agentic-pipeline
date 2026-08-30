@@ -64,6 +64,13 @@
       "when": 1787824792419,
       "tag": "0008_nasty_living_mummy",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788065000305,
+      "tag": "0009_chemical_squadron_supreme",
+      "breakpoints": true
     }
   ]
 }

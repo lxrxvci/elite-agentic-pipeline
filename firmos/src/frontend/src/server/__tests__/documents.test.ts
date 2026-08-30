@@ -343,6 +343,97 @@ describe.skipIf(!reachable)("documents engine (DB-backed)", () => {
     expect(stored.length).toBe(PDF_BYTES.length + 1);
   });
 
+  it("statement upload stores the optional ending balance on the document row", async () => {
+    const harborline = await clientByName("Harborline Marine Supply");
+    const checking = await accountByName(harborline.id, "Operating Checking");
+    const mara = await userByEmail("mara@blueledgerbooks.com");
+
+    const result = await uploadStatement({
+      accountId: checking.id,
+      uploadedById: mara.id,
+      fileName: "april-statement.pdf",
+      mimeType: "application/pdf",
+      bytes: PDF_BYTES,
+      statementDate: "2026-04-30",
+      endingBalance: "12408.22",
+      today: TEST_TODAY,
+    });
+    // The numeric(12,2) round-trip proves the ending_balance migration is live.
+    expect(result.document.endingBalance).toBe("12408.22");
+
+    const [row] = await db.select().from(documents).where(eq(documents.id, result.document.id));
+    expect(row.endingBalance).toBe("12408.22");
+  });
+
+  it("statement upload normalizes the balance and rejects non-money input", async () => {
+    const harborline = await clientByName("Harborline Marine Supply");
+    const card = await accountByName(harborline.id, "Business Credit Card");
+    const mara = await userByEmail("mara@blueledgerbooks.com");
+
+    const normalized = await uploadStatement({
+      accountId: card.id,
+      uploadedById: mara.id,
+      fileName: "card-march.pdf",
+      mimeType: "application/pdf",
+      bytes: PDF_BYTES,
+      statementDate: "2026-03-20",
+      endingBalance: "-312.5",
+      today: TEST_TODAY,
+    });
+    expect(normalized.document.endingBalance).toBe("-312.50");
+
+    await expect(
+      uploadStatement({
+        accountId: card.id,
+        uploadedById: mara.id,
+        fileName: "card-feb.pdf",
+        mimeType: "application/pdf",
+        bytes: PDF_BYTES,
+        statementDate: "2026-02-20",
+        endingBalance: "12,408.22",
+        today: TEST_TODAY,
+      }),
+    ).rejects.toThrow(DocumentError);
+  });
+
+  it("a balance-less re-upload clears the stored balance with the new file", async () => {
+    const harborline = await clientByName("Harborline Marine Supply");
+    const checking = await accountByName(harborline.id, "Operating Checking");
+    const mara = await userByEmail("mara@blueledgerbooks.com");
+
+    const reupload = await uploadStatement({
+      accountId: checking.id,
+      uploadedById: mara.id,
+      fileName: "april-statement-v2.pdf",
+      mimeType: "application/pdf",
+      bytes: PDF_BYTES,
+      statementDate: "2026-04-30",
+      today: TEST_TODAY,
+    });
+    expect(reupload.updatedInPlace).toBe(true);
+    expect(reupload.document.endingBalance).toBeNull();
+  });
+
+  it("promote-to-statement stores the optional ending balance too", async () => {
+    const harborline = await clientByName("Harborline Marine Supply");
+    const payroll = await accountByName(harborline.id, "Payroll Checking");
+    const mara = await userByEmail("mara@blueledgerbooks.com");
+
+    const general = await uploadDocument({
+      clientId: harborline.id,
+      uploadedById: mara.id,
+      fileName: "payroll-scan.pdf",
+      mimeType: "application/pdf",
+      bytes: PDF_BYTES,
+      folder: "General",
+      today: TEST_TODAY,
+    });
+    const promoted = await promoteToStatement(general.id, payroll.id, "2026-04-03", {
+      endingBalance: "5210.10",
+    });
+    expect(promoted.document.endingBalance).toBe("5210.10");
+  });
+
   it("promote-to-statement moves the file into the statement tree (happy path)", async () => {
     const harborline = await clientByName("Harborline Marine Supply");
     const checking = await accountByName(harborline.id, "Operating Checking");

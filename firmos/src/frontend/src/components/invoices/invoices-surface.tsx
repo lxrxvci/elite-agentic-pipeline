@@ -1,10 +1,10 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChevronLeft, ChevronRight, LayoutGrid, Rows3 } from 'lucide-react'
 
-import { moneyLabel } from '@/components/clients/format'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import type { GenerateSummary } from '@/server/invoices'
 import { monthLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 
@@ -20,6 +21,8 @@ import { BillingRunGrid } from './billing-run-grid'
 import { ByEmployeeReport } from './by-employee-report'
 import { periodParam } from './format'
 import { GenerateRunButton } from './generate-run-button'
+import { GenerateRunResultCard } from './generate-run-result'
+import { InvoicesHero } from './invoices-hero'
 import { InvoicesTable } from './invoices-table'
 import { PendingBillableTasks } from './pending-billable-tasks'
 import type {
@@ -104,18 +107,11 @@ export function InvoicesSurface({
   monthOptions,
 }: InvoicesSurfaceProps) {
   const router = useRouter()
+  const [runResult, setRunResult] = useState<GenerateSummary | null>(null)
 
   const idx = monthOptions.findIndex((o) => o.year === year && o.month === month)
   const prev = idx > 0 ? monthOptions[idx - 1] : null
   const next = idx >= 0 && idx < monthOptions.length - 1 ? monthOptions[idx + 1] : null
-
-  // Outstanding = sent + overdue, the money still to collect. Sum of
-  // display-rounded values is avoided: totals are numeric strings summed
-  // as cents integers.
-  const outstandingCents = rows
-    .filter((r) => r.status === 'sent' || r.status === 'overdue')
-    .reduce((sum, r) => sum + Math.round(Number(r.total) * 100), 0)
-  const outstanding = (outstandingCents / 100).toFixed(2)
 
   return (
     <div className="space-y-5 pb-10">
@@ -128,9 +124,6 @@ export function InvoicesSurface({
           <p className="text-xs text-muted-foreground">
             <span className="tnum font-semibold text-foreground">{rows.length}</span> invoice
             {rows.length === 1 ? '' : 's'} for {monthLabel(year, month)}
-            {' · '}
-            <span className="tnum text-sm font-bold text-money-strong">{moneyLabel(outstanding)}</span>{' '}
-            outstanding
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -179,9 +172,20 @@ export function InvoicesSurface({
           </div>
 
           <ViewToggle view={view} year={year} month={month} />
-          <GenerateRunButton year={year} month={month} pendingTaskCount={pendingTasks.length} />
+          <GenerateRunButton
+            year={year}
+            month={month}
+            pendingTaskCount={pendingTasks.length}
+            onResult={setRunResult}
+          />
         </div>
       </div>
+
+      {/* Money heroes + the billing-run result, when one just ran. */}
+      <InvoicesHero rows={rows} year={year} month={month} />
+      {runResult && (
+        <GenerateRunResultCard summary={runResult} onDismiss={() => setRunResult(null)} />
+      )}
 
       {/* Main view */}
       {view === 'grid' ? (

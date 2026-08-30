@@ -1,7 +1,7 @@
 'use client'
 
 import type { StatementCellState, StatementGridCell } from '@/server/statements'
-import { fullDateLabel } from '@/components/clients/format'
+import { fullDateLabel, moneyLabel } from '@/components/clients/format'
 import { monthLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 
@@ -22,7 +22,12 @@ export interface CellRef {
 function cellAriaLabel(cell: StatementGridCell): string {
   const meta = CELL_META[cell.state]
   const base = `${monthLabel(cell.year, cell.month)}: ${meta.label}, releases ${fullDateLabel(cell.releaseDate)}`
-  return cell.fileName ? `${base} (${cell.fileName})` : base
+  const withFile = cell.fileName ? `${base} (${cell.fileName})` : base
+  // The reconcile preview: the ending balance captured at upload, dated by
+  // the statement itself (falling back to the release date).
+  if (cell.endingBalance == null) return withFile
+  const asOf = fullDateLabel(cell.statementDate ?? cell.releaseDate)
+  return `${withFile} - Balance ${moneyLabel(cell.endingBalance)} as of ${asOf}`
 }
 
 interface StatementCellsProps {

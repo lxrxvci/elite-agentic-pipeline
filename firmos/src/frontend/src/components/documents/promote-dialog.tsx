@@ -49,6 +49,7 @@ export function PromoteDialog({ open, onOpenChange, document, accounts }: Promot
   const router = useRouter()
   const [accountId, setAccountId] = useState<string>('')
   const [statementDate, setStatementDate] = useState('')
+  const [endingBalance, setEndingBalance] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -56,6 +57,7 @@ export function PromoteDialog({ open, onOpenChange, document, accounts }: Promot
     if (open) {
       setAccountId(accounts.length === 1 ? String(accounts[0].id) : '')
       setStatementDate('')
+      setEndingBalance('')
       setError(null)
       setPending(false)
     }
@@ -65,7 +67,13 @@ export function PromoteDialog({ open, onOpenChange, document, accounts }: Promot
     if (!document || accountId === '' || statementDate === '') return
     setPending(true)
     setError(null)
-    const res = await promoteToStatementAction(document.id, Number(accountId), statementDate)
+    const res = await promoteToStatementAction(
+      document.id,
+      Number(accountId),
+      statementDate,
+      undefined,
+      endingBalance.trim() === '' ? null : endingBalance.trim(),
+    )
     setPending(false)
     if (!res.ok) {
       // Human-readable by contract - shown verbatim.
@@ -121,6 +129,30 @@ export function PromoteDialog({ open, onOpenChange, document, accounts }: Promot
             <p className="text-[11px] text-muted-foreground">
               The date printed on the statement; the accounting month is derived from it.
             </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="promote-ending-balance" className="text-xs">
+              Ending balance <span className="font-normal text-muted-foreground">(optional)</span>
+            </Label>
+            <div className="relative w-44">
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-muted-foreground"
+              >
+                $
+              </span>
+              <Input
+                id="promote-ending-balance"
+                type="text"
+                inputMode="decimal"
+                placeholder="12408.22"
+                autoComplete="off"
+                value={endingBalance}
+                onChange={(e) => setEndingBalance(e.target.value)}
+                className="tnum h-8 pl-6 text-sm"
+              />
+            </div>
           </div>
 
           {error && (

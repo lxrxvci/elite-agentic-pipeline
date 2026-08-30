@@ -36,11 +36,31 @@ export function marginLabel(margin: number): string {
   return 'Healthy'
 }
 
+/**
+ * The inline margin bar (Wave 5): fill width = the margin itself, clamped
+ * to the 0-100 track so outliers never break the layout. Negative margins
+ * show an empty track - the danger token plus the "Negative" badge already
+ * carry that meaning, and a leftward bar would invent a second language.
+ */
+export function marginBarPercent(margin: number): number {
+  return Math.min(100, Math.max(0, margin))
+}
+
+const MARGIN_FILL: Record<WorkStatus, string> = {
+  on_track: 'bg-status-on-track',
+  due_soon: 'bg-status-due-soon',
+  overdue: 'bg-status-overdue',
+  deferred: 'bg-status-deferred',
+  waiting_client: 'bg-status-waiting-client',
+  on_hold: 'bg-status-on-hold',
+}
+
 function MarginCell({ margin }: { margin: number | null }) {
   if (margin == null) return <span className="text-xs text-muted-foreground">-</span>
   // Negative margins get the danger fg; the figure keeps its minus sign and
   // the "Negative" badge is the text label (never color alone).
   const negative = margin < 0
+  const status = marginStatus(margin)
   return (
     <span className="inline-flex items-center justify-end gap-2">
       <span
@@ -48,7 +68,18 @@ function MarginCell({ margin }: { margin: number | null }) {
       >
         {margin.toFixed(1)}%
       </span>
-      <WorkStatusBadge status={marginStatus(margin)} label={marginLabel(margin)} />
+      <span
+        aria-hidden
+        className="h-1.5 w-14 overflow-hidden rounded-full bg-muted"
+        data-testid="margin-bar"
+      >
+        <span
+          className={`block h-full rounded-full ${MARGIN_FILL[status]}`}
+          style={{ width: `${marginBarPercent(margin)}%` }}
+          data-testid="margin-bar-fill"
+        />
+      </span>
+      <WorkStatusBadge status={status} label={marginLabel(margin)} />
     </span>
   )
 }

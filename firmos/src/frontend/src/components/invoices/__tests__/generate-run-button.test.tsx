@@ -52,23 +52,21 @@ describe('GenerateRunButton', () => {
     expect(mockGenerate).not.toHaveBeenCalled()
   })
 
-  it('runs the action for the viewed month and toasts the summary', async () => {
+  it('runs the action for the viewed month and hands the summary up for the result card', async () => {
     mockGenerate.mockResolvedValue({ ok: true, data: summary() })
     const { toast } = await import('sonner')
+    const onResult = vi.fn()
     const user = userEvent.setup()
-    render(<GenerateRunButton year={2026} month={8} pendingTaskCount={3} />)
+    render(
+      <GenerateRunButton year={2026} month={8} pendingTaskCount={3} onResult={onResult} />,
+    )
     await user.click(screen.getByTestId('generate-run-button'))
     await user.click(await screen.findByRole('button', { name: 'Run for Aug 2026' }))
 
     await waitFor(() => expect(mockGenerate).toHaveBeenCalledWith(2026, 8))
-    await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith(
-        'Aug 2026 billing run complete',
-        expect.objectContaining({
-          description: expect.stringContaining('5 created'),
-        }),
-      ),
-    )
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(summary()))
+    // The visual card replaced the summary toast (Wave 5).
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it('toasts the server error verbatim on failure', async () => {

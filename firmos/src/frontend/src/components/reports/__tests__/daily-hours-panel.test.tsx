@@ -94,4 +94,13 @@ describe('DailyHoursPanel', () => {
       await screen.findByText('Managers can only view their direct reports'),
     ).toBeInTheDocument()
   })
+
+  it('scales each day mini-bar against the biggest day in the range', async () => {
+    await renderPanel()
+    const dayRows = screen.getAllByTestId('daily-hours-day')
+    // 360 minutes is the max day: full bar. 180 minutes: half.
+    expect(within(dayRows[0]).getByTestId('daily-hours-bar')).toHaveStyle({ width: '100%' })
+    expect(within(dayRows[1]).getByTestId('daily-hours-bar')).toHaveStyle({ width: '50%' })
+    expect(within(dayRows[0]).getByTestId('daily-hours-bar')).toHaveClass('bg-kind-bank-feed')
+  })
 })

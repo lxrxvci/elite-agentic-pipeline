@@ -145,6 +145,8 @@ export async function uploadStatementAction(
       // genuinely ambiguous month-end case, inside resolveAttributedPeriod.
       explicitYear: numberField(formData, 'explicitYear'),
       explicitMonth: numberField(formData, 'explicitMonth'),
+      // Optional reconcile preview; validated and normalized in the engine.
+      endingBalance: stringField(formData, 'endingBalance'),
       today: localToday(),
     }),
   )
@@ -155,6 +157,7 @@ export async function promoteToStatementAction(
   accountId: number,
   statementDate: string,
   explicit?: { year?: number | null; month?: number | null },
+  endingBalance?: string | null,
 ): Promise<ActionResult<StatementActionData>> {
   const user = await requireStaffUser()
   if (!user) return { ok: false, error: 'Your session expired - sign in again.' }
@@ -170,6 +173,7 @@ export async function promoteToStatementAction(
     promoteToStatement(documentId, accountId, statementDate, {
       explicitYear: explicit?.year ?? null,
       explicitMonth: explicit?.month ?? null,
+      endingBalance: endingBalance ?? null,
     }),
   )
 }

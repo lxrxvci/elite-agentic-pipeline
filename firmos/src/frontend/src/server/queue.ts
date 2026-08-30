@@ -95,6 +95,8 @@ export interface WorkCard {
   readyToReconcile?: boolean;
   /** Reconciliation cards only: a statement document exists for the account+period (§6.7 derivation). */
   statementAvailable?: boolean;
+  /** Reconciliation cards only: the statement's ending balance (numeric string), when captured at upload. */
+  statementBalance?: string | null;
 }
 
 export interface UnifiedQueue {
@@ -240,13 +242,18 @@ export async function getUnifiedQueue(
         .map((r) => r.accountId),
     ),
   ];
-  const statementPeriodsByAccount = new Map<number, Set<string>>();
+  const statementPeriodsByAccount = new Map<number, Map<string, string | null>>();
   if (openReconAccountIds.length > 0) {
     const uploaded = await uploadedStatementMonths(openReconAccountIds);
     for (const [accountId, list] of uploaded) {
       statementPeriodsByAccount.set(
         accountId,
-        new Set(list.map((u) => `${u.period.year}-${u.period.month}`)),
+        new Map(
+          list.map((u) => [
+            `${u.period.year}-${u.period.month}`,
+            u.document.endingBalance ?? null,
+          ]),
+        ),
       );
     }
   }
@@ -330,8 +337,10 @@ export async function getUnifiedQueue(
     if (!eligibleIds.has(r.clientId) || r.completedAt != null) continue;
     const period = { year: r.attributedYear, month: r.attributedMonth };
     const gated = earlierPeriodIncomplete(gatingByKind.get(gatingKey(r.clientId, "reconciliation")) ?? [], period);
-    const statementAvailable =
-      statementPeriodsByAccount.get(r.accountId)?.has(`${period.year}-${period.month}`) ?? false;
+    const statementForPeriod = statementPeriodsByAccount
+      .get(r.accountId)
+      ?.get(`${period.year}-${period.month}`);
+    const statementAvailable = statementForPeriod !== undefined;
     const feedsSettled =
       feedsSettledByClientPeriod.get(`${r.clientId}:${period.year}-${period.month}`) ?? true;
     place(
@@ -351,6 +360,7 @@ export async function getUnifiedQueue(
         orderClass: "reconciliation",
         readyToReconcile: statementAvailable && feedsSettled,
         statementAvailable,
+        statementBalance: statementForPeriod ?? null,
       },
       gated,
     );

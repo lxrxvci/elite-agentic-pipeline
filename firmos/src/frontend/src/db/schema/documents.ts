@@ -12,7 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
-import { createdAt, updatedAt } from "./shared";
+import { createdAt, money, updatedAt } from "./shared";
 import { accounts } from "./accounts";
 import { clients } from "./clients";
 import { users } from "./users";
@@ -78,6 +78,9 @@ export const documents = pgTable(
     statementDate: date("statement_date", { mode: "string" }),
     attributedYear: integer("attributed_year"),
     attributedMonth: smallint("attributed_month"),
+    // Reconcile preview (owner call notes): the statement's ending balance,
+    // captured optionally at upload; null when not provided.
+    endingBalance: money("ending_balance"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

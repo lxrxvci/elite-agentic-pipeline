@@ -242,6 +242,7 @@ describe.skipIf(!reachable)("getUnifiedQueue - reconciliation readiness", () => 
         statementDate: "2026-07-31",
         attributedYear: 2026,
         attributedMonth: 6,
+        endingBalance: "12408.22",
       },
       {
         clientId: blueSpruceId,
@@ -290,6 +291,20 @@ describe.skipIf(!reachable)("getUnifiedQueue - reconciliation readiness", () => 
     const card = reconCard(cards, "Operating Checking", 6);
     expect(card.statementAvailable).toBe(true);
     expect(card.readyToReconcile).toBe(true);
+  });
+
+  it("the recon card carries the statement's ending balance when captured at upload", async () => {
+    const cards = allCards(await getUnifiedQueue(userId, TEST_TODAY));
+    const card = reconCard(cards, "Operating Checking", 6);
+    expect(card.statementBalance).toBe("12408.22");
+
+    // Statement uploaded without a balance: the field stays null, and a
+    // missing statement means no balance at all.
+    const noBalance = reconCard(cards, "Main Checking", 6);
+    expect(noBalance.statementAvailable).toBe(true);
+    expect(noBalance.statementBalance).toBeNull();
+    const noStatement = reconCard(cards, "Business Credit Card", 6);
+    expect(noStatement.statementBalance).toBeNull();
   });
 
   it("missing statement → not ready (statementAvailable false)", async () => {

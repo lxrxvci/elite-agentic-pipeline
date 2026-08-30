@@ -220,6 +220,8 @@ export interface UploadStatementInput {
   /** The grid cell the user clicked - honored only for month-end dates (§29). */
   explicitYear?: number | null;
   explicitMonth?: number | null;
+  /** Optional statement ending balance (dollars); shown on reconciliation cards. */
+  endingBalance?: string | null;
   today: LocalDate;
 }
 
@@ -230,6 +232,20 @@ export interface StatementUploadResult {
   storedPath: string;
   /** True when a re-upload updated the existing row at the deterministic path. */
   updatedInPlace: boolean;
+}
+
+/**
+ * The optional ending balance captured at statement upload: a signed dollar
+ * amount with at most two decimals, normalized to the numeric(12,2) string
+ * Postgres stores. Null/blank means "not provided".
+ */
+export function parseEndingBalance(raw: string | null | undefined): string | null {
+  const trimmed = raw?.trim() ?? "";
+  if (trimmed === "") return null;
+  if (!/^-?\d{1,10}(\.\d{1,2})?$/.test(trimmed)) {
+    throw new DocumentError("The ending balance must be a dollar amount like 12408.22.");
+  }
+  return Number(trimmed).toFixed(2);
 }
 
 /** Validation + attribution shared by uploadStatement and promoteToStatement. */
@@ -271,6 +287,7 @@ export async function uploadStatement(input: UploadStatementInput): Promise<Stat
 
   const relPath = statementRelPath(client, account.name, period, statementDate, validated.ext);
   const statementDateIso = formatLocalDate(statementDate);
+  const endingBalance = parseEndingBalance(input.endingBalance);
   const driver = await getStorageDriver();
 
   // §13 versioning rule: statement re-uploads reuse the deterministic path
@@ -296,6 +313,9 @@ export async function uploadStatement(input: UploadStatementInput): Promise<Stat
           statementDate: statementDateIso,
           attributedYear: period.year,
           attributedMonth: period.month,
+          // A re-upload replaces the statement, so the balance follows the
+          // new file - omitted means cleared, never stale.
+          endingBalance,
           uploadedById: input.uploadedById,
         })
         .where(eq(documents.id, existing.id))
@@ -315,6 +335,7 @@ export async function uploadStatement(input: UploadStatementInput): Promise<Stat
           statementDate: statementDateIso,
           attributedYear: period.year,
           attributedMonth: period.month,
+          endingBalance,
         })
         .returning();
     }
@@ -337,7 +358,7 @@ export async function promoteToStatement(
   documentId: number,
   accountId: number,
   statementDateIso: string,
-  opts: { explicitYear?: number | null; explicitMonth?: number | null } = {},
+  opts: { explicitYear?: number | null; explicitMonth?: number | null; endingBalance?: string | null } = {},
 ): Promise<StatementUploadResult> {
   const document = await getDocumentById(documentId);
   if (!document) throw new DocumentError("That document no longer exists.");
@@ -383,6 +404,7 @@ export async function promoteToStatement(
       statementDate: formatLocalDate(statementDate),
       attributedYear: period.year,
       attributedMonth: period.month,
+      endingBalance: parseEndingBalance(opts.endingBalance),
     })
     .where(eq(documents.id, document.id))
     .returning();

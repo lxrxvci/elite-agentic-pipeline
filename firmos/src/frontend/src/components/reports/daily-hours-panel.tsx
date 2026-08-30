@@ -63,10 +63,17 @@ export function DailyHoursPanel({ userId, fromIso, toIso }: DailyHoursPanelProps
     return <p className="text-xs text-muted-foreground">No day-by-day time in this range.</p>
   }
 
+  // Mini-bars are proportional to the biggest day in the loaded range, so
+  // the shape of the week reads peripherally (muted track, kind-teal fill;
+  // the hours label stays, never color alone).
+  const maxMinutes = Math.max(...days.map((d) => d.totalMinutes))
+
   return (
     <ul className="space-y-0.5">
       {days.map((day) => {
         const open = openDays.has(day.date)
+        const barPercent =
+          maxMinutes > 0 ? Math.round((day.totalMinutes / maxMinutes) * 100) : 0
         return (
           <li key={day.date} data-testid="daily-hours-day" data-date={day.date}>
             <button
@@ -82,6 +89,16 @@ export function DailyHoursPanel({ userId, fromIso, toIso }: DailyHoursPanelProps
               )}
               <span className="font-medium text-foreground">
                 {weekdayLabel(weekdayOf(day.date), 'long')}, {dayLabel(day.date)}
+              </span>
+              <span
+                aria-hidden
+                className="ml-2 h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted"
+              >
+                <span
+                  className="block h-full rounded-full bg-kind-bank-feed"
+                  style={{ width: `${barPercent}%` }}
+                  data-testid="daily-hours-bar"
+                />
               </span>
               <span className="tnum ml-auto text-muted-foreground">
                 {formatHours(day.totalMinutes)} h

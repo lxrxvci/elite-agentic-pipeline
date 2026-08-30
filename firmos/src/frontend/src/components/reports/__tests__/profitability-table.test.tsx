@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { ClientProfitability } from '@/server/profitability'
 
-import { ProfitabilityTable } from '../profitability-table'
+import { ProfitabilityTable, marginBarPercent } from '../profitability-table'
 
 const rows: ClientProfitability[] = [
   {
@@ -108,5 +108,45 @@ describe('ProfitabilityTable', () => {
   it('renders the empty state when there are no active clients', () => {
     render(<ProfitabilityTable rows={[]} />)
     expect(screen.getByText('No active clients')).toBeInTheDocument()
+  })
+})
+
+describe('marginBarPercent', () => {
+  it('passes in-range margins through', () => {
+    expect(marginBarPercent(20)).toBe(20)
+    expect(marginBarPercent(75)).toBe(75)
+  })
+
+  it('clamps negative margins to an empty track and outliers to a full one', () => {
+    expect(marginBarPercent(-50)).toBe(0)
+    expect(marginBarPercent(0)).toBe(0)
+    expect(marginBarPercent(100)).toBe(100)
+    expect(marginBarPercent(240)).toBe(100)
+  })
+})
+
+describe('ProfitabilityTable margin bar', () => {
+  it('fills the inline bar to the margin with the status color', () => {
+    render(<ProfitabilityTable rows={rows} />)
+    const healthy = rowFor('Copperline Coffee Roasters')
+    const fill = healthy.getByTestId('margin-bar-fill')
+    expect(fill).toHaveStyle({ width: '75%' })
+    expect(fill).toHaveClass('bg-status-on-track')
+
+    const thin = rowFor('Blue Spruce Landscaping')
+    expect(thin.getByTestId('margin-bar-fill')).toHaveStyle({ width: '20%' })
+    expect(thin.getByTestId('margin-bar-fill')).toHaveClass('bg-status-due-soon')
+  })
+
+  it('a negative margin shows an empty track next to the danger figure', () => {
+    render(<ProfitabilityTable rows={rows} />)
+    const negative = rowFor('Harborline Marine Supply')
+    expect(negative.getByTestId('margin-bar-fill')).toHaveStyle({ width: '0%' })
+    expect(negative.getByText('-50.0%')).toHaveClass('text-money-negative')
+  })
+
+  it('no bar renders when the margin is null', () => {
+    render(<ProfitabilityTable rows={rows} />)
+    expect(rowFor('Northwind Frame & Door').queryByTestId('margin-bar')).not.toBeInTheDocument()
   })
 })

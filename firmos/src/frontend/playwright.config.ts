@@ -20,6 +20,7 @@ const portalBaseURL = `http://localhost:${PORTAL_PORT}`
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: 'live/**',
   timeout: 60_000,
   workers: 1,
   retries: 0,

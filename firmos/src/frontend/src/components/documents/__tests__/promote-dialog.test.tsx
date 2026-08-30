@@ -69,7 +69,45 @@ describe('PromoteDialog', () => {
     await user.type(screen.getByLabelText('Statement date'), '2026-07-31')
     await user.click(screen.getByTestId('promote-submit'))
 
-    await waitFor(() => expect(mockPromote).toHaveBeenCalledWith(31, 6, '2026-07-31'))
+    await waitFor(() =>
+      expect(mockPromote).toHaveBeenCalledWith(31, 6, '2026-07-31', undefined, null),
+    )
+  })
+
+  it('passes the optional ending balance through to the action', async () => {
+    const user = userEvent.setup()
+    mockPromote.mockResolvedValue({
+      ok: true,
+      data: {
+        result: {
+          document: {} as never,
+          period: { year: 2026, month: 7 },
+          storedPath: 'x/y.pdf',
+          updatedInPlace: true,
+        },
+        status: {
+          nextPeriod: null,
+          nextStatementDate: null,
+          missingCount: 0,
+          earliestMissingPeriod: null,
+          earliestMissingDate: null,
+          deferredUntil: null,
+          isDeferred: false,
+          isOverdue: false,
+        },
+      },
+    })
+    renderDialog()
+
+    await user.click(screen.getByRole('combobox', { name: 'Account' }))
+    await user.click(screen.getByRole('option', { name: 'Amex Gold' }))
+    await user.type(screen.getByLabelText('Statement date'), '2026-07-31')
+    await user.type(screen.getByLabelText(/Ending balance/), '12408.22')
+    await user.click(screen.getByTestId('promote-submit'))
+
+    await waitFor(() =>
+      expect(mockPromote).toHaveBeenCalledWith(31, 6, '2026-07-31', undefined, '12408.22'),
+    )
   })
 
   it('shows server errors verbatim', async () => {

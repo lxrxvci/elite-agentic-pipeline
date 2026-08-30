@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import { Check, Lock } from 'lucide-react'
 
+import { moneyLabel } from '@/components/clients/format'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { KIND_META, KIND_STYLE } from '@/components/workstation/work-card'
 import type { QueueBucket, WorkCard, WorkCardKind } from '@/server/queue'
@@ -163,6 +164,26 @@ export function ClientWorkList({ rows, today, cellFilter = null, onComplete }: C
                       ? `until ${dayLabel(card.deferredUntil)}`
                       : aging.label}
                   </span>
+
+                  {/* Reconciliation readiness mirrors the workstation card:
+                      the Ready badge plus the statement's ending balance. */}
+                  {card.kind === 'reconciliation' && card.readyToReconcile != null && (
+                    <span className="inline-flex shrink-0 items-center gap-2">
+                      {card.readyToReconcile && (
+                        <span data-testid="recon-ready-badge">
+                          <WorkStatusBadge status="on_track" label="Ready" />
+                        </span>
+                      )}
+                      {card.statementBalance != null && (
+                        <span
+                          className="tnum text-xs font-semibold text-money-strong"
+                          data-testid="recon-statement-balance"
+                        >
+                          {moneyLabel(card.statementBalance)}
+                        </span>
+                      )}
+                    </span>
+                  )}
 
                   <span className="shrink-0">
                     {gated ? (

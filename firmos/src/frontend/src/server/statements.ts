@@ -314,6 +314,10 @@ export interface StatementGridCell {
   releaseDate: string;
   documentId: number | null;
   fileName: string | null;
+  /** Ending balance captured at upload (numeric string), or null. */
+  endingBalance: string | null;
+  /** The date printed on the uploaded statement (ISO), or null. */
+  statementDate: string | null;
 }
 
 export interface StatementGridAccount {
@@ -413,6 +417,8 @@ export async function getStatementsGrid(
         releaseDate: formatLocalDate(release),
         documentId: doc?.id ?? null,
         fileName: doc?.fileName ?? null,
+        endingBalance: doc?.endingBalance ?? null,
+        statementDate: doc?.statementDate ?? null,
       });
       cursor = addMonths(cursor, 1);
     }
