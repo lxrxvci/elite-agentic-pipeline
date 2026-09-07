@@ -36,9 +36,7 @@ function failure(error: unknown): { ok: false; error: string } {
   if (error instanceof AuthError) {
     return { ok: false, error: 'You do not have permission to do that.' }
   }
-  // TEMP DIAG: surface the raw driver/db error on the test deployment.
-  const raw = error instanceof Error ? error.message : String(error)
-  return { ok: false, error: `Something went wrong - try again. [${raw.slice(0, 200)}]` }
+  return { ok: false, error: 'Something went wrong - try again.' }
 }
 
 async function requireStaffUser() {
