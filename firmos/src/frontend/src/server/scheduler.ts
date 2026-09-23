@@ -20,11 +20,12 @@ import { firmLocalParts } from "./notifications";
 /**
  * Background scheduler (HANDOFF §9).
  *
- * One process runs the loop (scripts/scheduler.ts for dev/self-host; Vercel
- * Cron hits /api/cron/[job] for the daily jobs - the 5-minute jobs are the
- * loop's, per §9). NEVER run two schedulers: the legacy systemd units that
- * double-fired every notification were deleted for exactly that reason, and
- * the loop takes a Postgres advisory lock so a second instance exits.
+ * One process runs the loop (scripts/scheduler.ts for dev/self-host; on
+ * Vercel, Vercel Cron hits /api/cron/[job] for the daily jobs and an
+ * external scheduler hits /api/cron/frequent for the 5-minute ones).
+ * NEVER run two schedulers: the legacy systemd units that double-fired
+ * every notification were deleted for exactly that reason, and the loop
+ * takes a Postgres advisory lock so a second instance exits.
  *
  * runJob wraps every run: timing log, exception capture (Sentry seam), and
  * an app_settings `scheduler:last:{name}` stamp. A FAILED daily job does not
