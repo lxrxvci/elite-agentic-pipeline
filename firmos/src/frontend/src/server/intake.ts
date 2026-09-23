@@ -76,6 +76,13 @@ export interface IntakeCustomItemInput {
   quantity?: number;
 }
 
+/** A mid-intake tangent captured from the wizard's running-notes rail. */
+export interface IntakeRunningNote {
+  text: string;
+  /** ISO timestamp from the wizard client at capture time. */
+  at: string;
+}
+
 /** Per-account pre-conversion overrides, keyed by account name (§6.8). */
 export type IntakeAccountOverrides = Record<
   string,
@@ -137,6 +144,8 @@ export interface IntakeFormData {
   // Step 6 - recurring and notes
   customRecurringRules?: IntakeCustomRuleInput[];
   internalNotes?: string | null;
+  /** Running-notes rail entries; ride form_data so autosave preserves them. */
+  runningNotes?: IntakeRunningNote[];
   // Billing modifiers carried through conversion (§6.5)
   monthlyRecurringAmount?: string | number | null;
   baseMonthlyAmount?: string | number | null;

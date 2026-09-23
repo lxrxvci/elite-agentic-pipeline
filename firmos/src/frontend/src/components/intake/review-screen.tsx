@@ -12,6 +12,7 @@ import { monthLabel } from '@/shared/lib/date-display'
 
 import { ConvertDialog, type StaffOption } from './convert-dialog'
 import { formatMoney } from './format'
+import { noteLabel } from './notes-rail'
 import { quoteLineName } from './quote-panel'
 import { findChapter, visibleChapters, visibleQuestions, type WizardAnswers } from './registry'
 
@@ -111,7 +112,7 @@ export function ReviewScreen({
         </p>
         <div className="mt-4 flex items-center justify-center gap-3">
           {canConvert && (
-            <Button onClick={() => setConvertOpen(true)} data-testid="convert-button">
+            <Button variant="action" onClick={() => setConvertOpen(true)} data-testid="convert-button">
               Convert to client
             </Button>
           )}
@@ -227,6 +228,27 @@ export function ReviewScreen({
             </div>
           </section>
         )}
+
+        {/* Running notes captured mid-wizard ride along to the review and,
+            at conversion, into the client's notes. */}
+        {(answers.runningNotes ?? []).length > 0 && (
+          <section className="rounded-xl border border-border bg-card" data-testid="review-running-notes">
+            <header className="border-b border-border px-4 py-2.5">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Running notes
+                <span className="tnum ml-1.5">{(answers.runningNotes ?? []).length}</span>
+              </h3>
+            </header>
+            <ul className="divide-y divide-border px-4">
+              {(answers.runningNotes ?? []).map((n, i) => (
+                <li key={`${n.at}-${i}`} className="py-2.5" data-testid="running-note">
+                  <p className="text-sm text-foreground">{n.text}</p>
+                  <p className="tnum mt-0.5 text-[11px] text-muted-foreground">{noteLabel(n.at)}</p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
 
       {phase === 'duplicates' && (
@@ -272,7 +294,7 @@ export function ReviewScreen({
       )}
 
       {status === 'draft' && phase === 'review' && (
-        <Button onClick={() => submit(false)} disabled={busy} data-testid="submit-intake">
+        <Button variant="action" onClick={() => submit(false)} disabled={busy} data-testid="submit-intake">
           {busy ? 'Checking…' : 'Submit for review'}
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
@@ -281,7 +303,7 @@ export function ReviewScreen({
       {status === 'pending_review' && (
         <div className="flex items-center gap-3" data-testid="pending-review-actions">
           {canConvert ? (
-            <Button onClick={() => setConvertOpen(true)} data-testid="convert-button">
+            <Button variant="action" onClick={() => setConvertOpen(true)} data-testid="convert-button">
               Convert to client
             </Button>
           ) : (

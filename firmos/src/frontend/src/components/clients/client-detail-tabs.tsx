@@ -68,52 +68,57 @@ interface ClientDetailTabsProps {
 }
 
 export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel }: ClientDetailTabsProps) {
+  /* Segmented-pill tab strip (DESIGN-FRESHBOOKS §1): the active tab is the
+     brand pill (bg-primary/text-primary-foreground keeps AA in both themes);
+     icons inherit currentColor, so they follow the pill for free. */
+  const triggerCls =
+    'group rounded-full px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors duration-150 hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm'
   return (
     <Tabs defaultValue={defaultTab ?? 'overview'}>
-      <TabsList className="h-auto flex-wrap">
-        <TabsTrigger value="overview">Overview</TabsTrigger>
-        <TabsTrigger value="work">
+      <TabsList className="h-auto flex-wrap justify-start gap-1 rounded-full bg-muted p-1">
+        <TabsTrigger value="overview" className={triggerCls}>Overview</TabsTrigger>
+        <TabsTrigger value="work" className={triggerCls}>
           Work
           {work.rows.length > 0 && (
-            <span className="tnum ml-1.5 text-[11px] text-muted-foreground">{work.rows.length}</span>
+            <span className="tnum ml-1.5 text-[11px] text-muted-foreground group-data-[state=active]:text-primary-foreground/80">{work.rows.length}</span>
           )}
         </TabsTrigger>
-        <TabsTrigger value="recurring" data-testid="recurring-tab">
+        <TabsTrigger value="recurring" data-testid="recurring-tab" className={triggerCls}>
           <Repeat className="mr-1.5 h-3.5 w-3.5" aria-hidden />
           Recurring
         </TabsTrigger>
-        <TabsTrigger value="onboarding">Onboarding</TabsTrigger>
+        <TabsTrigger value="onboarding" className={triggerCls}>Onboarding</TabsTrigger>
         {showBilling && (
-          <TabsTrigger value="billing" data-testid="billing-tab">
+          <TabsTrigger value="billing" data-testid="billing-tab" className={triggerCls}>
             Billing
           </TabsTrigger>
         )}
-        <TabsTrigger value="documents" data-testid="documents-tab">
+        <TabsTrigger value="documents" data-testid="documents-tab" className={triggerCls}>
           <FolderOpen className="mr-1.5 h-3.5 w-3.5" aria-hidden />
           Documents
         </TabsTrigger>
-        <TabsTrigger value="statements" data-testid="statements-tab">
+        <TabsTrigger value="statements" data-testid="statements-tab" className={triggerCls}>
           <Landmark className="mr-1.5 h-3.5 w-3.5" aria-hidden />
           Statements
         </TabsTrigger>
-        <TabsTrigger value="tax" data-testid="tax-tab">
+        <TabsTrigger value="tax" data-testid="tax-tab" className={triggerCls}>
           <Scale className="mr-1.5 h-3.5 w-3.5" aria-hidden />
           Tax
         </TabsTrigger>
-        <TabsTrigger value="w9" data-testid="w9-tab">
+        <TabsTrigger value="w9" data-testid="w9-tab" className={triggerCls}>
           <ReceiptText className="mr-1.5 h-3.5 w-3.5" aria-hidden />
           W-9/1099
         </TabsTrigger>
-        <TabsTrigger value="offboarding" data-testid="offboarding-tab">
+        <TabsTrigger value="offboarding" data-testid="offboarding-tab" className={triggerCls}>
           <DoorOpen className="mr-1.5 h-3.5 w-3.5" aria-hidden />
           Offboarding
         </TabsTrigger>
-        <TabsTrigger value="projects" data-testid="projects-tab">
+        <TabsTrigger value="projects" data-testid="projects-tab" className={triggerCls}>
           <SquareKanban className="mr-1.5 h-3.5 w-3.5" aria-hidden />
           Projects
         </TabsTrigger>
         {detail.isRealEstateClient && (
-          <TabsTrigger value="properties" data-testid="properties-tab">
+          <TabsTrigger value="properties" data-testid="properties-tab" className={triggerCls}>
             <Building2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
             Properties
           </TabsTrigger>

@@ -29,6 +29,7 @@ coverage/
 htmlcov/
 
 # Test artifacts
+docs/design-preview/
 test-results/
 test-results-live/
 playwright-report/

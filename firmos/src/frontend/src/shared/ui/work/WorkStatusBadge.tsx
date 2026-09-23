@@ -76,7 +76,7 @@ export function StatusSpine({ status }: { status: WorkStatus }) {
     <span
       aria-hidden
       data-status={status}
-      className={`absolute inset-y-0 left-0 w-1 ${c.dot}`}
+      className={`absolute inset-y-0 left-0 w-[3px] ${c.dot}`}
     />
   )
 }

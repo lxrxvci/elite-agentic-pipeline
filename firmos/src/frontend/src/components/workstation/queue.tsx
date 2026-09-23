@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookmarkPlus,
+  Check,
+  ChevronDown,
+  Crosshair,
   Keyboard,
   Search,
   Undo2,
@@ -107,6 +110,48 @@ interface CompletedEntry {
   card: WorkCard
 }
 
+/**
+ * The optimistic-completions strip: green-tinted rows with one-click undo.
+ * Rendered per bucket in the full queue, or once globally in focus mode and
+ * the caught-up state.
+ */
+function CompletedStrip({
+  entries,
+  onReopen,
+  className,
+}: {
+  entries: CompletedEntry[]
+  onReopen: (entry: CompletedEntry) => void
+  className?: string
+}) {
+  return (
+    <div
+      data-testid="completed-strip"
+      className={cn('overflow-hidden rounded-lg border border-border bg-card shadow-card', className)}
+    >
+      {entries.map((entry) => (
+        <div
+          key={workCardKey(entry.card)}
+          className="flex h-9 animate-in fade-in items-center gap-2 border-b border-border bg-status-on-track-bg/30 px-4 pl-5 text-xs text-muted-foreground duration-150 last:border-b-0"
+        >
+          <CheckDraw className="h-3.5 w-3.5 shrink-0 text-status-on-track" />
+          <span className="min-w-0 flex-1 truncate">Completed - {entry.card.title}</span>
+          <span className="hidden shrink-0 md:block">{entry.card.clientName}</span>
+          <button
+            type="button"
+            onClick={() => void onReopen(entry)}
+            aria-label={`Re-open: ${entry.card.title}`}
+            title="Re-open (X)"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
+          >
+            <Undo2 className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 interface WorkstationQueueProps {
   queue: UnifiedQueue
   assignees: AssigneeOption[]
@@ -114,6 +159,27 @@ interface WorkstationQueueProps {
 
 function completedStorageKey(today: string): string {
   return `firmos.workstation.completed:${today}`
+}
+
+/* Focus mode (Jason's auto-prioritizer ask, docs/DESIGN-FRESHBOOKS.md §4.6):
+   a client-side view mode over the existing queue data - default off,
+   remembered in sessionStorage. Queue data/bucket semantics untouched. */
+const FOCUS_STORAGE_KEY = 'firmos.workstation.focus'
+
+function loadFocusMode(): boolean {
+  try {
+    return window.sessionStorage.getItem(FOCUS_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function persistFocusMode(on: boolean) {
+  try {
+    window.sessionStorage.setItem(FOCUS_STORAGE_KEY, on ? '1' : '0')
+  } catch {
+    // Storage blocked - focus mode just won't survive reload this session.
+  }
 }
 
 function loadCompleted(today: string): CompletedEntry[] {
@@ -152,6 +218,8 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
   const [viewName, setViewName] = useState('')
   // Task detail drawer: the open card (task-kind only), null when closed.
   const [drawerCard, setDrawerCard] = useState<WorkCard | null>(null)
+  // Focus mode: collapse the queue to the single next card (view mode only).
+  const [focusMode, setFocusMode] = useState(false)
 
   const searchRef = useRef<HTMLInputElement>(null)
   const [storageHydrated, setStorageHydrated] = useState(false)
@@ -165,9 +233,15 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
       .then(setViews)
       .catch(() => toast.error('Saved views could not be loaded'))
     setWorkDay(loadWorkDay(defaultWorkDay(queue.today)))
+    setFocusMode(loadFocusMode())
     setStorageHydrated(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!storageHydrated) return
+    persistFocusMode(focusMode)
+  }, [focusMode, storageHydrated])
 
   useEffect(() => {
     if (!storageHydrated) return
@@ -384,6 +458,13 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
           void reopen(last)
         }
       } else if (e.key === '/') {
+        // '/' is the command palette's app-wide key (command-menu.tsx). Its
+        // document-level listener runs before this window-level one in the
+        // bubble phase and preventDefaults when it claims the key - so when
+        // the palette handled it, don't ALSO focus the queue search (the
+        // double-open bug). This branch only fires when no palette claimed
+        // the key (e.g. the shell is not mounted).
+        if (e.defaultPrevented) return
         e.preventDefault()
         searchRef.current?.focus()
       } else if (e.key === '?') {
@@ -457,34 +538,30 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
     }
   }
 
-  // KPI chips: a nonzero count tints the whole card surface in the bucket's
-  // status token and the figure takes the status fg (state = color, larger
-  // display-font figure = the page hero). Zero stays neutral so an empty
-  // bucket never shouts.
-  const statChips: { bucket: QueueBucket; label: string; fg: string; surface: string }[] = [
+  // Hero stat row (docs/DESIGN-FRESHBOOKS.md §4.2): 4 white cards, huge blue
+  // tabular numerals (brand-strong = AA on white), small gray captions,
+  // click-to-filter. Overdue takes the red accent whenever it is nonzero;
+  // zeros stay muted so an empty bucket never shouts.
+  const statChips: { bucket: QueueBucket; label: string; figure: (nonzero: boolean) => string }[] = [
     {
       bucket: 'overdue',
       label: 'Overdue',
-      fg: 'text-status-overdue',
-      surface: 'border-status-overdue/40 bg-status-overdue-bg',
+      figure: (nonzero) => (nonzero ? 'text-status-overdue' : 'text-muted-foreground'),
     },
     {
       bucket: 'due_today',
       label: 'Due today',
-      fg: 'text-status-due-soon',
-      surface: 'border-status-due-soon/40 bg-status-due-soon-bg',
+      figure: (nonzero) => (nonzero ? 'text-firm-brand-strong' : 'text-muted-foreground'),
     },
     {
       bucket: 'upcoming',
       label: 'Upcoming',
-      fg: 'text-status-on-track',
-      surface: 'border-status-on-track/40 bg-status-on-track-bg',
+      figure: (nonzero) => (nonzero ? 'text-firm-brand-strong' : 'text-muted-foreground'),
     },
     {
       bucket: 'waiting_on_client',
       label: 'Waiting on client',
-      fg: 'text-status-waiting-client',
-      surface: 'border-status-waiting-client/40 bg-status-waiting-client-bg',
+      figure: (nonzero) => (nonzero ? 'text-firm-brand-strong' : 'text-muted-foreground'),
     },
   ]
 
@@ -502,7 +579,8 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
 
   return (
     <div className="space-y-5 pb-10">
-      {/* Header */}
+      {/* Header: title + the one green primary action (FreshBooks action
+          language - green is for DOING; docs/DESIGN-FRESHBOOKS.md §1). */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display text-xl font-semibold tracking-tight text-foreground">
@@ -512,6 +590,52 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
             One queue of everything due across every client.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-stretch">
+            <button
+              type="button"
+              data-testid="complete-next"
+              disabled={flatVisible.length === 0}
+              onClick={() => {
+                const next = flatVisible[cursor]
+                if (next) void complete(next)
+              }}
+              title="Complete the selected card (E)"
+              className="flex h-8 items-center gap-1.5 rounded-l-md bg-firm-action px-3 text-xs font-semibold text-firm-action-foreground shadow-sm transition-colors duration-150 hover:bg-firm-action-strong disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Check className="h-3.5 w-3.5" aria-hidden />
+              Complete next
+              <kbd className="rounded border border-white/30 px-1 font-mono text-[10px]">E</kbd>
+            </button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="More actions"
+                  className="flex h-8 items-center rounded-r-md border-l border-white/25 bg-firm-action px-1.5 text-firm-action-foreground shadow-sm transition-colors duration-150 hover:bg-firm-action-strong"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 p-1">
+                <button
+                  type="button"
+                  data-testid="header-quick-add"
+                  onClick={() => {
+                    // The quick-add menu lives in the top bar and owns its
+                    // dialogs; its global `n` listener is the public trigger.
+                    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n' }))
+                  }}
+                  className="flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left text-sm font-medium text-foreground outline-none transition-colors duration-150 hover:bg-accent focus-visible:bg-accent"
+                >
+                  Quick add…
+                  <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                    N
+                  </kbd>
+                </button>
+              </PopoverContent>
+            </Popover>
+          </div>
         <Popover open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
           <PopoverTrigger asChild>
             <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" aria-label="Keyboard shortcuts">
@@ -530,7 +654,6 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
                 ['Enter', 'Open task detail'],
                 ['X', 'Re-open last completed'],
                 ['N', 'Quick add'],
-                ['/', 'Focus search'],
                 ['?', 'Toggle this panel'],
               ].map(([keys, action]) => (
                 <div key={keys} className="flex items-center justify-between">
@@ -545,47 +668,48 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
             </dl>
           </PopoverContent>
         </Popover>
+        </div>
       </div>
 
-      {/* KPI stat chips - tinted by status when nonzero, display-font hero figure */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {/* Hero stat row: white cards, huge blue tabular numerals, click-to-filter */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {statChips.map((s) => {
           const n = counts[s.bucket]
-          const nonzero = n > 0
           return (
             <button
               key={s.bucket}
               type="button"
+              data-testid={`stat-${s.bucket}`}
               onClick={() => {
                 setBucketFilter(bucketFilter === s.bucket ? 'all' : s.bucket)
                 setRawCursor(0)
               }}
               aria-pressed={bucketFilter === s.bucket}
               className={cn(
-                'rounded-lg border px-4 py-2.5 text-left transition-colors duration-150 hover:border-ring/40',
-                nonzero ? s.surface : 'border-border bg-card',
+                'rounded-xl border border-border bg-card px-4 py-3 text-left shadow-card transition-[box-shadow,transform,border-color] duration-150 hover:shadow-pop motion-safe:hover:-translate-y-0.5',
                 bucketFilter === s.bucket && 'border-ring/60 ring-1 ring-ring/30',
               )}
             >
               <div
                 className={cn(
-                  'tnum font-display text-2xl font-bold leading-none',
-                  nonzero ? s.fg : 'text-muted-foreground',
+                  'tnum font-display text-[32px] font-bold leading-none',
+                  s.figure(n > 0),
                 )}
               >
                 {n}
               </div>
-              <div className="mt-1 text-[11px] font-medium text-muted-foreground">{s.label}</div>
+              <div className="mt-1.5 text-xs font-medium text-muted-foreground">{s.label}</div>
             </button>
           )
         })}
       </div>
 
-      {/* Work-day chips - the owner's daily client rotation (call notes) */}
+      {/* Work-day pills - the owner's daily client rotation (call notes),
+          FreshBooks segmented-pill styling */}
       <div
         role="group"
         aria-label="Filter by client work day"
-        className="flex flex-wrap items-center gap-1 rounded-lg bg-muted p-1"
+        className="flex flex-wrap items-center gap-1 rounded-full bg-muted p-1"
       >
         <span className="px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
           Work day
@@ -602,7 +726,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
               setRawCursor(0)
             }}
             className={cn(
-              'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors duration-150',
+              'rounded-full px-3 py-1.5 text-xs font-semibold transition-colors duration-150',
               workDay === chip.key
                 ? 'bg-card text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',
@@ -615,11 +739,11 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
         ))}
       </div>
 
-      {/* Bucket segmented control */}
+      {/* Bucket segmented pill group */}
       <div
         role="tablist"
         aria-label="Filter by bucket"
-        className="flex flex-wrap gap-1 rounded-lg bg-muted p-1"
+        className="flex flex-wrap items-center gap-1 rounded-full bg-muted p-1"
       >
         {bucketTabs.map((t) => (
           <button
@@ -631,7 +755,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
               setRawCursor(0)
             }}
             className={cn(
-              'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors duration-150',
+              'rounded-full px-3 py-1.5 text-xs font-semibold transition-colors duration-150',
               bucketFilter === t.key
                 ? 'bg-card text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',
@@ -739,6 +863,26 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
           </Button>
         )}
 
+        {/* Focus mode toggle (auto-prioritizer): collapse the queue to the
+            single next card. View mode only - queue data untouched. Kept out
+            of the tablist row: a non-tab child trips axe required-children. */}
+        <button
+          type="button"
+          aria-pressed={focusMode}
+          data-testid="focus-toggle"
+          title="Focus mode: one card at a time"
+          onClick={() => setFocusMode((v) => !v)}
+          className={cn(
+            'ml-auto flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors duration-150',
+            focusMode
+              ? 'bg-firm-action text-firm-action-foreground shadow-sm'
+              : 'border border-border bg-card text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <Crosshair className="h-3.5 w-3.5" aria-hidden />
+          Focus
+        </button>
+
         <Popover open={saveOpen} onOpenChange={setSaveOpen}>
           <PopoverTrigger asChild>
             <Button
@@ -808,9 +952,36 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
         </div>
       )}
 
-      {/* The queue */}
-      <div className="space-y-4" role="listbox" aria-label="Work queue" aria-multiselectable="false">
-        {flatVisible.length === 0 && filtersActive ? (
+      {/* The queue. Plain grouped markup, not role="listbox": options nested
+          under the per-bucket <section> regions are not "owned" by a listbox
+          (axe aria-required-children / aria-required-parent), option is not
+          an allowed role on <article>, and rows contain real buttons
+          (nested-interactive). Selection stays visual + keyboard-loop driven. */}
+      <section className="space-y-4" aria-label="Work queue">
+        {openCards.length === 0 ? (
+          /* All caught up - the celebratory clear-queue state (dopamine,
+             docs/DESIGN-FRESHBOOKS.md §4.5). CheckDraw is reduced-motion
+             safe: the draw animation only exists under motion-safe. */
+          <>
+            <div
+              data-testid="caught-up"
+              className="flex flex-col items-center justify-center rounded-xl border border-border bg-card px-6 py-14 text-center shadow-card"
+            >
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-status-on-track-bg">
+                <CheckDraw className="h-8 w-8 text-status-on-track" />
+              </span>
+              <h2 className="mt-4 font-display text-lg font-semibold text-foreground">
+                All caught up
+              </h2>
+              <p className="mt-1 max-w-sm text-[13px] text-muted-foreground">
+                Every client is handled. Enjoy the quiet - or get ahead on tomorrow.
+              </p>
+            </div>
+            {activeCompleted.length > 0 && (
+              <CompletedStrip entries={activeCompleted} onReopen={reopen} />
+            )}
+          </>
+        ) : flatVisible.length === 0 && filtersActive ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 py-14 text-center">
             <p className="text-sm font-semibold text-foreground">No work matches these filters.</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -845,6 +1016,54 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
               Show all days
             </Button>
           </div>
+        ) : focusMode ? (
+          /* Focus mode (auto-prioritizer): the queue collapses to the single
+             next card. Next = complete and move on (E), Skip = move without
+             completing (j). The keyboard loop keeps working untouched. */
+          <section aria-label="Focus mode" data-testid="focus-mode" className="space-y-3">
+            <p className="tnum px-1 text-xs font-medium text-muted-foreground">
+              Card {cursor + 1} of {flatVisible.length}
+            </p>
+            <WorkCardRow
+              card={flatVisible[cursor]}
+              today={queue.today}
+              selected
+              assignee={
+                flatVisible[cursor].assigneeId != null
+                  ? assigneeById.get(flatVisible[cursor].assigneeId)
+                  : undefined
+              }
+              onSelect={handleCardSelect}
+              onComplete={handleCardComplete}
+            />
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                data-testid="focus-skip"
+                disabled={cursor >= flatVisible.length - 1}
+                onClick={() => setRawCursor((c) => Math.min(c + 1, flatVisible.length - 1))}
+                title="Skip to the next card (j)"
+              >
+                Skip
+              </Button>
+              <button
+                type="button"
+                data-testid="focus-next"
+                onClick={() => void complete(flatVisible[cursor])}
+                title="Complete and move to the next card (E)"
+                className="flex h-8 items-center gap-1.5 rounded-md bg-firm-action px-3 text-xs font-semibold text-firm-action-foreground shadow-sm transition-colors duration-150 hover:bg-firm-action-strong"
+              >
+                <Check className="h-3.5 w-3.5" aria-hidden />
+                Next
+              </button>
+            </div>
+            {activeCompleted.length > 0 && (
+              <CompletedStrip entries={activeCompleted} onReopen={reopen} />
+            )}
+          </section>
         ) : (
           bucketsToRender.map((bucket) => {
             const rows = visibleByBucket.get(bucket) ?? []
@@ -863,9 +1082,11 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
                     <span className="tnum font-semibold">{rows.length}</span>
                   </span>
                 </h2>
-                <div className="overflow-hidden rounded-xl border border-border bg-card">
+                {/* Rows are individual white cards on the cool-gray canvas
+                    (FreshBooks card clarity), status left edge per card. */}
+                <div className="space-y-2">
                   {rows.length === 0 && (
-                    <p className="px-4 py-4 text-xs text-muted-foreground">
+                    <p className="rounded-lg border border-dashed border-border bg-card px-4 py-4 text-xs text-muted-foreground">
                       {filtersActive ? 'Nothing here matches the current filters.' : BUCKET_EMPTY[bucket]}
                     </p>
                   )}
@@ -885,37 +1106,15 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
                       />
                     )
                   })}
-                  {strip.length > 0 && (
-                    <div data-testid="completed-strip" className="border-t border-border">
-                      {strip.map((entry) => (
-                        <div
-                          key={workCardKey(entry.card)}
-                          className="flex h-9 animate-in fade-in items-center gap-2 bg-status-on-track-bg/30 px-4 pl-5 text-xs text-muted-foreground duration-150"
-                        >
-                          <CheckDraw className="h-3.5 w-3.5 shrink-0 text-status-on-track" />
-                          <span className="min-w-0 flex-1 truncate">
-                            Completed - {entry.card.title}
-                          </span>
-                          <span className="hidden shrink-0 md:block">{entry.card.clientName}</span>
-                          <button
-                            type="button"
-                            onClick={() => void reopen(entry)}
-                            aria-label={`Re-open: ${entry.card.title}`}
-                            title="Re-open (X)"
-                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
-                          >
-                            <Undo2 className="h-3.5 w-3.5" aria-hidden />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
+                {strip.length > 0 && (
+                  <CompletedStrip entries={strip} onReopen={reopen} className="mt-2" />
+                )}
               </section>
             )
           })
         )}
-      </div>
+      </section>
 
       <TaskDrawer
         taskId={drawerCard?.kind === 'task' ? drawerCard.id : null}

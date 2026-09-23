@@ -10,6 +10,9 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        /* The one primary action per page (DESIGN-FRESHBOOKS §1): saturated
+           FreshBooks green for DOING; status green stays for DONE. */
+        action: "bg-firm-action text-firm-action-foreground shadow-sm hover:bg-firm-action-strong",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:

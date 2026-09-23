@@ -56,6 +56,7 @@ export function GenerateRunButton({
     <>
       <Button
         type="button"
+        variant="action"
         size="sm"
         className="h-8 gap-1.5 text-xs"
         onClick={() => setOpen(true)}
@@ -88,7 +89,7 @@ export function GenerateRunButton({
             <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" size="sm" disabled={pending} onClick={() => void run()}>
+            <Button type="button" variant="action" size="sm" disabled={pending} onClick={() => void run()}>
               {pending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
               Run for {label}
             </Button>

@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 
-import { Separator } from '@/components/ui/separator'
 import {
   Tooltip,
   TooltipContent,
@@ -25,7 +24,7 @@ interface AppSidebarProps {
 
 function NavBadge({ count }: { count: number }) {
   return (
-    <span className="tnum ml-auto rounded-full bg-secondary px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
+    <span className="tnum ml-auto rounded-full bg-white/15 px-1.5 py-0.5 text-[11px] font-semibold text-firm-rail-text">
       {count}
     </span>
   )
@@ -42,8 +41,8 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
       className={cn(
         'flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors duration-150 ease-out',
         active
-          ? 'bg-accent font-semibold text-accent-foreground'
-          : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+          ? 'bg-firm-rail-active font-semibold text-firm-rail-text'
+          : 'text-firm-rail-text/85 hover:bg-firm-rail-hover hover:text-firm-rail-text',
         collapsed && 'justify-center px-0',
       )}
     >
@@ -73,25 +72,27 @@ export function AppSidebar({ collapsed, onToggle, role, chatUnread }: AppSidebar
   return (
     <aside
       className={cn(
-        'sticky top-0 flex h-screen shrink-0 flex-col border-r border-border bg-card transition-[width] duration-200 ease-out',
+        // The FreshBooks brand rail: deep blue gradient, white text, darker
+        // active pill. Stays blue in dark mode (docs/DESIGN-FRESHBOOKS.md §1).
+        'sticky top-0 flex h-screen shrink-0 flex-col bg-[linear-gradient(180deg,var(--firm-rail),var(--firm-rail-deep))] text-firm-rail-text transition-[width] duration-200 ease-out',
         collapsed ? 'w-14' : 'w-60',
       )}
     >
       {/* Brand */}
       <div
         className={cn(
-          'flex h-12 items-center gap-2 border-b border-border px-3',
+          'flex h-12 items-center gap-2 border-b border-white/10 px-3',
           collapsed && 'justify-center px-0',
         )}
       >
         <span
           aria-hidden
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary text-[13px] font-bold text-primary-foreground"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white text-[13px] font-bold text-firm-rail-deep"
         >
           F
         </span>
         {!collapsed && (
-          <span className="font-display text-[15px] font-bold tracking-tight text-foreground">
+          <span className="font-display text-[15px] font-bold tracking-tight text-firm-rail-text">
             FirmOS
           </span>
         )}
@@ -106,7 +107,7 @@ export function AppSidebar({ collapsed, onToggle, role, chatUnread }: AppSidebar
 
       {/* Admin (admin/owner only) + collapse, pinned to the bottom */}
       <div className="space-y-1 px-2 pb-2">
-        <Separator className="mb-2" />
+        <div aria-hidden className="mx-2 mb-2 h-px bg-white/10" />
         {(role === 'admin' || role === 'owner') && (
           <SidebarLink item={ADMIN_ITEM} collapsed={collapsed} />
         )}
@@ -115,7 +116,7 @@ export function AppSidebar({ collapsed, onToggle, role, chatUnread }: AppSidebar
           onClick={onToggle}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className={cn(
-            'flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors duration-150 ease-out hover:bg-secondary hover:text-foreground',
+            'flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-[13px] text-firm-rail-text/85 transition-colors duration-150 ease-out hover:bg-firm-rail-hover hover:text-firm-rail-text',
             collapsed && 'justify-center px-0',
           )}
         >

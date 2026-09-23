@@ -174,8 +174,7 @@ export const WorkCardRow = React.memo(function WorkCardRow({
 
   return (
     <article
-      role="option"
-      aria-selected={selected}
+      aria-current={selected ? 'true' : undefined}
       data-testid="work-card"
       data-card-key={workCardKey(card)}
       data-card-title={card.title}
@@ -183,11 +182,16 @@ export const WorkCardRow = React.memo(function WorkCardRow({
       data-status={card.status}
       onClick={() => onSelect(card)}
       className={cn(
-        'group relative flex h-12 cursor-pointer items-center gap-3 border-b border-border pl-5 pr-3 transition-colors duration-150 last:border-b-0',
+        // White card on the cool-gray canvas: 1px border, subtle shadow,
+        // slight hover lift; the 3px status spine is the left edge.
+        'group relative flex h-12 cursor-pointer items-center gap-3 overflow-hidden rounded-lg border border-border bg-card pl-5 pr-3 shadow-card transition-[background-color,box-shadow,transform] duration-150 hover:shadow-pop motion-safe:hover:-translate-y-0.5',
         selected ? 'bg-muted' : 'hover:bg-muted/60',
         card.status === 'waiting_on_client' && 'bg-status-waiting-client-bg/30',
         card.status === 'deferred' && 'bg-status-deferred-bg/30',
-        gated && 'opacity-60',
+        // Gated rows dim with the neutral on-hold tint, never opacity:
+        // opacity-60 blends every text color toward the background and
+        // drops it below WCAG AA (axe color-contrast).
+        gated && 'bg-status-on-hold-bg/40',
       )}
     >
       <StatusSpine status={status} />
@@ -313,7 +317,7 @@ export const WorkCardRow = React.memo(function WorkCardRow({
         aria-label={`Complete: ${card.title}`}
         title="Complete (E)"
         className={cn(
-          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-all duration-150 hover:border-status-on-track hover:bg-status-on-track-bg hover:text-status-on-track focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-all duration-150 hover:border-firm-action hover:bg-firm-action-soft hover:text-firm-action focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           completing
             ? 'border-status-on-track bg-status-on-track-bg text-status-on-track opacity-100'
             : selected

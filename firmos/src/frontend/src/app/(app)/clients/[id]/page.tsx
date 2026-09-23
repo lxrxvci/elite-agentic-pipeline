@@ -7,7 +7,9 @@ import { formatLocalDate } from '@firmos/domain'
 
 import { ClientDetailTabs } from '@/components/clients/client-detail-tabs'
 import { ClientRecurringPanel } from '@/components/clients/client-recurring-panel'
-import { cadenceTierLabel, fullDateLabel } from '@/components/clients/format'
+import { cadenceTierLabel, fullDateLabel, moneyLabel } from '@/components/clients/format'
+import { ClientContactCard } from '@/components/clients/contact-card'
+import { ClientHero, type ClientHeroStat } from '@/components/clients/client-hero'
 import { ClientStateChip } from '@/components/clients/state-chip'
 import type { ClientInvoiceRef } from '@/components/clients/billing-panel'
 import { DocumentsPanel } from '@/components/documents/documents-panel'
@@ -301,6 +303,52 @@ export default async function ClientDetailPage({
 
   const deepTab = ['work', 'recurring', 'billing', 'tax', 'w9', 'offboarding', 'projects', 'properties'].includes(tab ?? '') ? tab : undefined
 
+  // Hero stat row (DESIGN-FRESHBOOKS §5): computed from reads this page
+  // already owns - the unified-queue slice and the owner/admin invoice list.
+  const overdueCount = work.rows.filter((r) => r.status === 'overdue').length
+  const waitingCount = work.rows.filter((r) => r.status === 'waiting_on_client').length
+  const outstandingCents = clientInvoiceRows
+    .filter((r) => r.status === 'sent' || r.status === 'overdue')
+    .reduce((sum, r) => sum + Math.round(Number(r.total ?? '0') * 100), 0)
+  const heroStats: ClientHeroStat[] = [
+    {
+      key: 'open',
+      label: 'Open work items',
+      figure: String(work.rows.length),
+      tone: work.rows.length > 0 ? 'brand' : 'muted',
+    },
+    {
+      key: 'overdue',
+      label: 'Overdue',
+      figure: String(overdueCount),
+      caption: overdueCount > 0 ? 'Needs attention now' : 'Nothing past due',
+      tone: overdueCount > 0 ? 'danger' : 'muted',
+    },
+    {
+      key: 'waiting',
+      label: 'Waiting on client',
+      figure: String(waitingCount),
+      tone: waitingCount > 0 ? 'brand' : 'muted',
+    },
+  ]
+  if (canSeeBilling) {
+    heroStats.push({
+      key: 'outstanding',
+      label: 'Outstanding invoiced',
+      figure: moneyLabel((outstandingCents / 100).toFixed(2)),
+      caption: 'Sent, not yet paid',
+      tone: outstandingCents > 0 ? 'brand' : 'muted',
+    })
+  }
+
+  const contactAddress = [
+    detail.businessAddress,
+    [detail.businessCity, detail.businessState].filter(Boolean).join(', '),
+    detail.businessZip,
+  ]
+    .filter(Boolean)
+    .join(' ') || null
+
   return (
     <div className="space-y-5 pb-10">
       <Link
@@ -308,15 +356,16 @@ export default async function ClientDetailPage({
         className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
-        All clients
+        Clients
       </Link>
 
-      {/* Profile header */}
-      <header className="rounded-xl border border-border bg-card px-5 py-4">
+      {/* Profile header: name + state, then the FreshBooks-style contact
+          card directly beneath (DESIGN-FRESHBOOKS §5). */}
+      <header className="rounded-xl border border-border bg-card px-5 py-4 shadow-card">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="font-display text-xl font-semibold tracking-tight text-foreground">
+              <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
                 {detail.dbaName ?? detail.legalName}
               </h1>
               <ClientStateChip state={detail.state} size="md" />
@@ -353,7 +402,13 @@ export default async function ClientDetailPage({
             </dl>
           </div>
         </div>
+
+        <div className="mt-4 border-t border-border pt-4">
+          <ClientContactCard contacts={detail.contacts} address={contactAddress} />
+        </div>
       </header>
+
+      <ClientHero stats={heroStats} />
 
       <ClientDetailTabs
         detail={detail}

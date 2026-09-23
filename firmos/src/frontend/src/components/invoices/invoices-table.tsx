@@ -19,6 +19,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -123,6 +124,16 @@ export function InvoicesTable({ rows, year, month, today }: InvoicesTableProps) 
   )
 
   const filtersActive = statusFilter !== 'all' || clientFilter !== 'all'
+
+  // Footer totals row (DESIGN-FRESHBOOKS money typography): sums the filtered
+  // view in cents integers; void rows never count.
+  const totals = useMemo(() => {
+    const billed = filtered.filter((r) => r.status !== 'void')
+    return {
+      count: billed.length,
+      cents: billed.reduce((sum, r) => sum + Math.round(Number(r.total) * 100), 0),
+    }
+  }, [filtered])
 
   function toggleSelected(id: number, checked: boolean) {
     setSelected((prev) => {
@@ -309,6 +320,23 @@ export function InvoicesTable({ rows, year, month, today }: InvoicesTableProps) 
                 </TableRow>
               ))}
             </TableBody>
+            {/* Page-footer totals bar over the filtered view (void excluded). */}
+            <TableFooter className="bg-muted/50">
+              <TableRow className="hover:bg-transparent" data-testid="invoice-totals-row">
+                <TableCell className="px-3 py-2" colSpan={5}>
+                  <span className="text-xs font-semibold text-foreground">
+                    Total{filtersActive ? ' (filtered)' : ''}
+                  </span>
+                  <span className="ml-2 text-[11px] text-muted-foreground">
+                    {totals.count} invoice{totals.count === 1 ? '' : 's'}, void excluded
+                  </span>
+                </TableCell>
+                <TableCell className="tnum px-3 py-2 text-right text-sm font-bold text-foreground">
+                  {moneyLabel((totals.cents / 100).toFixed(2))}
+                </TableCell>
+                <TableCell className="px-3 py-2" colSpan={2} />
+              </TableRow>
+            </TableFooter>
           </Table>
         </div>
       )}

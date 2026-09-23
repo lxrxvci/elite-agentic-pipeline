@@ -242,6 +242,60 @@ describe('quote panel: QBO recommendation and priced retroactive', () => {
   })
 })
 
+describe('running notes rail', () => {
+  it('appends timestamped notes and persists them through autosave', async () => {
+    vi.useFakeTimers()
+    renderWizard({ legalName: 'Test Co' })
+
+    const input = screen.getByTestId('running-note-input')
+    fireEvent.change(input, { target: { value: 'Owner also runs a second LLC' } })
+    fireEvent.click(screen.getByTestId('running-note-add'))
+
+    // The note lists immediately and the composer clears.
+    expect(screen.getAllByTestId('running-note')).toHaveLength(1)
+    expect(screen.getByText('Owner also runs a second LLC')).toBeInTheDocument()
+    expect(input).toHaveValue('')
+
+    // Autosave carries the notes array into form_data.runningNotes.
+    await act(async () => {
+      vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
+    })
+    expect(saveIntake).toHaveBeenCalled()
+    const last = saveIntake.mock.calls.at(-1)?.[0] as {
+      patch: { formData?: { runningNotes?: { text: string; at: string }[] } }
+    }
+    expect(last.patch.formData?.runningNotes).toHaveLength(1)
+    expect(last.patch.formData?.runningNotes?.[0]?.text).toBe('Owner also runs a second LLC')
+    expect(typeof last.patch.formData?.runningNotes?.[0]?.at).toBe('string')
+  })
+
+  it('seeds the rail from prior answers (resume) and shows notes on the review screen', async () => {
+    const reviewIndex = flattenScreens(completeAnswers).length - 1
+    render(
+      <IntakeWizard
+        intakeId={7}
+        status="in_progress"
+        initialAnswers={{
+          ...completeAnswers,
+          runningNotes: [
+            { text: 'Wants weekly deposits reviewed', at: '2026-09-22T17:30:00.000Z' },
+          ],
+        }}
+        initialScreenIndex={reviewIndex}
+        canConvert
+        managers={[{ id: 1, name: 'Dana Whitfield' }]}
+        bookkeepers={[{ id: 2, name: 'Jorge Medina' }]}
+        clientId={null}
+      />,
+    )
+    // Rail lists the seeded note while editing…
+    expect(screen.getAllByTestId('running-note').length).toBeGreaterThan(0)
+    // …and the review screen carries the same note.
+    const section = screen.getByTestId('review-running-notes')
+    expect(section).toHaveTextContent('Wants weekly deposits reviewed')
+  })
+})
+
 describe('review screen', () => {
   const reviewIndex = flattenScreens(completeAnswers).length - 1
 

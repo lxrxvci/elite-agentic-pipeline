@@ -386,7 +386,7 @@ export function RepeatableScreen({
       )}
 
       <div className="flex items-center gap-3">
-        <Button type="button" onClick={finish} data-testid="continue">
+        <Button type="button" variant="action" onClick={finish} data-testid="continue">
           {items.length === 0 && !q.required ? 'Skip for now' : 'Continue'}
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
@@ -433,7 +433,7 @@ export function QuestionScreen({
     return (
       <div className="space-y-4">
         <MultiChips options={q.options ?? []} values={values} onToggle={toggle} />
-        <Button type="button" onClick={onAdvance} disabled={!canContinue} data-testid="continue">
+        <Button type="button" variant="action" onClick={onAdvance} disabled={!canContinue} data-testid="continue">
           {values.length === 0 ? 'Skip for now' : 'Continue'}
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
@@ -480,7 +480,7 @@ export function QuestionScreen({
             {error}
           </p>
         )}
-        <Button type="submit" data-testid="continue">
+        <Button type="submit" variant="action" data-testid="continue">
           {q.required || hasAny ? 'Continue' : 'Skip for now'}
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
@@ -493,7 +493,7 @@ export function QuestionScreen({
     return (
       <div className="space-y-4">
         <MonthYearPicker value={value} onChange={(iso) => onApply(q.apply(answers, iso))} currentYear={currentYear} />
-        <Button type="button" onClick={onAdvance} disabled={!value && !!q.required} data-testid="continue">
+        <Button type="button" variant="action" onClick={onAdvance} disabled={!value && !!q.required} data-testid="continue">
           {value || q.required ? 'Continue' : 'Skip for now'}
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>

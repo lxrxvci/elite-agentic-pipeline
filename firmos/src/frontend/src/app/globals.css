@@ -15,10 +15,34 @@
 :root {
   --radius: 0.5rem;
 
-  /* Brand - bookkeeping teal (nod to #007B7F), perceptually uniform */
-  --firm-brand: oklch(0.55 0.11 190);
-  --firm-brand-strong: oklch(0.47 0.11 190);
-  --firm-brand-soft: oklch(0.95 0.03 190);
+  /* Brand - FreshBooks blue family (nod to #0075DD), perceptually uniform */
+  --firm-brand: oklch(0.567 0.181 254);
+  --firm-brand-strong: oklch(0.45 0.15 256);
+  --firm-brand-soft: oklch(0.95 0.025 254);
+
+  /* Action - saturated FreshBooks green for the one-primary-CTA-per-page
+     rule. Action green is for DOING (complete, create); the status on-track
+     green stays for DONE. White text on action clears AA (5.2:1). */
+  --firm-action: oklch(0.52 0.14 145);
+  --firm-action-strong: oklch(0.47 0.13 145);
+  --firm-action-soft: oklch(0.95 0.04 145);
+  --firm-action-foreground: oklch(0.99 0.002 145);
+
+  /* Sidebar brand rail - deep blue (#0B5ED7 -> #0A4CA8 family), white text,
+     darker navy active pill. Stays blue in both themes. */
+  --firm-rail: oklch(0.515 0.2 260);
+  --firm-rail-deep: oklch(0.438 0.16 259);
+  --firm-rail-active: oklch(0.3 0.11 261);
+  --firm-rail-hover: oklch(0.4 0.14 260);
+  --firm-rail-text: oklch(0.99 0.002 255);
+
+  /* Elevation scale - cool-blue tinted shadows (FreshBooks card clarity) */
+  --elev-card:
+    0 1px 2px 0 oklch(0.3 0.05 255 / 0.06), 0 1px 3px 0 oklch(0.3 0.05 255 / 0.04);
+  --elev-pop:
+    0 4px 6px -2px oklch(0.3 0.05 255 / 0.08), 0 10px 24px -4px oklch(0.3 0.05 255 / 0.12);
+  --elev-modal:
+    0 8px 16px -4px oklch(0.3 0.05 255 / 0.12), 0 24px 48px -8px oklch(0.3 0.05 255 / 0.18);
 
   /* Surfaces - cool paper, layered */
   --firm-bg: oklch(0.977 0.003 240);
@@ -34,17 +58,17 @@
 
   /* ── STATUS LANGUAGE (the contract) ─────────────────────────── */
   --status-overdue: oklch(0.52 0.2 27);          /* on fire        */
-  --status-overdue-bg: oklch(0.96 0.03 27);
-  --status-due-soon: oklch(0.54 0.13 75);        /* act this week  */
-  --status-due-soon-bg: oklch(0.97 0.04 85);
+  --status-overdue-bg: oklch(0.963 0.025 27);
+  --status-due-soon: oklch(0.54 0.13 78);        /* act this week  */
+  --status-due-soon-bg: oklch(0.965 0.05 90);    /* invoice "Sent" yellow */
   --status-on-track: oklch(0.5 0.12 158);        /* healthy        */
-  --status-on-track-bg: oklch(0.96 0.035 158);
+  --status-on-track-bg: oklch(0.962 0.032 150);  /* invoice "Paid" pastel */
   --status-deferred: oklch(0.53 0.17 305);       /* parked on purpose */
   --status-deferred-bg: oklch(0.96 0.03 305);
   --status-waiting-client: oklch(0.52 0.13 247); /* blocked on client */
-  --status-waiting-client-bg: oklch(0.955 0.03 247);
+  --status-waiting-client-bg: oklch(0.958 0.028 247);
   --status-on-hold: oklch(0.5 0.02 255);         /* paused/archive */
-  --status-on-hold-bg: oklch(0.955 0.005 255);
+  --status-on-hold-bg: oklch(0.958 0.005 255);   /* draft gray     */
 
   /* Financial data accents */
   --money-positive: oklch(0.58 0.13 158);
@@ -87,8 +111,10 @@
   --card-foreground: var(--firm-text);
   --popover: var(--firm-surface);
   --popover-foreground: var(--firm-text);
-  --primary: var(--firm-brand);
-  --primary-foreground: oklch(0.99 0.002 190);
+  /* brand-strong, not brand: white text on primary must clear WCAG AA
+     (0.567 blue gives 4.58:1 - too thin a margin, 0.45 gives 7.5:1). */
+  --primary: var(--firm-brand-strong);
+  --primary-foreground: oklch(0.99 0.002 254);
   --secondary: var(--firm-surface-2);
   --secondary-foreground: var(--firm-text);
   --muted: var(--firm-surface-2);
@@ -103,9 +129,19 @@
 }
 
 .dark {
-  --firm-brand: oklch(0.72 0.11 190);
-  --firm-brand-strong: oklch(0.8 0.1 190);
-  --firm-brand-soft: oklch(0.28 0.05 190);
+  --firm-brand: oklch(0.74 0.13 255);
+  --firm-brand-strong: oklch(0.8 0.09 255);
+  --firm-brand-soft: oklch(0.28 0.05 255);
+
+  /* Action green stays the same saturated button color in dark mode (the
+     rail does too) - white text on it keeps AA against the dark canvas. */
+
+  --elev-card:
+    0 1px 2px 0 oklch(0 0 0 / 0.4), 0 1px 3px 0 oklch(0 0 0 / 0.3);
+  --elev-pop:
+    0 4px 6px -2px oklch(0 0 0 / 0.45), 0 10px 24px -4px oklch(0 0 0 / 0.5);
+  --elev-modal:
+    0 8px 16px -4px oklch(0 0 0 / 0.5), 0 24px 48px -8px oklch(0 0 0 / 0.6);
 
   --firm-bg: oklch(0.17 0.012 250);
   --firm-surface: oklch(0.215 0.014 250);
@@ -159,7 +195,7 @@
   --avatar-8-bg: oklch(0.33 0.06 340);
 
   /* shadcn overrides where the firm-token mapping alone is not enough */
-  --primary-foreground: oklch(0.16 0.03 190);
+  --primary-foreground: oklch(0.16 0.03 255);
   --destructive-foreground: oklch(0.97 0.01 27);
 }
 
@@ -189,6 +225,15 @@
   --color-firm-brand: var(--firm-brand);
   --color-firm-brand-strong: var(--firm-brand-strong);
   --color-firm-brand-soft: var(--firm-brand-soft);
+  --color-firm-action: var(--firm-action);
+  --color-firm-action-strong: var(--firm-action-strong);
+  --color-firm-action-soft: var(--firm-action-soft);
+  --color-firm-action-foreground: var(--firm-action-foreground);
+  --color-firm-rail: var(--firm-rail);
+  --color-firm-rail-deep: var(--firm-rail-deep);
+  --color-firm-rail-active: var(--firm-rail-active);
+  --color-firm-rail-hover: var(--firm-rail-hover);
+  --color-firm-rail-text: var(--firm-rail-text);
   --color-firm-bg: var(--firm-bg);
   --color-firm-surface: var(--firm-surface);
   --color-firm-surface-2: var(--firm-surface-2);
@@ -235,6 +280,11 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* Elevation scale (FreshBooks card clarity): shadow-card / shadow-pop / shadow-modal */
+  --shadow-card: var(--elev-card);
+  --shadow-pop: var(--elev-pop);
+  --shadow-modal: var(--elev-modal);
 }
 
 @layer base {

@@ -6,9 +6,11 @@ import { ArrowLeft, Check } from 'lucide-react'
 import type { Quote } from '@firmos/domain'
 
 import { getQuote, saveIntake } from '@/server/actions/intake'
+import type { IntakeRunningNote } from '@/server/intake'
 import { cn } from '@/shared/lib/utils'
 
 import type { StaffOption } from './convert-dialog'
+import { NotesRail } from './notes-rail'
 import { QuotePanel } from './quote-panel'
 import {
   buildPatch,
@@ -153,6 +155,16 @@ export function IntakeWizard({
     [editable, scheduleSave],
   )
 
+  // Running notes (the rail): appended into answers like any other field, so
+  // the debounced autosave carries them into form_data.runningNotes.
+  const addRunningNote = useCallback(
+    (text: string) => {
+      const entry: IntakeRunningNote = { text, at: new Date().toISOString() }
+      apply({ runningNotes: [...(answersRef.current.runningNotes ?? []), entry] })
+    },
+    [apply],
+  )
+
   const go = useCallback(
     (dir: 'fwd' | 'back') => {
       if (advanceTimer.current) {
@@ -245,8 +257,8 @@ export function IntakeWizard({
         }
       `}</style>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="min-w-0">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="mx-auto w-full max-w-2xl min-w-0">
           {/* Progress header */}
           <div className="mb-5">
             <div className="flex items-center justify-between gap-4">
@@ -297,7 +309,8 @@ export function IntakeWizard({
             )}
           </div>
 
-          {/* Screen */}
+          {/* Screen: one question per card on the cool-gray canvas
+              (DESIGN-FRESHBOOKS §5 - carded steps). */}
           {screen?.kind === 'question' ? (
             <div
               key={`${screen.chapterId}.${screen.questionId}`}
@@ -310,7 +323,7 @@ export function IntakeWizard({
                 const chapter = findChapter(screen.chapterId)
                 if (!q || !chapter) return null
                 return (
-                  <>
+                  <div className="rounded-xl border border-border bg-card p-6 shadow-card sm:p-8">
                     <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
                       {q.title}
                     </h1>
@@ -330,7 +343,7 @@ export function IntakeWizard({
                         {note}
                       </p>
                     )}
-                  </>
+                  </div>
                 )
               })()}
             </div>
@@ -378,7 +391,12 @@ export function IntakeWizard({
           )}
         </div>
 
-        <QuotePanel quote={quote} loading={quoteLoading} />
+        {/* Right rail: the persistent live quote, then the running-notes
+            rail (visible on every step; notes autosave with the answers). */}
+        <div className="space-y-4">
+          <QuotePanel quote={quote} loading={quoteLoading} />
+          <NotesRail notes={answers.runningNotes ?? []} onAdd={addRunningNote} />
+        </div>
       </div>
     </div>
   )

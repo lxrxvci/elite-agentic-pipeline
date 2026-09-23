@@ -125,7 +125,9 @@ export function ClientWorkList({ rows, today, cellFilter = null, onComplete }: C
                     'group relative flex h-12 items-center gap-3 border-b border-border pl-5 pr-4 last:border-b-0',
                     card.status === 'waiting_on_client' && 'bg-status-waiting-client-bg/30',
                     card.status === 'deferred' && 'bg-status-deferred-bg/30',
-                    gated && 'opacity-60',
+                    // Same treatment as the workstation queue: a tint, never
+                    // opacity-60 (opacity breaks text contrast, WCAG AA).
+                    gated && 'bg-status-on-hold-bg/40',
                   )}
                 >
                   <span

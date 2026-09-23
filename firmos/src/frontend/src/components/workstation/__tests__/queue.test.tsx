@@ -159,15 +159,15 @@ describe('WorkstationQueue', () => {
     const user = userEvent.setup()
     renderQueue()
     const rows = screen.getAllByTestId('work-card')
-    expect(rows[0]).toHaveAttribute('aria-selected', 'true')
-    expect(rows[1]).toHaveAttribute('aria-selected', 'false')
+    expect(rows[0]).toHaveAttribute('aria-current', 'true')
+    expect(rows[1]).not.toHaveAttribute('aria-current')
 
     await user.keyboard('j')
-    expect(rows[0]).toHaveAttribute('aria-selected', 'false')
-    expect(rows[1]).toHaveAttribute('aria-selected', 'true')
+    expect(rows[0]).not.toHaveAttribute('aria-current')
+    expect(rows[1]).toHaveAttribute('aria-current', 'true')
 
     await user.keyboard('k')
-    expect(rows[0]).toHaveAttribute('aria-selected', 'true')
+    expect(rows[0]).toHaveAttribute('aria-current', 'true')
   })
 
   it('completes the selected card with E, optimistically moving it to the strip', async () => {
@@ -243,6 +243,101 @@ describe('WorkstationQueue', () => {
     await user.click(chip)
     expect(screen.queryByText('Close August books')).not.toBeInTheDocument()
     expect(screen.getByText('August management report')).toBeInTheDocument()
+  })
+})
+
+describe('Focus mode (auto-prioritizer)', () => {
+  it('collapses the queue to a single card and advances with Skip', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await user.click(screen.getByTestId('focus-toggle'))
+
+    const focus = screen.getByTestId('focus-mode')
+    expect(focus).toHaveTextContent('Card 1 of 5')
+    const rows = within(focus).getAllByTestId('work-card')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toHaveAttribute('data-card-title', 'Bank feed week of 2026-08-17')
+
+    await user.click(screen.getByTestId('focus-skip'))
+    expect(focus).toHaveTextContent('Card 2 of 5')
+    expect(within(focus).getByTestId('work-card')).toHaveAttribute(
+      'data-card-title',
+      'Close August books',
+    )
+
+    // Toggling off restores the full queue.
+    await user.click(screen.getByTestId('focus-toggle'))
+    expect(screen.queryByTestId('focus-mode')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('work-card')).toHaveLength(5)
+  })
+
+  it('completes the focused card with Next and keeps the undo strip', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await user.click(screen.getByTestId('focus-toggle'))
+    await user.click(screen.getByTestId('focus-next'))
+
+    expect(mockComplete).toHaveBeenCalledWith({ kind: 'bank_feed', id: 1 }, true)
+    const focus = screen.getByTestId('focus-mode')
+    expect(within(focus).getByTestId('work-card')).toHaveAttribute(
+      'data-card-title',
+      'Close August books',
+    )
+    expect(
+      await screen.findByText('Completed - Bank feed week of 2026-08-17'),
+    ).toBeInTheDocument()
+  })
+
+  it('remembers the mode in sessionStorage', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await user.click(screen.getByTestId('focus-toggle'))
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem('firmos.workstation.focus')).toBe('1'),
+    )
+  })
+
+  it('keeps j/k/E working while focused', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await user.click(screen.getByTestId('focus-toggle'))
+    await user.keyboard('j')
+    expect(screen.getByTestId('focus-mode')).toHaveTextContent('Card 2 of 5')
+    await user.keyboard('e')
+    expect(mockComplete).toHaveBeenCalledWith({ kind: 'task', id: 2 }, true)
+  })
+})
+
+describe('Header green action + caught-up state', () => {
+  it('completes the selected card with the header Complete next button', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await user.click(screen.getByTestId('complete-next'))
+    expect(mockComplete).toHaveBeenCalledWith({ kind: 'bank_feed', id: 1 }, true)
+  })
+
+  it('renders the celebratory caught-up state when the queue is empty', () => {
+    const empty: UnifiedQueue = {
+      today: '2026-08-23',
+      buckets: {
+        overdue: [],
+        due_today: [],
+        upcoming: [],
+        waiting_on_client: [],
+        deferred: [],
+        gated: [],
+      },
+    }
+    render(
+      <TooltipProvider>
+        <WorkstationQueue queue={empty} assignees={assignees} />
+      </TooltipProvider>,
+    )
+    const caughtUp = screen.getByTestId('caught-up')
+    expect(caughtUp).toHaveTextContent('All caught up')
+    // The celebration reuses CheckDraw - reduced-motion safe by construction.
+    expect(within(caughtUp).getByTestId('check-draw')).toBeInTheDocument()
+    expect(screen.getByTestId('complete-next')).toBeDisabled()
   })
 })
 

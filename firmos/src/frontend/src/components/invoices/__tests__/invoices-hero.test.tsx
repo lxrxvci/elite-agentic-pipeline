@@ -48,10 +48,22 @@ describe('invoiceHeroTotals', () => {
     expect(totals.billedCents).toBe(365050)
     expect(totals.billedCount).toBe(5)
   })
+
+  it('draft sums the draft rows only', () => {
+    const totals = invoiceHeroTotals(rows)
+    expect(totals.draftCents).toBe(100000)
+    expect(totals.draftCount).toBe(1)
+  })
+
+  it('paid sums the paid rows only', () => {
+    const totals = invoiceHeroTotals(rows)
+    expect(totals.paidCents).toBe(80000)
+    expect(totals.paidCount).toBe(1)
+  })
 })
 
 describe('InvoicesHero', () => {
-  it('renders the three hero figures with money formatting and count captions', () => {
+  it('renders the four hero figures with money formatting and count captions', () => {
     render(<InvoicesHero rows={rows} year={2026} month={8} />)
 
     const outstanding = within(screen.getByTestId('hero-outstanding'))
@@ -62,9 +74,13 @@ describe('InvoicesHero', () => {
     expect(overdue.getByText('$1,200.00')).toBeInTheDocument()
     expect(overdue.getByText('1 invoice past due')).toBeInTheDocument()
 
-    const billed = within(screen.getByTestId('hero-billed'))
-    expect(billed.getByText('$3,650.50')).toBeInTheDocument()
-    expect(billed.getByText('5 invoices in Aug 2026')).toBeInTheDocument()
+    const draft = within(screen.getByTestId('hero-draft'))
+    expect(draft.getByText('$1,000.00')).toBeInTheDocument()
+    expect(draft.getByText('1 draft not yet sent')).toBeInTheDocument()
+
+    const paid = within(screen.getByTestId('hero-paid'))
+    expect(paid.getByText('$800.00')).toBeInTheDocument()
+    expect(paid.getByText('1 invoice paid in Aug 2026')).toBeInTheDocument()
   })
 
   it('the overdue figure carries the danger accent only when something is overdue', () => {
