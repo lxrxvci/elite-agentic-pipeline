@@ -56,10 +56,10 @@ const ENTITY_TYPE_BY_KIND: Record<WorkCard["kind"], string> = {
   report: "client_report",
 };
 
-/** Work cards link to the surface staff actually use (§31). */
-function workCardLink(card: WorkCard): string {
-  return card.kind === "task" ? `/tasks` : "/workstation";
-}
+/** §31 - notification links land on the surface staff actually use. Tasks
+ * have no dedicated route (their detail opens in the Workstation drawer),
+ * so every work-card kind links to /workstation. */
+const WORK_CARD_LINK = "/workstation";
 
 export interface EntityFailure {
   entityType: string;
@@ -148,7 +148,7 @@ async function notifyAssignees(
           type,
           title: `${verb}: ${card.title}`,
           message: `${card.clientName} - due ${card.dueDate ?? "unscheduled"}`,
-          link: workCardLink(card),
+          link: WORK_CARD_LINK,
           entityType: ENTITY_TYPE_BY_KIND[card.kind],
           entityId: card.id,
         },

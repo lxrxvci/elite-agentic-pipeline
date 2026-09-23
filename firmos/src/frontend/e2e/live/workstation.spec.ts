@@ -155,12 +155,12 @@ test('workstation: keyboard loop smoke', async ({ page }) => {
   const first = page.getByTestId('work-card').first()
   await page.keyboard.press('j')
   const selectedKey = await page
-    .locator('[data-testid="work-card"][aria-selected="true"]')
+    .locator('[data-testid="work-card"][aria-current="true"]')
     .getAttribute('data-card-key')
   expect(selectedKey).toBeTruthy()
   expect(selectedKey).not.toBe(await first.getAttribute('data-card-key'))
   await page.keyboard.press('k')
-  await expect(first).toHaveAttribute('aria-selected', 'true')
+  await expect(first).toHaveAttribute('aria-current', 'true')
 
   // ? opens the shortcuts popover, Escape closes it.
   await page.keyboard.press('?')

@@ -16,7 +16,7 @@ import { authFileFor } from './global-setup'
  *
  * Sessions come from global-setup.ts: four personas signed in ONCE each
  * and stashed as storageState files (the production runtime rate-limits
- * /api/auth/sign-in/email to 5/min per IP, so per-test sign-ins 429).
+ * /api/auth/sign-in/email to 20/min per IP, so per-test sign-ins 429).
  * Every spec except auth.spec (which tests the login form itself) should
  * use `live` with a persona:
  *
@@ -67,7 +67,7 @@ export function liveName(prefix: string): string {
 /** Sign in through the real login form. Portal users land on /portal. */
 export async function loginAs(page: Page, email: string, next?: string): Promise<void> {
   await page.goto(next ? `/login?next=${encodeURIComponent(next)}` : '/login')
-  // Retry absorbs a 429 from the 5/min sign-in rule (the form reports it
+  // Retry absorbs a 429 from the 20/min sign-in rule (the form reports it
   // with the same generic error text as bad credentials).
   for (let attempt = 0; attempt < 4; attempt += 1) {
     await page.getByLabel('Email').fill(email)

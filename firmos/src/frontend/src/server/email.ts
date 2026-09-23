@@ -2,14 +2,17 @@
  * FirmOS outbound email. One interface - sendEmail({ to, subject, html }) -
  * with swappable drivers:
  *
- *  - Dev driver (default outside production): logs the message to the
- *    console and stashes the latest message per recipient in-process so the
- *    dev/test helper (src/server/auth/dev-links.ts) can hand back magic
- *    links without a mailbox.
- *  - Phase 6 adds a Resend driver behind this same interface; callers
- *    (auth magic links, notification digests) do not change.
+ *  - Resend driver (production): active whenever RESEND_API_KEY is set. The
+ *    from-address comes from FIRMOS_EMAIL_FROM (default below works with
+ *    Resend's shared test domain; set a verified-domain address in
+ *    production). Callers (auth magic links, notification digests, W-9
+ *    requests) do not change.
+ *  - Dev driver (default when the key is unset outside production): logs the
+ *    message to the console and stashes the latest message per recipient
+ *    in-process so the dev/test helper (src/server/auth/dev-links.ts) can
+ *    hand back magic links without a mailbox.
  *
- * In production there is no driver yet, so sendEmail throws rather than
+ * In production with no RESEND_API_KEY, sendEmail throws rather than
  * silently dropping mail - a misconfigured deploy must be loud.
  */
 
@@ -38,10 +41,34 @@ const devDriver: EmailDriver = {
   },
 };
 
+/**
+ * Resend driver. The SDK is imported lazily so dev/test environments without
+ * RESEND_API_KEY never load it.
+ */
+function resendDriver(apiKey: string): EmailDriver {
+  const from = process.env.FIRMOS_EMAIL_FROM ?? "FirmOS <onboarding@resend.dev>";
+  return {
+    async send(message) {
+      const { Resend } = await import("resend");
+      const resend = new Resend(apiKey);
+      const { error } = await resend.emails.send({
+        from,
+        to: message.to,
+        subject: message.subject,
+        html: message.html,
+      });
+      if (error) {
+        throw new Error(`sendEmail: Resend rejected the message (${error.name}: ${error.message})`);
+      }
+    },
+  };
+}
+
 function activeDriver(): EmailDriver {
-  // Phase 6: return the Resend driver here when RESEND_API_KEY is set.
+  const apiKey = process.env.RESEND_API_KEY;
+  if (apiKey) return resendDriver(apiKey);
   if (process.env.NODE_ENV === "production") {
-    throw new Error("sendEmail: no production email driver configured yet (Phase 6 Resend driver)");
+    throw new Error("sendEmail: RESEND_API_KEY is not set - production email is not configured");
   }
   return devDriver;
 }

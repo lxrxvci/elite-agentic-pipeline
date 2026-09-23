@@ -8,9 +8,11 @@ import { getJobDefinition, runJob } from "@/server/scheduler";
  * CRON_SECRET env var is set; anything without it gets a 401.
  *
  * vercel.json schedules the daily jobs here. The 5-minute jobs
- * (stale-cleanup, mention-sms, deferred-push) belong to the long-running
- * scheduler loop (scripts/scheduler.ts), never to cron - and never both
- * (§9: never run two schedulers).
+ * (stale-cleanup, mention-sms, deferred-push) run as a batch through
+ * /api/cron/frequent (triggered by .github/workflows/cron-frequent.yml on
+ * Vercel Hobby; on self-host they belong to the long-running scheduler
+ * loop, scripts/scheduler.ts) - never both at once (§9: never run two
+ * schedulers).
  */
 
 export const runtime = "nodejs";

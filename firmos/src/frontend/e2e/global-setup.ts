@@ -25,7 +25,7 @@ async function signInFor(email: string, file: string): Promise<void> {
 
 /**
  * Re-seed the dev database, then sign in once as the owner and stash the
- * session cookie. The production sign-in limit is 5/min per IP, and the
+ * session cookie. The production sign-in limit is 20/min per IP, and the
  * suite's per-test logins were tripping it; workstation.spec rides this.
  */
 export default async function globalSetup(): Promise<void> {

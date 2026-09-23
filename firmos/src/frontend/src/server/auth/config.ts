@@ -25,7 +25,8 @@ import { sendEmail } from "../email";
  *  - 7-day sessions, refreshed when older than 1 day (silent re-issue).
  *  - Lockout: 5 failed sign-ins → 15-minute lock, HTTP 423 (before/after
  *    hooks below, backed by users.failed_login_attempts / locked_until).
- *  - Rate limits: sign-in 5/min/IP, two-factor 10/min/IP (disabled in test).
+ *  - Rate limits: sign-in 20/min/IP (office-friendly), two-factor 10/min/IP
+ *    (disabled in test).
  *  - Password policy ≥8 chars with upper+lower+digit, max 128 (min/max are
  *    enforced by Better Auth; complexity by the /change-password hook).
  *  - TOTP MFA via the twoFactor plugin (issuer FirmOS, 10 backup codes).
@@ -124,12 +125,15 @@ export const auth = betterAuth({
 
   rateLimit: {
     // Memory store is per-process; disabled under vitest so lockout tests can
-    // fire repeated sign-ins without tripping the 5/min login rule.
+    // fire repeated sign-ins without tripping the 20/min login rule.
     enabled: process.env.NODE_ENV !== "test",
     window: 60,
     max: 100,
     customRules: {
-      "/sign-in/email": { window: 60, max: 5 }, // §11 login 5/min
+      // §11 login 20/min: a shared office NAT IP must fit a whole firm's
+      // morning sign-ins; the per-account lockout above carries the real
+      // credential-stuffing weight.
+      "/sign-in/email": { window: 60, max: 20 },
       "/two-factor/*": { window: 60, max: 10 }, // §11 MFA 10/min
     },
   },

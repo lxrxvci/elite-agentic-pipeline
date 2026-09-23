@@ -7,7 +7,7 @@ const PASSWORD = 'Firm0s-dev!'
 
 async function signIn(page: Page, email: string) {
   // Ride the global setup's single sign-in when it exists (the production
-  // sign-in limit is 5/min per IP); fall back to the form otherwise.
+  // sign-in limit is 20/min per IP); fall back to the form otherwise.
   try {
     const file = email.startsWith('jorge@') ? JORGE_COOKIES_FILE : OWNER_COOKIES_FILE
     const storage = JSON.parse(readFileSync(file, 'utf8'))

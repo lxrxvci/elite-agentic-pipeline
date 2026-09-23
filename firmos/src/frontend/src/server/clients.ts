@@ -324,6 +324,76 @@ export async function listClients(): Promise<ClientList> {
   return { today: formatLocalDate(today), rows };
 }
 
+// ── Contacts directory ────────────────────────────────────────────────
+
+/** Display name shared by every contact read: entities use entity_name,
+ * individuals join first + last (either may be partial). */
+function contactDisplayName(c: typeof contacts.$inferSelect): string {
+  return c.type === "entity"
+    ? (c.entityName ?? "Unnamed entity")
+    : [c.firstName, c.lastName].filter(Boolean).join(" ") || "Unnamed contact";
+}
+
+export interface ContactClientRef {
+  clientId: number;
+  clientName: string;
+  relationshipType: string;
+}
+
+export interface ContactListRow {
+  id: number;
+  name: string;
+  type: string;
+  email: string | null;
+  phone: string | null;
+  clients: ContactClientRef[];
+}
+
+/**
+ * The /contacts directory (§7): every contact with its client links. Read-
+ * only; the linked-client names are what the page links through with.
+ */
+export async function listContacts(): Promise<{ rows: ContactListRow[] }> {
+  await requireStaff();
+
+  const [contactRows, linkRows] = await Promise.all([
+    db.select().from(contacts).orderBy(asc(contacts.id)),
+    db
+      .select({
+        contactId: contactClientLinks.contactId,
+        clientId: clients.id,
+        clientName: clients.legalName,
+        relationshipType: contactClientLinks.relationshipType,
+      })
+      .from(contactClientLinks)
+      .innerJoin(clients, eq(clients.id, contactClientLinks.clientId))
+      .orderBy(asc(clients.legalName)),
+  ]);
+
+  const linksByContact = new Map<number, ContactClientRef[]>();
+  for (const link of linkRows) {
+    const list = linksByContact.get(link.contactId) ?? [];
+    list.push({
+      clientId: link.clientId,
+      clientName: link.clientName,
+      relationshipType: link.relationshipType,
+    });
+    linksByContact.set(link.contactId, list);
+  }
+
+  const rows: ContactListRow[] = contactRows.map((c) => ({
+    id: c.id,
+    name: contactDisplayName(c),
+    type: c.type,
+    email: c.email,
+    phone: c.phone,
+    clients: linksByContact.get(c.id) ?? [],
+  }));
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+
+  return { rows };
+}
+
 // ── Client detail ───────────────────────────────────────────────────
 
 export interface ClientContactRow {
@@ -428,15 +498,10 @@ export async function getClientDetail(id: number): Promise<ClientDetail | null> 
       : [];
   for (const u of assigneeRows) if (!staffById.has(u.id)) staffById.set(u.id, u);
 
-  const contactName = (c: typeof contacts.$inferSelect): string =>
-    c.type === "entity"
-      ? (c.entityName ?? "Unnamed entity")
-      : [c.firstName, c.lastName].filter(Boolean).join(" ") || "Unnamed contact";
-
   const contactRows: ClientContactRow[] = linkRows.map(({ link, contact }) => ({
     linkId: link.id,
     contactId: contact.id,
-    name: contactName(contact),
+    name: contactDisplayName(contact),
     email: contact.email,
     phone: contact.phone,
     relationshipType: link.relationshipType,
@@ -626,7 +691,9 @@ export async function getClientBilling(id: number): Promise<ClientBilling | null
       const discount = toNumber(l.discount);
       const frequency = typeof l.frequency === "string" ? l.frequency : "monthly";
       const months = FREQUENCY_MONTHS[frequency] ?? 1;
-      const monthlyAmount = (unitPrice * quantity - discount) / months;
+      // Net of discount, clamped at 0 - the invoice engine bills the same
+      // clamped net, so the billing tab can never show a negative line.
+      const monthlyAmount = Math.max(0, (unitPrice * quantity - discount) / months);
       return {
         serviceKey: typeof l.service_key === "string" ? l.service_key : "custom",
         productName: typeof l.product_name === "string" ? l.product_name : "Custom item",

@@ -1,0 +1,42 @@
+name: cron-frequent
+
+# Runs FirmOS's 5-minute jobs (stale-cleanup, mention-sms, deferred-push -
+# src/server/scheduler.ts "every_tick") against the production deploy by
+# hitting /api/cron/frequent.
+#
+# Why GitHub Actions and not vercel.json: Vercel Hobby fires crons at most
+# once per day. On Vercel Pro, delete this workflow and add to
+# firmos/src/frontend/vercel.json instead:
+#   { "path": "/api/cron/frequent", "schedule": "*/5 * * * *" }
+# (Vercel then sends the CRON_SECRET bearer automatically.)
+#
+# Setup: repository secret CRON_SECRET (same value as the Vercel env var) and
+# repository variable FIRMOS_BASE_URL (e.g. https://firmos.example.com).
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the 5-minute jobs
+        env:
+          BASE_URL: ${{ vars.FIRMOS_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "FIRMOS_BASE_URL (variable) and CRON_SECRET (secret) must be set" >&2
+            exit 1
+          fi
+          status=$(curl -sS -o /tmp/frequent.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$BASE_URL/api/cron/frequent")
+          cat /tmp/frequent.json
+          echo
+          if [ "$status" -ne 200 ]; then
+            echo "frequent cron failed with HTTP $status" >&2
+            exit 1
+          fi

@@ -44,6 +44,9 @@ export default defineConfig({
         // this is a throwaway e2e value, never deployed.
         BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? 'firmos-e2e-only-secret',
         BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? baseURL,
+        // Call-notes import (ADR-0006) runs the deterministic stub extractor -
+        // e2e never calls the live Gemini API.
+        INTAKE_EXTRACT_MOCK: process.env.INTAKE_EXTRACT_MOCK ?? '1',
       },
     },
     {

@@ -9,7 +9,7 @@ import { request } from '@playwright/test'
  * as a Playwright storageState file. This is deliberately NOT a reseed -
  * the shared database is never touched (FIRMOS-LIVE-TEST-PLAN §3).
  *
- * Why: the production runtime rate-limits /api/auth/sign-in/email to 5/min
+ * Why: the production runtime rate-limits /api/auth/sign-in/email to 20/min
  * per IP (src/server/auth/config.ts), so per-test sign-ins 429 halfway
  * through the suite. Four spaced sign-ins here stay under the rule; specs
  * then ride the saved sessions.
@@ -59,7 +59,7 @@ export default async function globalSetup(): Promise<void> {
       await context.dispose()
     }
     // Space personas out: four quick sign-ins plus the auth spec's UI
-    // logins must stay under 5/min.
+    // logins must stay under 20/min.
     await new Promise((r) => setTimeout(r, 2_000))
   }
 }

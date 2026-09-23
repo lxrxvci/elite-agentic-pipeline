@@ -6,8 +6,9 @@
  * One process, 5-minute ticks. On startup it runs the generation jobs once
  * and seeds the time-gated notification jobs to "yesterday" so a 2 AM
  * restart does not blast alerts (§9). On Vercel the daily jobs run through
- * /api/cron/[job] instead (vercel.json); the 5-minute jobs belong to this
- * loop (§9's job table).
+ * /api/cron/[job] (vercel.json) and the 5-minute jobs through
+ * /api/cron/frequent (see .github/workflows/cron-frequent.yml); this loop is
+ * the dev/self-host runner for those same jobs (§9's job table).
  *
  * NEVER run two schedulers (§9: the legacy double-fire bug). Enforced by a
  * Postgres session-level advisory lock on a dedicated single-connection

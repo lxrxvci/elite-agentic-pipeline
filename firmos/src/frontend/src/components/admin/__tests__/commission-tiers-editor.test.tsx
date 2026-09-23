@@ -8,6 +8,7 @@ import { CommissionTiersEditor, validateTierDrafts } from '../commission-tiers-e
 
 vi.mock('@/server/actions/pricing', () => ({
   setCommissionTiersAction: vi.fn(),
+  setCommissionFloorRateAction: vi.fn(async (rate: number) => ({ ok: true as const, data: rate })),
   setPricingOverrideAction: vi.fn(),
 }))
 

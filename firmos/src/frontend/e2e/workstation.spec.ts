@@ -5,7 +5,7 @@ import { OWNER_COOKIES_FILE } from './global-setup'
 
 /**
  * The session comes from the global setup's single sign-in (the UI login
- * itself is covered by auth.spec; per-test form logins trip the 5/min
+ * itself is covered by auth.spec; per-test form logins trip the 20/min
  * rate limit when the whole suite runs).
  */
 test.beforeEach(async ({ context, baseURL }) => {
@@ -39,7 +39,7 @@ test.beforeEach(async ({ context, baseURL }) => {
  */
 test('workstation: complete a bank-feed card, reload, re-open', async ({ page }) => {
   // Signed-in owner via the shared global-setup storageState (the UI login
-  // is covered by auth.spec; per-test logins trip the 5/min rate limit).
+  // is covered by auth.spec; per-test logins trip the 20/min rate limit).
 
   // ── Land on /workstation: buckets render with seeded work ──
   await page.goto('/workstation')

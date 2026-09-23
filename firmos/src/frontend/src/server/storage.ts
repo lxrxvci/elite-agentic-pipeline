@@ -108,15 +108,7 @@ function localDriver(): StorageDriver {
 function blobToken(): string | undefined {
   // Explicit token wins; on Vercel the @vercel/blob SDK falls back to the
   // runtime's VERCEL_OIDC_TOKEN for stores linked to this project.
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (!token) return undefined;
-  if (!token) {
-    throw new StorageError(
-      "config",
-      "FIRMOS_STORAGE_DRIVER=vercel-blob requires BLOB_READ_WRITE_TOKEN (or the Vercel OIDC link)",
-    );
-  }
-  return token;
+  return process.env.BLOB_READ_WRITE_TOKEN;
 }
 
 /**
