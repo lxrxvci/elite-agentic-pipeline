@@ -55,7 +55,9 @@ import type { TemplateLineItem } from "./quote";
  * semi-annual/annual items are summed across the months the invoice covers,
  * and 1099 services bill only in February of years after the anchor year
  * (domain februaryBilledDue). Discounts aggregate into a single negative
- * "Preferred Customer Discount" line.
+ * "Preferred Customer Discount" line, capped per line at the line's billed
+ * amount and in aggregate at the billed subtotal, so no combination of
+ * discounts can produce a negative line net or a negative invoice.
  */
 
 export class InvoiceError extends Error {
@@ -195,6 +197,9 @@ export async function buildItemizedLineItems(
 
   const lines: InvoiceLineSpec[] = [];
   let discountTotal = 0;
+  // Sum of the positive line amounts; the aggregate discount line is capped
+  // at it so an invoice can reach zero but never go negative.
+  let billableSubtotal = 0;
 
   for (const line of template) {
     if (!line || typeof line.service_key !== "string") continue;
@@ -262,14 +267,16 @@ export async function buildItemizedLineItems(
         : (pricingOverrides[line.service_key] ?? line.unit_price);
     if (unitPrice == null) continue; // unpriced - billed manually
 
-    // A per-line discount scales with the same factor its quantity did.
+    // A per-line discount scales with the same factor its quantity did, and
+    // is capped at the line's own billed amount: a discount can zero its
+    // line out, never produce a negative line net.
+    const amount = round2(unitPrice * quantity);
     const perLineDiscount = Number(line.discount ?? 0);
     if (perLineDiscount > 0) {
       const factor = line.quantity > 0 ? quantity / line.quantity : 1;
-      discountTotal -= perLineDiscount * factor;
+      discountTotal -= Math.min(perLineDiscount * factor, amount);
     }
-
-    const amount = round2(unitPrice * quantity);
+    billableSubtotal += amount;
     lines.push({
       lineType: line.service_key.startsWith("quickbooks_")
         ? "quickbooks_subscription"
@@ -284,7 +291,10 @@ export async function buildItemizedLineItems(
   }
 
   if (discountTotal !== 0) {
-    const total = round2(discountTotal);
+    // The aggregate discount never exceeds the billed subtotal: a template
+    // full of over-discounts bottoms out at a $0.00 invoice, not a negative
+    // client balance.
+    const total = round2(Math.max(discountTotal, -billableSubtotal));
     lines.push({
       lineType: "other",
       serviceKey: SECTION_DISCOUNT_KEY,

@@ -255,6 +255,9 @@ export const recurringTemplateTasks = pgTable(
 /**
  * §19 - org-wide onboarding checklist definitions. Admin-phase tasks start
  * new; the rest start blocked until the admin phase completes.
+ * requires_online_accounts marks bank-sync/feed-verification rows: conversion
+ * skips them when the client's accounts all lack online access (walkthrough
+ * bug: sync tasks for offline accounts).
  */
 export const onboardingTemplateTasks = pgTable(
   "onboarding_template_tasks",
@@ -263,6 +266,7 @@ export const onboardingTemplateTasks = pgTable(
     title: text("title").notNull(),
     description: text("description"),
     isAdminPhase: boolean("is_admin_phase").notNull().default(false),
+    requiresOnlineAccounts: boolean("requires_online_accounts").notNull().default(false),
     defaultAssigneeRole: text("default_assignee_role"),
     position: integer("position").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),

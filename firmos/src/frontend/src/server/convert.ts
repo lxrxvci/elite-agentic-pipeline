@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   closeTierDueDate,
   compareLocalDate,
+  effectiveDueDate,
   formatLocalDate,
   nextRunFrom,
   parseLocalDate,
@@ -22,6 +23,8 @@ import {
   contacts,
   intakeOwners,
   onboardingTemplateTasks,
+  projects,
+  projectTasks,
   properties,
   recurringTasks,
   recurringTaskSubtasks,
@@ -39,6 +42,7 @@ import {
   type IntakeRow,
 } from "./intake";
 import { materializeOperationalRows, reportDefinitionsOf } from "./materialize";
+import { catchUpRangesFor } from "./projects";
 import {
   buildRecurringServicesTemplate,
   calculateIntakeQuoteWithConfig,
@@ -59,7 +63,8 @@ import { runRecurringOnce } from "./recurring";
  * template, client notes, contacts (+ owner links), accounts (intake +
  * default seeds + pre-conversion overrides), real-estate properties (when
  * the intake is real-estate specific), recurring rules (defaults +
- * custom), onboarding tasks, and report tracking rows; then it links the
+ * custom), onboarding tasks, catch-up projects (one per calendar year of
+ * retroactive scope), and report tracking rows; then it links the
  * intake and stamps converted_at. Any failure rolls EVERYTHING back - the
  * §29 bare-client bug (create_client committed before seeding related
  * records) is dead by construction.
@@ -98,6 +103,8 @@ export interface ConversionResult {
   propertiesCreated: number;
   recurringRulesCreated: number;
   onboardingTasksCreated: number;
+  /** §20 - one catch-up project per calendar year of retroactive scope. */
+  catchUpProjectsCreated: number;
   reportRowsCreated: number;
   /** null when the post-commit generation pass failed (see header). */
   tasksGenerated: number | null;
@@ -313,6 +320,17 @@ export async function convertIntakeToClient(
         body: intake.internalNotes,
       });
     }
+    // The wizard's running-notes rail entries carry through the same path,
+    // one client note per entry, oldest first.
+    for (const note of form.runningNotes ?? []) {
+      if (typeof note?.text === "string" && note.text.trim().length > 0) {
+        await tx.insert(clientNotes).values({
+          clientId,
+          authorId: userId,
+          body: note.text,
+        });
+      }
+    }
 
     // 3. Contacts and links.
     let contactsCreated = 0;
@@ -386,6 +404,7 @@ export async function convertIntakeToClient(
     //    with pre-conversion overrides applied by account name (§6.8).
     const overrides = form.accountOverrides ?? {};
     let accountsCreated = 0;
+    const insertedAccounts: (typeof accounts.$inferSelect)[] = [];
     for (const a of form.accounts ?? []) {
       const override = overrides[a.name] ?? {};
       const statementDay =
@@ -394,35 +413,45 @@ export async function convertIntakeToClient(
           : override.statementDay !== undefined
             ? override.statementDay
             : defaultStatementDayFor(a.accountType);
-      await tx.insert(accounts).values({
-        clientId,
-        name: a.name,
-        accountType: a.accountType.trim().toLowerCase(),
-        institution: a.institution ?? null,
-        statementDay,
-        openDate: a.openDate ?? intake.bookkeepingStartDate,
-        requiresManualTransactions:
-          override.requiresManualTransactions ?? a.requiresManualTransactions ?? false,
-      });
+      const [insertedAccount] = await tx
+        .insert(accounts)
+        .values({
+          clientId,
+          name: a.name,
+          accountType: a.accountType.trim().toLowerCase(),
+          institution: a.institution ?? null,
+          statementDay,
+          openDate: a.openDate ?? intake.bookkeepingStartDate,
+          requiresManualTransactions:
+            override.requiresManualTransactions ?? a.requiresManualTransactions ?? false,
+        })
+        .returning();
+      insertedAccounts.push(insertedAccount);
       accountsCreated += 1;
     }
     // §29 fix: every merchant account becomes its own row with all fields
     // kept; multi-merchant arrays never collapse to a single value.
     for (const m of form.merchantAccounts ?? []) {
-      await tx.insert(accounts).values({
-        clientId,
-        name: m.name,
-        accountType: "merchant",
-        // SCHEMA GAP: accounts has no merchant_processor column (only
-        // properties.merchantProcessor exists); the processor is preserved
-        // in institution until the schema grows one.
-        institution: m.processor ?? null,
-        statementDay: defaultStatementDayFor("merchant"),
-        openDate: intake.bookkeepingStartDate,
-      });
+      const [merchantAccount] = await tx
+        .insert(accounts)
+        .values({
+          clientId,
+          name: m.name,
+          accountType: "merchant",
+          // SCHEMA GAP: accounts has no merchant_processor column (only
+          // properties.merchantProcessor exists); the processor is preserved
+          // in institution until the schema grows one.
+          institution: m.processor ?? null,
+          statementDay: defaultStatementDayFor("merchant"),
+          openDate: intake.bookkeepingStartDate,
+        })
+        .returning();
+      insertedAccounts.push(merchantAccount);
       accountsCreated += 1;
     }
-    accountsCreated += (await seedDefaultAccounts(clientId, { openDate: intake.bookkeepingStartDate }, tx as DbOrTx)).length;
+    const seededAccounts = await seedDefaultAccounts(clientId, { openDate: intake.bookkeepingStartDate }, tx as DbOrTx);
+    insertedAccounts.push(...seededAccounts);
+    accountsCreated += seededAccounts.length;
 
     // 5b. Real-estate properties (owner walkthrough: "Are you real estate
     //     specific? Do you have like 10 properties?"). The intake carries a
@@ -500,13 +529,22 @@ export async function convertIntakeToClient(
 
     // 7. Onboarding tasks from the active template rows (§19): admin-phase
     //    tasks start new; the rest start blocked until the admin phase
-    //    completes.
+    //    completes. Template rows marked requires_online_accounts (bank
+    //    sync/feed verification) are skipped when no account can connect:
+    //    an account has online access when it is not flagged for manual
+    //    transaction downloads and it is a statement-producing type
+    //    (owner-documented equity/related-party accounts never connect).
+    const hasOnlineAccounts = insertedAccounts.some(
+      (a) => !a.requiresManualTransactions && a.statementDay != null,
+    );
     const templateRows = await tx
       .select()
       .from(onboardingTemplateTasks)
       .where(sql`${onboardingTemplateTasks.isActive} = true`)
       .orderBy(onboardingTemplateTasks.position);
+    let onboardingTasksCreated = 0;
     for (const row of templateRows) {
+      if (row.requiresOnlineAccounts && !hasOnlineAccounts) continue;
       // Onboarding work belongs to the current work period: stamp a due date
       // and attributed period so queue bucketing (workPeriodForRow) never
       // sees a period-less task.
@@ -527,16 +565,55 @@ export async function convertIntakeToClient(
               ? bookkeeperId
               : null,
       });
+      onboardingTasksCreated += 1;
+    }
+
+    // 7b. Retroactive catch-up projects (§20, owner walkthrough): when the
+    //     intake scopes retroactive bookkeeping, conversion creates ONE
+    //     catch-up project per calendar year - never a single merged blob -
+    //     each carrying that year's per-account monthly-grid tasks, exactly
+    //     the shape createProject's catch-up generator produces.
+    let catchUpProjectsCreated = 0;
+    if ((form.serviceKeys ?? []).includes("retroactive_bookkeeping") && intake.bookkeepingStartDate) {
+      const ranges = catchUpRangesFor(parseLocalDate(intake.bookkeepingStartDate), today);
+      const activeAccounts = insertedAccounts.filter((a) => a.isActive);
+      for (const range of ranges) {
+        const [project] = await tx
+          .insert(projects)
+          .values({
+            clientId,
+            name: `Catch-up Bookkeeping ${range.year}`,
+            status: "pending",
+            billingMode: "project",
+            autoGenerateTasks: true,
+            createdById: userId,
+          })
+          .returning();
+        if (activeAccounts.length > 0) {
+          await tx.insert(projectTasks).values(
+            activeAccounts.map((account, position) => ({
+              projectId: project.id,
+              title: `${account.name} - ${range.year} catch-up`,
+              taskKind: "time_period" as const,
+              position,
+            })),
+          );
+        }
+        catchUpProjectsCreated += 1;
+      }
     }
 
     // 8. Report tracking rows for the current year, from the intake's
-    //    report definitions (§6.3).
+    //    report definitions (§6.3). Catch-up periods are floored at the
+    //    catch-up date (§32) so a freshly converted client never shows a
+    //    wall of instantly-overdue reports dated months in the past.
     let reportRowsCreated = 0;
     if (!isProject) {
       const tier = ((): 5 | 10 | 15 => {
         const n = intake.monthlyCloseTier == null ? 15 : Number(intake.monthlyCloseTier);
         return n === 5 || n === 10 ? n : 15;
       })();
+      const catchup = intake.bankFeedCatchupDate ? parseLocalDate(intake.bankFeedCatchupDate) : null;
       const start: Month | null = intake.bookkeepingStartDate
         ? parseLocalDate(intake.bookkeepingStartDate)
         : null;
@@ -545,7 +622,9 @@ export async function convertIntakeToClient(
           if (start && (today.year < start.year || (today.year === start.year && month < start.month))) {
             continue;
           }
-          const due = closeTierDueDate({ year: today.year, month }, tier);
+          const due = effectiveDueDate(closeTierDueDate({ year: today.year, month }, tier), {
+            catchupDate: catchup,
+          });
           const inserted = await tx
             .insert(clientReports)
             .values({
@@ -583,7 +662,8 @@ export async function convertIntakeToClient(
       accountsCreated,
       propertiesCreated,
       recurringRulesCreated,
-      onboardingTasksCreated: templateRows.length,
+      onboardingTasksCreated,
+      catchUpProjectsCreated,
       reportRowsCreated,
     };
   });
@@ -620,6 +700,7 @@ export async function convertIntakeToClient(
     propertiesCreated: result.propertiesCreated,
     recurringRulesCreated: result.recurringRulesCreated,
     onboardingTasksCreated: result.onboardingTasksCreated,
+    catchUpProjectsCreated: result.catchUpProjectsCreated,
     reportRowsCreated: result.reportRowsCreated,
     tasksGenerated,
   };

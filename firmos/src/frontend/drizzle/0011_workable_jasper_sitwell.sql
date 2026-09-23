@@ -1,0 +1,1 @@
+ALTER TABLE "onboarding_template_tasks" ADD COLUMN "requires_online_accounts" boolean DEFAULT false NOT NULL;

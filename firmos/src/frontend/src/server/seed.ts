@@ -464,7 +464,7 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
     { title: "Collect signed engagement letter and W-9", isAdminPhase: true, defaultAssigneeRole: "manager", position: 1 },
     { title: "Gather prior-year financials and tax returns", isAdminPhase: true, defaultAssigneeRole: "manager", position: 2 },
     { title: "Set up or verify QuickBooks Online access", isAdminPhase: false, defaultAssigneeRole: "bookkeeper", position: 3 },
-    { title: "Connect bank feeds for all accounts", isAdminPhase: false, defaultAssigneeRole: "bookkeeper", position: 4 },
+    { title: "Connect bank feeds for all accounts", isAdminPhase: false, requiresOnlineAccounts: true, defaultAssigneeRole: "bookkeeper", position: 4 },
     { title: "Import and review chart of accounts", isAdminPhase: false, defaultAssigneeRole: "bookkeeper", position: 5 },
     { title: "Confirm reporting cadence and close tier", isAdminPhase: false, defaultAssigneeRole: "manager", position: 6 },
     { title: "Walk through the first monthly close with the client", isAdminPhase: false, defaultAssigneeRole: "manager", position: 7 },

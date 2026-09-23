@@ -71,6 +71,20 @@
       "when": 1788065000305,
       "tag": "0009_chemical_squadron_supreme",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789115855644,
+      "tag": "0010_big_energizer",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790204533236,
+      "tag": "0011_workable_jasper_sitwell",
+      "breakpoints": true
     }
   ]
 }

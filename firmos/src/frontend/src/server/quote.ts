@@ -175,7 +175,8 @@ const BUCKET_FREQUENCY: Record<string, string> = {
 /**
  * Quote -> the recurring services template stored on the client. Custom
  * items keep their own frequency (§15 quantity scaling is per item
- * frequency); everything else follows its pricing bucket.
+ * frequency); everything else follows its pricing bucket. Per-line discounts
+ * carry verbatim so the invoice engine bills the discounted rate.
  */
 export function buildRecurringServicesTemplate(
   quote: Quote,
@@ -190,7 +191,7 @@ export function buildRecurringServicesTemplate(
       product_name: line.product_name,
       unit_price: line.unit_price,
       quantity: line.quantity,
-      discount: 0,
+      discount: line.discount ?? 0,
       frequency: customMatch?.frequency ?? BUCKET_FREQUENCY[line.bucket] ?? "monthly",
       notes: line.unpriced ? "Priced manually: no amount stated in HANDOFF §15." : null,
     };

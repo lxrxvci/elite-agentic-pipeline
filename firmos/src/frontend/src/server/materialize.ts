@@ -5,6 +5,7 @@ import {
   closeTierDueDate,
   compareLocalDate,
   dayOfWeek,
+  effectiveDueDate,
   formatLocalDate,
   generatesRecurringWork,
   parseLocalDate,
@@ -41,9 +42,10 @@ import { localToday } from "./dates";
  * Idempotent: bank-feed and reconciliation inserts rely on the schema's
  * unique constraints (weekly_bank_feeds(client_id, week_start_date),
  * account_reconciliations(account_id, year, month)) via ON CONFLICT DO
- * NOTHING; client_reports has no unique constraint in the schema, so it is
- * guarded by an existence check on (client, name, period). Running twice
- * changes nothing.
+ * NOTHING; client_reports has its own unique constraint
+ * (client_reports_client_name_period_unique on client, name, period), and
+ * the existence check below keeps the insert a no-op on re-run. Running
+ * twice changes nothing.
  *
  * Per-client isolation (§9): each client is processed independently inside
  * try/catch; one bad client is logged and skipped, never aborts the batch.
@@ -269,13 +271,17 @@ async function ensureClientReports(client: ClientRow, year: number): Promise<num
   const startMonth = client.bookkeepingStartDate
     ? parseLocalDate(client.bookkeepingStartDate)
     : null;
+  // §32: the catch-up floor applies to report rows too, on every creation
+  // path - a catch-up month is due at the anchor, never months before it.
+  const catchup = catchupOf(client);
 
   let created = 0;
   for (const def of definitions) {
     for (const month of reportMonthsForFrequency(def.frequency)) {
       if (startMonth && (year < startMonth.year || (year === startMonth.year && month < startMonth.month))) continue;
-      // client_reports has no unique constraint in the schema, so idempotency
-      // is an existence check on (client, report name, attributed period).
+      // Idempotency guard: the schema's client_reports_client_name_period_unique
+      // constraint backs this existence check on (client, report name,
+      // attributed period).
       const [existing] = await db
         .select({ id: clientReports.id })
         .from(clientReports)
@@ -291,8 +297,8 @@ async function ensureClientReports(client: ClientRow, year: number): Promise<num
       if (existing) continue;
 
       // Due at the client's promised close (tier day of the following month;
-      // default 15 for non-monthly clients, §6.1 RULE 1).
-      const due = closeTierDueDate({ year, month }, tier);
+      // default 15 for non-monthly clients, §6.1 RULE 1), floored by catch-up.
+      const due = effectiveDueDate(closeTierDueDate({ year, month }, tier), { catchupDate: catchup });
       await db.insert(clientReports).values({
         clientId: client.id,
         name: def.name,

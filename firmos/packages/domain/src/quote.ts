@@ -12,6 +12,10 @@
  *
  * Pure: calculate_quote() takes duck-typed intake answers and returns line
  * items plus totals; no DB, no clock (the current month is a parameter).
+ * Per-line discounts (flat dollars off per billing cycle) ride the service
+ * input and reduce the totals net-of-discount, clamped at zero per line, so
+ * the effective monthly rate - and the retroactive per-month rate derived
+ * from it - always follows the discounted price and can never go negative.
  */
 
 import { FEBRUARY_BILLED_SERVICE_KEYS } from "./billing.ts";
@@ -226,6 +230,13 @@ export interface QuoteServiceInput {
   key: string;
   /** Raw units: live account/class/location counts, filings, hours. Ignored for flat services. */
   quantity?: number;
+  /**
+   * Flat dollars off the line per billing cycle (the recurring-services
+   * template's per-line discount, §15). Clamped so a line never contributes
+   * less than 0 to the totals - a discount can zero a line out, never push
+   * the quote negative.
+   */
+  discount?: number;
 }
 
 export type CustomItemFrequency = "weekly" | "daily" | "monthly" | "quarterly" | "semi_annual";
@@ -274,6 +285,8 @@ export interface QuoteLine {
   product_name: string;
   unit_price: number | null;
   quantity: number;
+  /** Flat dollars off per billing cycle; absent/0 for undiscounted lines. */
+  discount?: number;
   /** null when the handoff states no price for the service */
   amount: number | null;
   bucket: PricingBucket;
@@ -371,6 +384,7 @@ export function calculateQuote(input: QuoteInput, pricingOverrides?: PricingOver
       product_name: entry.product_name,
       unit_price: entry.unit_price,
       quantity,
+      discount: Math.max(0, svc.discount ?? 0),
       amount: entry.unit_price == null ? null : entry.unit_price * quantity,
       bucket: entry.bucket,
       unpriced: entry.unit_price == null,
@@ -397,6 +411,7 @@ export function calculateQuote(input: QuoteInput, pricingOverrides?: PricingOver
         product_name: entry.product_name,
         unit_price: entry.unit_price,
         quantity: cycle,
+        discount: 0,
         amount: entry.unit_price == null ? null : entry.unit_price * cycle,
         bucket: entry.bucket,
         unpriced: false,
@@ -412,6 +427,7 @@ export function calculateQuote(input: QuoteInput, pricingOverrides?: PricingOver
       product_name: item.product_name,
       unit_price: item.unit_price,
       quantity,
+      discount: 0,
       amount: item.unit_price * quantity,
       bucket: "monthly",
       unpriced: false,
@@ -429,26 +445,31 @@ export function calculateQuote(input: QuoteInput, pricingOverrides?: PricingOver
   };
   for (const line of lines) {
     if (line.amount == null) continue;
+    // Totals are net of the per-line discount, clamped at zero per line: the
+    // effective monthly rate (and therefore the retroactive per-month rate)
+    // always follows the DISCOUNTED price, and a discount can never push a
+    // bucket negative.
+    const amount = Math.max(0, line.amount - (line.discount ?? 0));
     switch (line.bucket) {
       case "monthly":
-        totals.totalMonthly += line.amount;
+        totals.totalMonthly += amount;
         break;
       case "quarterly":
-        totals.totalQuarterly += line.amount;
+        totals.totalQuarterly += amount;
         break;
       case "annual":
         // HANDOFF §15: February-billed services are excluded from the annual term
         if (FEBRUARY_BILLED_SERVICE_KEYS.has(line.service_key)) {
-          totals.totalFebruaryBilledAnnual += line.amount;
+          totals.totalFebruaryBilledAnnual += amount;
         } else {
-          totals.annualExcludingFebruaryBilled += line.amount;
+          totals.annualExcludingFebruaryBilled += amount;
         }
         break;
       case "payroll_monthly":
-        totals.totalPayrollMonthly += line.amount;
+        totals.totalPayrollMonthly += amount;
         break;
       case "one_time":
-        totals.totalOneTime += line.amount;
+        totals.totalOneTime += amount;
         break;
     }
   }
