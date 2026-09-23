@@ -180,6 +180,15 @@ export const workingHoursStatusEnum = pgEnum("working_hours_status", [
   "rejected",
 ]);
 
+// ADR-0006 - call-notes import: uploaded → extracted → confirmed, with
+// failed as the extraction-failure exit (the raw text stays stored).
+export const intakeTranscriptStatusEnum = pgEnum("intake_transcript_status", [
+  "uploaded",
+  "extracted",
+  "confirmed",
+  "failed",
+]);
+
 // §18 - W-9/1099 workflow: pending_w9 → w9_received → 1099_sent.
 export const w9StatusEnum = pgEnum("w9_status", [
   "pending_w9",

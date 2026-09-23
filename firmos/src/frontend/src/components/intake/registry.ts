@@ -167,7 +167,9 @@ export const SERVICE_LABELS: Record<string, string> = {
 
 export const serviceLabel = (k: string): string => SERVICE_LABELS[k] ?? k.replaceAll('_', ' ')
 
-const ACCOUNT_TYPE_LABELS: Record<string, string> = {
+// Label maps are exported for the call-notes extraction vocabulary
+// (src/server/intake-extract.ts) - the canonical enum value sets live here.
+export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   checking: 'Checking',
   savings: 'Savings',
   credit_card: 'Credit card',
@@ -178,7 +180,7 @@ const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   other: 'Other',
 }
 
-const FREQUENCY_LABELS: Record<string, string> = {
+export const FREQUENCY_LABELS: Record<string, string> = {
   monthly: 'Monthly',
   quarterly: 'Quarterly',
   semi_annual: 'Semi-annual',
@@ -189,7 +191,7 @@ const FREQUENCY_LABELS: Record<string, string> = {
   daily: 'Daily',
 }
 
-const PAYMENT_METHOD_LABELS: Record<string, string> = {
+export const PAYMENT_METHOD_LABELS: Record<string, string> = {
   cash: 'Cash',
   check: 'Checks',
   ach: 'ACH / bank transfer',
@@ -197,7 +199,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   online: 'Online payments',
 }
 
-const PROPERTY_TYPE_LABELS: Record<string, string> = {
+export const PROPERTY_TYPE_LABELS: Record<string, string> = {
   single_family: 'Single-family rental',
   multi_family: 'Multi-family',
   commercial: 'Commercial',
@@ -210,7 +212,7 @@ const PROPERTY_TYPE_LABELS: Record<string, string> = {
  * (shared/lib/proforma DEPRECIATION_FIELDS) so conversion can drop the
  * toggles straight into each property's depreciation breakdown.
  */
-const DEPRECIATION_BUCKET_LABELS: Record<string, string> = {
+export const DEPRECIATION_BUCKET_LABELS: Record<string, string> = {
   land_value: 'Land',
   building_value: 'Building',
   improvements: 'Improvements',

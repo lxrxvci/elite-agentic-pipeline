@@ -10,6 +10,7 @@
  *   tasks.ts          tasks & templates (14)
  *   periodic.ts       periodic work (3) - account_reconciliations lives in accounts.ts
  *   documents.ts      documents (2)
+ *   intake-transcripts.ts call-notes transcripts for AI intake autofill (1)
  *   projects.ts       projects (4)
  *   billing.ts        billing (3)
  *   tax.ts            tax & compliance (3)
@@ -27,6 +28,7 @@ export * from "./accounts";
 export * from "./tasks";
 export * from "./periodic";
 export * from "./documents";
+export * from "./intake-transcripts";
 export * from "./projects";
 export * from "./billing";
 export * from "./tax";

@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { desc, eq } from 'drizzle-orm'
 
 import { IntakeList, type IntakeListRow } from '@/components/intake/intake-list'
+import { ImportCallNotes } from '@/components/intake/import-call-notes'
 import { NewIntakeButton } from '@/components/intake/new-intake-button'
 import { db } from '@/db'
 import { clientIntakes, users } from '@/db/schema'
@@ -80,7 +81,10 @@ export default async function IntakePage() {
             question at a time.
           </p>
         </div>
-        <NewIntakeButton />
+        <div className="flex items-center gap-2">
+          <ImportCallNotes />
+          <NewIntakeButton />
+        </div>
       </div>
       <IntakeList
         rows={rows}
