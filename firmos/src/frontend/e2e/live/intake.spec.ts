@@ -84,7 +84,8 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   // ── Real estate: no; income: checks only, no payroll ──
   await pick(page, 'option-no', 'payment-methods')
   await page.getByTestId('chip-check').click()
-  await advance(page, 'payroll')
+  await advance(page, 'personal-card')
+  await pick(page, 'option-no', 'payroll') // no personal-card business spend (B18)
   await pick(page, 'option-no', 'bk-frequency')
 
   // ── Reporting: monthly, close by the 10th ──
@@ -106,7 +107,8 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await advance(page, 'retroactive') // skip special reports
 
   // ── Retroactive cleanup: yes - the 2025 start prices a one-time line ──
-  await pick(page, 'option-yes', 'rules')
+  await pick(page, 'option-yes', 'default-rules')
+  await advance(page, 'rules') // keep the four standard routines selected (B21)
   const retroSummary = page.getByTestId('retroactive-summary')
   await expect(retroSummary).toBeVisible({ timeout: 15_000 })
   await expect(retroSummary).toContainText('one-time')

@@ -158,11 +158,18 @@ describe('TaskDrawer', () => {
     await waitFor(() => expect(box).toHaveValue(''))
   })
 
-  it('delegates completion to the queue handler', async () => {
+  it('delegates completion to the queue handler once the checklist is done (B4)', async () => {
+    const user = userEvent.setup()
     const onToggleComplete = renderDrawer()
+    // B4 gate: with an open checklist item the complete action is disabled...
     const button = await screen.findByTestId('drawer-complete-toggle')
     expect(button).toHaveTextContent('Complete task')
-    await userEvent.click(button)
+    expect(button).toBeDisabled()
+    expect(screen.getByTestId('subtask-gate-note')).toHaveTextContent('1 checklist item still open')
+    // ...until the last subtask completes (optimistic local flip ungates it).
+    await user.click(await screen.findByRole('checkbox', { name: 'Match cleared items' }))
+    await waitFor(() => expect(button).toBeEnabled())
+    await user.click(button)
     expect(onToggleComplete).toHaveBeenCalledWith(true)
   })
 

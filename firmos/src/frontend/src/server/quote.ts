@@ -8,6 +8,7 @@ import {
   type Quote,
   type QuoteInput,
   type QuoteServiceInput,
+  type SpecialtyReportInput,
 } from "@firmos/domain";
 
 import { defaultStatementDayFor } from "./accounts-seed";
@@ -68,12 +69,42 @@ function defaultQuantityFor(key: string, answers: IntakeQuoteAnswers): number | 
   }
 }
 
+/**
+ * C10: specialty report definitions price into the quote at their own
+ * cadence. Only definitions carrying pricing data (hours, a flat price, or a
+ * missed-filings count) reach the engine; pure tracking definitions stay out
+ * of the money (they still materialize report rows at conversion). The quote
+ * line keys (specialty_report_{n}) index into THIS filtered array, so every
+ * caller of buildRecurringServicesTemplate must pass the same list.
+ */
+export function specialtyReportsFromIntake(
+  answers: Pick<IntakeQuoteAnswers, "reportDefinitions">,
+): SpecialtyReportInput[] {
+  return (answers.reportDefinitions ?? [])
+    .filter((r) => r.estimatedHours != null || r.flatPrice != null || (r.missedFilings ?? 0) > 0)
+    .map((r) => ({
+      name: r.name,
+      frequency: r.frequency,
+      estimatedHours: r.estimatedHours ?? null,
+      flatPrice: r.flatPrice ?? null,
+      hourlyRate: r.hourlyRate ?? null,
+      missedFilings: r.missedFilings ?? null,
+    }));
+}
+
 function toQuoteInput(answers: IntakeQuoteAnswers, today: LocalDate): QuoteInput {
   const serviceKeys = answers.serviceKeys ?? [];
   const services: QuoteServiceInput[] = serviceKeys.map((key) => {
     if (!PRICING[key]) throw new Error(`unknown service key: ${key}`);
     const explicit = answers.serviceQuantities?.[key];
-    return { key, quantity: explicit ?? defaultQuantityFor(key, answers) };
+    // C1 follow-through: the wizard's per-service discount (flat dollars off
+    // per billing cycle) rides the service input; the domain clamps at zero.
+    const discount = answers.serviceDiscounts?.[key];
+    return {
+      key,
+      quantity: explicit ?? defaultQuantityFor(key, answers),
+      discount: discount != null && Number.isFinite(discount) && discount > 0 ? discount : undefined,
+    };
   });
 
   const customItems: CustomItemInput[] = (answers.customItems ?? []).map((item, i) => ({
@@ -83,6 +114,10 @@ function toQuoteInput(answers: IntakeQuoteAnswers, today: LocalDate): QuoteInput
     frequency: item.frequency,
     quantity: item.quantity,
   }));
+
+  // C10 specialty reports: see specialtyReportsFromIntake (only priced
+  // definitions reach the engine).
+  const specialtyReports = specialtyReportsFromIntake(answers);
 
   // QBO pass-through (owner walkthrough): every QuickBooks status ends on
   // QBO, so any answered status prices the tier line - recommended from the
@@ -113,6 +148,7 @@ function toQuoteInput(answers: IntakeQuoteAnswers, today: LocalDate): QuoteInput
     customItems,
     qbo,
     retroactive,
+    specialtyReports,
   };
 }
 
@@ -177,15 +213,38 @@ const BUCKET_FREQUENCY: Record<string, string> = {
  * items keep their own frequency (§15 quantity scaling is per item
  * frequency); everything else follows its pricing bucket. Per-line discounts
  * carry verbatim so the invoice engine bills the discounted rate.
+ *
+ * Specialty report lines (C10, keys specialty_report_{n}[_retro]): the quote
+ * line's quantity is already cycle-normalized (occurrences per intake cycle),
+ * which is exactly the quantity semantics the invoice engine's periodic
+ * spread expects; the template line just needs the report's OWN frequency so
+ * the spread bills it correctly on any billing cadence. Retro missed-filings
+ * lines store as one_time (the engine never recurs them; they exist so the
+ * client sees the full catch-up price on the template).
  */
 export function buildRecurringServicesTemplate(
   quote: Quote,
   customItems: IntakeCustomItemInput[] = [],
+  specialtyReports: SpecialtyReportInput[] = [],
 ): TemplateLineItem[] {
   return quote.lines.map((line) => {
     const customMatch = line.service_key.startsWith("custom_item_")
       ? customItems[Number(line.service_key.replace("custom_item_", "")) - 1]
       : undefined;
+    const specialtyMatch = line.service_key.match(/^specialty_report_(\d+)(_retro)?$/);
+    if (specialtyMatch) {
+      const report = specialtyReports[Number(specialtyMatch[1]) - 1];
+      const isRetro = specialtyMatch[2] != null;
+      return {
+        service_key: line.service_key,
+        product_name: line.product_name,
+        unit_price: line.unit_price,
+        quantity: line.quantity,
+        discount: line.discount ?? 0,
+        frequency: isRetro ? "one_time" : (report?.frequency ?? "monthly"),
+        notes: line.unpriced ? "Priced manually: no amount stated in HANDOFF §15." : null,
+      };
+    }
     return {
       service_key: line.service_key,
       product_name: line.product_name,

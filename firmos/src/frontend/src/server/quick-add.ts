@@ -75,24 +75,41 @@ async function requireUser(userId: number, label: string): Promise<void> {
 
 export type QuickNoteRow = typeof quickNotes.$inferSelect;
 
+/** E4: quick-note priority levels (default normal). */
+export const QUICK_NOTE_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+export type QuickNotePriority = (typeof QUICK_NOTE_PRIORITIES)[number];
+
 export async function addQuickNote(
-  input: { clientId?: number | null; body: string },
+  input: { clientId?: number | null; body: string; priority?: QuickNotePriority; dueDate?: string | null },
   userId: number,
 ): Promise<QuickNoteRow> {
   const body = input.body.trim();
   if (body === "") throw new QuickAddError(400, "Note body must not be empty");
   if (input.clientId != null) await requireClient(input.clientId);
+  const priority = input.priority ?? "normal";
+  if (!QUICK_NOTE_PRIORITIES.includes(priority)) {
+    throw new QuickAddError(400, `Priority must be one of ${QUICK_NOTE_PRIORITIES.join(", ")}`);
+  }
+  if (input.dueDate != null && input.dueDate !== "" && !ISO_DATE.test(input.dueDate)) {
+    throw new QuickAddError(400, `Due date must be YYYY-MM-DD, got "${input.dueDate}"`);
+  }
 
   const [note] = await db
     .insert(quickNotes)
-    .values({ userId, clientId: input.clientId ?? null, body })
+    .values({
+      userId,
+      clientId: input.clientId ?? null,
+      body,
+      priority,
+      dueDate: input.dueDate || null,
+    })
     .returning();
   await logEvent({
     userId,
     action: "quick_note_created",
     entityType: "quick_note",
     entityId: note.id,
-    metadata: { clientId: note.clientId },
+    metadata: { clientId: note.clientId, priority: note.priority, dueDate: note.dueDate },
   });
   return note;
 }
@@ -107,6 +124,30 @@ export async function deleteQuickNote(noteId: number, userId: number): Promise<v
   await logEvent({ userId, action: "quick_note_deleted", entityType: "quick_note", entityId: noteId });
 }
 
+/**
+ * E4: a note's completion date. Author-only, same posture as delete; the
+ * follow-up-task flow stamps it when the task lands.
+ */
+export async function setQuickNoteCompleted(
+  noteId: number,
+  completed: boolean,
+  userId: number,
+): Promise<QuickNoteRow> {
+  const [updated] = await db
+    .update(quickNotes)
+    .set({ completedAt: completed ? new Date() : null, updatedAt: new Date() })
+    .where(and(eq(quickNotes.id, noteId), eq(quickNotes.userId, userId)))
+    .returning();
+  if (!updated) throw new QuickAddError(404, `Quick note ${noteId} not found`);
+  await logEvent({
+    userId,
+    action: completed ? "quick_note_completed" : "quick_note_reopened",
+    entityType: "quick_note",
+    entityId: noteId,
+  });
+  return updated;
+}
+
 export interface QuickNoteFeedItem {
   id: number;
   body: string;
@@ -115,6 +156,10 @@ export interface QuickNoteFeedItem {
   authorId: number | null;
   authorName: string;
   createdAt: Date;
+  /** E4: priority, optional due date, and the completion stamp. */
+  priority: QuickNotePriority;
+  dueDate: string | null;
+  completedAt: Date | null;
 }
 
 /**
@@ -133,6 +178,9 @@ export async function listQuickNotes(userId: number): Promise<QuickNoteFeedItem[
       authorFirstName: users.firstName,
       authorLastName: users.lastName,
       createdAt: quickNotes.createdAt,
+      priority: quickNotes.priority,
+      dueDate: quickNotes.dueDate,
+      completedAt: quickNotes.completedAt,
     })
     .from(quickNotes)
     .leftJoin(clients, eq(quickNotes.clientId, clients.id))
@@ -149,6 +197,11 @@ export async function listQuickNotes(userId: number): Promise<QuickNoteFeedItem[
     authorName:
       r.authorFirstName != null ? `${r.authorFirstName} ${r.authorLastName ?? ""}`.trim() : "Unknown",
     createdAt: r.createdAt,
+    priority: (QUICK_NOTE_PRIORITIES as readonly string[]).includes(r.priority)
+      ? (r.priority as QuickNotePriority)
+      : "normal",
+    dueDate: r.dueDate,
+    completedAt: r.completedAt,
   }));
 }
 
@@ -164,7 +217,6 @@ export interface QuickTaskInput {
   subtasks?: string[];
   billableStatus?: "billable" | "non_billable" | "not_sure";
 }
-
 export async function quickAddTask(
   input: QuickTaskInput,
   userId: number,
@@ -243,6 +295,51 @@ export async function quickAddTask(
     });
   }
   return task;
+}
+
+/**
+ * E4: "create follow-up task" from a quick note. The caller pre-fills the
+ * task dialog from the note (client + title); here the note stamps completed
+ * once the task lands - the note's job is done. Any staff member can spin a
+ * task off a note they can see (own notes and firm-wide stickies).
+ */
+export async function createTaskFromNote(
+  noteId: number,
+  overrides: { clientId?: number | null; title?: string; assigneeId?: number | null; dueDate?: string | null },
+  userId: number,
+  today: LocalDate = localToday(),
+): Promise<{ note: QuickNoteRow; task: typeof tasks.$inferSelect }> {
+  const [note] = await db.select().from(quickNotes).where(eq(quickNotes.id, noteId)).limit(1);
+  if (!note) throw new QuickAddError(404, `Quick note ${noteId} not found`);
+  // Firm-wide stickies carry no client; the dialog collects one.
+  const clientId = note.clientId ?? overrides.clientId ?? null;
+  if (clientId == null) {
+    throw new QuickAddError(400, "Pick a client on the note before creating a follow-up task");
+  }
+  const title = (overrides.title ?? note.body).trim();
+  const task = await quickAddTask(
+    {
+      clientId,
+      title,
+      assigneeId: overrides.assigneeId ?? null,
+      dueDate: overrides.dueDate ?? note.dueDate,
+    },
+    userId,
+    today,
+  );
+  const [completed] = await db
+    .update(quickNotes)
+    .set({ completedAt: new Date(), updatedAt: new Date() })
+    .where(eq(quickNotes.id, noteId))
+    .returning();
+  await logEvent({
+    userId,
+    action: "quick_note_followup_task_created",
+    entityType: "quick_note",
+    entityId: noteId,
+    metadata: { taskId: task.id, clientId },
+  });
+  return { note: completed, task };
 }
 
 // ── 4. Log meeting ────────────────────────────────────────────────────────

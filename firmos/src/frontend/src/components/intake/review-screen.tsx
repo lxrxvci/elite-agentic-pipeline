@@ -13,7 +13,7 @@ import { monthLabel } from '@/shared/lib/date-display'
 import { ConvertDialog, type StaffOption } from './convert-dialog'
 import { formatMoney } from './format'
 import { noteLabel } from './notes-rail'
-import { quoteLineName } from './quote-panel'
+import { quoteLineName, quoteLineNet } from './quote-panel'
 import { findChapter, visibleChapters, visibleQuestions, type WizardAnswers } from './registry'
 
 /**
@@ -188,18 +188,37 @@ export function ReviewScreen({
             <ul className="divide-y divide-border px-4">
               {quote.lines
                 .filter((l) => l.quantity > 0 && !(l.service_key === 'retroactive_bookkeeping' && quote.retroactive))
-                .map((l) => (
-                  <li key={l.service_key} className="flex items-baseline justify-between gap-4 py-2">
-                    <span className="text-sm text-foreground">{quoteLineName(quote, l)}</span>
-                    {l.unpriced ? (
-                      <span className="text-xs italic text-muted-foreground">quoted at review</span>
-                    ) : (
-                      <span className="tnum text-sm font-medium text-foreground">
-                        {l.amount != null ? formatMoney(l.amount) : ''}
+                .map((l) => {
+                  const discount = l.discount ?? 0
+                  const net = quoteLineNet(l)
+                  return (
+                    <li key={l.service_key} className="flex items-baseline justify-between gap-4 py-2">
+                      <span className="text-sm text-foreground">
+                        {quoteLineName(quote, l)}
+                        {discount > 0 && (
+                          <span
+                            className="tnum ml-2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground"
+                            data-testid={`review-discount-${l.service_key}`}
+                          >
+                            −{formatMoney(discount)}/cycle
+                          </span>
+                        )}
                       </span>
-                    )}
-                  </li>
-                ))}
+                      {l.unpriced ? (
+                        <span className="text-xs italic text-muted-foreground">quoted at review</span>
+                      ) : (
+                        <span className="tnum text-sm font-medium text-foreground">
+                          {discount > 0 && l.amount != null && (
+                            <span className="mr-1.5 text-xs font-normal text-muted-foreground line-through">
+                              {formatMoney(l.amount)}
+                            </span>
+                          )}
+                          {net != null ? formatMoney(net) : ''}
+                        </span>
+                      )}
+                    </li>
+                  )
+                })}
             </ul>
           </section>
         )}

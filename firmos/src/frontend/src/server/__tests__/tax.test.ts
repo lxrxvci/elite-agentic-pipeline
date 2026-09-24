@@ -141,8 +141,12 @@ describe.skipIf(!reachable)("tax + W-9 engines (HANDOFF §18)", () => {
     const result = await populateAllChecklists(TAX_YEAR);
     const activeClients = await db.select().from(clients).where(eq(clients.isActive, true));
     expect(result.clientsProcessed).toBe(activeClients.length);
-    // Harborline already had 12 template items; every other client got 12.
-    expect(result.itemsCreated).toBe((activeClients.length - 1) * 12);
+    // E11: payroll clients get all 12 template items, no-payroll clients 11
+    // (the payroll/W-2 item is excluded). Harborline already had its 12.
+    const expected = activeClients
+      .filter((c) => c.id !== harborlineId)
+      .reduce((sum, c) => sum + (c.hasPayroll ? 12 : 11), 0);
+    expect(result.itemsCreated).toBe(expected);
 
     // Idempotent second run.
     const second = await populateAllChecklists(TAX_YEAR);

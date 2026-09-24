@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { ClientBilling, ClientDetail, ClientWork } from '@/server/clients'
 import type { ClientYearGrid } from '@/server/year-grid'
 
-import { BillingPanel, type ClientInvoiceRef } from './billing-panel'
+import { BillingPanel, type ClientInvoiceTimelineItem } from './billing-panel'
 import { ClientWorkTab } from './client-work-tab'
 import { OnboardingPanel } from './onboarding-panel'
 import { OverviewPanel, type StaffOption } from './overview-panel'
@@ -45,8 +45,8 @@ interface ClientDetailTabsProps {
   /** Active staff options for the Overview tab team selects. */
   managers?: StaffOption[]
   bookkeepers?: StaffOption[]
-  /** Recent invoices for the Billing tab sub-section (owner/admin only). */
-  clientInvoices?: ClientInvoiceRef[]
+  /** Full billing timeline (C16) for the Billing tab (owner/admin only). */
+  clientInvoices?: ClientInvoiceTimelineItem[]
   /** Deep-linkable tab (e.g. ?tab=billing for screenshots). */
   defaultTab?: string
   /** Server-composed Documents tab panel. */

@@ -272,3 +272,86 @@ test("a start date in the current month means zero retroactive months", () => {
   assert.equal(quote.retroactive?.months, 0);
   assert.equal(quote.retroactive?.total, 0);
 });
+
+// ---- Specialty reports (C10: priced into the quote, retro missed filings) ----
+test("specialty reports price hours x the default rate at their own cadence", () => {
+  const quote = calculateQuote({
+    services: [{ key: "bank_feed_management" }], // $100/mo base
+    specialtyReports: [
+      // The walkthrough figure: a 3-hour specialty report at $150/hr = $450/mo.
+      { name: "Owner Draw Analysis", frequency: "monthly", estimatedHours: 3 },
+      // Quarterly cadence on a monthly-billed client: $300/quarter = $100/mo.
+      { name: "Oregon CAT", frequency: "quarterly", flatPrice: 300 },
+    ],
+  });
+  const monthly = quote.lines.find((l) => l.service_key === "specialty_report_1");
+  assert.equal(monthly?.unit_price, 450);
+  assert.equal(monthly?.quantity, 1); // cycle 1 / 1 month
+  assert.equal(monthly?.amount, 450);
+  assert.equal(monthly?.bucket, "monthly");
+  const quarterly = quote.lines.find((l) => l.service_key === "specialty_report_2");
+  assert.equal(quarterly?.unit_price, 300);
+  assert.equal(quarterly?.quantity, 1 / 3); // one report per quarter, spread monthly
+  assert.equal(quarterly?.amount, 100);
+  // 100 (bank feeds) + 450 + 100.
+  assert.equal(quote.totals.effectiveMonthly, 650);
+});
+
+test("specialty report frequency is independent of the client's billing cycle", () => {
+  const quote = calculateQuote({
+    reportFrequency: "quarterly", // cycle 3
+    services: [{ key: "bank_feed_management" }], // 3 x $100
+    specialtyReports: [
+      { name: "Annual Filing", frequency: "annual", flatPrice: 1200 },
+      { name: "Monthly KPI", frequency: "monthly", estimatedHours: 2 }, // $300/mo
+    ],
+  });
+  const annual = quote.lines.find((l) => l.service_key === "specialty_report_1");
+  assert.equal(annual?.quantity, 3 / 12); // cycle months / 12
+  assert.equal(annual?.amount, 300); // $1,200/yr normalized into the quarter
+  const monthly = quote.lines.find((l) => l.service_key === "specialty_report_2");
+  assert.equal(monthly?.quantity, 3);
+  assert.equal(monthly?.amount, 900);
+  // effectiveMonthly = (300 + 300 + 900) / 3 = 500.
+  assert.equal(quote.totals.effectiveMonthly, 500);
+});
+
+test("missed past filings add one-time retro lines at the per-report price (C10)", () => {
+  const quote = calculateQuote({
+    services: [{ key: "bank_feed_management" }],
+    specialtyReports: [
+      // The walkthrough scenario: 18 unfiled Oregon reports.
+      { name: "Oregon Special Report", frequency: "annual", flatPrice: 200, missedFilings: 18 },
+    ],
+  });
+  const retro = quote.lines.find((l) => l.service_key === "specialty_report_1_retro");
+  assert.equal(retro?.product_name, "Missed past filings: Oregon Special Report");
+  assert.equal(retro?.quantity, 18);
+  assert.equal(retro?.unit_price, 200);
+  assert.equal(retro?.amount, 3600);
+  assert.equal(retro?.bucket, "one_time");
+  // One-time money lands in totalOneTime and never inflates the monthly rate.
+  assert.equal(quote.totals.totalOneTime, 3600);
+  // 200/12 rounds to 16.67 at the line (per-line round2 convention).
+  assert.equal(quote.totals.effectiveMonthly, 116.67);
+});
+
+test("a specialty report with no hours and no price stays unpriced, never guessed", () => {
+  const quote = calculateQuote({
+    services: [{ key: "bank_feed_management" }],
+    specialtyReports: [{ name: "Mystery Report", frequency: "monthly", missedFilings: 4 }],
+  });
+  const line = quote.lines.find((l) => l.service_key === "specialty_report_1");
+  assert.equal(line?.unpriced, true);
+  assert.equal(line?.amount, null);
+  const retro = quote.lines.find((l) => l.service_key === "specialty_report_1_retro");
+  assert.equal(retro?.unpriced, true);
+  assert.equal(retro?.amount, null);
+  assert.equal(quote.totals.effectiveMonthly, 100);
+  assert.equal(quote.totals.totalOneTime, 0);
+});
+
+test("no specialty reports -> no specialty lines (existing quotes unchanged)", () => {
+  const quote = calculateQuote({ services: [{ key: "bank_feed_management" }] });
+  assert.equal(quote.lines.some((l) => l.service_key.startsWith("specialty_report_")), false);
+});

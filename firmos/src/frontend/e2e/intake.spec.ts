@@ -78,7 +78,8 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
 
   // ── Income and expenses: checks only (merchant questions stay hidden), no payroll ──
   await page.getByTestId('chip-check').click()
-  await advance(page, 'payroll')
+  await advance(page, 'personal-card')
+  await pick(page, 'option-no', 'payroll') // no business spend on a personal card (B18)
   await pick(page, 'option-no', 'bk-frequency')
 
   // ── Reporting and payroll: monthly, close by the 10th, cash ──
@@ -96,7 +97,8 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await advance(page, 'retroactive') // skip special reports
 
   // ── Recurring and notes ──
-  await pick(page, 'option-no', 'rules')
+  await pick(page, 'option-no', 'default-rules')
+  await advance(page, 'rules') // keep all four standard routines selected (B21)
   await advance(page, 'notes') // skip custom rules
   await page.getByTestId('continue').click() // skip notes
 

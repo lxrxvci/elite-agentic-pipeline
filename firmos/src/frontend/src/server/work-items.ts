@@ -1,5 +1,6 @@
 import { and, eq, isNull, ne } from "drizzle-orm";
 import {
+  incompleteSubtaskCount,
   isReportTaskName,
   isSettled,
   reverseSyncTargetForTaskTitle,
@@ -16,6 +17,7 @@ import {
   clientReports,
   documents,
   tasks,
+  taskSubtasks,
   weeklyBankFeeds,
 } from "@/db/schema";
 
@@ -48,6 +50,24 @@ export class ReportDocumentRequiredError extends Error {
         `${period.year}-${String(period.month).padStart(2, "0")}`,
     );
     this.name = "ReportDocumentRequiredError";
+  }
+}
+
+/**
+ * B4 (owner walkthrough, 00:29:44): a parent task cannot complete while it
+ * has incomplete subtasks - "collect logins" only closes when the
+ * Chase/Stripe/... subtasks are all collected. The count comes from the
+ * domain's incompleteSubtaskCount; re-opening is never gated.
+ */
+export class SubtasksIncompleteError extends Error {
+  constructor(
+    taskId: number,
+    public readonly incompleteCount: number,
+  ) {
+    super(
+      `task ${taskId} cannot be completed: ${incompleteCount} subtask${incompleteCount === 1 ? "" : "s"} still open`,
+    );
+    this.name = "SubtasksIncompleteError";
   }
 }
 
@@ -300,6 +320,17 @@ export async function completeTask(
     if (task.clientId == null || !(await reportDocumentExists(task.clientId, period))) {
       throw new ReportDocumentRequiredError(taskId, period);
     }
+  }
+
+  // B4 gating: a parent with an open checklist cannot complete (completing
+  // every subtask first is the only way through; re-opening is ungated).
+  if (completed) {
+    const subtaskRows = await db
+      .select({ isCompleted: taskSubtasks.isCompleted })
+      .from(taskSubtasks)
+      .where(eq(taskSubtasks.taskId, taskId));
+    const openCount = incompleteSubtaskCount(subtaskRows.map((s) => ({ is_completed: s.isCompleted })));
+    if (openCount > 0) throw new SubtasksIncompleteError(taskId, openCount);
   }
 
   const now = nowIso();

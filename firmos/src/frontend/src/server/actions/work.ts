@@ -10,6 +10,7 @@ import {
   setBankFeedCompleted,
   setReconciliationCompleted,
   setReportCompleted,
+  SubtasksIncompleteError,
 } from '@/server/work-items'
 
 /**
@@ -60,6 +61,13 @@ export async function completeWorkCard(
     // §6.3 guard: report tasks need their report document uploaded first.
     if (error instanceof ReportDocumentRequiredError) {
       return { ok: false, error: 'Upload the report document first.' }
+    }
+    // B4 guard: a parent task closes only when its checklist is complete.
+    if (error instanceof SubtasksIncompleteError) {
+      return {
+        ok: false,
+        error: `${error.incompleteCount} checklist item${error.incompleteCount === 1 ? '' : 's'} still open - finish the checklist first.`,
+      }
     }
     return { ok: false, error: 'Couldn’t update this item - try again.' }
   }

@@ -449,18 +449,35 @@ export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, on
                 <TaskTimerToggle taskId={task.id} taskTitle={task.title} revealed />
                 <span className="text-xs text-muted-foreground">Task timer</span>
               </div>
-              <Button
-                type="button"
-                size="sm"
-                variant={isCompleted ? 'outline' : 'default'}
-                data-testid="drawer-complete-toggle"
-                onClick={() => {
-                  onToggleComplete(!isCompleted)
-                  onOpenChange(false)
-                }}
-              >
-                {isCompleted ? 'Re-open task' : 'Complete task'}
-              </Button>
+              {/* B4: a parent task cannot complete with an open checklist -
+                  the server enforces it too; here the affordance explains it. */}
+              {(() => {
+                const openSubtasks = detail.subtasks.filter((s) => !s.isCompleted).length
+                const gated = !isCompleted && openSubtasks > 0
+                return (
+                  <div className="flex items-center gap-2">
+                    {gated && (
+                      <span className="text-[11px] text-muted-foreground" data-testid="subtask-gate-note">
+                        {openSubtasks} checklist item{openSubtasks === 1 ? '' : 's'} still open
+                      </span>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={isCompleted ? 'outline' : 'default'}
+                      data-testid="drawer-complete-toggle"
+                      disabled={gated}
+                      title={gated ? 'Finish the checklist first' : undefined}
+                      onClick={() => {
+                        onToggleComplete(!isCompleted)
+                        onOpenChange(false)
+                      }}
+                    >
+                      {isCompleted ? 'Re-open task' : 'Complete task'}
+                    </Button>
+                  </div>
+                )
+              })()}
             </div>
           </>
         )}

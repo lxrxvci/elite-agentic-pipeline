@@ -249,6 +249,55 @@ export interface CustomItemInput {
   quantity?: number;
 }
 
+// ── Specialty reports (C10) ───────────────────────────────────────────────
+
+/**
+ * Specialty reports price hours x rate (owner walkthrough: the 3-hour
+ * specialty report at $450/mo is the tier-1 consulting rate x 3). When the
+ * intake states hours but no custom rate, the tier-1 rate applies.
+ */
+export const SPECIALTY_REPORT_DEFAULT_RATE = 150;
+
+/** Months between occurrences of a specialty report's own cadence. */
+export const SPECIALTY_REPORT_PERIOD_MONTHS: Record<string, number> = {
+  monthly: 1,
+  quarterly: 3,
+  semi_annual: 6,
+  annual: 12,
+};
+
+/**
+ * One specialty report definition as the quote sees it. frequency is the
+ * report's OWN cadence, independent of the client's close frequency. Retro
+ * scope: missedFilings unfiled past reports price one-time at the per-report
+ * price (C10: 18 unfiled Oregon reports x the per-report price).
+ */
+export interface SpecialtyReportInput {
+  name: string;
+  frequency: "monthly" | "quarterly" | "semi_annual" | "annual" | string;
+  estimatedHours?: number | null;
+  /** Flat price per report; wins over estimatedHours x rate when present. */
+  flatPrice?: number | null;
+  /** Hourly rate override; defaults to SPECIALTY_REPORT_DEFAULT_RATE. */
+  hourlyRate?: number | null;
+  /** Unfiled past filings; each prices one-time at the per-report price. */
+  missedFilings?: number | null;
+}
+
+/**
+ * The per-occurrence price of a specialty report: the flat price when stated,
+ * else estimated hours x the hourly rate. null when the intake captured
+ * neither - priced at review, never guessed (§15 convention for unnamed
+ * amounts).
+ */
+export function specialtyReportPrice(report: SpecialtyReportInput): number | null {
+  if (report.flatPrice != null && report.flatPrice > 0) return round2(report.flatPrice);
+  if (report.estimatedHours != null && report.estimatedHours > 0) {
+    return round2(report.estimatedHours * (report.hourlyRate ?? SPECIALTY_REPORT_DEFAULT_RATE));
+  }
+  return null;
+}
+
 export interface QuoteInput {
   /** How often the books are closed; drives the billing cycle multiplier. */
   reportFrequency?: string | null;
@@ -267,6 +316,15 @@ export interface QuoteInput {
    * ("quoted at review").
    */
   retroactive?: RetroactiveQuoteInput | null;
+  /**
+   * Specialty report definitions with pricing data (C10). Each prices as a
+   * recurring line at the report's own cadence (normalized into the monthly
+   * bucket like every periodic service) plus, when missedFilings is set,
+   * a one-time retro line at missedFilings x the per-report price. Reports
+   * without hours or a flat price stay out of the quote entirely (they are
+   * tracking rows, not money).
+   */
+  specialtyReports?: SpecialtyReportInput[];
 }
 
 /**
@@ -432,6 +490,41 @@ export function calculateQuote(input: QuoteInput, pricingOverrides?: PricingOver
       bucket: "monthly",
       unpriced: false,
     });
+  }
+
+  // Specialty reports (C10): each prices at its OWN cadence, normalized into
+  // the monthly bucket like every other periodic service (occurrences per
+  // cycle = cycle / period months). Missed past filings ride as a one-time
+  // retro line at the same per-report price, so the catch-up quote shows the
+  // full number. A report with neither hours nor a flat price emits an
+  // unpriced line ("quoted at review"), never a guessed amount.
+  for (const [i, report] of (input.specialtyReports ?? []).entries()) {
+    const price = specialtyReportPrice(report);
+    const months = SPECIALTY_REPORT_PERIOD_MONTHS[report.frequency] ?? 1;
+    const quantity = cycle / months;
+    lines.push({
+      service_key: `specialty_report_${i + 1}`,
+      product_name: `Specialty Report: ${report.name}`,
+      unit_price: price,
+      quantity,
+      discount: 0,
+      amount: price == null ? null : round2(price * quantity),
+      bucket: "monthly",
+      unpriced: price == null,
+    });
+    const missed = Math.max(0, Math.floor(report.missedFilings ?? 0));
+    if (missed > 0) {
+      lines.push({
+        service_key: `specialty_report_${i + 1}_retro`,
+        product_name: `Missed past filings: ${report.name}`,
+        unit_price: price,
+        quantity: missed,
+        discount: 0,
+        amount: price == null ? null : round2(price * missed),
+        bucket: "one_time",
+        unpriced: price == null,
+      });
+    }
   }
 
   const totals: QuoteTotals = {

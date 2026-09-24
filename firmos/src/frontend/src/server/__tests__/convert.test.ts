@@ -144,18 +144,26 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     expect(clientAccounts.filter((a) => a.accountType === "merchant")).toHaveLength(2);
     expect(byName.get("Stripe")?.institution).toBe("Stripe");
 
-    // Recurring rules: 4 defaults (monthly, tier day 10) + 1 custom weekly.
+    // Recurring rules: 4 defaults (monthly, tier day 10) + 1 custom weekly
+    // + 2 specialty report rules (C10: each report definition recurs as its
+    // own rule on the report's cadence).
     const rules = await db
       .select()
       .from(recurringTasks)
       .where(eq(recurringTasks.clientId, client.id));
-    expect(rules).toHaveLength(5);
+    expect(rules).toHaveLength(7);
     const titles = rules.map((r) => r.title);
     for (const t of ["Reconcile Accounts", "Categorize Transactions", "Client Questions", "Send Reports"]) {
       expect(titles).toContain(t);
     }
-    const custom = rules.find((r) => r.isCustom);
-    expect(custom?.title).toBe("Weekly deposit review");
+    // C10: the two report definitions became recurring rules at their own
+    // cadence, carrying the data-source note slot (null here).
+    const monthlyReportRule = rules.find((r) => r.title === "Monthly Financial Package");
+    expect(monthlyReportRule?.scheduleType).toBe("monthly");
+    const quarterlyReportRule = rules.find((r) => r.title === "Quarterly Tax Summary");
+    expect(quarterlyReportRule?.scheduleType).toBe("quarterly");
+    const custom = rules.find((r) => r.title === "Weekly deposit review");
+    expect(custom?.isCustom).toBe(true);
     expect(custom?.scheduleType).toBe("weekly");
     const subtasks = await db
       .select()
@@ -197,7 +205,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
 
     expect(result.onboardingTasksCreated).toBe(8);
     expect(result.reportRowsCreated).toBe(16);
-    expect(result.recurringRulesCreated).toBe(5);
+    expect(result.recurringRulesCreated).toBe(7); // 4 defaults + 1 custom + 2 specialty report rules (C10)
     expect(result.tasksGenerated).not.toBeNull();
   });
 

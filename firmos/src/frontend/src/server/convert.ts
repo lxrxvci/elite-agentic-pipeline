@@ -31,6 +31,7 @@ import {
   tasks,
 } from "@/db/schema";
 import { DEPRECIATION_FIELDS, type DepreciationBreakdown } from "@/shared/lib/proforma";
+import { DEFAULT_RECURRING_RULES } from "@/shared/lib/default-rules";
 
 import { defaultStatementDayFor, seedDefaultAccounts, type DbOrTx } from "./accounts-seed";
 import { autoLinkInstitutionSops } from "./templates";
@@ -47,6 +48,7 @@ import {
   buildRecurringServicesTemplate,
   calculateIntakeQuoteWithConfig,
   quoteAmountStamps,
+  specialtyReportsFromIntake,
 } from "./quote";
 import { runRecurringOnce } from "./recurring";
 
@@ -124,20 +126,31 @@ function splitName(name: string): { firstName: string; lastName: string | null }
 // ── Recurring rules (§19 defaults, cadence-aware) ─────────────────────────
 
 interface DefaultRuleSpec {
+  key: string;
   title: string;
   assignee: "manager" | "bookkeeper";
   dayOfMonth: number;
 }
 
-/** The four defaults (§19); tier day is the close-work due day on monthly clients. */
-function defaultRuleSpecs(tierDay: number): DefaultRuleSpec[] {
-  return [
-    { title: "Reconcile Accounts", assignee: "bookkeeper", dayOfMonth: tierDay },
-    { title: "Categorize Transactions", assignee: "bookkeeper", dayOfMonth: tierDay },
-    { title: "Client Questions", assignee: "manager", dayOfMonth: 25 },
-    { title: "Send Reports", assignee: "manager", dayOfMonth: tierDay },
-  ];
+/**
+ * The four defaults (§19) from the shared canonical list; the tier day is
+ * the close-work due day on monthly clients. B21: the intake wizard renders
+ * these as a pre-selected checklist; keys in form_data.excludedDefaultRules
+ * are unselected there and skipped here.
+ */
+function defaultRuleSpecs(tierDay: number, excludedKeys: ReadonlySet<string> = new Set()): DefaultRuleSpec[] {
+  return DEFAULT_RECURRING_RULES.filter((r) => !excludedKeys.has(r.key)).map((r) => ({
+    key: r.key,
+    title: r.title,
+    assignee: r.assignee,
+    dayOfMonth: r.dueDay === "tier" ? tierDay : r.dueDay,
+  }));
 }
+
+/** B18: seeded when the intake flags a personal card used for business. */
+export const PERSONAL_CARD_REMINDER_TITLE = "Ask client for personal-card business-expense breakdown";
+/** B18: the reminder lands on the 1st, asking for the prior month's breakdown. */
+const PERSONAL_CARD_REMINDER_DAY = 1;
 
 function scheduleForCadence(
   frequency: string | null | undefined,
@@ -265,9 +278,30 @@ export async function convertIntakeToClient(
     const isProject = (intake.engagementType ?? form.engagementType) === "project";
 
     // Billing template from the quote (§6.5 price flow, server-side only),
-    // priced against the admin-configured table.
-    const quote = await calculateIntakeQuoteWithConfig({ ...form, bookkeepingFrequency: intake.bookkeepingFrequency }, today);
-    const template = buildRecurringServicesTemplate(quote, form.customItems ?? []);
+    // priced against the admin-configured table. The report-definitions
+    // structured column is the fallback when form_data lacks it (the wizard
+    // writes both; API-created intakes may carry only the column) - C10.
+    const quote = await calculateIntakeQuoteWithConfig(
+      {
+        ...form,
+        reportDefinitions:
+          form.reportDefinitions ??
+          (intake.reportDefinitions as IntakeFormData["reportDefinitions"] | null) ??
+          undefined,
+        bookkeepingFrequency: intake.bookkeepingFrequency,
+      },
+      today,
+    );
+    const template = buildRecurringServicesTemplate(
+      quote,
+      form.customItems ?? [],
+      specialtyReportsFromIntake({
+        reportDefinitions:
+          form.reportDefinitions ??
+          (intake.reportDefinitions as IntakeFormData["reportDefinitions"] | null) ??
+          undefined,
+      }),
+    );
     const stamps = quoteAmountStamps(quote);
 
     // 1. Client record.
@@ -306,6 +340,8 @@ export async function convertIntakeToClient(
         qboUserCount: form.qboUserCount ?? null,
         qboSubscriptionTier: form.qboSubscriptionTier ?? null,
         isRealEstateClient: form.isRealEstateClient === true,
+        // E11: the payroll answer gates payroll/W-2 year-end checklist items.
+        hasPayroll: form.hasPayroll === true,
         isProjectEngagement: isProject,
         requiresWeeklyBankFeeds: !isProject,
       })
@@ -484,8 +520,9 @@ export async function convertIntakeToClient(
       }
     }
 
-    // 6. Recurring rules: the four defaults (cadence-aware, §19) plus custom
-    //    intake rules. Project engagements are skipped entirely (§19).
+    // 6. Recurring rules: the four defaults (cadence-aware, §19; B21: minus
+    //    the ones unselected in the intake checklist) plus custom intake
+    //    rules. Project engagements are skipped entirely (§19).
     let recurringRulesCreated = 0;
     if (!isProject) {
       const tierDay = intake.monthlyCloseTier == null ? 15 : Number(intake.monthlyCloseTier);
@@ -493,7 +530,8 @@ export async function convertIntakeToClient(
         ? parseLocalDate(intake.bookkeepingStartDate).month
         : 1;
       const schedule = scheduleForCadence(intake.bookkeepingFrequency, anchorMonth);
-      for (const spec of defaultRuleSpecs(Number.isNaN(tierDay) ? 15 : tierDay)) {
+      const excludedDefaults = new Set((form.excludedDefaultRules ?? []).map((k) => String(k)));
+      for (const spec of defaultRuleSpecs(Number.isNaN(tierDay) ? 15 : tierDay, excludedDefaults)) {
         const nextRun = initialNextRun(
           {
             schedule_type: schedule.scheduleType,
@@ -515,6 +553,49 @@ export async function convertIntakeToClient(
         });
         recurringRulesCreated += 1;
       }
+
+      // B18 (01:04:29): a personal card used for business needs a monthly
+      // chase for the breakdown - seeded like any other default rule.
+      if (form.personalCardForBusiness === true) {
+        const nextRun = initialNextRun(
+          {
+            schedule_type: "monthly",
+            day_of_month: PERSONAL_CARD_REMINDER_DAY,
+            next_run: intake.bookkeepingStartDate ?? formatLocalDate(today),
+          },
+          intake.bookkeepingStartDate,
+          today,
+        );
+        await tx.insert(recurringTasks).values({
+          clientId,
+          title: PERSONAL_CARD_REMINDER_TITLE,
+          scheduleType: "monthly",
+          dayOfMonth: PERSONAL_CARD_REMINDER_DAY,
+          nextRun,
+          assigneeId: bookkeeperId,
+        });
+        recurringRulesCreated += 1;
+      }
+
+      // C10: specialty report definitions recur as their own rules (on the
+      // report's cadence, not the client's close cadence) so the work shows
+      // up in the queue; pricing rides the services template via the quote.
+      const specialtyRules: IntakeCustomRuleInput[] = reportDefinitionsOf(intake).map((def) => ({
+        title: def.name,
+        description: def.dataSource ?? null,
+        ...scheduleForCadence(def.frequency, anchorMonth),
+      }));
+      if (specialtyRules.length > 0) {
+        recurringRulesCreated += await insertCustomRules(
+          tx,
+          clientId,
+          specialtyRules,
+          { managerId, bookkeeperId },
+          intake.bookkeepingStartDate,
+          today,
+        );
+      }
+
       const customRules =
         (intake.customRecurringRules as IntakeCustomRuleInput[] | null) ?? form.customRecurringRules ?? [];
       recurringRulesCreated += await insertCustomRules(

@@ -32,6 +32,7 @@ export default async function NotesPage() {
       <NotesFeed
         initialNotes={notes}
         clients={options.clients}
+        staff={options.staff}
         currentUserId={user.id}
         currentUserName={`${user.firstName} ${user.lastName}`}
       />

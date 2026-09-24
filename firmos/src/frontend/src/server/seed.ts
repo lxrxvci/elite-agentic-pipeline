@@ -216,6 +216,9 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
       bankFeedCatchupDate: catchup,
       bookkeepingStartDate: yearStart,
       workDayOfWeek: 1,
+      // E11: Harborline runs payroll - its year-end checklist includes the
+      // payroll/W-2 item (no-payroll clients skip it).
+      hasPayroll: true,
       managerId: managerDana,
       bookkeeperId: bookkeeperJorge,
       cpaContactId: cpaContact.id,
@@ -229,6 +232,7 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
       bankFeedDayOfWeek: 5,
       bookkeepingStartDate: yearStart,
       workDayOfWeek: 2,
+      hasPayroll: true,
       managerId: managerDana,
       bookkeeperId: bookkeeperSofia,
     },
@@ -555,6 +559,8 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
     ],
     payrollFrequency: "biweekly",
     payrollProvider: "Gusto",
+    // E11: the payroll answer rides form_data; Gusto + biweekly means yes.
+    hasPayroll: true,
     reportDefinitions: [
       { name: "Monthly Financial Package", frequency: "monthly" },
       { name: "Quarterly Tax Summary", frequency: "quarterly" },

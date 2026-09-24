@@ -56,6 +56,8 @@ export interface TaskTemplateItem {
   dayOfMonth?: number | null
   /** onboarding only. */
   isAdminPhase?: boolean
+  /** onboarding only: conversion skips the task when no account connects. */
+  requiresOnlineAccounts?: boolean
 }
 
 const SCHEDULE_TYPES = ['daily', 'weekly', 'monthly', 'quarterly', 'semi_annual', 'annual'] as const
@@ -110,6 +112,7 @@ export function TaskTemplateAdmin({ kind, items, canEdit }: TaskTemplateAdminPro
   const [scheduleType, setScheduleType] = useState<string>('monthly')
   const [dayOfMonth, setDayOfMonth] = useState('')
   const [isAdminPhase, setIsAdminPhase] = useState(false)
+  const [requiresOnlineAccounts, setRequiresOnlineAccounts] = useState(false)
 
   function openForm(target: TaskTemplateItem | null) {
     setEditTarget(target)
@@ -121,6 +124,7 @@ export function TaskTemplateAdmin({ kind, items, canEdit }: TaskTemplateAdminPro
     setScheduleType(target?.scheduleType ?? 'monthly')
     setDayOfMonth(target?.dayOfMonth != null ? String(target.dayOfMonth) : '')
     setIsAdminPhase(target?.isAdminPhase ?? false)
+    setRequiresOnlineAccounts(target?.requiresOnlineAccounts ?? false)
     setFormOpen(true)
   }
 
@@ -146,6 +150,7 @@ export function TaskTemplateAdmin({ kind, items, canEdit }: TaskTemplateAdminPro
         title,
         description: description || null,
         isAdminPhase,
+        requiresOnlineAccounts,
         defaultAssigneeRole: role,
         position: Number(position) || 0,
         isActive,
@@ -225,6 +230,14 @@ export function TaskTemplateAdmin({ kind, items, canEdit }: TaskTemplateAdminPro
                   {kind === 'onboarding' && item.isAdminPhase && (
                     <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Admin phase
+                    </span>
+                  )}
+                  {kind === 'onboarding' && item.requiresOnlineAccounts && (
+                    <span
+                      className="ml-2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent-foreground"
+                      data-testid="requires-online-badge"
+                    >
+                      Needs online accounts
                     </span>
                   )}
                 </p>
@@ -339,6 +352,16 @@ export function TaskTemplateAdmin({ kind, items, canEdit }: TaskTemplateAdminPro
                 <label className="flex items-center gap-2 pb-2 text-sm text-foreground">
                   <Checkbox checked={isAdminPhase} onCheckedChange={(c) => setIsAdminPhase(c === true)} />
                   Admin phase
+                </label>
+              )}
+              {kind === 'onboarding' && (
+                <label className="flex items-center gap-2 pb-2 text-sm text-foreground">
+                  <Checkbox
+                    checked={requiresOnlineAccounts}
+                    onCheckedChange={(c) => setRequiresOnlineAccounts(c === true)}
+                    data-testid="requires-online-checkbox"
+                  />
+                  Needs online accounts
                 </label>
               )}
               {editTarget && (

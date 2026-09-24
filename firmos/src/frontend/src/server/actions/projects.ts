@@ -72,7 +72,13 @@ export async function updateProjectStatusAction(
 
 export async function updateProjectBillingAction(
   projectId: number,
-  patch: { billingMode?: ProjectBillingMode; fixedPrice?: string | null },
+  patch: {
+    billingMode?: ProjectBillingMode;
+    fixedPrice?: string | null;
+    milestoneIntervalMonths?: number | null;
+    milestoneAmount?: string | null;
+    billOnCompletion?: boolean;
+  },
 ): Promise<ActionResult<Awaited<ReturnType<typeof updateProjectBilling>>>> {
   try {
     const user = await requireRole("owner", "admin", "manager");

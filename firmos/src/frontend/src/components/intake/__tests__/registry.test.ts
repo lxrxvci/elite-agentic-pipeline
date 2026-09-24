@@ -173,6 +173,7 @@ describe('firstUnansweredScreen (resume)', () => {
       serviceKeys: ['bank_feed_management'],
       isRealEstateClient: false,
       hasPayroll: false,
+      personalCardForBusiness: false,
       bookkeepingFrequency: 'monthly',
       monthlyCloseTier: '10',
       accountingMethod: 'cash',
@@ -200,5 +201,76 @@ describe('firstUnansweredScreen (resume)', () => {
     }
     const screens = flattenScreens(nearlyFull)
     expect(screens[firstUnansweredScreen(nearlyFull)]).toMatchObject({ questionId: 're-yes' })
+  })
+})
+
+describe('B18 personal-card question', () => {
+  it('sits in the income chapter as a required yes/no', () => {
+    const income = CHAPTERS.find((c) => c.id === 'income')!
+    const q = income.questions.find((q) => q.id === 'personal-card')!
+    expect(q.required).toBe(true)
+    // A "sometimes" answer lands as boolean true (the reminder seeds on true).
+    expect(q.apply(base, 'yes')).toEqual({ personalCardForBusiness: true })
+    expect(q.apply(base, 'no')).toEqual({ personalCardForBusiness: false })
+    expect(q.summarize({ ...base, personalCardForBusiness: true })).toBe('Yes')
+  })
+})
+
+describe('C10 specialty report capture', () => {
+  const reportsQ = CHAPTERS.find((c) => c.id === 'reporting')!.questions.find((q) => q.id === 'reports')!
+
+  it('coerces numeric pricing fields and keeps the data-source note', () => {
+    const patch = reportsQ.apply(base, [
+      {
+        name: 'Oregon Special Report',
+        frequency: 'annual',
+        dataSource: 'Client portal',
+        estimatedHours: '',
+        flatPrice: '200',
+        missedFilings: '18',
+      },
+    ])
+    expect(patch.reportDefinitions?.[0]).toEqual({
+      name: 'Oregon Special Report',
+      frequency: 'annual',
+      dataSource: 'Client portal',
+      estimatedHours: null,
+      flatPrice: 200,
+      missedFilings: 18,
+    })
+  })
+
+  it('summarizes the chip with cadence, price, and missed-filings count', () => {
+    const sub = reportsQ.repeatable!.sub!
+    expect(sub({ name: 'X', frequency: 'monthly', estimatedHours: 3 })).toBe('Monthly · 3h × $150')
+    expect(sub({ name: 'X', frequency: 'annual', flatPrice: 200, missedFilings: 18 })).toBe(
+      'Annual · $200/report · 18 missed',
+    )
+    expect(sub({ name: 'X', frequency: 'quarterly' })).toBe('Quarterly')
+  })
+})
+
+describe('B21 default-rules checklist', () => {
+  const recurring = CHAPTERS.find((c) => c.id === 'recurring')!
+  const q = recurring.questions.find((q) => q.id === 'default-rules')!
+
+  it('is pre-selected with all four defaults and hidden for project engagements', () => {
+    expect(q.when?.({ ...base, engagementType: 'project' })).toBe(false)
+    // Untouched answers read as fully selected.
+    expect(q.get(base)).toEqual(['reconcile_accounts', 'categorize_transactions', 'client_questions', 'send_reports'])
+    expect(q.summarize(base)).toBe('All 4 standard routines')
+  })
+
+  it('unselecting persists exclusions (never selections)', () => {
+    const selected = ['reconcile_accounts', 'categorize_transactions']
+    const patch = q.apply(base, selected)
+    expect(patch).toEqual({ excludedDefaultRules: ['client_questions', 'send_reports'] })
+    // The exclusions round-trip back into the selected set.
+    expect(q.get({ ...base, ...patch })).toEqual(selected)
+    expect(q.summarize({ ...base, ...patch })).toBe('2 of 4: Reconcile Accounts, Categorize Transactions')
+    // Unselecting everything is a valid answer.
+    expect(q.apply(base, [])).toEqual({
+      excludedDefaultRules: ['reconcile_accounts', 'categorize_transactions', 'client_questions', 'send_reports'],
+    })
   })
 })

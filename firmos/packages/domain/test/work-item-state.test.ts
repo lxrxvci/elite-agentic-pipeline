@@ -9,6 +9,7 @@ import {
   reportMonthsForFrequency,
   effectiveDueDate,
   isOverdue,
+  incompleteSubtaskCount,
   DEFAULT_BANK_FEED_DAY_OF_WEEK,
   RECONCILIATION_GRACE_DAYS,
 } from "../src/work-item-state.ts";
@@ -141,5 +142,24 @@ test("catch-up + deferred combine (later wins)", () => {
       deferredUntil: ld("2026-03-01"),
     }),
     ld("2026-03-01"),
+  );
+});
+
+// ---- B4: subtask-completion gating -----------------------------------------
+test("incomplete subtasks gate the parent (count drives the server error)", () => {
+  assert.equal(incompleteSubtaskCount([]), 0); // no checklist -> nothing gates
+  assert.equal(
+    incompleteSubtaskCount([{ is_completed: true }, { is_completed: true }]),
+    0,
+  );
+  // "Collect logins" parent with Chase/Stripe open: 2 still incomplete.
+  assert.equal(
+    incompleteSubtaskCount([
+      { is_completed: true },
+      { is_completed: false },
+      { is_completed: null },
+      {},
+    ]),
+    3,
   );
 });

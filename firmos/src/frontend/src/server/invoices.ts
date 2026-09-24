@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import {
   addDays,
   addMonths,
@@ -25,6 +25,7 @@ import {
   clients,
   invoiceLineItems,
   invoices,
+  projects,
   recurringTasks,
   tasks,
   users,
@@ -58,6 +59,13 @@ import type { TemplateLineItem } from "./quote";
  * "Preferred Customer Discount" line, capped per line at the line's billed
  * amount and in aggregate at the billed subtotal, so no combination of
  * discounts can produce a negative line net or a negative invoice.
+ *
+ * The same monthly run also picks up C15 milestone billing: projects with a
+ * milestone schedule invoice progress amounts every N months from their
+ * start, and bill-on-completion projects invoice their fixed price once when
+ * they close (generateProjectMilestoneInvoices; stamped idempotent on the
+ * project row). Milestone invoices are separate one-off rows, never the
+ * per-(client, period) auto-generated invoice.
  */
 
 export class InvoiceError extends Error {
@@ -359,6 +367,153 @@ async function pendingBillableTasksFor(clientId: number): Promise<PendingBillabl
   return getPendingBillableTasks(clientId);
 }
 
+// ── Milestone billing (C15) ───────────────────────────────────────────────
+
+/**
+ * Project milestone invoicing, picked up by the monthly run (owner
+ * walkthrough 01:42:10: "progress invoice at 6 months / bill on completion").
+ *
+ *  - Progress: a project with milestone_interval_months=N bills
+ *    milestone_amount once per N full months elapsed from the project start
+ *    (start_date, else the created day). Accrues while the project is
+ *    pending/in_progress; completing the project freezes progress accrual
+ *    (the completion invoice is the final bill when configured).
+ *  - Completion: bill_on_completion projects bill fixed_price once when the
+ *    project closes.
+ *
+ * Idempotent: milestones_invoiced / completion_invoiced_at stamp what has
+ * been billed, so a rerun of the same period creates nothing new. Milestone
+ * invoices are NOT auto-generated rows (they never collide with the
+ * per-(client, period) generated-invoice unique index); they read as
+ * progress/completion invoices in the client billing timeline.
+ */
+export async function generateProjectMilestoneInvoices(
+  client: ClientRow,
+  year: number,
+  month: number,
+): Promise<number> {
+  const rows = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.clientId, client.id), ne(projects.status, "cancelled")));
+  const billable = rows.filter(
+    (p) =>
+      (p.milestoneIntervalMonths != null && p.milestoneAmount != null) ||
+      (p.billOnCompletion && p.fixedPrice != null),
+  );
+  if (billable.length === 0) return 0;
+
+  let created = 0;
+  for (const project of billable) {
+    const lines: InvoiceLineSpec[] = [];
+    let numberSuffix: string | null = null;
+    let milestonesNow = 0;
+
+    // Progress milestones due as of the run period.
+    if (
+      project.milestoneIntervalMonths != null &&
+      project.milestoneAmount != null &&
+      (project.status === "pending" || project.status === "in_progress")
+    ) {
+      const interval = project.milestoneIntervalMonths;
+      if (interval >= 1) {
+        const start = project.startDate
+          ? parseLocalDate(project.startDate)
+          : localToday(new Date(project.createdAt ?? Date.now()));
+        const elapsed = Math.max(0, diffMonths({ year: start.year, month: start.month }, { year, month }));
+        const due = Math.floor(elapsed / interval) - project.milestonesInvoiced;
+        if (due > 0) {
+          const first = project.milestonesInvoiced + 1;
+          const last = project.milestonesInvoiced + due;
+          const price = Number(project.milestoneAmount);
+          lines.push({
+            lineType: "other",
+            serviceKey: null,
+            description: `Progress billing - ${project.name} (milestone${due === 1 ? "" : "s"} ${first}${due === 1 ? "" : `-${last}`}, every ${interval} months from project start)`,
+            quantity: due,
+            unitPrice: price,
+            discount: 0,
+            amount: round2(price * due),
+          });
+          milestonesNow = due;
+          numberSuffix = `P${project.id}-${last}`;
+        }
+      }
+    }
+
+    // Completion invoice (only when no progress lines fired this run -
+    // progress accrual freezes at completion, so they never double up).
+    if (
+      milestonesNow === 0 &&
+      project.billOnCompletion &&
+      project.status === "completed" &&
+      project.completionInvoicedAt == null &&
+      project.fixedPrice != null &&
+      Number(project.fixedPrice) > 0
+    ) {
+      const price = Number(project.fixedPrice);
+      lines.push({
+        lineType: "other",
+        serviceKey: null,
+        description: `Project completion - ${project.name}`,
+        quantity: 1,
+        unitPrice: price,
+        discount: 0,
+        amount: round2(price),
+      });
+      numberSuffix = `C${project.id}`;
+    }
+
+    if (lines.length === 0 || numberSuffix == null) continue;
+
+    const total = round2(lines.reduce((sum, l) => sum + l.amount, 0));
+    const [inserted] = await db
+      .insert(invoices)
+      .values({
+        clientId: client.id,
+        invoiceNumber: `INV-${year}${String(month).padStart(2, "0")}-${client.id}-${numberSuffix}`,
+        status: "draft",
+        year,
+        month,
+        isAutoGenerated: false, // milestone rows are progress invoices, not the monthly recurring one
+        issueDate: formatLocalDate({ year, month, day: 1 }),
+        dueDate: net15DueDate(year, month),
+        total: total.toFixed(2),
+        notes: `Milestone billing for project "${project.name}".`,
+      })
+      .onConflictDoNothing()
+      .returning({ id: invoices.id });
+    if (!inserted) continue; // invoice number already exists - nothing to do
+
+    await db.insert(invoiceLineItems).values(
+      lines.map((l, position) => ({
+        invoiceId: inserted.id,
+        lineType: l.lineType,
+        serviceKey: l.serviceKey,
+        description: l.description,
+        quantity: l.quantity.toFixed(2),
+        unitPrice: l.unitPrice.toFixed(2),
+        discount: l.discount.toFixed(2),
+        amount: l.amount.toFixed(2),
+        taskId: l.taskId ?? null,
+        position,
+      })),
+    );
+
+    await db
+      .update(projects)
+      .set({
+        milestonesInvoiced: project.milestonesInvoiced + milestonesNow,
+        completionInvoicedAt:
+          milestonesNow === 0 && project.status === "completed" ? new Date() : project.completionInvoicedAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, project.id));
+    created += 1;
+  }
+  return created;
+}
+
 // ── Monthly generation (§6.5) ─────────────────────────────────────────────
 
 export interface GenerateFailure {
@@ -379,6 +534,8 @@ export interface GenerateSummary {
    *  rather than left empty - they are never persisted). */
   emptySkipped: number;
   tasksAttached: number;
+  /** C15: progress/completion invoices created from project milestones. */
+  milestoneInvoicesCreated: number;
   failures: GenerateFailure[];
 }
 
@@ -405,11 +562,28 @@ export async function generateMonthlyInvoices(
     skippedNoBilling: 0,
     emptySkipped: 0,
     tasksAttached: 0,
+    milestoneInvoicesCreated: 0,
     failures: [],
   };
 
   const allClients = await db.select().from(clients);
   for (const client of allClients) {
+    // C15: milestone billing runs for every live client, independent of the
+    // recurring-billing eligibility below - project-engagement clients never
+    // get a recurring invoice but DO get progress/completion invoices.
+    if (client.isActive && !client.isPaused) {
+      try {
+        summary.milestoneInvoicesCreated += await generateProjectMilestoneInvoices(client, year, month);
+      } catch (err) {
+        // §9 - per-client try/catch: one bad client cannot abort the batch.
+        console.error(`[invoices] milestone billing for client ${client.id} (${client.legalName}) failed:`, err);
+        summary.failures.push({
+          clientId: client.id,
+          clientName: client.legalName,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     // §6.2 worked-clients predicate via the domain (§30 conv. 2): paused,
     // inactive, and project-only clients never invoice here.
     if (!generatesRecurringWork(toDomainClient(client))) {

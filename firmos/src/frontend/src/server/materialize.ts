@@ -71,6 +71,12 @@ export interface MaterializeSummary {
 interface ReportDefinition {
   name: string;
   frequency: string;
+  /** C10 specialty-report extras (data-source note, pricing) pass through. */
+  dataSource?: string | null;
+  estimatedHours?: number | null;
+  flatPrice?: number | null;
+  hourlyRate?: number | null;
+  missedFilings?: number | null;
 }
 
 export async function materializeOperationalRows(

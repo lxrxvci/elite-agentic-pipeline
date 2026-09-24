@@ -31,6 +31,7 @@ export default async function OnboardingTemplatesPage() {
           position: t.position,
           isActive: t.isActive,
           isAdminPhase: t.isAdminPhase,
+          requiresOnlineAccounts: t.requiresOnlineAccounts,
         }))}
         canEdit={canEditTaskTemplates(user)}
       />

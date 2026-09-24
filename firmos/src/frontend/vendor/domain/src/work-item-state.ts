@@ -73,6 +73,21 @@ export function isSettled(row: Pick<WorkItemRow, "completed_at" | "waiting_on_cl
 
 export type ReverseSyncTarget = "bank_feeds" | "reconciliations" | "client_reports";
 
+/** Duck-typed checklist row on a parent task (B4 subtask-completion gating). */
+export interface SubtaskStateRow {
+  is_completed?: boolean | null;
+}
+
+/**
+ * B4 (owner walkthrough, 00:29:44): a parent task cannot complete while it
+ * has incomplete subtasks - the "collect logins" parent only closes when the
+ * Chase/Stripe/... subtasks are all collected. Pure count; the server layer
+ * throws its typed error when this is non-zero on a completion attempt.
+ */
+export function incompleteSubtaskCount(subtasks: SubtaskStateRow[]): number {
+  return subtasks.filter((s) => s.is_completed !== true).length;
+}
+
 /**
  * HANDOFF §6.3 task → row reverse sync (routes_tasks.py:951): dispatches on
  * the task title. The reconciliation match is an EXACT title comparison, not

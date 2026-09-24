@@ -110,6 +110,64 @@ export function MultiChips({
   )
 }
 
+// ── Pre-selected checklist (B21) ──────────────────────────────────────────
+
+/**
+ * A checklist whose items start SELECTED (the caller's `get` derives the
+ * selected set, defaulting to all) and can be individually unselected -
+ * the §19 default-recurring-rules picker. Unlike MultiChips there is no
+ * empty-state disable: unselecting everything is a valid answer.
+ */
+export function ChecklistCards({
+  options,
+  values,
+  onToggle,
+}: {
+  options: NonNullable<QuestionDef['options']>
+  values: string[]
+  onToggle: (value: string) => void
+}) {
+  return (
+    <ul className="space-y-2" aria-label="Checklist">
+      {options.map((o) => {
+        const checked = values.includes(o.value)
+        return (
+          <li key={o.value}>
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={checked}
+              data-testid={`check-${o.value}`}
+              data-checked={checked || undefined}
+              onClick={() => onToggle(o.value)}
+              className={cn(
+                'flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+                checked
+                  ? 'border-firm-brand bg-accent'
+                  : 'border-border bg-card hover:border-firm-brand/60 hover:bg-accent/50',
+              )}
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  'mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border transition-colors',
+                  checked ? 'border-firm-brand bg-firm-brand text-primary-foreground' : 'border-input',
+                )}
+              >
+                {checked && <Check className="h-3 w-3" />}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-foreground">{o.label}</span>
+                {o.sub && <span className="mt-0.5 block text-xs text-muted-foreground">{o.sub}</span>}
+              </span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 // ── Field rows (shared by `fields` questions and repeatable drafts) ───────
 
 function FieldInput({
@@ -435,6 +493,23 @@ export function QuestionScreen({
         <MultiChips options={q.options ?? []} values={values} onToggle={toggle} />
         <Button type="button" variant="action" onClick={onAdvance} disabled={!canContinue} data-testid="continue">
           {values.length === 0 ? 'Skip for now' : 'Continue'}
+          <ArrowRight className="h-4 w-4" aria-hidden />
+        </Button>
+      </div>
+    )
+  }
+
+  // B21 checklist: pre-selected items the user can unselect; unselecting
+  // everything is a valid answer, so Continue never disables.
+  if (q.type === 'checklist') {
+    const values = (q.get(answers) as string[]) ?? []
+    const toggle = (v: string) =>
+      onApply(q.apply(answers, values.includes(v) ? values.filter((x) => x !== v) : [...values, v]))
+    return (
+      <div className="space-y-4">
+        <ChecklistCards options={q.options ?? []} values={values} onToggle={toggle} />
+        <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
+          Continue
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
       </div>

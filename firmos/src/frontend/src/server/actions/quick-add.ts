@@ -5,12 +5,15 @@ import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/server/auth/guards";
 import {
   addQuickNote,
+  createTaskFromNote,
   deleteQuickNote,
   listQuickAddOptions,
   listQuickNotes,
   logMeeting,
   quickAddTask,
+  setQuickNoteCompleted,
   type LogMeetingInput,
+  type QuickNotePriority,
   type QuickTaskInput,
 } from "@/server/quick-add";
 import { mintAdHocTask } from "@/server/templates";
@@ -39,13 +42,43 @@ export async function quickAddOptionsAction(): Promise<ActionResult<Awaited<Retu
 }
 
 export async function addQuickNoteAction(
-  input: { clientId?: number | null; body: string },
+  input: { clientId?: number | null; body: string; priority?: QuickNotePriority; dueDate?: string | null },
 ): Promise<ActionResult<Awaited<ReturnType<typeof addQuickNote>>>> {
   try {
     const user = await requireStaff();
     const note = await addQuickNote(input, user.id);
     revalidatePath("/notes");
     return { ok: true, data: note };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+export async function setQuickNoteCompletedAction(
+  noteId: number,
+  completed: boolean,
+): Promise<ActionResult<Awaited<ReturnType<typeof setQuickNoteCompleted>>>> {
+  try {
+    const user = await requireStaff();
+    const note = await setQuickNoteCompleted(noteId, completed, user.id);
+    revalidatePath("/notes");
+    return { ok: true, data: note };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** E4: spin a follow-up task off a note; the note stamps completed. */
+export async function createTaskFromNoteAction(
+  noteId: number,
+  overrides: { clientId?: number | null; title?: string; assigneeId?: number | null; dueDate?: string | null } = {},
+): Promise<ActionResult<Awaited<ReturnType<typeof createTaskFromNote>>>> {
+  try {
+    const user = await requireStaff();
+    const result = await createTaskFromNote(noteId, overrides, user.id);
+    revalidatePath("/notes");
+    revalidatePath("/workstation");
+    return { ok: true, data: result };
   } catch (error) {
     return fail(error);
   }

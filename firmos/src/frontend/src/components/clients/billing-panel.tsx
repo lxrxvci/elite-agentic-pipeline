@@ -1,13 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Loader2, ReceiptText, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { InvoiceStatusChip } from '@/components/invoices/invoice-status-chip'
-import type { InvoiceStatus } from '@/components/invoices/format'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -29,32 +26,25 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { resyncClientBillingAction } from '@/server/actions/invoices'
 import type { ClientBilling } from '@/server/clients'
-import { monthLabel } from '@/shared/lib/date-display'
 
-import { cadenceLabel, fullDateLabel, moneyLabel } from './format'
+import { BillingTimeline, type ClientInvoiceTimelineItem } from './billing-timeline'
+import { cadenceLabel, moneyLabel } from './format'
 
 /**
  * Billing tab (admin/owner only - the server read is role-guarded, so this
  * panel only ever renders with authorized data). Services template line
  * items renormalized to monthly amounts, plus the cached legacy amounts.
+ * Below the template: the C16 billing timeline - the full chronological
+ * invoice history with expandable line items.
  */
 
-/** Recent invoice summary for the Invoices sub-section. */
-export interface ClientInvoiceRef {
-  id: number
-  invoiceNumber: string
-  status: InvoiceStatus
-  year: number | null
-  month: number | null
-  /** Numeric string from Postgres - formatted, never computed on. */
-  total: string
-  dueDate: string | null
-}
+// Re-exported for the page/tabs wiring (the timeline owns the shape).
+export type { ClientInvoiceTimelineItem } from './billing-timeline'
 
 interface BillingPanelProps {
   billing: ClientBilling
   clientId: number
-  invoices: ClientInvoiceRef[]
+  invoices: ClientInvoiceTimelineItem[]
 }
 
 function CachedAmount({ label, value, unset }: { label: string; value: string; unset?: boolean }) {
@@ -195,7 +185,7 @@ export function BillingPanel({ billing, clientId, invoices }: BillingPanelProps)
         </div>
       )}
 
-      <ClientInvoicesSection invoices={invoices} />
+      <BillingTimeline invoices={invoices} />
     </div>
   )
 }
@@ -281,67 +271,3 @@ function ResyncButton({ clientId, lastSyncedAt }: { clientId: number; lastSynced
   )
 }
 
-/** Recent invoices for this client, linking through to /invoices/[id]. */
-function ClientInvoicesSection({ invoices }: { invoices: ClientInvoiceRef[] }) {
-  return (
-    <section aria-label="Client invoices" className="space-y-2">
-      <h3 className="flex items-baseline gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-        Invoices
-        <span className="tnum font-semibold">{invoices.length}</span>
-      </h3>
-      {invoices.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border bg-card px-4 py-4 text-xs text-muted-foreground">
-          No invoices yet - they appear here after the monthly billing run.
-        </p>
-      ) : (
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="h-8 px-4 text-[11px] font-semibold uppercase tracking-wider">Invoice</TableHead>
-                <TableHead className="h-8 px-3 text-[11px] font-semibold uppercase tracking-wider">Period</TableHead>
-                <TableHead className="h-8 px-3 text-[11px] font-semibold uppercase tracking-wider">Status</TableHead>
-                <TableHead className="h-8 px-3 text-[11px] font-semibold uppercase tracking-wider">Due</TableHead>
-                <TableHead className="h-8 px-4 text-right text-[11px] font-semibold uppercase tracking-wider">Total</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {invoices.map((inv) => (
-                <TableRow key={inv.id} className="h-10" data-testid="client-invoice-row">
-                  <TableCell className="px-4 py-0">
-                    <Link
-                      href={`/invoices/${inv.id}`}
-                      className="tnum whitespace-nowrap text-sm font-medium text-foreground underline-offset-4 hover:underline"
-                    >
-                      {inv.invoiceNumber}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="px-3 py-0">
-                    {inv.year != null && inv.month != null ? (
-                      <span className="tnum shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        {monthLabel(inv.year, inv.month)}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">Ad hoc</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="px-3 py-0">
-                    <InvoiceStatusChip status={inv.status} />
-                  </TableCell>
-                  <TableCell className="px-3 py-0">
-                    <span className="tnum whitespace-nowrap text-xs text-muted-foreground">
-                      {inv.dueDate ? fullDateLabel(inv.dueDate) : 'No due date'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="tnum px-4 py-0 text-right text-sm font-semibold text-foreground">
-                    {moneyLabel(inv.total)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-    </section>
-  )
-}

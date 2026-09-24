@@ -23,7 +23,7 @@ import {
   mintFromTemplateAction,
   quickAddTaskAction,
 } from '@/server/actions/quick-add'
-import type { QuickAddOptions } from '@/server/quick-add'
+import type { QuickAddOptions, QuickNotePriority } from '@/server/quick-add'
 
 import { PickerCombobox, type PickerOption } from './picker-combobox'
 
@@ -77,6 +77,8 @@ export function QuickNoteDialog({ open, onOpenChange, options }: DialogProps) {
   const router = useRouter()
   const [clientId, setClientId] = React.useState<number | null>(null)
   const [body, setBody] = React.useState('')
+  const [priority, setPriority] = React.useState<QuickNotePriority>('normal')
+  const [dueDate, setDueDate] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -84,7 +86,12 @@ export function QuickNoteDialog({ open, onOpenChange, options }: DialogProps) {
     setBusy(true)
     setError(null)
     try {
-      const res = await addQuickNoteAction({ clientId, body })
+      const res = await addQuickNoteAction({
+        clientId,
+        body,
+        priority,
+        dueDate: dueDate === '' ? null : dueDate,
+      })
       if (!res.ok) {
         setError(res.error)
         return
@@ -92,6 +99,8 @@ export function QuickNoteDialog({ open, onOpenChange, options }: DialogProps) {
       toast.success('Note added', { action: viewAction(router, '/notes') })
       setBody('')
       setClientId(null)
+      setPriority('normal')
+      setDueDate('')
       onOpenChange(false)
     } finally {
       setBusy(false)
@@ -131,6 +140,32 @@ export function QuickNoteDialog({ open, onOpenChange, options }: DialogProps) {
               className="text-sm"
             />
           </Field>
+          {/* E4: optional priority + due date; defaults stay normal/none so
+              the two-tap note flow is unchanged. */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Priority" htmlFor="quick-note-priority">
+              <select
+                id="quick-note-priority"
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground"
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as QuickNotePriority)}
+              >
+                <option value="normal">Normal</option>
+                <option value="low">Low</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </Field>
+            <Field label="Due date (optional)" htmlFor="quick-note-due">
+              <Input
+                id="quick-note-due"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="h-9 text-sm"
+              />
+            </Field>
+          </div>
           <FormError message={error} />
         </div>
         <DialogFooter>

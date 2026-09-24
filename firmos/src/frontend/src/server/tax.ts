@@ -39,13 +39,19 @@ export type YearEndChecklistRow = typeof yearEndTaxChecklists.$inferSelect;
 /**
  * §18's twelve defaults. Role mapping is ours (the spec names the items but
  * not per-item roles): prep work lands on the bookkeeper; review, financials,
- * and CPA delivery land on the manager.
+ * and CPA delivery land on the manager. E11: payroll/W-2 items carry
+ * requiresPayroll and populate only for clients with payroll (clients
+ * .has_payroll, stamped from the intake answer at conversion).
  */
-export const YEAR_END_DEFAULT_ITEMS: readonly { title: string; defaultAssigneeRole: "bookkeeper" | "manager" }[] = [
+export const YEAR_END_DEFAULT_ITEMS: readonly {
+  title: string;
+  defaultAssigneeRole: "bookkeeper" | "manager";
+  requiresPayroll?: boolean;
+}[] = [
   { title: "Verify all bank feeds are connected and current", defaultAssigneeRole: "bookkeeper" },
   { title: "Complete year-end reconciliations for every account", defaultAssigneeRole: "bookkeeper" },
   { title: "Review transaction categorization for the year", defaultAssigneeRole: "bookkeeper" },
-  { title: "Reconcile payroll and prepare W-2 information", defaultAssigneeRole: "bookkeeper" },
+  { title: "Reconcile payroll and prepare W-2 information", defaultAssigneeRole: "bookkeeper", requiresPayroll: true },
   { title: "Review fixed assets and depreciation schedules", defaultAssigneeRole: "bookkeeper" },
   { title: "Reconcile intercompany balances", defaultAssigneeRole: "bookkeeper" },
   { title: "Review owner equity accounts", defaultAssigneeRole: "bookkeeper" },
@@ -82,7 +88,7 @@ export async function listYearEndTemplates(): Promise<YearEndTemplateRow[]> {
 
 export async function createYearEndTemplate(
   userId: number,
-  input: { title: string; description?: string | null; defaultAssigneeRole?: string | null; position?: number },
+  input: { title: string; description?: string | null; defaultAssigneeRole?: string | null; position?: number; requiresPayroll?: boolean },
 ): Promise<YearEndTemplateRow> {
   if (input.title.trim() === "") throw new TaxError(400, "Title must not be empty");
   const [row] = await db
@@ -92,6 +98,7 @@ export async function createYearEndTemplate(
       description: input.description ?? null,
       defaultAssigneeRole: input.defaultAssigneeRole ?? null,
       position: input.position ?? 0,
+      requiresPayroll: input.requiresPayroll ?? false,
     })
     .returning();
   await logEvent({ userId, action: "tax_template_created", entityType: "year_end_tax_template", entityId: row.id });
@@ -101,7 +108,7 @@ export async function createYearEndTemplate(
 export async function updateYearEndTemplate(
   userId: number,
   templateId: number,
-  patch: { title?: string; description?: string | null; defaultAssigneeRole?: string | null; position?: number; isActive?: boolean },
+  patch: { title?: string; description?: string | null; defaultAssigneeRole?: string | null; position?: number; isActive?: boolean; requiresPayroll?: boolean },
 ): Promise<YearEndTemplateRow> {
   const [existing] = await db.select().from(yearEndTaxTemplates).where(eq(yearEndTaxTemplates.id, templateId)).limit(1);
   if (!existing) throw new TaxError(404, `Year-end template ${templateId} not found`);
@@ -114,6 +121,7 @@ export async function updateYearEndTemplate(
         patch.defaultAssigneeRole !== undefined ? patch.defaultAssigneeRole : existing.defaultAssigneeRole,
       position: patch.position ?? existing.position,
       isActive: patch.isActive ?? existing.isActive,
+      requiresPayroll: patch.requiresPayroll ?? existing.requiresPayroll,
       updatedAt: new Date(),
     })
     .where(eq(yearEndTaxTemplates.id, templateId))
@@ -152,11 +160,14 @@ async function requireClient(clientId: number): Promise<typeof clients.$inferSel
  * Auto-populate on first access for (client, year): one checklist row per
  * active template, assignee from the template's default role mapped to the
  * client's bookkeeper/manager. Idempotent via the partial unique index on
- * (client_id, year, template_id).
+ * (client_id, year, template_id). E11: payroll/W-2 template items
+ * (requires_payroll) populate only when the client runs payroll.
  */
 export async function getOrCreateClientChecklist(clientId: number, year: number): Promise<YearEndChecklistRow[]> {
   const client = await requireClient(clientId);
-  const templates = (await ensureYearEndTemplates()).filter((t) => t.isActive);
+  const templates = (await ensureYearEndTemplates()).filter(
+    (t) => t.isActive && (client.hasPayroll || !t.requiresPayroll),
+  );
 
   const existing = await db
     .select()

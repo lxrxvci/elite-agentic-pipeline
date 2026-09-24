@@ -123,6 +123,9 @@ describe('QuickAddMenu', () => {
       expect(mockNote).toHaveBeenCalledWith({
         clientId: null,
         body: 'Call the CPA about Q3 estimates',
+        // E4: the fast path keeps the defaults - normal priority, no due date.
+        priority: 'normal',
+        dueDate: null,
       }),
     )
   })

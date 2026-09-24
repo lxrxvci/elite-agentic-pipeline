@@ -662,6 +662,8 @@ interface PhaseTemplateInput {
   defaultAssigneeRole?: string | null;
   position?: number;
   isActive?: boolean;
+  /** onboarding only: skip at conversion when no account has online access. */
+  requiresOnlineAccounts?: boolean;
 }
 
 type PhaseTable = typeof onboardingTemplateTasks | typeof offboardingTemplateTasks;
@@ -683,7 +685,11 @@ async function createPhaseTemplate(
     kind === "onboarding"
       ? await db
           .insert(onboardingTemplateTasks)
-          .values({ ...values, isAdminPhase: input.isAdminPhase ?? false })
+          .values({
+            ...values,
+            isAdminPhase: input.isAdminPhase ?? false,
+            requiresOnlineAccounts: input.requiresOnlineAccounts ?? false,
+          })
           .returning()
       : await db.insert(offboardingTemplateTasks).values(values).returning();
   await logEvent({ userId, action: `${kind}_template_created`, entityType: `${kind}_template_task`, entityId: row.id });
@@ -712,7 +718,13 @@ async function updatePhaseTemplate(
     kind === "onboarding"
       ? await db
           .update(onboardingTemplateTasks)
-          .set({ ...base, isAdminPhase: patch.isAdminPhase ?? (existing as typeof onboardingTemplateTasks.$inferSelect).isAdminPhase })
+          .set({
+            ...base,
+            isAdminPhase: patch.isAdminPhase ?? (existing as typeof onboardingTemplateTasks.$inferSelect).isAdminPhase,
+            requiresOnlineAccounts:
+              patch.requiresOnlineAccounts ??
+              (existing as typeof onboardingTemplateTasks.$inferSelect).requiresOnlineAccounts,
+          })
           .where(eq(onboardingTemplateTasks.id, templateId))
           .returning()
       : await db.update(offboardingTemplateTasks).set(base).where(eq(offboardingTemplateTasks.id, templateId)).returning();
@@ -738,13 +750,22 @@ export const listOnboardingTemplates = (includeInactive = false) =>
     .orderBy(asc(onboardingTemplateTasks.position), asc(onboardingTemplateTasks.id))
     .then((rows) => (includeInactive ? rows : rows.filter((r) => r.isActive)));
 
-export const createOnboardingTemplate = (userId: number, input: PhaseTemplateInput & { isAdminPhase?: boolean }) =>
-  createPhaseTemplate(userId, input, "onboarding");
-export const updateOnboardingTemplate = (
+type OnboardingTemplateRow = typeof onboardingTemplateTasks.$inferSelect;
+type OffboardingTemplateRow = typeof offboardingTemplateTasks.$inferSelect;
+
+// The kind literal pins the table at runtime; the casts pin it at the type
+// level (the shared helpers otherwise union the two row shapes).
+export const createOnboardingTemplate = async (
+  userId: number,
+  input: PhaseTemplateInput & { isAdminPhase?: boolean },
+): Promise<OnboardingTemplateRow> =>
+  (await createPhaseTemplate(userId, input, "onboarding")) as OnboardingTemplateRow;
+export const updateOnboardingTemplate = async (
   userId: number,
   templateId: number,
   patch: Partial<PhaseTemplateInput & { isAdminPhase?: boolean }>,
-) => updatePhaseTemplate(onboardingTemplateTasks, userId, templateId, patch, "onboarding");
+): Promise<OnboardingTemplateRow> =>
+  (await updatePhaseTemplate(onboardingTemplateTasks, userId, templateId, patch, "onboarding")) as OnboardingTemplateRow;
 export const deleteOnboardingTemplate = (userId: number, templateId: number) =>
   deletePhaseTemplate(onboardingTemplateTasks, userId, templateId, "onboarding");
 
@@ -755,10 +776,17 @@ export const listOffboardingTemplates = (includeInactive = false) =>
     .orderBy(asc(offboardingTemplateTasks.position), asc(offboardingTemplateTasks.id))
     .then((rows) => (includeInactive ? rows : rows.filter((r) => r.isActive)));
 
-export const createOffboardingTemplate = (userId: number, input: PhaseTemplateInput) =>
-  createPhaseTemplate(userId, input, "offboarding");
-export const updateOffboardingTemplate = (userId: number, templateId: number, patch: Partial<PhaseTemplateInput>) =>
-  updatePhaseTemplate(offboardingTemplateTasks, userId, templateId, patch, "offboarding");
+export const createOffboardingTemplate = async (
+  userId: number,
+  input: PhaseTemplateInput,
+): Promise<OffboardingTemplateRow> =>
+  (await createPhaseTemplate(userId, input, "offboarding")) as OffboardingTemplateRow;
+export const updateOffboardingTemplate = async (
+  userId: number,
+  templateId: number,
+  patch: Partial<PhaseTemplateInput>,
+): Promise<OffboardingTemplateRow> =>
+  (await updatePhaseTemplate(offboardingTemplateTasks, userId, templateId, patch, "offboarding")) as OffboardingTemplateRow;
 export const deleteOffboardingTemplate = (userId: number, templateId: number) =>
   deletePhaseTemplate(offboardingTemplateTasks, userId, templateId, "offboarding");
 

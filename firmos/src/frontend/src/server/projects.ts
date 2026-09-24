@@ -437,15 +437,52 @@ export async function updateProjectStatus(
 /** Billing mode is money-relevant: actions gate it to manager+ (§11). */
 export async function updateProjectBilling(
   projectId: number,
-  patch: { billingMode?: ProjectBillingMode; fixedPrice?: string | null },
+  patch: {
+    billingMode?: ProjectBillingMode;
+    fixedPrice?: string | null;
+    /** C15 milestone billing; null interval/amount disables progress invoicing. */
+    milestoneIntervalMonths?: number | null;
+    milestoneAmount?: string | null;
+    billOnCompletion?: boolean;
+  },
   userId: number,
 ): Promise<ProjectRow> {
   const project = await requireProject(projectId);
+  if (
+    patch.milestoneIntervalMonths != null &&
+    (!Number.isInteger(patch.milestoneIntervalMonths) || patch.milestoneIntervalMonths < 1)
+  ) {
+    throw new ProjectError(400, "Milestone interval must be a whole number of months");
+  }
+  if (
+    patch.milestoneAmount !== undefined &&
+    patch.milestoneAmount !== null &&
+    !(Number(patch.milestoneAmount) > 0)
+  ) {
+    throw new ProjectError(400, "Milestone amount must be a positive number");
+  }
+  const milestoneTouched =
+    patch.milestoneIntervalMonths !== undefined || patch.milestoneAmount !== undefined;
+  const nextInterval =
+    patch.milestoneIntervalMonths !== undefined
+      ? patch.milestoneIntervalMonths
+      : project.milestoneIntervalMonths;
+  const nextAmount =
+    patch.milestoneAmount !== undefined ? patch.milestoneAmount : project.milestoneAmount;
+  if ((nextInterval == null) !== (nextAmount == null)) {
+    throw new ProjectError(400, "Progress invoicing needs both an interval and an amount");
+  }
   const [updated] = await db
     .update(projects)
     .set({
       billingMode: patch.billingMode ?? project.billingMode,
       fixedPrice: patch.fixedPrice !== undefined ? patch.fixedPrice : project.fixedPrice,
+      // Editing the milestone schedule resets the billed counter so the new
+      // schedule re-evaluates from the project start on the next run.
+      milestoneIntervalMonths: nextInterval ?? null,
+      milestoneAmount: nextAmount ?? null,
+      milestonesInvoiced: milestoneTouched ? 0 : project.milestonesInvoiced,
+      billOnCompletion: patch.billOnCompletion ?? project.billOnCompletion,
       updatedAt: new Date(),
     })
     .where(eq(projects.id, projectId))
@@ -572,6 +609,12 @@ export interface ProjectDetail {
   startDate: string | null;
   dueDate: string | null;
   autoGenerateTasks: boolean;
+  /** C15 milestone billing config + progress (null interval = no progress invoicing). */
+  milestoneIntervalMonths: number | null;
+  milestoneAmount: string | null;
+  billOnCompletion: boolean;
+  milestonesInvoiced: number;
+  completionInvoicedAt: string | null;
   completedAt: string | null;
   createdAt: string | null;
   client: { id: number; name: string };
@@ -688,6 +731,11 @@ export async function getProjectDetail(id: number, today: LocalDate = localToday
     startDate: project.startDate,
     dueDate: project.dueDate,
     autoGenerateTasks: project.autoGenerateTasks,
+    milestoneIntervalMonths: project.milestoneIntervalMonths,
+    milestoneAmount: project.milestoneAmount,
+    billOnCompletion: project.billOnCompletion,
+    milestonesInvoiced: project.milestonesInvoiced,
+    completionInvoicedAt: project.completionInvoicedAt ? project.completionInvoicedAt.toISOString() : null,
     completedAt: project.completedAt ? project.completedAt.toISOString() : null,
     createdAt: project.createdAt ? project.createdAt.toISOString() : null,
     client: { id: project.clientId, name: client?.dbaName ?? client?.legalName ?? `Client ${project.clientId}` },

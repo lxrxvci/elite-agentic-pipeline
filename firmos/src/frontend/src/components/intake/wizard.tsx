@@ -123,8 +123,11 @@ export function IntakeWizard({
         a: answers.accounts ?? [],
         m: answers.merchantAccounts ?? [],
         q: answers.serviceQuantities ?? null,
+        d: answers.serviceDiscounts ?? null,
         n: answers.estimated1099Count ?? null,
         c: answers.customItems ?? [],
+        // Specialty report definitions move the quote when priced (C10).
+        rd: answers.reportDefinitions ?? [],
         // QBO tier inputs and the retroactive scope move the quote too.
         qb: answers.quickbooksStatus ?? null,
         u: answers.qboUserCount ?? null,
@@ -392,9 +395,21 @@ export function IntakeWizard({
         </div>
 
         {/* Right rail: the persistent live quote, then the running-notes
-            rail (visible on every step; notes autosave with the answers). */}
+            rail (visible on every step; notes autosave with the answers).
+            The quote panel also captures per-line discounts (C1) - edits
+            apply into answers, so autosave + repricing follow like any
+            other answer. */}
         <div className="space-y-4">
-          <QuotePanel quote={quote} loading={quoteLoading} />
+          <QuotePanel
+            quote={quote}
+            loading={quoteLoading}
+            discounts={answers.serviceDiscounts ?? {}}
+            onDiscountChange={(serviceKey, dollars) =>
+              apply({
+                serviceDiscounts: { ...(answersRef.current.serviceDiscounts ?? {}), [serviceKey]: dollars },
+              })
+            }
+          />
           <NotesRail notes={answers.runningNotes ?? []} onAdd={addRunningNote} />
         </div>
       </div>

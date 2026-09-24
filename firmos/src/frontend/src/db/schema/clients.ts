@@ -127,6 +127,9 @@ export const clients = pgTable(
       .notNull()
       .default(false),
     isAutoPay: boolean("is_auto_pay").notNull().default(false),
+    // E11: the intake payroll answer ("Do they run payroll?"), stamped at
+    // conversion; gates payroll/W-2 year-end checklist items at populate time.
+    hasPayroll: boolean("has_payroll").notNull().default(false),
 
     // QuickBooks and real estate - name arrays priced at $25/class|location.
     qboClassNames: jsonb("qbo_class_names").$type<string[]>(),
@@ -423,6 +426,11 @@ export const quickNotes = pgTable(
     clientId: integer("client_id").references(() => clients.id, { onDelete: "cascade" }),
     body: text("body").notNull(),
     color: text("color"),
+    // E4: optional priority (low | normal | high | urgent; default normal) and
+    // an optional due date; completing a note stamps completed_at.
+    priority: text("priority").notNull().default("normal"),
+    dueDate: date("due_date", { mode: "string" }),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

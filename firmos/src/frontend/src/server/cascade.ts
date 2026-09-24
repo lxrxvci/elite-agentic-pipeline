@@ -32,6 +32,7 @@ import {
   calculateIntakeQuoteWithConfig,
   mergeManualTemplateLines,
   quoteAmountStamps,
+  specialtyReportsFromIntake,
 } from "./quote";
 
 /**
@@ -95,6 +96,7 @@ const DIRECT_FIELD_MAP = {
 const PRICING_RELEVANT_FORM_KEYS = [
   "serviceKeys",
   "serviceQuantities",
+  "serviceDiscounts",
   "customItems",
   "accounts",
   "merchantAccounts",
@@ -105,6 +107,7 @@ const PRICING_RELEVANT_FORM_KEYS = [
   "include1099FullManagement",
   "includeMerchantReconciliation",
   "payrollFrequency",
+  "reportDefinitions", // C10: specialty report pricing
 ] as const;
 
 const PRICING_RELEVANT_COLUMNS = [
@@ -182,6 +185,15 @@ export async function cascadeIntakeToClient(
         updatedAt: new Date(),
       })
       .where(eq(contacts.id, client.primaryContactId));
+  }
+
+  // 2b. E11: the payroll answer gates payroll/W-2 year-end checklist items
+  //     on the client; edits to a converted intake propagate it.
+  if (patch.formData && "hasPayroll" in patch.formData) {
+    await db
+      .update(clients)
+      .set({ hasPayroll: patch.formData.hasPayroll === true, updatedAt: new Date() })
+      .where(eq(clients.id, clientId));
   }
 
   // 3. Owners reconciled: added, re-percentaged, removed (§6.8).
@@ -344,11 +356,18 @@ export async function cascadeIntakeToClient(
       .where(eq(clientIntakes.id, intakeId))
       .limit(1);
     const form = (fresh?.formData ?? {}) as IntakeFormData;
+    // The structured report-definitions column is the fallback when
+    // form_data lacks it (same merge as convert.ts, C10).
+    const reportDefinitions =
+      form.reportDefinitions ??
+      (fresh?.reportDefinitions as IntakeFormData["reportDefinitions"] | null) ??
+      undefined;
     const quote = await calculateIntakeQuoteWithConfig({
       ...form,
+      reportDefinitions,
       bookkeepingFrequency: fresh?.bookkeepingFrequency ?? null,
     });
-    const rebuilt = buildRecurringServicesTemplate(quote, form.customItems ?? []);
+    const rebuilt = buildRecurringServicesTemplate(quote, form.customItems ?? [], specialtyReportsFromIntake({ reportDefinitions }));
     const merged = mergeManualTemplateLines(rebuilt, client.recurringServicesTemplate);
     const stamps = quoteAmountStamps(quote);
     await db

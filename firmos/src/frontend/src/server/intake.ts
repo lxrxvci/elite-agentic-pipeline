@@ -50,9 +50,26 @@ export interface IntakeMerchantAccountInput {
   processor?: string | null;
 }
 
+/**
+ * One report the firm tracks for the client (§6.3), now first-class
+ * specialty-report definitions (C10): name + the report's OWN frequency
+ * (independent of the client's close frequency), a data-source/portal note,
+ * and pricing - estimated hours (priced hours x rate by the quote engine) or
+ * a flat per-report price. missedFilings counts unfiled past reports; each
+ * prices one-time at the per-report price in the catch-up quote.
+ */
 export interface IntakeReportDefinition {
   name: string;
   frequency: string;
+  /** Where the data comes from (portal, QBO, the client's bookkeeper, ...). */
+  dataSource?: string | null;
+  estimatedHours?: number | null;
+  /** Flat price per report; wins over estimatedHours x rate when present. */
+  flatPrice?: number | null;
+  /** Hourly rate override; the quote engine's default rate applies otherwise. */
+  hourlyRate?: number | null;
+  /** Unfiled past filings; priced one-time at the per-report price. */
+  missedFilings?: number | null;
 }
 
 export interface IntakeCustomRuleInput {
@@ -99,6 +116,9 @@ export interface IntakeFormData {
   serviceKeys?: string[];
   /** Explicit unit counts per service key (accounts, classes, filings, ...). */
   serviceQuantities?: Record<string, number>;
+  /** Per-service discount capture (C1): flat dollars off per billing cycle,
+   *  keyed by service key; the quote engine clamps each line at zero. */
+  serviceDiscounts?: Record<string, number>;
   customItems?: IntakeCustomItemInput[];
   owners?: IntakeOwnerInput[];
   contacts?: IntakeContactInput[];
@@ -128,6 +148,9 @@ export interface IntakeFormData {
   merchantAccounts?: IntakeMerchantAccountInput[];
   paymentMethods?: string[];
   payrollFrequency?: "weekly" | "biweekly" | "semi_monthly" | "monthly";
+  /** B18: "personal credit card used for business" - yes/sometimes both land
+   *  here as true; conversion seeds the monthly breakdown reminder task. */
+  personalCardForBusiness?: boolean;
   // Step 5 - reporting and payroll
   bookkeepingFrequency?: string | null;
   billingFrequency?: string | null;
@@ -144,6 +167,9 @@ export interface IntakeFormData {
   // Step 6 - recurring and notes
   customRecurringRules?: IntakeCustomRuleInput[];
   internalNotes?: string | null;
+  /** B21: keys of the §19 default recurring rules the user UNSELECTED in the
+   *  intake checklist (all four are pre-selected; absent = all selected). */
+  excludedDefaultRules?: string[];
   /** Running-notes rail entries; ride form_data so autosave preserves them. */
   runningNotes?: IntakeRunningNote[];
   // Billing modifiers carried through conversion (§6.5)

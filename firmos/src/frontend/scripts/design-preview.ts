@@ -77,6 +77,16 @@ async function openFullWeek(page: Page): Promise<void> {
   await page.waitForTimeout(300);
 }
 
+// Wizard step drivers (same conventions as e2e/intake.spec.ts).
+async function wizardPick(page: Page, testid: string, nextQuestion: string): Promise<void> {
+  await page.getByTestId(testid).click();
+  await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", nextQuestion);
+}
+async function wizardAdvance(page: Page, nextQuestion: string): Promise<void> {
+  await page.getByTestId("continue").click();
+  await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", nextQuestion);
+}
+
 async function main(): Promise<void> {
   const caughtUpOnly = process.argv.includes("--caught-up");
   const server = startServer();
@@ -127,6 +137,15 @@ async function main(): Promise<void> {
     await shot(page, "client-detail-dark");
     await setTheme(page, "light");
 
+    // 4b. C16 billing timeline: the Billing tab's full invoice history with
+    //     an expanded line-items row.
+    const clientUrl = page.url();
+    await page.goto(`${clientUrl}?tab=billing`, { waitUntil: "networkidle" });
+    await page.getByTestId("billing-timeline").waitFor({ timeout: 15_000 });
+    await page.getByTestId("billing-timeline-expand").first().click();
+    await page.waitForTimeout(300);
+    await shot(page, "client-billing-timeline");
+
     // 5. Intake wizard mid-step with the running-notes rail: start a fresh
     //    intake, answer one question, capture two tangents.
     await page.goto(`${BASE}/intake`, { waitUntil: "networkidle" });
@@ -148,6 +167,63 @@ async function main(): Promise<void> {
     await page.getByTestId("running-note-add").click();
     await page.waitForTimeout(400);
     await shot(page, "intake-wizard");
+
+    // 5b. C1: discount capture on the live quote panel. Answer the services
+    //     question so the panel has priced lines, then set a $25 discount.
+    await wizardAdvance(page, "address"); // skip EIN
+    await wizardAdvance(page, "services"); // skip address
+    await page.getByTestId("chip-bank_feed_management").click();
+    await page.getByTestId("chip-account_reconciliations").click();
+    await page.getByTestId("continue").click();
+    // The debounced server quote repaints the panel with priced lines.
+    const discountInput = page.getByTestId("discount-bank_feed_management");
+    await discountInput.waitFor({ timeout: 15_000 });
+    await discountInput.fill("25");
+    await page.waitForTimeout(900); // quote debounce + server round-trip
+    await shot(page, "intake-quote-discount");
+
+    // 5c. Drive the remaining questions to the specialty-reports step (C10).
+    await wizardAdvance(page, "contacts"); // currently on owners
+    await wizardAdvance(page, "referral");
+    await wizardPick(page, "option-Web search", "existing-client");
+    await wizardPick(page, "option-no", "engagement");
+    await wizardPick(page, "option-bookkeeping", "qbo-status");
+    await wizardPick(page, "option-existing", "qbo-users");
+    await page.getByLabel("QuickBooks users").fill("2");
+    await wizardAdvance(page, "qbo-tier");
+    await wizardPick(page, "option-recommended", "bk-start");
+    await page.getByTestId("month-1").click();
+    await wizardAdvance(page, "catchup");
+    await wizardAdvance(page, "accounts"); // skip catch-up
+    await wizardAdvance(page, "re-yes"); // skip accounts
+    await wizardPick(page, "option-no", "payment-methods");
+    await wizardAdvance(page, "personal-card"); // checks only
+    await wizardPick(page, "option-no", "payroll"); // B18: no personal card
+    await wizardPick(page, "option-no", "bk-frequency");
+    await wizardPick(page, "option-monthly", "close-tier");
+    await wizardPick(page, "option-15", "acct-method");
+    await wizardPick(page, "option-cash", "bill-pay");
+    await wizardPick(page, "option-no", "ten99-services");
+    await wizardAdvance(page, "reports"); // skip 1099
+
+    // C10: a priced specialty report with missed past filings, committed as a
+    // chip; the live quote prices it (hours x rate / flat + retro one-time).
+    await page.getByLabel("Report name").fill("Oregon Special Report");
+    await page.getByLabel("Frequency").selectOption("annual");
+    await page.getByLabel("Data source (optional)").fill("Secretary of State portal");
+    await page.getByLabel("Flat price per report (optional)").fill("200");
+    await page.getByLabel("Missed past filings (optional)").fill("18");
+    await page.getByTestId("add-another").click();
+    await page.waitForTimeout(900); // let the quote reprice with the new lines
+    await shot(page, "intake-specialty-reports");
+
+    // 5d. B21: the default recurring routines checklist (pre-selected,
+    //     per-item unselect).
+    await wizardAdvance(page, "retroactive"); // commit the reports screen
+    await wizardPick(page, "option-no", "default-rules");
+    await page.getByTestId("check-client_questions").click(); // unselect one
+    await page.waitForTimeout(400);
+    await shot(page, "intake-default-rules");
 
     // 6. Intake review screen: the seeded pending_review intake renders the
     //    read-only review (quote + running-notes section when present).
@@ -179,6 +255,34 @@ async function main(): Promise<void> {
     }
     await page.waitForTimeout(400);
     await shot(page, "invoices-light");
+
+    // 8. C15 project billing: create a project and set milestone billing
+    //    (progress every 6 months + bill on completion) on its detail page.
+    await page.goto(`${BASE}/projects`, { waitUntil: "networkidle" });
+    await page.getByTestId("new-project-button").click();
+    await page.getByLabel("Client").click();
+    await page.getByRole("option", { name: "Harborline Marine Supply" }).click();
+    await page.getByLabel("Name").fill("2025 books catch-up");
+    await page.getByTestId("create-project-submit").click();
+    await page.waitForURL(/\/projects\/\d+$/, { timeout: 15_000 });
+    await page.getByTestId("project-billing-section").waitFor({ timeout: 15_000 });
+    await page.getByTestId("milestone-progress-toggle").click();
+    await page.getByTestId("milestone-interval").fill("6");
+    await page.getByTestId("milestone-amount").fill("500");
+    await page.getByTestId("milestone-completion-toggle").click();
+    await page.getByTestId("milestone-fixed-price").fill("2500");
+    await page.getByTestId("milestone-save").click();
+    await page.waitForTimeout(600);
+    await shot(page, "project-billing");
+
+    // 9. E4 notes: priority + due date on the quick-note composer.
+    await page.goto(`${BASE}/notes`, { waitUntil: "networkidle" });
+    await page.getByLabel("New note").fill("Harborline asked about Q3 estimates - urgent follow-up.");
+    await page.getByTestId("note-priority-select").selectOption("urgent");
+    await page.getByLabel("Due date (optional)").fill("2026-09-30");
+    await page.getByRole("button", { name: "Add note" }).click();
+    await page.waitForTimeout(600);
+    await shot(page, "notes-priority");
 
     await browser.close();
   } finally {

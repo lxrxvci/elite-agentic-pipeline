@@ -277,6 +277,7 @@ export async function createOnboardingTemplateAction(input: {
   title: string;
   description?: string | null;
   isAdminPhase?: boolean;
+  requiresOnlineAccounts?: boolean;
   defaultAssigneeRole?: string | null;
   position?: number;
 }) {
@@ -294,6 +295,7 @@ export async function updateOnboardingTemplateAction(
     title: string;
     description: string | null;
     isAdminPhase: boolean;
+    requiresOnlineAccounts: boolean;
     defaultAssigneeRole: string | null;
     position: number;
     isActive: boolean;

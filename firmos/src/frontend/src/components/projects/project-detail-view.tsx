@@ -23,6 +23,7 @@ import {
   updateProjectStatusAction,
 } from '@/server/actions/projects'
 import type { ProjectDetail, ProjectTaskItem } from '@/server/projects'
+import { moneyLabel } from '@/components/clients/format'
 import { dueAging } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 import { WorkStatusBadge } from '@/shared/ui/work'
@@ -46,6 +47,165 @@ interface ProjectDetailViewProps {
   canEditBilling: boolean
 }
 
+/**
+ * C15 milestone billing section (01:42:10): "progress invoice at 6 months /
+ * bill on completion". Progress invoicing bills milestone_amount once per N
+ * full months from the project start in the monthly run; completion billing
+ * invoices the fixed price once when the project closes. The billed counters
+ * render so staff can see what has already invoiced. Edits are manager+
+ * (the action re-guards) and reset the progress counter when the schedule
+ * changes (server rule).
+ */
+function ProjectBillingSection({
+  detail,
+  canEditBilling,
+}: {
+  detail: ProjectDetail
+  canEditBilling: boolean
+}) {
+  const router = useRouter()
+  const [progressOn, setProgressOn] = useState(detail.milestoneIntervalMonths != null)
+  const [intervalMonths, setIntervalMonths] = useState(
+    detail.milestoneIntervalMonths != null ? String(detail.milestoneIntervalMonths) : '6',
+  )
+  const [amount, setAmount] = useState(detail.milestoneAmount ?? '')
+  const [billOnCompletion, setBillOnCompletion] = useState(detail.billOnCompletion)
+  const [fixedPrice, setFixedPrice] = useState(detail.fixedPrice ?? '')
+  const [saving, setSaving] = useState(false)
+
+  const summaryParts: string[] = []
+  if (detail.milestoneIntervalMonths != null && detail.milestoneAmount != null) {
+    summaryParts.push(
+      `Progress: ${moneyLabel(detail.milestoneAmount)} every ${detail.milestoneIntervalMonths} mo (${detail.milestonesInvoiced} invoiced)`,
+    )
+  }
+  if (detail.billOnCompletion) {
+    summaryParts.push(
+      detail.completionInvoicedAt != null
+        ? 'Completion invoice created'
+        : 'Bills the fixed price on completion',
+    )
+  }
+
+  async function save() {
+    setSaving(true)
+    const interval = progressOn ? Number(intervalMonths) : null
+    const res = await updateProjectBillingAction(detail.id, {
+      milestoneIntervalMonths: progressOn && Number.isFinite(interval) && (interval ?? 0) >= 1 ? interval : null,
+      milestoneAmount: progressOn ? amount || null : null,
+      billOnCompletion,
+      fixedPrice: fixedPrice === '' ? null : fixedPrice,
+    })
+    setSaving(false)
+    if (!res.ok) {
+      toast.error(res.error)
+      return
+    }
+    toast.success('Billing saved')
+    router.refresh()
+  }
+
+  return (
+    <section
+      aria-label="Milestone billing"
+      data-testid="project-billing-section"
+      className="rounded-xl border border-border bg-card px-5 py-4"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Milestone billing
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {summaryParts.length > 0
+              ? summaryParts.join(' · ')
+              : 'No milestone invoicing - this project bills through the monthly run or billable tasks.'}
+          </p>
+        </div>
+      </div>
+
+      {canEditBilling && (
+        <div className="mt-3 space-y-3 border-t border-border pt-3">
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <Checkbox
+              checked={progressOn}
+              onCheckedChange={(c) => setProgressOn(c === true)}
+              data-testid="milestone-progress-toggle"
+            />
+            Progress invoice every
+          </label>
+          {progressOn && (
+            <div className="flex flex-wrap items-center gap-2 pl-6">
+              <Input
+                type="number"
+                min={1}
+                max={36}
+                value={intervalMonths}
+                onChange={(e) => setIntervalMonths(e.target.value)}
+                aria-label="Months per milestone"
+                className="tnum h-8 w-20 text-sm"
+                data-testid="milestone-interval"
+              />
+              <span className="text-xs text-muted-foreground">months from start, at</span>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                aria-label="Amount per progress invoice"
+                placeholder="500.00"
+                className="tnum h-8 w-28 text-sm"
+                data-testid="milestone-amount"
+              />
+              <span className="text-xs text-muted-foreground">per invoice</span>
+            </div>
+          )}
+
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <Checkbox
+              checked={billOnCompletion}
+              onCheckedChange={(c) => setBillOnCompletion(c === true)}
+              data-testid="milestone-completion-toggle"
+            />
+            Bill on completion
+          </label>
+          {(billOnCompletion || detail.billingMode === 'project') && (
+            <div className="flex flex-wrap items-center gap-2 pl-6">
+              <span className="text-xs text-muted-foreground">Fixed price</span>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={fixedPrice}
+                onChange={(e) => setFixedPrice(e.target.value)}
+                aria-label="Fixed price"
+                placeholder="2500.00"
+                className="tnum h-8 w-28 text-sm"
+                data-testid="milestone-fixed-price"
+              />
+            </div>
+          )}
+
+          <div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              disabled={saving}
+              onClick={() => void save()}
+              data-testid="milestone-save"
+            >
+              {saving ? 'Saving…' : 'Save billing'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function OneOffRow({
   task,
   today,
@@ -54,8 +214,7 @@ function OneOffRow({
   task: ProjectTaskItem
   today: string
   frozen: boolean
-}) {
-  const router = useRouter()
+}) {  const router = useRouter()
   const [pending, setPending] = useState(false)
   const aging = dueAging(task.dueDate, today)
   const disabled = frozen || pending || task.blocked
@@ -334,6 +493,9 @@ export function ProjectDetailView({ detail, staff, canEditBilling }: ProjectDeta
           </span>
         </div>
       </header>
+
+      {/* C15: milestone billing configuration + progress. */}
+      <ProjectBillingSection detail={detail} canEditBilling={canEditBilling} />
 
       {/* Checklist */}
       {detail.tasks.length === 0 ? (

@@ -36,6 +36,9 @@ export const yearEndTaxTemplates = pgTable("year_end_tax_templates", {
   defaultAssigneeRole: text("default_assignee_role"),
   position: integer("position").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
+  // E11: payroll/W-2 items populate only for clients with payroll
+  // (clients.has_payroll). Seeded true on the payroll template row.
+  requiresPayroll: boolean("requires_payroll").notNull().default(false),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

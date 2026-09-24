@@ -6,6 +6,7 @@ import {
   jsonb,
   pgTable,
   serial,
+  smallint,
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
@@ -50,6 +51,15 @@ export const projects = pgTable(
     // §20 - catch-up projects auto-generate account-based tasks when the
     // project name suggests catch-up bookkeeping and generation is requested.
     autoGenerateTasks: boolean("auto_generate_tasks").notNull().default(false),
+    // C15 milestone billing (optional): a progress invoice every N months
+    // from the project start at milestone_amount each, and/or a completion
+    // invoice for fixed_price when the project closes. milestones_invoiced /
+    // completion_invoiced_at make the monthly run idempotent.
+    milestoneIntervalMonths: smallint("milestone_interval_months"),
+    milestoneAmount: money("milestone_amount"),
+    billOnCompletion: boolean("bill_on_completion").notNull().default(false),
+    milestonesInvoiced: integer("milestones_invoiced").notNull().default(0),
+    completionInvoicedAt: timestamp("completion_invoiced_at", { withTimezone: true, mode: "date" }),
     completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
     createdById: integer("created_by_id").references((): AnyPgColumn => users.id),
     createdAt: createdAt(),

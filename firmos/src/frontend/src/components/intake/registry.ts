@@ -1,5 +1,8 @@
+import { SPECIALTY_REPORT_DEFAULT_RATE } from '@firmos/domain'
+
 import type { IntakePatch } from '@/server/intake'
 import type { IntakeFormData, IntakeRow } from '@/server/intake'
+import { DEFAULT_RECURRING_RULES, DEFAULT_RULE_KEYS } from '@/shared/lib/default-rules'
 import { monthLabel } from '@/shared/lib/date-display'
 
 /**
@@ -70,7 +73,7 @@ export interface RepeatableDef {
   addLabel: string
 }
 
-export type QuestionType = 'select' | 'multi' | 'fields' | 'monthyear' | 'repeatable'
+export type QuestionType = 'select' | 'multi' | 'fields' | 'monthyear' | 'repeatable' | 'checklist'
 
 export interface QuestionDef {
   id: string
@@ -130,6 +133,22 @@ const monthYearLabel = (iso: unknown): string | null => {
   const [y, m] = s.split('-').map(Number)
   if (!y || !m) return null
   return monthLabel(y, m)
+}
+
+/** Number input coercion for repeatable drafts: ''/NaN -> null. */
+const numOrNull = (v: unknown): number | null => {
+  if (v === '' || v == null) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/** C10: the per-report price readout on a specialty-report chip. */
+const specialtyPriceLabel = (i: Record<string, unknown>): string | null => {
+  const flat = numOrNull(i.flatPrice)
+  if (flat != null && flat > 0) return `$${flat}/report`
+  const hours = numOrNull(i.estimatedHours)
+  if (hours != null && hours > 0) return `${hours}h × $${SPECIALTY_REPORT_DEFAULT_RATE}`
+  return null
 }
 
 // ── Service labels (labels only; money is rendered from server quotes) ────
@@ -716,6 +735,17 @@ export const CHAPTERS: ChapterDef[] = [
           takesCards(a) && (a.merchantAccounts ?? []).length > 0 ? boolWord(a.includeMerchantReconciliation) : null,
       },
       {
+        // B18 (01:04:29): a "sometimes" is a yes - the monthly chase task
+        // seeds at conversion either way.
+        id: 'personal-card',
+        title: 'Do they put business expenses on a personal credit card?',
+        help: 'Yes means we ask for the breakdown every month - conversion seeds that reminder task automatically.',
+        type: 'select',
+        required: true,
+        ...yesNo('personalCardForBusiness', { yes: 'Yes, sometimes or often', no: 'No' }),
+        summarize: (a) => boolWord(a.personalCardForBusiness),
+      },
+      {
         id: 'payroll',
         title: 'Do they run payroll?',
         type: 'select',
@@ -882,24 +912,44 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'reports',
         title: 'Any special reports to track?',
-        help: 'Beyond the standard monthly package. We track each one to its due date.',
+        help: `Beyond the standard monthly package. Each runs on its own cadence with its own checklist; estimated hours price at $${SPECIALTY_REPORT_DEFAULT_RATE}/hr on the quote, a flat price wins, and missed past filings price one-time at the same per-report price.`,
         type: 'repeatable',
         required: false,
         repeatable: {
           addLabel: 'Add report',
           itemFields: [
-            { key: 'name', label: 'Report name', kind: 'text', required: true, placeholder: 'Quarterly Tax Summary' },
+            { key: 'name', label: 'Report name', kind: 'text', required: true, placeholder: 'Oregon Special Report' },
             {
               key: 'frequency', label: 'Frequency', kind: 'select', required: true, half: true,
               options: ['monthly', 'quarterly', 'semi_annual', 'annual'].map((f) => ({ value: f, label: FREQUENCY_LABELS[f] })),
             },
+            { key: 'dataSource', label: 'Data source (optional)', kind: 'text', half: true, placeholder: 'Client portal, QBO, …' },
+            { key: 'estimatedHours', label: 'Est. hours (optional)', kind: 'number', min: 0, max: 200, half: true, placeholder: '3' },
+            { key: 'flatPrice', label: 'Flat price per report (optional)', kind: 'number', min: 0, max: 100000, half: true, placeholder: '450' },
+            { key: 'missedFilings', label: 'Missed past filings (optional)', kind: 'number', min: 0, max: 999, half: true, placeholder: '18' },
           ],
           itemValid: (i) => !!str(i.name) && !!str(i.frequency),
           summarize: (i) => String(i.name),
-          sub: (i) => FREQUENCY_LABELS[String(i.frequency)] ?? null,
+          sub: (i) => {
+            const parts = [FREQUENCY_LABELS[String(i.frequency)] ?? null]
+            const price = specialtyPriceLabel(i)
+            if (price) parts.push(price)
+            const missed = Number(i.missedFilings)
+            if (Number.isFinite(missed) && missed > 0) parts.push(`${missed} missed`)
+            return join(...parts)
+          },
         },
         get: (a) => a.reportDefinitions ?? [],
-        apply: (_a, v) => ({ reportDefinitions: v as WizardAnswers['reportDefinitions'] }),
+        apply: (_a, v) => ({
+          reportDefinitions: (v as Array<Record<string, unknown>>).map((i) => ({
+            name: String(i.name),
+            frequency: String(i.frequency),
+            dataSource: str(i.dataSource),
+            estimatedHours: numOrNull(i.estimatedHours),
+            flatPrice: numOrNull(i.flatPrice),
+            missedFilings: numOrNull(i.missedFilings),
+          })),
+        }),
         summarize: (a) => {
           const rs = a.reportDefinitions ?? []
           return rs.length > 0 ? rs.map((r) => r.name).join(', ') : null
@@ -924,6 +974,35 @@ export const CHAPTERS: ChapterDef[] = [
         get: (a) => (a.includeRetroactive === true ? 'yes' : a.includeRetroactive === false ? 'no' : undefined),
         apply: (_a, v) => ({ includeRetroactive: v === 'yes' }),
         summarize: (a) => boolWord(a.includeRetroactive),
+      },
+      {
+        // B21 (01:13:35): the §19 defaults are a select-all-by-default
+        // checklist - unselect per client before conversion, which seeds
+        // only the selected ones. Exclusions (not selections) persist so
+        // untouched intakes keep every default.
+        id: 'default-rules',
+        title: 'Which standard routines should we seed?',
+        help: 'On for every client by default - uncheck anything this engagement skips. Each one becomes a recurring task at conversion.',
+        type: 'checklist',
+        required: false,
+        when: isBookkeeping,
+        options: DEFAULT_RECURRING_RULES.map((r) => ({
+          value: r.key,
+          label: r.title,
+          sub: `${r.help} · ${r.assignee === 'manager' ? 'Manager' : 'Bookkeeper'}`,
+        })),
+        get: (a) => DEFAULT_RULE_KEYS.filter((k) => !(a.excludedDefaultRules ?? []).includes(k)),
+        apply: (_a, v) => ({
+          excludedDefaultRules: DEFAULT_RULE_KEYS.filter((k) => !(v as string[]).includes(k)),
+        }),
+        summarize: (a) => {
+          if (!isBookkeeping(a)) return null
+          const excluded = a.excludedDefaultRules ?? []
+          if (excluded.length === 0) return `All ${DEFAULT_RULE_KEYS.length} standard routines`
+          const kept = DEFAULT_RECURRING_RULES.filter((r) => !excluded.includes(r.key))
+          if (kept.length === 0) return 'None of the standard routines'
+          return `${kept.length} of ${DEFAULT_RULE_KEYS.length}: ${kept.map((r) => r.title).join(', ')}`
+        },
       },
       {
         id: 'rules',
