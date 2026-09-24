@@ -3,12 +3,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getJobDefinition, runJob, type JobRunResult } from "@/server/scheduler";
 
 /**
- * The 5-minute jobs (HANDOFF §9: stale-cleanup, mention-sms, deferred-push)
- * on an HTTP trigger. The daily jobs run one-per-invocation through
- * /api/cron/[job] (vercel.json); this route runs the every-tick trio as a
- * batch so Vercel Hobby - where crons fire at most once a day - still gets
- * the 5-minute cadence via an external scheduler
- * (.github/workflows/cron-frequent.yml).
+ * The 5-minute jobs (HANDOFF §9: stale-cleanup, mention-sms, deferred-push,
+ * not-clocked-in-alert) on an HTTP trigger. The daily jobs run
+ * one-per-invocation through /api/cron/[job] (vercel.json); this route runs
+ * the every-tick family as a batch so Vercel Hobby - where crons fire at
+ * most once a day - still gets the 5-minute cadence via an external
+ * scheduler (.github/workflows/cron-frequent.yml).
  *
  * Secured exactly like /api/cron/[job]: `Authorization: Bearer $CRON_SECRET`.
  *
@@ -20,7 +20,7 @@ export const runtime = "nodejs";
 // Three jobs, each touching at most a recent-window slice of rows.
 export const maxDuration = 120;
 
-const FREQUENT_JOBS = ["stale-cleanup", "mention-sms", "deferred-push"] as const;
+const FREQUENT_JOBS = ["stale-cleanup", "mention-sms", "deferred-push", "not-clocked-in-alert"] as const;
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const secret = process.env.CRON_SECRET;

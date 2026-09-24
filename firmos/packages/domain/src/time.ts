@@ -77,3 +77,44 @@ export function generalTimeMinutes(
   );
   return mergedMinutes(general);
 }
+
+// ── Break typing (owner walkthrough F2, 02:08:30) ─────────────────────────
+//
+// Breaks and lunches ride the activity timer as first-class kinds, in paid
+// and unpaid variants. The paid variants are ordinary work-adjacent time
+// (they stay inside the wall-clock union); the UNPAID variants are the only
+// intervals payroll subtracts, so an unpaid lunch never inflates paid hours
+// even though the day session spans it.
+
+/** Activity-timer kinds that are breaks (paid or unpaid). */
+export const BREAK_ACTIVITY_TYPES = [
+  "break_paid",
+  "break_unpaid",
+  "lunch_paid",
+  "lunch_unpaid",
+] as const;
+export type BreakActivityType = (typeof BREAK_ACTIVITY_TYPES)[number];
+
+/** The activity kinds whose intervals are excluded from paid-hours math. */
+export const UNPAID_ACTIVITY_TYPES = ["break_unpaid", "lunch_unpaid"] as const;
+
+/** True when the activity type is a break or lunch (paid or unpaid). */
+export function isBreakActivityType(activityType: string): boolean {
+  return (BREAK_ACTIVITY_TYPES as readonly string[]).includes(activityType);
+}
+
+/** True when the activity type is unpaid time (excluded from payroll). */
+export function isUnpaidActivityType(activityType: string): boolean {
+  return (UNPAID_ACTIVITY_TYPES as readonly string[]).includes(activityType);
+}
+
+/**
+ * Paid time: the wall-clock union of every work interval with the unpaid
+ * break/lunch intervals cut out of it. Identity when there is no unpaid time.
+ */
+export function paidMinutes(
+  workIntervals: readonly Interval[],
+  unpaidBreakIntervals: readonly Interval[],
+): number {
+  return mergedMinutes(subtractIntervals(workIntervals, unpaidBreakIntervals));
+}

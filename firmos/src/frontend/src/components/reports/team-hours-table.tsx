@@ -16,11 +16,13 @@ import type { UserHoursReport } from '@/server/time-tracking'
 
 import { DailyHoursPanel } from './daily-hours-panel'
 import { activityLabel, formatHours } from './format'
+import { SortableHead, cycleSort, type SortState } from './sortable-head'
 
 /**
  * Team hours (HANDOFF §21): one row per in-scope user, expandable to the
  * activity/client breakdown. Every figure is the server's interval union -
  * the client only formats. CSV export is derived from the same payload.
+ * Columns are click-to-sort (D11); the team-total row stays pinned last.
  */
 
 interface TeamHoursTableProps {
@@ -38,6 +40,8 @@ const HOUR_COLUMNS: { key: keyof Pick<UserHoursReport, 'totalMinutes' | 'dayMinu
   { key: 'billableMinutes', label: 'Billable' },
   { key: 'unbillableMinutes', label: 'Unbillable' },
 ]
+
+type HoursSortKey = 'name' | (typeof HOUR_COLUMNS)[number]['key']
 
 function buildCsv(users: UserHoursReport[]): string {
   const header = ['user_id', 'user_name', 'role', ...HOUR_COLUMNS.map((c) => c.label.toLowerCase())]
@@ -57,6 +61,20 @@ function buildCsv(users: UserHoursReport[]): string {
 
 export function TeamHoursTable({ users, fromIso, toIso }: TeamHoursTableProps) {
   const [expanded, setExpanded] = React.useState<Set<number>>(new Set())
+  // D11: default view is alphabetical; numeric columns start desc on first click.
+  const [sort, setSort] = React.useState<SortState<HoursSortKey>>({ key: 'name', dir: 'asc' })
+
+  const sorted = React.useMemo(() => {
+    const rows = [...users]
+    rows.sort((a, b) => {
+      const cmp =
+        sort.key === 'name'
+          ? a.userName.localeCompare(b.userName)
+          : a[sort.key] - b[sort.key]
+      return sort.dir === 'asc' ? cmp : -cmp
+    })
+    return rows
+  }, [users, sort])
 
   function toggle(userId: number) {
     setExpanded((prev) => {
@@ -104,23 +122,34 @@ export function TeamHoursTable({ users, fromIso, toIso }: TeamHoursTableProps) {
         <TableHeader>
           <TableRow>
             <TableHead className="w-8 pl-4" />
-            <TableHead>Team member</TableHead>
+            <SortableHead
+              label="Team member"
+              sortKey="name"
+              sort={sort}
+              onSort={setSort}
+              defaultDir="asc"
+            />
             {HOUR_COLUMNS.map((c) => (
-              <TableHead key={c.key} className="text-right">
-                {c.label}
-              </TableHead>
+              <SortableHead
+                key={c.key}
+                label={c.label}
+                sortKey={c.key}
+                sort={sort}
+                onSort={setSort}
+                className="text-right"
+              />
             ))}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {users.length === 0 ? (
+          {sorted.length === 0 ? (
             <TableRow>
               <TableCell colSpan={HOUR_COLUMNS.length + 2} className="pl-4 text-xs text-muted-foreground">
                 No hours recorded in this range.
               </TableCell>
             </TableRow>
           ) : (
-            users.map((u) => {
+            sorted.map((u) => {
               const open = expanded.has(u.userId)
               const activities = Object.entries(u.byActivityType).sort((a, b) => b[1] - a[1])
               return (

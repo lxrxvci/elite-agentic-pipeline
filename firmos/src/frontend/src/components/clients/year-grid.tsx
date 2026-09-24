@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CircleDashed,
   Clock,
+  Flag,
   PauseCircle,
 } from 'lucide-react'
 
@@ -115,9 +116,29 @@ function countsSentence(cell: YearGridCell): string {
   return parts.join(', ')
 }
 
+/**
+ * D10 (02:15:04): cells with missing/incomplete items carry a visible flag
+ * marker, never color alone. Flagged states are the ones where work exists
+ * and some of it is not done (behind / in progress / waiting); complete,
+ * not-due, and no-work cells never flag.
+ */
+function incompleteCount(cell: YearGridCell): number {
+  return cell.total - cell.completed
+}
+
+function isFlagged(cell: YearGridCell): boolean {
+  return (
+    (cell.state === 'behind' || cell.state === 'in_progress' || cell.state === 'waiting') &&
+    incompleteCount(cell) > 0
+  )
+}
+
 function cellAriaLabel(cell: YearGridCell): string {
   const meta = YEAR_GRID_CELL_META[cell.state]
-  return `${STREAM_LABEL[cell.stream]}, ${monthLabel(cell.year, cell.month)}: ${meta.label}, ${countsSentence(cell)}`
+  const flagged = isFlagged(cell)
+  return `${STREAM_LABEL[cell.stream]}, ${monthLabel(cell.year, cell.month)}: ${meta.label}, ${countsSentence(cell)}${
+    flagged ? `, ${incompleteCount(cell)} incomplete` : ''
+  }`
 }
 
 function cellKey(cell: Pick<YearGridCell, 'stream' | 'year' | 'month'>): string {
@@ -292,7 +313,7 @@ export function YearGrid({ grid, filter, onCellClick, prevYearHref, nextYearHref
                           : undefined
                       }
                       className={cn(
-                        'flex h-8 items-center justify-center rounded-md transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        'relative flex h-8 items-center justify-center rounded-md transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                         meta.classes,
                         clickable && 'cursor-pointer hover:ring-1 hover:ring-ring/60',
                         !clickable && 'cursor-default',
@@ -302,6 +323,13 @@ export function YearGrid({ grid, filter, onCellClick, prevYearHref, nextYearHref
                       )}
                     >
                       <StateIcon meta={meta} />
+                      {isFlagged(cell) && (
+                        <Flag
+                          aria-hidden
+                          className="absolute right-0.5 top-0.5 h-2 w-2 text-status-overdue"
+                          data-testid="year-grid-cell-flag"
+                        />
+                      )}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{countsSentence(cell)}</TooltipContent>

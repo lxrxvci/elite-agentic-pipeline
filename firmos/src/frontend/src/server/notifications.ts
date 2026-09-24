@@ -165,6 +165,34 @@ export function isInsideWorkingHours(
   return false;
 }
 
+/**
+ * The day's scheduled span in firm-local minutes: earliest interval start
+ * through the latest interval end (a wrap interval's end lands past
+ * midnight). Null when nothing is scheduled that weekday. The
+ * not-clocked-in alert reads this: [start + grace, end) is the alert window.
+ */
+export function scheduleWindowForWeekday(
+  schedule: WorkingHoursSchedule,
+  weekday: number,
+): { startMinutes: number; endMinutes: number } | null {
+  const intervals = schedule[DAY_KEYS[weekday]] ?? [];
+  if (!Array.isArray(intervals)) return null;
+  let start: number | null = null;
+  let end: number | null = null;
+  for (const interval of intervals) {
+    if (!interval || typeof interval.start !== "string" || typeof interval.end !== "string") {
+      continue;
+    }
+    const s = parseHm(interval.start);
+    let e = parseHm(interval.end);
+    if (s == null || e == null) continue;
+    if (e <= s) e += 24 * 60; // wrap past midnight (same rule as isInsideWorkingHours)
+    start = start == null ? s : Math.min(start, s);
+    end = end == null ? e : Math.max(end, e);
+  }
+  return start == null || end == null ? null : { startMinutes: start, endMinutes: end };
+}
+
 // ── Emitter (§16) ─────────────────────────────────────────────────────────
 
 export type NotificationPriority = "low" | "normal" | "high" | "urgent";

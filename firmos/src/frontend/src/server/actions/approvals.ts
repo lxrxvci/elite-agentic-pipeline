@@ -18,6 +18,12 @@ import {
   type PurgatoryItem,
 } from "@/server/approvals";
 import { requireRole, requireStaff } from "@/server/auth/guards";
+import {
+  requestBumperLaneOverride,
+  reviewBumperLaneOverride,
+  revokeBumperLaneOverride,
+} from "@/server/bumper-lanes";
+import type { WorkCardKind } from "@/server/queue";
 
 /**
  * Approval workflow server actions (HANDOFF §22). Role guards per the spec
@@ -194,6 +200,55 @@ export async function getPurgatoryQueueAction(): Promise<ActionResult<PurgatoryI
   try {
     await requireRole("admin", "owner");
     return { ok: true, data: await getPurgatoryQueue() };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+// ── Bumper-lane overrides (D7/L3: staff request; manager+ reviews) ────────
+
+/** Any staff member (the laned bookkeeper) requests an override on a locked card. */
+export async function requestBumperOverrideAction(
+  card: { kind: WorkCardKind; id: number },
+  reason: string,
+): Promise<ActionResult<{ requestId: number }>> {
+  try {
+    const user = await requireStaff();
+    const request = await requestBumperLaneOverride(user.id, card, reason);
+    revalidatePath("/workstation");
+    revalidatePath("/admin/purgatory");
+    return { ok: true, data: { requestId: request.id } };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** Manager/admin/owner review; the engine re-checks the role + four-eyes. */
+export async function reviewBumperOverrideAction(
+  requestId: number,
+  approve: boolean,
+): Promise<ActionResult<{ status: string }>> {
+  try {
+    const reviewer = await requireRole("manager", "admin", "owner");
+    const row = await reviewBumperLaneOverride(requestId, reviewer.id, approve);
+    revalidatePath("/admin/purgatory");
+    revalidatePath("/workstation");
+    return { ok: true, data: { status: row.status } };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** Manager/admin/owner revokes an active grant. */
+export async function revokeBumperOverrideAction(
+  requestId: number,
+): Promise<ActionResult<{ status: string }>> {
+  try {
+    const actor = await requireRole("manager", "admin", "owner");
+    const row = await revokeBumperLaneOverride(requestId, actor.id);
+    revalidatePath("/admin/purgatory");
+    revalidatePath("/workstation");
+    return { ok: true, data: { status: row.status } };
   } catch (error) {
     return fail(error);
   }

@@ -8,6 +8,7 @@ import {
   Percent,
   Scale,
   TrendingUp,
+  Users,
   Wallet,
   type LucideIcon,
 } from 'lucide-react'
@@ -59,6 +60,13 @@ const LINKS: ReportLink[] = [
     title: 'Staff capacity',
     description: 'Who is overloaded: open work due per week plus clocked vs approved hours.',
     Icon: Gauge,
+    roles: MANAGER_UP,
+  },
+  {
+    href: '/reports/team',
+    title: 'Team overview',
+    description: 'Per-person completion by client tier and cadence for a chosen week.',
+    Icon: Users,
     roles: MANAGER_UP,
   },
   {

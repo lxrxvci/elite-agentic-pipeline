@@ -3,20 +3,22 @@ import { and, eq, gte, inArray, isNull, lt, lte } from "drizzle-orm";
 import { addDays, formatLocalDate, type LocalDate } from "@firmos/domain";
 
 import { db } from "@/db";
-import { notifications, tasks, users } from "@/db/schema";
+import { notifications, tasks, users, workstationTimeEntries } from "@/db/schema";
 
 import { materializeOperationalRows, type MaterializeSummary } from "./materialize";
 import {
   emitOncePer24Hours,
   emitOncePerDay,
+  firmLocalParts,
   firmLocalToday,
   getApprovedWorkingHours,
   isInsideWorkingHours,
+  scheduleWindowForWeekday,
   IMMEDIATE_PUSH_TYPES,
 } from "./notifications";
 import { sendPushToUser } from "./push";
 import { getUnifiedQueue, type WorkCard } from "./queue";
-import { runRecurringOnce, type RecurringSummary } from "./recurring";
+import { runRecurringOnce, backfillRecurringInstanceSubtasks, type RecurringSummary } from "./recurring";
 import { getStatementQueue } from "./statements";
 import { runStaleCleanup, type StaleCleanupResult } from "./time-tracking";
 
@@ -73,11 +75,17 @@ export interface RecurringJobSummary {
   recurring: RecurringSummary;
   /** §9 - run_recurring also purges trash older than 30 days. */
   trashPurged: number;
+  /** 2B-1 - current-year instances repaired with their rule's checklist. */
+  instanceSubtasksCreated: number;
 }
 
 export async function recurringJob(now: Date = new Date()): Promise<RecurringJobSummary> {
   const today = firmLocalToday(now);
   const recurring = await runRecurringOnce(today);
+
+  // 2B-1 - after generation, backfill the checklists of current-year
+  // instances that predate the materialization copy (idempotent).
+  const backfill = await backfillRecurringInstanceSubtasks(today);
 
   // §9 - trash purge: soft-deleted tasks whose deleted_at is 30+ days old.
   const cutoff = new Date(now.getTime() - 30 * 24 * 60 * MS_PER_MINUTE);
@@ -86,7 +94,7 @@ export async function recurringJob(now: Date = new Date()): Promise<RecurringJob
     .where(lt(tasks.deletedAt, cutoff))
     .returning({ id: tasks.id });
 
-  return { recurring, trashPurged: purged.length };
+  return { recurring, trashPurged: purged.length, instanceSubtasksCreated: backfill.subtasksCreated };
 }
 
 // ── materialize (§9: once per day, after recurring) ───────────────────────
@@ -383,6 +391,123 @@ export async function mentionEscalationJob(
       summary.failures.push({
         entityType: "notification",
         entityId: row.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return summary;
+}
+
+// ── not-clocked-in alert (F4: every 5 minutes, weekdays) ─────────────────
+
+/** F4 grace: the alert window opens this many minutes after the scheduled start. */
+export const NOT_CLOCKED_IN_GRACE_MINUTES = 30;
+
+export interface NotClockedInSummary {
+  today: string;
+  /** false on weekends - the job is a no-op then (F4: weekdays). */
+  weekday: boolean;
+  checked: number;
+  alerted: number;
+  skipped: { userId: number; reason: string }[];
+  failures: EntityFailure[];
+}
+
+/**
+ * F4 (walkthrough 02:08:30): on a weekday, a bookkeeper with approved
+ * working hours for today who is past their start + 30-minute grace with NO
+ * open day session alerts their direct manager plus every active admin.
+ *
+ * Dedup: emitOncePerDay per (recipient, type, entity=the bookkeeper) - one
+ * alert per absent bookkeeper per firm-local day per recipient, however
+ * often the 5-minute loop fires. Deactivated staff are excluded at
+ * selection. The alert window closes at the scheduled end of their day, so
+ * a bookkeeper who worked and clocked OUT never triggers an evening false
+ * positive.
+ */
+export async function notClockedInAlertJob(now: Date = new Date()): Promise<NotClockedInSummary> {
+  const parts = firmLocalParts(now);
+  const today = firmLocalToday(now);
+  const summary: NotClockedInSummary = {
+    today: formatLocalDate(today),
+    weekday: parts.weekday >= 1 && parts.weekday <= 5,
+    checked: 0,
+    alerted: 0,
+    skipped: [],
+    failures: [],
+  };
+  if (!summary.weekday) return summary;
+
+  const [bookkeepers, admins, openDays] = await Promise.all([
+    db.select().from(users).where(and(eq(users.role, "bookkeeper"), eq(users.isActive, true))),
+    db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.role, "admin"), eq(users.isActive, true))),
+    db
+      .select({ userId: workstationTimeEntries.userId })
+      .from(workstationTimeEntries)
+      .where(
+        and(
+          eq(workstationTimeEntries.activityType, "day"),
+          isNull(workstationTimeEntries.endedAt),
+        ),
+      ),
+  ]);
+  const clockedIn = new Set(openDays.map((r) => r.userId));
+  const minutesNow = parts.hour * 60 + parts.minute;
+
+  for (const bookkeeper of bookkeepers) {
+    summary.checked += 1;
+    try {
+      if (clockedIn.has(bookkeeper.id)) {
+        summary.skipped.push({ userId: bookkeeper.id, reason: "clocked_in" });
+        continue;
+      }
+      const schedule = await getApprovedWorkingHours(bookkeeper.id);
+      if (schedule == null) {
+        summary.skipped.push({ userId: bookkeeper.id, reason: "no_approved_working_hours" });
+        continue;
+      }
+      const window = scheduleWindowForWeekday(schedule, parts.weekday);
+      if (window == null) {
+        summary.skipped.push({ userId: bookkeeper.id, reason: "not_scheduled_today" });
+        continue;
+      }
+      if (minutesNow < window.startMinutes + NOT_CLOCKED_IN_GRACE_MINUTES) {
+        summary.skipped.push({ userId: bookkeeper.id, reason: "within_grace" });
+        continue;
+      }
+      if (minutesNow >= window.endMinutes) {
+        summary.skipped.push({ userId: bookkeeper.id, reason: "outside_schedule" });
+        continue;
+      }
+
+      const recipients = new Set<number>(admins.map((a) => a.id));
+      if (bookkeeper.managerId != null) recipients.add(bookkeeper.managerId);
+      const name = `${bookkeeper.firstName} ${bookkeeper.lastName}`.trim();
+      const startH = String(Math.floor(window.startMinutes / 60)).padStart(2, "0");
+      const startM = String(window.startMinutes % 60).padStart(2, "0");
+      for (const recipientId of recipients) {
+        const written = await emitOncePerDay(
+          {
+            userId: recipientId,
+            type: "not_clocked_in",
+            title: `${name} hasn't clocked in`,
+            message: `Scheduled to start at ${startH}:${startM} (+${NOT_CLOCKED_IN_GRACE_MINUTES} min grace) - no day session is open.`,
+            link: "/reports/hours",
+            entityType: "user",
+            entityId: bookkeeper.id,
+          },
+          now,
+        );
+        if (written) summary.alerted += 1;
+      }
+    } catch (err) {
+      // §9 - per-entity isolation: one bad bookkeeper cannot abort the batch.
+      summary.failures.push({
+        entityType: "user",
+        entityId: bookkeeper.id,
         error: err instanceof Error ? err.message : String(err),
       });
     }

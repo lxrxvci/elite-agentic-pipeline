@@ -18,6 +18,13 @@ import { convertIntake } from '@/server/actions/intake'
 export interface StaffOption {
   id: number
   name: string
+  /** E13: current open assigned work count ("don't overload one person"). */
+  openCount?: number
+}
+
+/** "Sofia Lindqvist (12 open)" when the workload count is available. */
+export function staffOptionLabel(o: StaffOption): string {
+  return o.openCount == null ? o.name : `${o.name} (${o.openCount} open)`
 }
 
 const selectCls =
@@ -94,7 +101,7 @@ export function ConvertDialog({
               <option value="">Assign after conversion</option>
               {managers.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name}
+                  {staffOptionLabel(m)}
                 </option>
               ))}
             </select>
@@ -113,7 +120,7 @@ export function ConvertDialog({
               <option value="">Assign after conversion</option>
               {bookkeepers.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.name}
+                  {staffOptionLabel(b)}
                 </option>
               ))}
             </select>

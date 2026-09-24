@@ -66,6 +66,7 @@ function card(partial: Partial<WorkCard> & Pick<WorkCard, 'kind' | 'id' | 'statu
 // Monday 2026-08-24: the default work-day filter is Monday.
 const mondayQueue: UnifiedQueue = {
   today: '2026-08-24',
+  bumperLanes: { enabled: false, activeClientId: null, activeClientName: null, activeStage: null },
   buckets: {
     overdue: [],
     due_today: [
@@ -154,6 +155,7 @@ describe('WorkstationQueue reconciliation readiness badges', () => {
   function badgeQueue(partial: Partial<WorkCard>): UnifiedQueue {
     return {
       today: '2026-08-23',
+      bumperLanes: { enabled: false, activeClientId: null, activeClientName: null, activeStage: null },
       buckets: {
         overdue: [],
         due_today: [

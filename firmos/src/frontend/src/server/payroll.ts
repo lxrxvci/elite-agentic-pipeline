@@ -7,8 +7,8 @@ import {
   invoiceCountsForCommission,
   isOnHold,
   lastDayOfMonth,
-  mergedMinutes,
   onTimePercent,
+  paidMinutes,
   parseLocalDate,
   semiMonthlyPeriods,
   totalPay,
@@ -43,9 +43,9 @@ import { collectUserIntervals } from "./time-tracking";
  * (invoiceCountsForCommission), and the pay total (totalPay). Row
  * SELECTION (the §6.6 exclusions) happens here, never the math.
  *
- * §29 fix by construction: hours come from collectUserIntervals +
- * mergedMinutes (the same wall-clock union the hours report uses), never
- * from summing stored duration_minutes.
+ * §29 fix by construction: hours come from collectUserIntervals + the domain
+ * union (paidMinutes = wall-clock union minus unpaid break/lunch time, F2),
+ * never from summing stored duration_minutes.
  */
 
 export class PayrollError extends Error {
@@ -398,11 +398,16 @@ export async function getPayrollCalculator(
         Math.min(dayStart(addDays(period.end, 1)).getTime(), Date.now()),
       );
       const collected = await collectUserIntervals(user.id, from, to);
-      const minutes = mergedMinutes([
-        ...collected.day,
-        ...collected.activities.map((a) => a.interval),
-        ...collected.taskTimers.map((t) => t.interval),
-      ]);
+      // §29 union, then F2: unpaid break/lunch time is cut out of paid hours
+      // (domain paidMinutes) - a 9-5 day with a 1h unpaid lunch pays 7h.
+      const minutes = paidMinutes(
+        [
+          ...collected.day,
+          ...collected.activities.map((a) => a.interval),
+          ...collected.taskTimers.map((t) => t.interval),
+        ],
+        collected.unpaidBreaks,
+      );
       const hours = round2(minutes / 60);
       const hourlyPay = round2(hours * baseHourlyPay);
       totalHours = round2(totalHours + hours);

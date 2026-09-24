@@ -8,6 +8,7 @@ import { IntakeWizard } from '@/components/intake/wizard'
 import { db } from '@/db'
 import { users } from '@/db/schema'
 import { requireStaff } from '@/server/auth/guards'
+import { getStaffOpenWorkCounts } from '@/server/capacity'
 import { getIntake } from '@/server/intake'
 import { WorkStatusBadge } from '@/shared/ui/work'
 
@@ -37,12 +38,14 @@ export default async function IntakeWizardPage({ params }: { params: Promise<{ i
     .where(eq(users.isActive, true))
   const nameOf = (u: (typeof staffRows)[number]) =>
     `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `Staff ${u.id}`
+  // E13: the assignment step shows each candidate's current open-work count.
+  const workload = new Map((await getStaffOpenWorkCounts()).map((w) => [w.userId, w.openCount]))
   const managers = staffRows
     .filter((u) => ['owner', 'admin', 'manager'].includes(u.role.toLowerCase()))
-    .map((u) => ({ id: u.id, name: nameOf(u) }))
+    .map((u) => ({ id: u.id, name: nameOf(u), openCount: workload.get(u.id) ?? 0 }))
   const bookkeepers = staffRows
     .filter((u) => u.role.toLowerCase() === 'bookkeeper')
-    .map((u) => ({ id: u.id, name: nameOf(u) }))
+    .map((u) => ({ id: u.id, name: nameOf(u), openCount: workload.get(u.id) ?? 0 }))
 
   const chip = INTAKE_STATUS[intake.status]
 

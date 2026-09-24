@@ -45,6 +45,8 @@ export interface StaffUserPatch {
   canEditTaskTemplates?: boolean;
   canEditSops?: boolean;
   canEditTaxTemplates?: boolean;
+  /** D6/D8 - per-employee bumper lanes (one client at a time, in order). */
+  bumperLanesEnabled?: boolean;
 }
 
 /** Money columns are numeric(12,2) / numeric(6,2); null clears the override. */
@@ -122,6 +124,7 @@ export async function updateStaffUserAction(
       "canEditTaskTemplates",
       "canEditSops",
       "canEditTaxTemplates",
+      "bumperLanesEnabled",
     ] as const) {
       if (patch[flag] !== undefined) {
         set[flag] = patch[flag];

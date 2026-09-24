@@ -141,12 +141,19 @@ interface WorkCardRowProps {
   assignee?: AssigneeInfo
   onSelect: (card: WorkCard) => void
   onComplete: (card: WorkCard) => void
+  /** Bumper lanes (D7): opens the override-request dialog for a locked card. */
+  onRequestOverride?: (card: WorkCard) => void
 }
 
 /**
  * One dense row of the unified queue. 4/8px grid, muted metadata, color only
  * means state, tabular numerals. The complete action is hover/focus-revealed
  * and always visible on the keyboard-selected row (mouse-optional loop).
+ *
+ * Bumper lanes (D6/D8): a lane-locked card shows the lock + reason in place
+ * of the complete affordance, plus a Request-override action (D7) - the
+ * server re-enforces the lock on every completion path. An active override
+ * unlocks the card and is marked with the "Override" chip.
  *
  * Memoized: the queue re-renders on every keyboard cursor move, and rows
  * whose props did not change (same card reference, stable callbacks from the
@@ -159,12 +166,14 @@ export const WorkCardRow = React.memo(function WorkCardRow({
   assignee,
   onSelect,
   onComplete,
+  onRequestOverride,
 }: WorkCardRowProps) {
   const { status, label } = BUCKET_STATUS[card.status]
   const { Icon, label: kindLabel } = KIND_META[card.kind]
   const kindStyle = KIND_STYLE[card.kind]
   const aging = dueAging(card.dueDate, today)
   const gated = card.status === 'gated'
+  const laneLocked = card.laneLocked === true
   // Completing transition: swap the static check for the self-drawing one.
   // The state change itself is instant (optimistic removal); the draw is
   // pure garnish for the frames the button stays mounted.
@@ -274,7 +283,30 @@ export const WorkCardRow = React.memo(function WorkCardRow({
       </span>
 
       <span className="shrink-0">
-        {gated ? (
+        {laneLocked ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="inline-flex cursor-help items-center gap-1"
+                data-testid="lane-lock"
+                data-reason={card.laneLockReason ?? ''}
+              >
+                <Lock className="h-3 w-3 text-muted-foreground" aria-hidden />
+                <WorkStatusBadge status="on_hold" label="Locked" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{card.laneLockReason ?? 'Locked by bumper lanes'}</TooltipContent>
+          </Tooltip>
+        ) : card.laneOverride === 'active' ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex cursor-help items-center gap-1" data-testid="lane-override-active">
+                <WorkStatusBadge status="due_soon" label="Override" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Override approved - this card is unlocked for 24 hours.</TooltipContent>
+          </Tooltip>
+        ) : gated ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex cursor-help items-center gap-1">
@@ -307,30 +339,62 @@ export const WorkCardRow = React.memo(function WorkCardRow({
         <TaskTimerToggle taskId={card.id} taskTitle={card.title} revealed={selected} />
       )}
 
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          setCompleting(true)
-          onComplete(card)
-        }}
-        aria-label={`Complete: ${card.title}`}
-        title="Complete (E)"
-        className={cn(
-          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-all duration-150 hover:border-firm-action hover:bg-firm-action-soft hover:text-firm-action focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          completing
-            ? 'border-status-on-track bg-status-on-track-bg text-status-on-track opacity-100'
-            : selected
-              ? 'opacity-100'
-              : 'opacity-0 group-hover:opacity-100',
-        )}
-      >
-        {completing ? (
-          <CheckDraw className="h-4 w-4" />
+      {laneLocked ? (
+        // Bumper lanes: the complete affordance is replaced by the lock +
+        // override request (D7). Pending requests show their state instead.
+        card.laneOverride === 'pending' ? (
+          <span
+            data-testid="override-pending"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[10px] font-semibold text-muted-foreground"
+          >
+            <Lock className="h-3 w-3" aria-hidden />
+            Override requested
+          </span>
         ) : (
-          <Check className="h-4 w-4" aria-hidden />
-        )}
-      </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onRequestOverride?.(card)
+            }}
+            aria-label={`Request override: ${card.title}`}
+            title={card.laneLockReason ?? 'Locked by bumper lanes - request an override'}
+            data-testid="request-override"
+            className={cn(
+              'flex h-7 shrink-0 items-center gap-1 rounded-md border border-input px-2 text-[10px] font-semibold text-muted-foreground transition-all duration-150 hover:border-firm-action hover:bg-firm-action-soft hover:text-firm-action focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+            )}
+          >
+            <Lock className="h-3 w-3" aria-hidden />
+            Override…
+          </button>
+        )
+      ) : (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setCompleting(true)
+            onComplete(card)
+          }}
+          aria-label={`Complete: ${card.title}`}
+          title="Complete (E)"
+          className={cn(
+            'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-all duration-150 hover:border-firm-action hover:bg-firm-action-soft hover:text-firm-action focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            completing
+              ? 'border-status-on-track bg-status-on-track-bg text-status-on-track opacity-100'
+              : selected
+                ? 'opacity-100'
+                : 'opacity-0 group-hover:opacity-100',
+          )}
+        >
+          {completing ? (
+            <CheckDraw className="h-4 w-4" />
+          ) : (
+            <Check className="h-4 w-4" aria-hidden />
+          )}
+        </button>
+      )}
     </article>
   )
 })

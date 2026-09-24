@@ -299,6 +299,50 @@ describe.skipIf(!reachable)("payroll engine (HANDOFF §6.6, §15)", () => {
     expect(totalLine).toContain("1200.00");
   });
 
+  // F2 (02:08:30): paid/unpaid break + lunch kinds; payroll pays the union
+  // MINUS unpaid time - a 9-5 day with a 1h unpaid lunch pays 7h.
+  it("payroll excludes unpaid break/lunch time, keeps paid breaks (F2)", async () => {
+    const bk = await makeUser("bookkeeper", { baseHourlyPay: "100.00" });
+
+    await db.insert(workstationTimeEntries).values({
+      userId: bk.id,
+      activityType: "day",
+      startedAt: d(4, 9),
+      endedAt: d(4, 17),
+      durationMinutes: 480,
+    });
+    // Unpaid lunch inside the day: subtracts 60 minutes.
+    await db.insert(workstationTimeEntries).values({
+      userId: bk.id,
+      activityType: "lunch_unpaid",
+      startedAt: d(4, 12),
+      endedAt: d(4, 13),
+      durationMinutes: 60,
+    });
+    // Unpaid break + paid break: only the unpaid one subtracts.
+    await db.insert(workstationTimeEntries).values({
+      userId: bk.id,
+      activityType: "break_unpaid",
+      startedAt: d(4, 15),
+      endedAt: d(4, 15, 15),
+      durationMinutes: 15,
+    });
+    await db.insert(workstationTimeEntries).values({
+      userId: bk.id,
+      activityType: "break_paid",
+      startedAt: d(4, 10),
+      endedAt: d(4, 10, 15),
+      durationMinutes: 15,
+    });
+
+    const calc = await getPayrollCalculator(2026, 8, TEST_TODAY);
+    const row = calc.rows.find((r) => r.userId === bk.id)!;
+    // 8h day - 1h unpaid lunch - 15m unpaid break = 6.75h paid.
+    expect(row.periods[0].hours).toBe(6.75);
+    expect(row.totalHours).toBe(6.75);
+    expect(row.totalPay).toBe(675);
+  });
+
   it("payout config: the three cadences map to the right paycheck (§6.6)", async () => {
     const admin = await db
       .select({ id: users.id })

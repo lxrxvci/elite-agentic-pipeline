@@ -99,4 +99,31 @@ describe('ProjectDetailView - prerequisite chains (HANDOFF §20)', () => {
     render(<ProjectDetailView detail={detail} staff={[]} canEditBilling={false} />)
     expect(screen.queryByLabelText('Task title')).not.toBeInTheDocument()
   })
+
+  it('renders the dashboard summary: hero percent plus counts by state (D18)', () => {
+    const tasks = [
+      oneOff({ id: 11, title: 'Done row', isCompleted: true }),
+      oneOff({ id: 12, title: 'Blocked row', blocked: true, prerequisiteTitle: 'Done row', prerequisiteId: 11 }),
+      oneOff({ id: 13, title: 'Late row', dueDate: '2026-08-01' }),
+    ]
+    const detail = { ...detailWith(tasks), name: 'Catch-up Bookkeeping 2025', completionPct: 33 }
+    render(<ProjectDetailView detail={detail} staff={[]} canEditBilling={false} />)
+
+    const summary = screen.getByTestId('project-progress-summary')
+    expect(summary).toHaveTextContent('33%')
+    expect(summary).toHaveTextContent('1 done · 2 remaining · 1 blocked')
+    expect(summary).toHaveTextContent('1 overdue')
+  })
+
+  it('deep-links the year-end tax checklist when the project year is known (D18)', () => {
+    const detail = { ...detailWith([oneOff({ id: 11, title: 'Row' })]), name: 'Catch-up Bookkeeping 2025' }
+    render(<ProjectDetailView detail={detail} staff={[]} canEditBilling={false} />)
+    expect(screen.getByTestId('tax-checklist-link')).toHaveAttribute('href', '/clients/5?tab=tax')
+    expect(screen.getByTestId('tax-checklist-link')).toHaveTextContent('Year-end tax 2025 checklist')
+  })
+
+  it('omits the tax link when no year is detectable', () => {
+    render(<ProjectDetailView detail={detailWith([oneOff({ id: 11, title: 'Row' })])} staff={[]} canEditBilling={false} />)
+    expect(screen.queryByTestId('tax-checklist-link')).not.toBeInTheDocument()
+  })
 })

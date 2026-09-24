@@ -1,11 +1,13 @@
 import {
   ClipboardCheck,
+  Coffee,
   FolderKanban,
   Landmark,
   LayoutDashboard,
   RefreshCw,
   Repeat,
   SquareCheck,
+  UtensilsCrossed,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -23,8 +25,13 @@ export type ActivityType =
   | 'reconciliations'
   | 'projects'
   | 'tax_checklist'
+  | 'break_paid'
+  | 'break_unpaid'
+  | 'lunch_paid'
+  | 'lunch_unpaid'
 
-/** The seven non-day workstation activity timers (HANDOFF §17). */
+/** The seven non-day workstation activity timers (HANDOFF §17) plus the F2
+ *  paid/unpaid break and lunch kinds (walkthrough 02:08:30). */
 export const ACTIVITY_META: Record<ActivityType, { label: string; Icon: LucideIcon }> = {
   bank_feeds: { label: 'Bank feeds', Icon: Landmark },
   tasks: { label: 'Tasks', Icon: SquareCheck },
@@ -33,6 +40,10 @@ export const ACTIVITY_META: Record<ActivityType, { label: string; Icon: LucideIc
   reconciliations: { label: 'Reconciliations', Icon: RefreshCw },
   projects: { label: 'Projects', Icon: FolderKanban },
   tax_checklist: { label: 'Tax checklist', Icon: ClipboardCheck },
+  break_paid: { label: 'Break (paid)', Icon: Coffee },
+  break_unpaid: { label: 'Break (unpaid)', Icon: Coffee },
+  lunch_paid: { label: 'Lunch (paid)', Icon: UtensilsCrossed },
+  lunch_unpaid: { label: 'Lunch (unpaid)', Icon: UtensilsCrossed },
 }
 
 export const ACTIVITY_TYPES = Object.keys(ACTIVITY_META) as ActivityType[]

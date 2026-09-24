@@ -85,6 +85,26 @@ describe('OverviewPanel team assignment', () => {
     expect(mockAssign).toHaveBeenCalledWith(1, { managerId: 3, bookkeeperId: null })
   })
 
+  it('each candidate shows its current open-work count (E13)', async () => {
+    const user = userEvent.setup()
+    renderPanel({
+      managers: [
+        { id: 3, name: 'Dana Whitfield', openCount: 2 },
+        { id: 4, name: 'Priya Raman', openCount: 17 },
+      ],
+      bookkeepers: [{ id: 5, name: 'Jorge Medina', openCount: 9 }],
+    })
+
+    await user.click(screen.getByTestId('manager-select'))
+    expect(await screen.findByRole('option', { name: 'Dana Whitfield (2 open)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Priya Raman (17 open)' })).toBeInTheDocument()
+
+    // Close the open dropdown before opening the next one.
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByTestId('bookkeeper-select'))
+    expect(await screen.findByRole('option', { name: 'Jorge Medina (9 open)' })).toBeInTheDocument()
+  })
+
   it('read-only roles see names or Unassigned text, never the selects', () => {
     const { unmount } = renderPanel({ canAssignStaff: false })
     expect(screen.queryByTestId('manager-select')).not.toBeInTheDocument()

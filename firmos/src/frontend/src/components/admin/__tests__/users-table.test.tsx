@@ -30,6 +30,7 @@ function staff(partial: Partial<AdminStaffRow>): AdminStaffRow {
     canEditTaskTemplates: false,
     canEditSops: false,
     canEditTaxTemplates: false,
+    bumperLanesEnabled: false,
     ...partial,
   }
 }
@@ -77,7 +78,22 @@ describe('UsersTable', () => {
       canEditTaskTemplates: false,
       canEditSops: false,
       canEditTaxTemplates: false,
+      bumperLanesEnabled: false,
     })
+  })
+
+  it('saves the bumper-lanes toggle with the row (D6/D8)', async () => {
+    render(
+      <TooltipProvider>
+        <UsersTable rows={[staff({})]} managers={MANAGERS} viewerId={99} />
+      </TooltipProvider>,
+    )
+    await userEvent.click(screen.getByTestId('bumper-lanes-toggle'))
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    expect(mockUpdate).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ bumperLanesEnabled: true }),
+    )
   })
 
   it('hides save until a row is dirty', () => {

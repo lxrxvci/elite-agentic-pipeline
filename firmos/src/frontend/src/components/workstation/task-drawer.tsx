@@ -7,6 +7,13 @@ import { toast } from 'sonner'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { CloseStepSegments, closeStepTitleKey } from '@/components/clients/close-stepper'
@@ -147,6 +154,7 @@ export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, on
   const [error, setError] = React.useState<string | null>(null)
   const [noteDraft, setNoteDraft] = React.useState('')
   const [busy, setBusy] = React.useState(false)
+  const [assignBusy, setAssignBusy] = React.useState(false)
   const [closeSteps, setCloseSteps] = React.useState<CloseSteps | null>(null)
 
   // Month-close context: only recurring close-step tasks (Categorize /
@@ -231,6 +239,26 @@ export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, on
     void refresh(taskId)
   }
 
+  // E13: inline reassignment; the server answer refreshes the drawer.
+  async function assignTo(assigneeId: number | null) {
+    if (taskId == null) return
+    setAssignBusy(true)
+    try {
+      const m = await import('@/server/actions/tasks')
+      const res = await m.assignTaskAction(taskId, assigneeId)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      toast.success('Task reassigned')
+      void refresh(taskId)
+    } catch {
+      toast.error('The assignment could not be saved - try again.')
+    } finally {
+      setAssignBusy(false)
+    }
+  }
+
   const task = detail?.task ?? null
   const badge = task ? (TASK_STATUS_BADGE[task.status] ?? { status: 'on_track' as WorkStatus, label: task.status }) : null
   const aging = detail && task ? dueAging(task.dueDate, detail.today) : null
@@ -294,20 +322,40 @@ export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, on
                   >
                     {aging.label}
                   </span>
-                  {task.assigneeName && (
-                    <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                      <Avatar className="h-4 w-4">
-                        <AvatarFallback
-                          className="text-[8px] font-semibold"
-                          style={task.assigneeId != null ? avatarStyle(task.assigneeId) : undefined}
-                        >
-                          <span className="sr-only">{task.assigneeName}</span>
-                          <span aria-hidden>{assigneeInitials}</span>
-                        </AvatarFallback>
-                      </Avatar>
-                      {task.assigneeName}
-                    </span>
-                  )}
+                  {/* E13: assign inline; every option shows its current open
+                      work count so nobody gets overloaded by default. */}
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <Avatar className="h-4 w-4">
+                      <AvatarFallback
+                        className="text-[8px] font-semibold"
+                        style={task.assigneeId != null ? avatarStyle(task.assigneeId) : undefined}
+                      >
+                        <span className="sr-only">{task.assigneeName ?? 'Unassigned'}</span>
+                        <span aria-hidden>{assigneeInitials ?? '–'}</span>
+                      </AvatarFallback>
+                    </Avatar>
+                    <Select
+                      value={task.assigneeId != null ? String(task.assigneeId) : 'none'}
+                      onValueChange={(v) => void assignTo(v === 'none' ? null : Number(v))}
+                      disabled={assignBusy}
+                    >
+                      <SelectTrigger
+                        className="h-6 w-auto gap-1 border-none px-1 text-xs shadow-none"
+                        aria-label="Assign task"
+                        data-testid="task-assign-select"
+                      >
+                        <SelectValue placeholder="Unassigned" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Unassigned</SelectItem>
+                        {detail.assignableStaff.map((s) => (
+                          <SelectItem key={s.id} value={String(s.id)}>
+                            {s.name} ({s.openCount} open)
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </span>
                 </div>
               </SheetDescription>
             </SheetHeader>

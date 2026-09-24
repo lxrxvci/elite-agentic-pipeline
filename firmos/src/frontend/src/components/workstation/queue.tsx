@@ -1,17 +1,20 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   BookmarkPlus,
   Check,
   ChevronDown,
   Crosshair,
   Keyboard,
+  Lock,
   Search,
   Undo2,
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { LANE_STAGE_LABEL } from '@firmos/domain'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -36,6 +39,7 @@ import {
   type SavedView,
 } from './saved-views'
 import { CheckDraw } from './check-draw'
+import { RequestOverrideDialog } from './request-override-dialog'
 import { TaskDrawer } from './task-drawer'
 import {
   KIND_META,
@@ -220,6 +224,10 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
   const [drawerCard, setDrawerCard] = useState<WorkCard | null>(null)
   // Focus mode: collapse the queue to the single next card (view mode only).
   const [focusMode, setFocusMode] = useState(false)
+  // Bumper lanes (D7): the card an override is being requested for.
+  const [overrideCard, setOverrideCard] = useState<WorkCard | null>(null)
+
+  const router = useRouter()
 
   const searchRef = useRef<HTMLInputElement>(null)
   const [storageHydrated, setStorageHydrated] = useState(false)
@@ -577,6 +585,10 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
 
   const bucketsToRender = BUCKET_ORDER.filter((b) => visibleByBucket.has(b))
 
+  // Bumper lanes (D6/D8): the header chip names the active client + stage.
+  const lane = queue.bumperLanes
+  const cursorCard = flatVisible[cursor]
+
   return (
     <div className="space-y-5 pb-10">
       {/* Header: title + the one green primary action (FreshBooks action
@@ -589,18 +601,36 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
           <p className="text-xs text-muted-foreground">
             One queue of everything due across every client.
           </p>
+          {lane.enabled && (
+            <p
+              data-testid="bumper-lanes-chip"
+              className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-status-on-hold-bg px-2.5 py-0.5 text-[11px] font-semibold text-status-on-hold"
+            >
+              <Lock className="h-3 w-3" aria-hidden />
+              Bumper lanes
+              {lane.activeClientName != null && lane.activeStage != null && (
+                <span className="font-medium">
+                  · {lane.activeClientName} · {LANE_STAGE_LABEL[lane.activeStage]}
+                </span>
+              )}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-stretch">
             <button
               type="button"
               data-testid="complete-next"
-              disabled={flatVisible.length === 0}
+              disabled={flatVisible.length === 0 || cursorCard?.laneLocked === true}
               onClick={() => {
                 const next = flatVisible[cursor]
                 if (next) void complete(next)
               }}
-              title="Complete the selected card (E)"
+              title={
+                cursorCard?.laneLocked === true
+                  ? (cursorCard.laneLockReason ?? 'Locked by bumper lanes')
+                  : 'Complete the selected card (E)'
+              }
               className="flex h-8 items-center gap-1.5 rounded-l-md bg-firm-action px-3 text-xs font-semibold text-firm-action-foreground shadow-sm transition-colors duration-150 hover:bg-firm-action-strong disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Check className="h-3.5 w-3.5" aria-hidden />
@@ -1035,6 +1065,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
               }
               onSelect={handleCardSelect}
               onComplete={handleCardComplete}
+              onRequestOverride={setOverrideCard}
             />
             <div className="flex items-center justify-end gap-2">
               <Button
@@ -1052,9 +1083,14 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
               <button
                 type="button"
                 data-testid="focus-next"
+                disabled={flatVisible[cursor]?.laneLocked === true}
                 onClick={() => void complete(flatVisible[cursor])}
-                title="Complete and move to the next card (E)"
-                className="flex h-8 items-center gap-1.5 rounded-md bg-firm-action px-3 text-xs font-semibold text-firm-action-foreground shadow-sm transition-colors duration-150 hover:bg-firm-action-strong"
+                title={
+                  flatVisible[cursor]?.laneLocked === true
+                    ? (flatVisible[cursor].laneLockReason ?? 'Locked by bumper lanes')
+                    : 'Complete and move to the next card (E)'
+                }
+                className="flex h-8 items-center gap-1.5 rounded-md bg-firm-action px-3 text-xs font-semibold text-firm-action-foreground shadow-sm transition-colors duration-150 hover:bg-firm-action-strong disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Check className="h-3.5 w-3.5" aria-hidden />
                 Next
@@ -1103,6 +1139,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
                         }
                         onSelect={handleCardSelect}
                         onComplete={handleCardComplete}
+                        onRequestOverride={setOverrideCard}
                       />
                     )
                   })}
@@ -1135,6 +1172,15 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
         onToggleComplete={(completed) => {
           if (drawerCard) drawerToggleComplete(drawerCard, completed)
         }}
+      />
+
+      <RequestOverrideDialog
+        card={overrideCard}
+        open={overrideCard != null}
+        onOpenChange={(open) => {
+          if (!open) setOverrideCard(null)
+        }}
+        onRequested={() => router.refresh()}
       />
     </div>
   )

@@ -19,6 +19,7 @@ import {
   invoices,
   projects,
   projectTasks,
+  recurringTasks,
   tasks,
   users,
   weeklyBankFeeds,
@@ -724,6 +725,97 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
     const contactIds = detail!.contacts.map((c) => c.contactId);
     expect(detail!.contacts).toHaveLength(4); // shared + three more
     for (const c of [shared, ...extraContacts]) expect(contactIds).toContain(c.id);
+  });
+
+  // Scenario 10 (G3, 02:17:18) - Taiwan Restoration: a MONTHLY client with an
+  // ANNUAL task must render both the monthly blocks and the annual block, each
+  // in the right column. The annual rule's instance attributes backwards
+  // (domain RULE 2: quarterly/semi-annual/annual always attribute to the
+  // prior month), so the annual block belongs to the prior December column -
+  // never smeared into January or dropped from the board.
+  it("recurring_rollup_monthly_client_with_annual_task_shows_both", async () => {
+    const [client] = await db
+      .insert(clients)
+      .values({
+        legalName: "Taiwan Restoration Fixture",
+        bookkeepingFrequency: "monthly",
+        monthlyCloseTier: "15",
+        bookkeepingStartDate: "2026-01-01",
+      })
+      .returning();
+
+    const [monthlyRule] = await db
+      .insert(recurringTasks)
+      .values({
+        clientId: client.id,
+        title: "Monthly close work",
+        scheduleType: "monthly",
+        dayOfMonth: 15,
+        nextRun: "2026-01-15",
+      })
+      .returning();
+    const [annualRule] = await db
+      .insert(recurringTasks)
+      .values({
+        clientId: client.id,
+        title: "Annual tax filing",
+        scheduleType: "annual",
+        dayOfMonth: 15,
+        anchorMonth: 1,
+        nextRun: "2026-01-15",
+      })
+      .returning();
+
+    const { runRecurringOnce } = await import("@/server/recurring");
+    const summary = await runRecurringOnce(TEST_TODAY);
+    expect(summary.tasksCreated).toBeGreaterThan(0);
+
+    // Generation: the monthly rule made one instance per due month through
+    // today (Jan 15 - Aug 15); the annual rule made exactly one.
+    const monthlyInstances = await db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.recurringTaskId, monthlyRule.id));
+    const annualInstances = await db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.recurringTaskId, annualRule.id));
+    expect(monthlyInstances).toHaveLength(8);
+    expect(annualInstances).toHaveLength(1);
+    // The annual task attributes BACKWARDS: due Jan 15 2026 -> the December
+    // 2025 column (the 2025 annual block), per RULE 2.
+    expect(annualInstances[0]).toMatchObject({ attributedYear: 2025, attributedMonth: 12 });
+
+    // The queue shows both blocks for the client: the current monthly close
+    // AND the annual filing (overdue since January).
+    const queue = await getUnifiedQueue(ownerId, TEST_TODAY);
+    const cards = Object.values(queue.buckets)
+      .flat()
+      .filter((c) => c.clientId === client.id);
+    const monthlyCard = cards.find((c) => c.title === "Monthly close work");
+    const annualCard = cards.find((c) => c.title === "Annual tax filing");
+    expect(monthlyCard).toBeDefined();
+    expect(annualCard).toBeDefined();
+    expect(annualCard).toMatchObject({ attributedYear: 2025, attributedMonth: 12 });
+
+    // The 2025 board column: December carries BOTH blocks (the Dec monthly
+    // close + the annual filing); January carries neither - the annual block
+    // is not smeared across the year.
+    const grid2025 = await getClientYearGrid(client.id, 2025, TEST_TODAY);
+    const tasksRow2025 = grid2025!.rows.find((r) => r.stream === "tasks")!;
+    const dec2025 = tasksRow2025.cells.find((c) => c.month === 12)!;
+    expect(dec2025.total).toBe(2);
+    expect(tasksRow2025.cells.find((c) => c.month === 1)!.total).toBe(0);
+
+    // The 2026 board: the monthly blocks render Jan-Jul; December 2026 has no
+    // annual block yet (its instance generates when the 2027-01-15 due date
+    // arrives - the annual task never double-renders into the current year).
+    const grid2026 = await getClientYearGrid(client.id, 2026, TEST_TODAY);
+    const tasksRow2026 = grid2026!.rows.find((r) => r.stream === "tasks")!;
+    for (let month = 1; month <= 7; month++) {
+      expect(tasksRow2026.cells.find((c) => c.month === month)!.total).toBe(1);
+    }
+    expect(tasksRow2026.cells.find((c) => c.month === 12)!.total).toBe(0);
   });
 
   // The intake fixture helper stays honest: a converted intake links its client.

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { requireStaff } from "@/server/auth/guards";
-import { addTaskNote, getTaskDetail, setSubtaskCompleted, type TaskDetail } from "@/server/task-detail";
+import { addTaskNote, assignTask, getTaskDetail, setSubtaskCompleted, type TaskDetail } from "@/server/task-detail";
 
 /**
  * Task drawer server actions (workstation detail surface). All staff-level:
@@ -50,6 +50,21 @@ export async function addTaskNoteAction(
     const note = await addTaskNote(taskId, body, user.id);
     revalidatePath("/workstation");
     return { ok: true, data: { noteId: note.id } };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** E13: assign/reassign from the drawer; the options carry open-work counts. */
+export async function assignTaskAction(
+  taskId: number,
+  assigneeId: number | null,
+): Promise<ActionResult<{ assigneeId: number | null }>> {
+  try {
+    const user = await requireStaff();
+    const updated = await assignTask(taskId, assigneeId, user.id);
+    revalidatePath("/workstation");
+    return { ok: true, data: { assigneeId: updated.assigneeId } };
   } catch (error) {
     return fail(error);
   }

@@ -131,10 +131,10 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // ── Assign the team from the client record (the new admin flow) ──
   await page.getByTestId('manager-select').click()
   await page.getByRole('option', { name: 'Dana Whitfield' }).click()
-  await expect(page.getByTestId('manager-select')).toHaveText('Dana Whitfield')
+  await expect(page.getByTestId('manager-select')).toContainText('Dana Whitfield')
   await page.getByTestId('bookkeeper-select').click()
   await page.getByRole('option', { name: 'Jorge Medina' }).click()
-  await expect(page.getByTestId('bookkeeper-select')).toHaveText('Jorge Medina')
+  await expect(page.getByTestId('bookkeeper-select')).toContainText('Jorge Medina')
 
   // Revalidation swaps the placeholders for the assigned avatars.
   await expect(page.getByTestId('unassigned-manager')).toHaveCount(0)

@@ -13,7 +13,8 @@
  *  - client-state.ts    the four work states and eligibility predicates (§6.2)
  *  - work-item-state.ts completion transition, sync dispatch, due dates (§6.3)
  *  - recurring.ts       schedule math, billing quantities, gating (§6.4)
- *  - time.ts            wall-clock interval union/subtraction (§6.6)
+ *  - time.ts            wall-clock interval union/subtraction (§6.6), break typing
+ *  - bumper-lanes.ts    per-employee sequential lane ordering + locking (D6/D8)
  *  - commission.ts      on-time tiers, semi-monthly payroll, payout (§6.6/§15)
  *  - health.ts          client health scoring (§21)
  *  - quote.ts           PRICING table + calculate_quote (§15)
@@ -26,6 +27,7 @@ export * from "./client-state.ts";
 export * from "./work-item-state.ts";
 export * from "./recurring.ts";
 export * from "./time.ts";
+export * from "./bumper-lanes.ts";
 export * from "./commission.ts";
 export * from "./health.ts";
 export * from "./quote.ts";

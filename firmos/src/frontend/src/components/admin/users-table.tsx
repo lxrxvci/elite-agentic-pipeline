@@ -49,6 +49,14 @@ const PERMISSION_FLAGS = [
   { key: 'canEditTaxTemplates', label: 'Tax', full: 'Edit tax templates' },
 ] as const
 
+/** D6/D8: bumper lanes live outside the four delegated permission flags -
+ *  they enforce workflow order, not access. */
+const LANE_FLAG = {
+  key: 'bumperLanesEnabled',
+  label: 'Lanes',
+  full: 'Bumper lanes: workstation serves one client at a time, in the firm order',
+} as const
+
 interface UsersTableProps {
   rows: AdminStaffRow[]
   managers: ManagerOption[]
@@ -67,6 +75,7 @@ interface RowDraft {
   canEditTaskTemplates: boolean
   canEditSops: boolean
   canEditTaxTemplates: boolean
+  bumperLanesEnabled: boolean
 }
 
 function toDraft(row: AdminStaffRow): RowDraft {
@@ -81,6 +90,7 @@ function toDraft(row: AdminStaffRow): RowDraft {
     canEditTaskTemplates: row.canEditTaskTemplates,
     canEditSops: row.canEditSops,
     canEditTaxTemplates: row.canEditTaxTemplates,
+    bumperLanesEnabled: row.bumperLanesEnabled,
   }
 }
 
@@ -121,6 +131,7 @@ export function UsersTable({ rows, managers, viewerId }: UsersTableProps) {
         canEditTaskTemplates: draft.canEditTaskTemplates,
         canEditSops: draft.canEditSops,
         canEditTaxTemplates: draft.canEditTaxTemplates,
+        bumperLanesEnabled: draft.bumperLanesEnabled,
       }
       const res = await updateStaffUserAction(row.id, patch)
       if (!res.ok) {
@@ -238,6 +249,22 @@ export function UsersTable({ rows, managers, viewerId }: UsersTableProps) {
                         <TooltipContent>{flag.full}</TooltipContent>
                       </Tooltip>
                     ))}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="flex items-center gap-1 border-l border-border pl-2.5">
+                          <Checkbox
+                            checked={draft.bumperLanesEnabled}
+                            onCheckedChange={(v) =>
+                              patchDraft(row.id, { bumperLanesEnabled: v === true })
+                            }
+                            aria-label={`${LANE_FLAG.full}: ${row.name}`}
+                            data-testid="bumper-lanes-toggle"
+                          />
+                          <span className="text-[11px] text-muted-foreground">{LANE_FLAG.label}</span>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{LANE_FLAG.full}</TooltipContent>
+                    </Tooltip>
                   </div>
                 </TableCell>
                 <TableCell className="px-3 py-2 text-right">

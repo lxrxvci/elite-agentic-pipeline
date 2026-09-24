@@ -68,7 +68,12 @@ test('progress: owner lands on the board, filters, and drills into a client', as
   await expect(behindCell).toBeVisible()
   await behindCell.hover()
   await expect(page.getByRole('tooltip')).toBeVisible()
+  // D12/D9: clicking the cell opens a detail overlay in place; navigation
+  // happens one click deeper, from the link inside the popover.
   await behindCell.click()
+  const popover = page.getByTestId('cell-popover')
+  await expect(popover).toBeVisible()
+  await popover.getByRole('link', { name: /work tab/ }).click()
   await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname), { timeout: 15_000 })
   expect(new URL(page.url()).searchParams.get('tab')).toBe('work')
 })

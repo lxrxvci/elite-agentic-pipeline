@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { appSettings, auditEvents, feedback, users, userWorkingHours } from "@/db/schema";
 
 import { getPurgatoryQueue } from "./approvals";
+import { listPendingBumperOverrides } from "./bumper-lanes";
 import { getPayoutConfig, type PayrollConfig } from "./payroll";
 import { listTimeEditRequests } from "./time-edits";
 import { maxClockInHours } from "./time-tracking";
@@ -38,6 +39,8 @@ export interface AdminStaffRow {
   canEditTaskTemplates: boolean;
   canEditSops: boolean;
   canEditTaxTemplates: boolean;
+  /** D6/D8 - the per-employee sequential-enforcement flag. */
+  bumperLanesEnabled: boolean;
 }
 
 /** Staff logins (portal roles excluded) with the manager name resolved. */
@@ -61,6 +64,7 @@ export async function listStaffForAdmin(): Promise<AdminStaffRow[]> {
       canEditTaskTemplates: u.canEditTaskTemplates,
       canEditSops: u.canEditSops,
       canEditTaxTemplates: u.canEditTaxTemplates,
+      bumperLanesEnabled: u.bumperLanesEnabled,
     }));
 }
 
@@ -89,7 +93,8 @@ export type AdminQueueGroup =
   | "reset"
   | "portal_change"
   | "working_hours"
-  | "time_edit";
+  | "time_edit"
+  | "bumper_override";
 
 export interface AdminQueueItem {
   group: AdminQueueGroup;
@@ -110,10 +115,11 @@ export interface AdminQueueItem {
  * time-edit requests, normalized to one shape for the admin surface.
  */
 export async function getAdminApprovalsQueue(): Promise<AdminQueueItem[]> {
-  const [purgatory, workingHours, timeEdits] = await Promise.all([
+  const [purgatory, workingHours, timeEdits, bumperOverrides] = await Promise.all([
     getPurgatoryQueue(),
     db.select().from(userWorkingHours).where(eq(userWorkingHours.status, "pending")),
     listTimeEditRequests("pending"),
+    listPendingBumperOverrides(),
   ]);
 
   const userIds = [
@@ -158,6 +164,15 @@ export async function getAdminApprovalsQueue(): Promise<AdminQueueItem[]> {
         (t.reason ? `${t.reason} ` : "") +
         `(${t.requestedStartedAt.toISOString()} -> ${t.requestedEndedAt?.toISOString() ?? "open"})`,
       createdAt: t.createdAt,
+    })),
+    ...bumperOverrides.map((b) => ({
+      group: "bumper_override" as const,
+      id: b.id,
+      requestedById: b.requestedById,
+      requesterName: b.requesterName,
+      target: `${b.clientName} - ${b.cardLabel}`,
+      detail: b.reason,
+      createdAt: b.createdAt,
     })),
   ];
   items.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());

@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 
 import type { CommissionRow } from '@/server/payroll'
@@ -68,5 +69,44 @@ describe('CommissionTable on-time progress bar', () => {
     const lee = rowFor('Lee Baker')
     expect(lee.queryByTestId('on-time-progress')).not.toBeInTheDocument()
     expect(lee.getByText('No data')).toBeInTheDocument()
+  })
+
+  it('columns sort asc/desc with aria-sort (D11), no-data on-time always last', async () => {
+    const user = userEvent.setup()
+    render(<CommissionTable rows={rows} />)
+
+    const names = () =>
+      screen.getAllByTestId('commission-row').map((r) => r.textContent ?? '')
+
+    // Default: commission, descending.
+    expect(names()[0]).toContain('Jorge Medina')
+
+    // New column starts desc; repeat click flips to asc.
+    await user.click(screen.getByTestId('sort-rate'))
+    expect(screen.getByTestId('sort-rate').closest('th')).toHaveAttribute(
+      'aria-sort',
+      'descending',
+    )
+    expect(names()[0]).toContain('Sam Ortega') // rate 50
+    await user.click(screen.getByTestId('sort-rate'))
+    expect(screen.getByTestId('sort-rate').closest('th')).toHaveAttribute(
+      'aria-sort',
+      'ascending',
+    )
+    expect(names()[0]).toContain('Lee Baker') // rate 35
+
+    // On-time: the null (no-data) row stays last in both directions.
+    await user.click(screen.getByTestId('sort-onTime'))
+    expect(names()[names().length - 1]).toContain('Lee Baker')
+    await user.click(screen.getByTestId('sort-onTime'))
+    expect(names()[names().length - 1]).toContain('Lee Baker')
+
+    // Name starts asc on first click.
+    await user.click(screen.getByTestId('sort-bookkeeper'))
+    expect(screen.getByTestId('sort-bookkeeper').closest('th')).toHaveAttribute(
+      'aria-sort',
+      'ascending',
+    )
+    expect(names()[0]).toContain('Jorge Medina')
   })
 })

@@ -13,6 +13,7 @@ import {
   reviewPurgeAction,
   reviewResetAction,
   reviewWorkingHoursAction,
+  reviewBumperOverrideAction,
 } from '@/server/actions/approvals'
 import { reviewTimeEditAction } from '@/server/actions/time'
 import type { ActionResult } from '@/server/actions/approvals'
@@ -21,12 +22,12 @@ import { cn } from '@/shared/lib/utils'
 
 /**
  * /admin/purgatory - the pending approvals queue (HANDOFF §22 + the §29
- * reset fix): pause, purge, reset, portal-change, working-hours, and
- * time-edit requests in groups. Approve/reject call the approvals engine
- * actions; the engine enforces the four-eyes rule server-side and this
- * surface mirrors it by disabling Approve for the requester (with the reason
- * in a tooltip). Purge/reset are owner-only reviews and destructive -
- * approval arms an inline confirm first.
+ * reset fix): pause, purge, reset, portal-change, working-hours, time-edit,
+ * and bumper-lane-override requests in groups. Approve/reject call the
+ * approvals engine actions; the engine enforces the four-eyes rule
+ * server-side and this surface mirrors it by disabling Approve for the
+ * requester (with the reason in a tooltip). Purge/reset are owner-only
+ * reviews and destructive - approval arms an inline confirm first.
  */
 
 interface GroupMeta {
@@ -82,6 +83,14 @@ const GROUP_META: Record<AdminQueueGroup, GroupMeta> = {
     ownerOnly: false,
     destructive: false,
   },
+  bumper_override: {
+    title: 'Bumper-lane overrides',
+    description:
+      'Locked-card override requests; approval unlocks that one card for 24 hours.',
+    review: (id, approve) => reviewBumperOverrideAction(id, approve),
+    ownerOnly: false,
+    destructive: false,
+  },
 }
 
 const GROUP_ORDER: AdminQueueGroup[] = [
@@ -91,6 +100,7 @@ const GROUP_ORDER: AdminQueueGroup[] = [
   'portal_change',
   'working_hours',
   'time_edit',
+  'bumper_override',
 ]
 
 interface PurgatoryQueueProps {
@@ -202,8 +212,8 @@ export function PurgatoryQueue({ items: initialItems, viewer }: PurgatoryQueuePr
         </span>
         <h3 className="mt-4 text-sm font-semibold text-foreground">Nothing pending review</h3>
         <p className="mt-1 max-w-sm text-[13px] text-muted-foreground">
-          Pause, purge, reset, portal-change, working-hours, and time-edit requests land here
-          when staff submit them.
+          Pause, purge, reset, portal-change, working-hours, time-edit, and bumper-lane-override
+          requests land here when staff submit them.
         </p>
       </div>
     )

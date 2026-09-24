@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -89,6 +89,27 @@ describe('YearGrid render matrix', () => {
       expect(el).toHaveAttribute('data-stream', 'bank_feeds')
       expect(el).toHaveAttribute('data-month', `2026-${c.month}`)
     }
+  })
+
+  it('flags cells with incomplete items and names the count (D10)', () => {
+    const grid = makeYearGrid({
+      rows: [
+        { stream: 'bank_feeds', cells: matrix.map(([, c]) => c) },
+        ...makeYearGrid().rows.filter((r) => r.stream !== 'bank_feeds'),
+      ],
+    })
+    renderGrid({ grid })
+
+    // behind (1 of 4) and in progress (2 of 4) flag; complete/not_due/no_work don't.
+    const behind = screen.getByLabelText(/Bank feeds, Mar 2026: Behind/)
+    expect(within(behind).getByTestId('year-grid-cell-flag')).toBeInTheDocument()
+    expect(behind.getAttribute('aria-label')).toContain('3 incomplete')
+    const inProgress = screen.getByLabelText(/Bank feeds, Feb 2026: In progress/)
+    expect(within(inProgress).getByTestId('year-grid-cell-flag')).toBeInTheDocument()
+    const complete = screen.getByLabelText(/Bank feeds, Jan 2026: Complete/)
+    expect(within(complete).queryByTestId('year-grid-cell-flag')).not.toBeInTheDocument()
+    const notDue = screen.getByLabelText(/Bank feeds, May 2026: Not due yet/)
+    expect(within(notDue).queryByTestId('year-grid-cell-flag')).not.toBeInTheDocument()
   })
 
   it('renders one cell per stream x column, with stream row labels', () => {

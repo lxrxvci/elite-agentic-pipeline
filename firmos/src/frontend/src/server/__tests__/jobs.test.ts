@@ -586,7 +586,7 @@ describe.skipIf(!reachable)("background jobs (HANDOFF §9, §16)", () => {
 
     const results = await schedulerTick(at(19, 7, 5));
     const names = results.map((r) => r.name).sort();
-    expect(names).toEqual(["deferred-push", "mention-sms", "overdue-check", "stale-cleanup"]);
+    expect(names).toEqual(["deferred-push", "mention-sms", "not-clocked-in-alert", "overdue-check", "stale-cleanup"]);
     expect(results.every((r) => r.ok)).toBe(true);
     expect(await getLastRan("overdue-check")).toEqual(at(19, 7, 5));
 
@@ -595,6 +595,7 @@ describe.skipIf(!reachable)("background jobs (HANDOFF §9, §16)", () => {
     expect(again.map((r) => r.name).sort()).toEqual([
       "deferred-push",
       "mention-sms",
+      "not-clocked-in-alert",
       "stale-cleanup",
     ]);
   });
@@ -607,6 +608,7 @@ describe.skipIf(!reachable)("background jobs (HANDOFF §9, §16)", () => {
       "deferred-push",
       "materialize",
       "mention-sms",
+      "not-clocked-in-alert",
       "recurring",
       "resync-recurring",
       "stale-cleanup",
@@ -622,6 +624,7 @@ describe.skipIf(!reachable)("background jobs (HANDOFF §9, §16)", () => {
     expect(tick.map((r) => r.name).sort()).toEqual([
       "deferred-push",
       "mention-sms",
+      "not-clocked-in-alert",
       "stale-cleanup",
     ]);
 

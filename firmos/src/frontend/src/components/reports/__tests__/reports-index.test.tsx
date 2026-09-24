@@ -31,6 +31,7 @@ describe('visibleReportLinks', () => {
       '/reports/my-hours',
       '/reports/hours',
       '/reports/capacity',
+      '/reports/team',
       '/reports/commission',
       '/reports/profitability',
       '/reports/tax',
@@ -53,8 +54,9 @@ describe('ReportsIndex', () => {
 
   it('renders the admin set', () => {
     render(<ReportsIndex role="owner" />)
-    expect(screen.getAllByRole('link')).toHaveLength(8)
+    expect(screen.getAllByRole('link')).toHaveLength(9)
     expect(screen.getByText('Staff capacity')).toBeInTheDocument()
+    expect(screen.getByText('Team overview')).toBeInTheDocument()
     expect(screen.getByText('Payroll')).toBeInTheDocument()
     expect(screen.getByText('Profitability')).toBeInTheDocument()
     expect(screen.getByText('Time edit requests')).toBeInTheDocument()

@@ -431,3 +431,240 @@ export async function getCapacityReport(opts: {
     rows,
   };
 }
+
+// ── Team overview breakouts (G5, 02:20:15) ────────────────────────────────
+
+/**
+ * Per-person completion over a date range (a week by default), broken out by
+ * client tier and cadence. Assignment mirrors the unified queue, exactly like
+ * the capacity grid (tasks -> assignee, feeds/reconciliations -> the client's
+ * bookkeeper, reports -> the client's manager); on-hold clients contribute
+ * nothing (§6.2). A card counts when its due date falls inside [from, to]
+ * (inclusive, ISO-local); "done" means completed.
+ *
+ * Client tier is the legacy free-text `clients.tier` column normalized to
+ * 1/2/3 (anything else, including unset, is "untiered") - there is no
+ * first-class tier model to read instead.
+ */
+
+export type TeamTierKey = "1" | "2" | "3" | "untiered";
+export const TEAM_TIER_KEYS: readonly TeamTierKey[] = ["1", "2", "3", "untiered"];
+
+export type TeamCadenceKey = "monthly" | "quarterly" | "semi_annual" | "annual" | "other";
+export const TEAM_CADENCE_KEYS: readonly TeamCadenceKey[] = [
+  "monthly",
+  "quarterly",
+  "semi_annual",
+  "annual",
+  "other",
+];
+
+export interface TeamOverviewBucket {
+  done: number;
+  total: number;
+}
+
+export interface TeamOverviewRow {
+  userId: number;
+  name: string;
+  role: string;
+  totals: TeamOverviewBucket;
+  byTier: Record<TeamTierKey, TeamOverviewBucket>;
+  byCadence: Record<TeamCadenceKey, TeamOverviewBucket>;
+}
+
+export interface TeamOverviewReport {
+  fromIso: string;
+  toIso: string;
+  scope: "all_staff" | "direct_reports";
+  rows: TeamOverviewRow[];
+}
+
+/** "Tier 2" / "2" / "tier_3" -> the digit; anything else -> untiered. */
+export function tierKeyOf(raw: string | null): TeamTierKey {
+  if (raw == null) return "untiered";
+  const match = /([123])/.exec(raw);
+  return match != null ? (match[1] as TeamTierKey) : "untiered";
+}
+
+function cadenceKeyOf(frequency: string): TeamCadenceKey {
+  return (TEAM_CADENCE_KEYS as readonly string[]).includes(frequency)
+    ? (frequency as TeamCadenceKey)
+    : "other";
+}
+
+const EMPTY_BUCKETS = <K extends string>(keys: readonly K[]): Record<K, TeamOverviewBucket> =>
+  Object.fromEntries(keys.map((k) => [k, { done: 0, total: 0 }])) as Record<K, TeamOverviewBucket>;
+
+export async function getTeamOverviewReport(opts: {
+  requesterId: number;
+  requesterRole: UserRole;
+  /** Inclusive ISO-local bounds. */
+  fromIso: string;
+  toIso: string;
+}): Promise<TeamOverviewReport> {
+  const { requesterId, requesterRole, fromIso, toIso } = opts;
+  if (requesterRole !== "owner" && requesterRole !== "admin" && requesterRole !== "manager") {
+    throw new CapacityError(403, "Team overview reporting requires the manager role or above");
+  }
+  if (!(fromIso <= toIso)) throw new CapacityError(403, "from must not be after to");
+
+  const staffRows = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.isActive, true), inArray(users.role, [...STAFF_ROLES])))
+    .orderBy(asc(users.firstName), asc(users.lastName));
+  const visible =
+    requesterRole === "manager"
+      ? staffRows.filter((u) => u.id === requesterId || u.managerId === requesterId)
+      : staffRows;
+  const visibleIds = new Set(visible.map((u) => u.id));
+
+  const [clientRows, taskRows, feedRows, reconRows, reportRows] = await Promise.all([
+    db.select().from(clients),
+    db
+      .select()
+      .from(tasks)
+      .where(and(isNull(tasks.deletedAt), notInArray(tasks.status, ["cancelled"]))),
+    db.select().from(weeklyBankFeeds),
+    db.select().from(accountReconciliations),
+    db.select().from(clientReports),
+  ]);
+
+  const scoring = clientRows.filter((c) => countsForScoring(toDomainClient(c)));
+  const clientById = new Map(scoring.map((c) => [c.id, c]));
+
+  interface OverviewCard {
+    assigneeId: number | null;
+    tier: TeamTierKey;
+    cadence: TeamCadenceKey;
+    done: boolean;
+  }
+  const cards: OverviewCard[] = [];
+  const push = (
+    clientId: number,
+    assigneeId: number | null,
+    dueDate: string | null,
+    done: boolean,
+  ) => {
+    const client = clientById.get(clientId);
+    if (!client) return;
+    if (dueDate == null || dueDate < fromIso || dueDate > toIso) return;
+    cards.push({
+      assigneeId,
+      tier: tierKeyOf(client.tier),
+      cadence: cadenceKeyOf(client.bookkeepingFrequency),
+      done,
+    });
+  };
+  for (const t of taskRows) {
+    if (t.clientId == null) continue;
+    push(t.clientId, t.assigneeId, t.dueDate, t.status === "completed");
+  }
+  for (const f of feedRows) push(f.clientId, clientById.get(f.clientId)?.bookkeeperId ?? null, f.dueDate, f.completedAt != null);
+  for (const r of reconRows) push(r.clientId, clientById.get(r.clientId)?.bookkeeperId ?? null, r.dueDate, r.completedAt != null);
+  for (const r of reportRows) push(r.clientId, clientById.get(r.clientId)?.managerId ?? null, r.dueDate, r.completedAt != null);
+
+  const rows: TeamOverviewRow[] = visible.map((u) => {
+    const mine = cards.filter((c) => c.assigneeId === u.id);
+    const byTier = EMPTY_BUCKETS(TEAM_TIER_KEYS);
+    const byCadence = EMPTY_BUCKETS(TEAM_CADENCE_KEYS);
+    const totals = { done: 0, total: 0 };
+    for (const card of mine) {
+      totals.total += 1;
+      byTier[card.tier].total += 1;
+      byCadence[card.cadence].total += 1;
+      if (card.done) {
+        totals.done += 1;
+        byTier[card.tier].done += 1;
+        byCadence[card.cadence].done += 1;
+      }
+    }
+    return {
+      userId: u.id,
+      name: `${u.firstName} ${u.lastName}`,
+      role: u.role,
+      totals,
+      byTier,
+      byCadence,
+    };
+  });
+
+  return {
+    fromIso,
+    toIso,
+    scope: requesterRole === "manager" ? "direct_reports" : "all_staff",
+    rows,
+  };
+}
+
+// ── Assignment workload (E13, 01:15:16) ───────────────────────────────────
+
+export interface StaffOpenWorkCount {
+  userId: number;
+  name: string;
+  role: string;
+  /** Open assigned cards across all four kinds (queue assignment rules). */
+  openCount: number;
+}
+
+/**
+ * One shared, batched read for assignment surfaces ("don't overload one
+ * person"): every active staff member with their current count of OPEN
+ * assigned work - tasks by assignee, feeds/reconciliations by the client's
+ * bookkeeper, reports by the client's manager, on-hold clients excluded
+ * (same mirror as the queue and the capacity grid). Four table reads total;
+ * never per-staff queries.
+ */
+export async function getStaffOpenWorkCounts(): Promise<StaffOpenWorkCount[]> {
+  const [staffRows, clientRows, taskRows, feedRows, reconRows, reportRows] = await Promise.all([
+    db
+      .select()
+      .from(users)
+      .where(and(eq(users.isActive, true), inArray(users.role, [...STAFF_ROLES])))
+      .orderBy(asc(users.firstName), asc(users.lastName)),
+    db.select().from(clients),
+    db
+      .select()
+      .from(tasks)
+      .where(and(isNull(tasks.deletedAt), notInArray(tasks.status, ["cancelled", "completed"]))),
+    db.select().from(weeklyBankFeeds).where(isNull(weeklyBankFeeds.completedAt)),
+    db.select().from(accountReconciliations).where(isNull(accountReconciliations.completedAt)),
+    db.select().from(clientReports).where(isNull(clientReports.completedAt)),
+  ]);
+
+  const scoring = clientRows.filter((c) => countsForScoring(toDomainClient(c)));
+  const clientById = new Map(scoring.map((c) => [c.id, c]));
+
+  const counts = new Map<number, number>();
+  const bump = (assigneeId: number | null) => {
+    if (assigneeId == null) return;
+    counts.set(assigneeId, (counts.get(assigneeId) ?? 0) + 1);
+  };
+  for (const t of taskRows) {
+    if (t.clientId == null || !clientById.has(t.clientId)) continue;
+    bump(t.assigneeId);
+  }
+  for (const f of feedRows) {
+    const client = clientById.get(f.clientId);
+    if (!client) continue;
+    bump(client.bookkeeperId);
+  }
+  for (const r of reconRows) {
+    const client = clientById.get(r.clientId);
+    if (!client) continue;
+    bump(client.bookkeeperId);
+  }
+  for (const r of reportRows) {
+    const client = clientById.get(r.clientId);
+    if (!client) continue;
+    bump(client.managerId);
+  }
+
+  return staffRows.map((u) => ({
+    userId: u.id,
+    name: `${u.firstName} ${u.lastName}`,
+    role: u.role,
+    openCount: counts.get(u.id) ?? 0,
+  }));
+}

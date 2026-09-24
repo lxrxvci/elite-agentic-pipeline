@@ -9,6 +9,7 @@ import {
   dueSoonCheckJob,
   materializeJob,
   mentionEscalationJob,
+  notClockedInAlertJob,
   overdueCheckJob,
   recurringJob,
   resyncRecurringJob,
@@ -47,7 +48,8 @@ export type JobName =
   | "bank-feed-alerts"
   | "statement-overdue"
   | "mention-sms"
-  | "deferred-push";
+  | "deferred-push"
+  | "not-clocked-in-alert";
 
 export type JobSchedule =
   | { kind: "every_tick" } // the loop's 5-minute cadence
@@ -80,6 +82,9 @@ export const JOB_SCHEDULE: readonly JobDefinition[] = [
   { name: "statement-overdue", run: statementOverdueJob, schedule: { kind: "daily", hour: 7, minute: 30 }, startup: "seed_yesterday" },
   { name: "mention-sms", run: mentionEscalationJob, schedule: { kind: "every_tick" }, startup: "run" },
   { name: "deferred-push", run: deferredPushJob, schedule: { kind: "every_tick" }, startup: "run" },
+  // F4: the check is cheap (three reads) and self-dedups per user/day; the
+  // alert window logic inside gates it to weekdays after start+grace.
+  { name: "not-clocked-in-alert", run: notClockedInAlertJob, schedule: { kind: "every_tick" }, startup: "run" },
 ];
 
 export function getJobDefinition(name: string): JobDefinition | undefined {

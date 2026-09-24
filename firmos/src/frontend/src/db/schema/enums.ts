@@ -140,7 +140,9 @@ export const approvalRequestStatusEnum = pgEnum("approval_request_status", [
   "cancelled",
 ]);
 
-// §17 - Workstation activity timers.
+// §17 - Workstation activity timers. F2 (walkthrough 02:08:30): breaks and
+// lunches are first-class activity kinds in paid and unpaid variants; the
+// unpaid pair is what payroll subtracts from the wall-clock union.
 export const workActivityTypeEnum = pgEnum("work_activity_type", [
   "day",
   "bank_feeds",
@@ -150,6 +152,10 @@ export const workActivityTypeEnum = pgEnum("work_activity_type", [
   "reconciliations",
   "projects",
   "tax_checklist",
+  "break_paid",
+  "break_unpaid",
+  "lunch_paid",
+  "lunch_unpaid",
 ]);
 
 // §7 - Contacts and their relationship to clients.

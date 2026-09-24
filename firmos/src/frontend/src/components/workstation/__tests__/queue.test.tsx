@@ -88,6 +88,7 @@ function card(partial: Partial<WorkCard> & Pick<WorkCard, 'kind' | 'id' | 'statu
 
 const queue: UnifiedQueue = {
   today: '2026-08-23',
+  bumperLanes: { enabled: false, activeClientId: null, activeClientName: null, activeStage: null },
   buckets: {
     overdue: [card({ kind: 'bank_feed', id: 1, status: 'overdue', title: 'Bank feed week of 2026-08-17' })],
     due_today: [card({ kind: 'task', id: 2, status: 'due_today', title: 'Close August books', dueDate: '2026-08-23' })],
@@ -319,6 +320,7 @@ describe('Header green action + caught-up state', () => {
   it('renders the celebratory caught-up state when the queue is empty', () => {
     const empty: UnifiedQueue = {
       today: '2026-08-23',
+      bumperLanes: { enabled: false, activeClientId: null, activeClientName: null, activeStage: null },
       buckets: {
         overdue: [],
         due_today: [],

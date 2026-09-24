@@ -1,3 +1,6 @@
+'use client'
+
+import * as React from 'react'
 import Link from 'next/link'
 import { AlertTriangle, Flame } from 'lucide-react'
 
@@ -12,6 +15,8 @@ import {
 import type { CapacityLoad, CapacityReport, CapacityStaffRow } from '@/server/capacity'
 import { dayLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
+
+import { SortableHead, type SortState } from './sortable-head'
 
 /**
  * The capacity grid: rows are staff, columns are weeks. A cell shows the
@@ -74,27 +79,62 @@ function StaffCell({ row }: { row: CapacityStaffRow }) {
   )
 }
 
+type CapacitySortKey = 'name' | 'thisWeek'
+
 export function CapacityGrid({ report }: { report: CapacityReport }) {
   const { rows, weekStartIsos, thresholds } = report
+  // D11: sortable columns - the sensible ones are the member and this
+  // week's open load (clocked hours ride inside the this-week cell).
+  const [sort, setSort] = React.useState<SortState<CapacitySortKey>>({ key: 'name', dir: 'asc' })
+
+  const sorted = React.useMemo(() => {
+    const list = [...rows]
+    list.sort((a, b) => {
+      const cmp =
+        sort.key === 'name'
+          ? a.name.localeCompare(b.name)
+          : a.weeks[0].openCount - b.weeks[0].openCount
+      return sort.dir === 'asc' ? cmp : -cmp
+    })
+    return list
+  }, [rows, sort])
 
   return (
     <div>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="pl-4">Team member</TableHead>
-            {weekStartIsos.map((iso, i) => (
-              <TableHead key={iso} className="text-center">
-                {i === 0 ? 'This week' : `Week of ${dayLabel(iso)}`}
-                <span className="block text-[10px] font-normal text-muted-foreground">
-                  {i === 0 ? `since ${dayLabel(iso)}` : 'open cards due'}
-                </span>
-              </TableHead>
-            ))}
+            <SortableHead
+              label="Team member"
+              sortKey="name"
+              sort={sort}
+              onSort={setSort}
+              defaultDir="asc"
+              className="pl-4"
+            />
+            {weekStartIsos.map((iso, i) =>
+              i === 0 ? (
+                <SortableHead
+                  key={iso}
+                  label="This week"
+                  sortKey="thisWeek"
+                  sort={sort}
+                  onSort={setSort}
+                  className="text-center"
+                />
+              ) : (
+                <TableHead key={iso} className="text-center">
+                  {`Week of ${dayLabel(iso)}`}
+                  <span className="block text-[10px] font-normal text-muted-foreground">
+                    open cards due
+                  </span>
+                </TableHead>
+              ),
+            )}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.length === 0 ? (
+          {sorted.length === 0 ? (
             <TableRow>
               <TableCell
                 colSpan={weekStartIsos.length + 1}
@@ -104,7 +144,7 @@ export function CapacityGrid({ report }: { report: CapacityReport }) {
               </TableCell>
             </TableRow>
           ) : (
-            rows.map((row) => (
+            sorted.map((row) => (
               <TableRow key={row.userId} data-testid="capacity-row">
                 <StaffCell row={row} />
                 {row.weeks.map((cell, i) => (

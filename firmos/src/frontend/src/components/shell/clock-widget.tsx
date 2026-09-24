@@ -215,17 +215,27 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
           {ACTIVITY_TYPES.map((type) => {
             const meta = ACTIVITY_META[type]
             const current = activity?.activityType === type
+            // F2: a separator before the break/lunch kinds keeps the work
+            // timers and the unpaid/paid break timers visually apart.
+            const firstBreak = type === 'break_paid'
             return (
-              <DropdownMenuItem
-                key={type}
-                disabled={busy || current}
-                onSelect={() => void run(() => startActivityAction(type as NonDayActivityType))}
-                className="gap-2"
-              >
-                <meta.Icon aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="flex-1">{meta.label}</span>
-                {current && <Check aria-hidden className="h-3.5 w-3.5 text-status-on-track" />}
-              </DropdownMenuItem>
+              <React.Fragment key={type}>
+                {firstBreak && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Breaks and lunch</DropdownMenuLabel>
+                  </>
+                )}
+                <DropdownMenuItem
+                  disabled={busy || current}
+                  onSelect={() => void run(() => startActivityAction(type as NonDayActivityType))}
+                  className="gap-2"
+                >
+                  <meta.Icon aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="flex-1">{meta.label}</span>
+                  {current && <Check aria-hidden className="h-3.5 w-3.5 text-status-on-track" />}
+                </DropdownMenuItem>
+              </React.Fragment>
             )
           })}
           <DropdownMenuSeparator />

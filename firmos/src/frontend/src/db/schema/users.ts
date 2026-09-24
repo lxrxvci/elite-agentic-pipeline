@@ -12,7 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
-import { userRoleEnum } from "./enums";
+import { approvalRequestStatusEnum, userRoleEnum } from "./enums";
 import { createdAt, updatedAt } from "./shared";
 import { clients, contacts } from "./clients";
 
@@ -75,6 +75,11 @@ export const users = pgTable(
     canEditTaskTemplates: boolean("can_edit_task_templates").notNull().default(false),
     canEditSops: boolean("can_edit_sops").notNull().default(false),
     canEditTaxTemplates: boolean("can_edit_tax_templates").notNull().default(false),
+
+    // D6/D8 (walkthrough 02:02:19): per-employee bumper lanes - when ON, the
+    // workstation serves one client at a time in the firm's kind order and
+    // locks the rest; owner/admin set the flag per employee.
+    bumperLanesEnabled: boolean("bumper_lanes_enabled").notNull().default(false),
 
     // §12 - first-login portal tour; admin can reset it for all portal users.
     tourSeenAt: timestamp("tour_seen_at", { withTimezone: true, mode: "date" }),
@@ -142,4 +147,41 @@ export const authPendingSessions = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("auth_pending_sessions_user_idx").on(t.userId)],
+);
+
+/**
+ * D7/L3 (walkthrough 02:04:39/02:23:11) - bumper-lane override requests.
+ * A bookkeeper asks to complete one lane-locked card early; a manager/admin/
+ * owner approves (four-eyes: never the requester) and the grant is
+ * time-boxed (expires_at = reviewed_at + 24h, stamped at approval). One
+ * pending request per (user, card) at a time.
+ */
+export const bumperLaneOverrideRequests = pgTable(
+  "bumper_lane_override_requests",
+  {
+    id: serial("id").primaryKey(),
+    // The lane-restricted staff member the override belongs to (the requester).
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // The work card: kind is the queue's WorkCardKind (task | bank_feed |
+    // reconciliation | report); work_item_id is the row id within that table.
+    kind: text("kind").notNull(),
+    workItemId: integer("work_item_id").notNull(),
+    clientId: integer("client_id")
+      .notNull()
+      .references((): AnyPgColumn => clients.id, { onDelete: "cascade" }),
+    reason: text("reason"),
+    status: approvalRequestStatusEnum("status").notNull().default("pending"),
+    reviewedById: integer("reviewed_by_id").references((): AnyPgColumn => users.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true, mode: "date" }),
+    // Set at approval: the grant dies 24 hours after review.
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("bumper_lane_override_requests_user_idx").on(t.userId, t.status),
+    index("bumper_lane_override_requests_status_idx").on(t.status),
+  ],
 );

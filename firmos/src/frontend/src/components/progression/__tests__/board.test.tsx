@@ -184,13 +184,72 @@ describe('ProgressionBoard - the firm heatmap', () => {
     expect(offCadence.tagName).toBe('SPAN')
   })
 
-  it('links live cells to the client work tab for the board year', () => {
+  it('opens a detail overlay popover on click instead of navigating away (D12/D9)', async () => {
+    const user = userEvent.setup()
     renderBoard()
     const behind = screen.getByLabelText(/Blue Spruce Landscaping, Mar 2026: Behind/)
-    expect(behind.tagName).toBe('A')
-    expect(behind).toHaveAttribute('href', '/clients/2?tab=work&year=2026')
-    const complete = screen.getByLabelText(/Copperline Coffee Roasters, Mar 2026: Complete/)
-    expect(complete).toHaveAttribute('href', '/clients/3?tab=work&year=2026')
+    // The cell is a button now - the popover owns the detail.
+    expect(behind.tagName).toBe('BUTTON')
+
+    await user.click(behind)
+    const popover = await screen.findByTestId('cell-popover')
+    // Per-kind completion detail: dot/icon + label, never color alone.
+    expect(within(popover).getByText('Bank feeds')).toBeInTheDocument()
+    expect(within(popover).getByText('1 of 4 done, 2 overdue')).toBeInTheDocument()
+    expect(within(popover).getByText('Reconciliations')).toBeInTheDocument()
+    // Navigation is still one click away, from inside the overlay.
+    const link = within(popover).getByRole('link', { name: /Open Blue Spruce Landscaping.s work tab/ })
+    expect(link).toHaveAttribute('href', '/clients/2?tab=work&year=2026')
+  })
+
+  it('flags cells with incomplete items (icon marker, not color alone) (D10)', () => {
+    renderBoard()
+    // Blue Spruce Mar: behind, 3 of 6 incomplete -> flagged, and the
+    // accessible name carries the count.
+    const behind = screen.getByLabelText(/Blue Spruce Landscaping, Mar 2026: Behind/)
+    expect(within(behind).getByTestId('cell-flag')).toBeInTheDocument()
+    expect(behind.getAttribute('aria-label')).toContain('3 items incomplete')
+
+    // Harborline Aug: in progress, 3 of 6 incomplete -> flagged.
+    const inProgress = screen.getByLabelText(/Harborline Marine Supply, Aug 2026: In progress/)
+    expect(within(inProgress).getByTestId('cell-flag')).toBeInTheDocument()
+
+    // Complete and not-due cells never flag.
+    const complete = screen.getByLabelText(/Harborline Marine Supply, Jan 2026: Complete/)
+    expect(within(complete).queryByTestId('cell-flag')).not.toBeInTheDocument()
+    const notDue = screen.getByLabelText(/Harborline Marine Supply, Dec 2026: Not due yet/)
+    expect(within(notDue).queryByTestId('cell-flag')).not.toBeInTheDocument()
+  })
+
+  it('expand-all unfolds the four stream rows per client; collapse restores (D9)', async () => {
+    const user = userEvent.setup()
+    renderBoard()
+    expect(screen.queryAllByTestId('stream-row')).toHaveLength(0)
+
+    const toggle = screen.getByTestId('expand-all-toggle')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+
+    // 3 clients x 4 streams, in stream order under each row.
+    const streamRows = screen.getAllByTestId('stream-row')
+    expect(streamRows).toHaveLength(12)
+    expect(streamRows.slice(0, 4).map((r) => r.getAttribute('data-stream'))).toEqual([
+      'bank_feeds',
+      'reconciliations',
+      'reports',
+      'tasks',
+    ])
+
+    // A stream sub-cell carries the same state language + flag rule.
+    const behindStreamCell = screen.getByLabelText(
+      /Blue Spruce Landscaping Bank feeds, Mar 2026: Behind/,
+    )
+    expect(behindStreamCell).toHaveAttribute('data-state', 'behind')
+    expect(within(behindStreamCell).getByTestId('cell-flag')).toBeInTheDocument()
+
+    await user.click(toggle)
+    expect(screen.queryAllByTestId('stream-row')).toHaveLength(0)
   })
 
   it('renders the firm completion footer per month, with a dot when nothing is attributed', () => {

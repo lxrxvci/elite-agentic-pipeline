@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { requireStaff } from '@/server/auth/guards'
+import { BumperLaneLockedError } from '@/server/bumper-lanes'
 import type { WorkCardKind } from '@/server/queue'
 import {
   completeTask,
@@ -58,6 +59,11 @@ export async function completeWorkCard(
         break
     }
   } catch (error) {
+    // D6/D8 lane gate: the lane reason IS the message - show it verbatim so
+    // the bookkeeper sees exactly what to finish first.
+    if (error instanceof BumperLaneLockedError) {
+      return { ok: false, error: error.reason }
+    }
     // §6.3 guard: report tasks need their report document uploaded first.
     if (error instanceof ReportDocumentRequiredError) {
       return { ok: false, error: 'Upload the report document first.' }

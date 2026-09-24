@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 
 import type { CapacityReport, CapacityStaffRow } from '@/server/capacity'
@@ -145,5 +146,35 @@ describe('CapacityGrid', () => {
   it('documents the overload rule in the legend', () => {
     render(<CapacityGrid report={report([row({ userId: 1, name: 'Jorge Medina' })])} />)
     expect(screen.getByText(/overload rule/i)).toHaveTextContent('12')
+  })
+
+  it('sorts by member name and this-week load with aria-sort (D11)', async () => {
+    const user = userEvent.setup()
+    render(
+      <CapacityGrid
+        report={report([
+          row({ userId: 1, name: 'Sofia Lindqvist', weeks: WEEK_STARTS.map((iso, i) => ({ weekStartIso: iso, openCount: i === 0 ? 2 : 0, load: 'ok' })) }),
+          row({ userId: 2, name: 'Jorge Medina', weeks: WEEK_STARTS.map((iso, i) => ({ weekStartIso: iso, openCount: i === 0 ? 9 : 0, load: 'ok' })) }),
+        ])}
+      />,
+    )
+    const names = () => screen.getAllByTestId('capacity-row').map((r) => r.textContent ?? '')
+
+    // Default: name asc.
+    expect(names()[0]).toContain('Jorge Medina')
+
+    await user.click(screen.getByTestId('sort-thisWeek'))
+    expect(screen.getByTestId('sort-thisWeek').closest('th')).toHaveAttribute(
+      'aria-sort',
+      'descending',
+    )
+    expect(names()[0]).toContain('Jorge Medina') // 9 cards
+    await user.click(screen.getByTestId('sort-thisWeek'))
+    expect(names()[0]).toContain('Sofia Lindqvist') // 2 cards
+
+    await user.click(screen.getByTestId('sort-name'))
+    expect(screen.getByTestId('sort-name').closest('th')).toHaveAttribute('aria-sort', 'ascending')
+    await user.click(screen.getByTestId('sort-name'))
+    expect(names()[0]).toContain('Sofia Lindqvist')
   })
 })

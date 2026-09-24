@@ -1,6 +1,7 @@
 import { and, eq, gt, isNull, lt, ne, or } from "drizzle-orm";
 import {
   generalTimeMinutes,
+  isUnpaidActivityType,
   mergedMinutes,
   mergeIntervals,
   subtractIntervals,
@@ -485,6 +486,13 @@ export interface CollectedIntervals {
   day: Interval[];
   activities: { interval: Interval; activityType: string; clientId: number | null }[];
   taskTimers: { interval: Interval; clientId: number | null; billable: boolean }[];
+  /**
+   * F2: unpaid break/lunch intervals (activity kinds break_unpaid,
+   * lunch_unpaid), kept separate so payroll can subtract them from the
+   * wall-clock union. They ALSO appear in `activities` - the hours report's
+   * per-kind breakdown still shows the time.
+   */
+  unpaidBreaks: Interval[];
 }
 
 function clip(start: Date, end: Date, from: Date, to: Date): Interval | null {
@@ -534,7 +542,7 @@ export async function collectUserIntervals(
       ),
     );
 
-  const collected: CollectedIntervals = { day: [], activities: [], taskTimers: [] };
+  const collected: CollectedIntervals = { day: [], activities: [], taskTimers: [], unpaidBreaks: [] };
   for (const row of workstationRows) {
     const interval = clip(row.startedAt, row.endedAt ?? to, from, to);
     if (!interval) continue;
@@ -546,6 +554,11 @@ export async function collectUserIntervals(
         activityType: row.activityType,
         clientId: row.clientId,
       });
+      // F2: unpaid breaks ride the activity stream AND feed the payroll
+      // subtraction set (domain isUnpaidActivityType owns the kinds).
+      if (isUnpaidActivityType(row.activityType)) {
+        collected.unpaidBreaks.push(interval);
+      }
     }
   }
   for (const row of taskRows) {

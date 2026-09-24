@@ -21,6 +21,7 @@ import {
   weeklyBankFeeds,
 } from "@/db/schema";
 
+import { assertBumperLaneAllows } from "./bumper-lanes";
 import { localToday, nowIso } from "./dates";
 import { stopTaskTimer } from "./time-tracking";
 
@@ -72,6 +73,13 @@ export class SubtasksIncompleteError extends Error {
 }
 
 type PeriodicKind = ReverseSyncTarget; // "bank_feeds" | "reconciliations" | "client_reports"
+
+/** PeriodicKind -> the queue's card kind (the lane gate speaks card kinds). */
+const CARD_KIND: Record<PeriodicKind, "bank_feed" | "reconciliation" | "report"> = {
+  bank_feeds: "bank_feed",
+  reconciliations: "reconciliation",
+  client_reports: "report",
+};
 
 type FeedRow = typeof weeklyBankFeeds.$inferSelect;
 type ReconRow = typeof accountReconciliations.$inferSelect;
@@ -246,6 +254,9 @@ async function setRowCompleted(
   userId: number,
   load: () => Promise<AnyRow | undefined>,
 ): Promise<AnyRow> {
+  // D6/D8: with bumper lanes on, a lane-locked card completes only through
+  // an active override (checked inside the gate). Re-opening is never gated.
+  if (completed) await assertBumperLaneAllows(userId, CARD_KIND[kind], id);
   const row = await load();
   if (!row) throw new Error(`${kind} row ${id} not found`);
   const now = nowIso();
@@ -301,6 +312,10 @@ export async function completeTask(
 ): Promise<typeof tasks.$inferSelect> {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
   if (!task) throw new Error(`task ${taskId} not found`);
+
+  // D6/D8 lane gate (same construction as the row completers; completion
+  // only - re-opening stays ungated).
+  if (completed) await assertBumperLaneAllows(userId, "task", taskId);
 
   // Same fallback as the queue: period-less ad-hoc tasks belong to the
   // current work period rather than crashing completion.

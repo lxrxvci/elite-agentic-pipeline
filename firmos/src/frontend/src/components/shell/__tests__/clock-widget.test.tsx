@@ -103,6 +103,28 @@ describe('ClockWidget', () => {
     )
   })
 
+  it('offers the F2 paid/unpaid break and lunch kinds in the dropdown', async () => {
+    mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
+
+    render(<ClockWidget />)
+    await userEvent.click(await screen.findByRole('button', { name: /current activity: tasks/i }))
+
+    expect(screen.getByRole('menuitem', { name: /break \(paid\)/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /break \(unpaid\)/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /lunch \(paid\)/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /lunch \(unpaid\)/i })).toBeInTheDocument()
+
+    mockStartActivity.mockResolvedValue({
+      ok: true,
+      data: status({
+        ...clockedInStatus,
+        currentActivity: { ...clockedInStatus.currentActivity!, activityType: 'lunch_unpaid' },
+      }),
+    })
+    await userEvent.click(screen.getByRole('menuitem', { name: /lunch \(unpaid\)/i }))
+    expect(mockStartActivity).toHaveBeenCalledWith('lunch_unpaid')
+  })
+
   it('confirms clock-out when task timers are open', async () => {
     const withTimer = status({
       ...clockedInStatus,

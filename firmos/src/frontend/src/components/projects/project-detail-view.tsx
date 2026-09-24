@@ -351,6 +351,16 @@ export function ProjectDetailView({ detail, staff, canEditBilling }: ProjectDeta
   const frozen = detail.status === 'cancelled'
   const allDone = detail.tasksTotal > 0 && detail.tasksDone === detail.tasksTotal
 
+  const blockedCount = detail.tasks.filter((t) => t.blocked).length
+  const overdueCount = detail.tasks.filter(
+    (t) => !t.isCompleted && t.dueDate != null && t.dueDate < detail.today,
+  ).length
+  const remaining = detail.tasksTotal - detail.tasksDone
+  const projectYear =
+    detail.name.match(/(19|20)\d{2}/)?.[0] ??
+    detail.tasks.find((t) => t.targetYear != null)?.targetYear?.toString() ??
+    null
+
   async function setStatus(status: ProjectStatusKey) {
     setPendingStatus(true)
     const res = await updateProjectStatusAction(detail.id, status)
@@ -458,6 +468,35 @@ export function ProjectDetailView({ detail, staff, canEditBilling }: ProjectDeta
               </dd>
             </div>
           </dl>
+        </div>
+
+        {/* D18: dashboard summary - hero percent + counts by state + tax deep link. */}
+        <div
+          className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border pt-3"
+          data-testid="project-progress-summary"
+        >
+          <div className="flex items-baseline gap-2">
+            <span className="tnum font-display text-3xl font-bold text-firm-brand-strong">
+              {detail.completionPct}%
+            </span>
+            <span className="text-xs text-muted-foreground">complete</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {detail.tasksDone} done · {remaining} remaining
+            {blockedCount > 0 && ` · ${blockedCount} blocked`}
+            {overdueCount > 0 && (
+              <span className="font-semibold text-status-overdue"> · {overdueCount} overdue</span>
+            )}
+          </p>
+          {projectYear != null && (
+            <Link
+              href={`/clients/${detail.client.id}?tab=tax`}
+              className="ml-auto text-xs font-medium text-firm-brand-strong hover:underline"
+              data-testid="tax-checklist-link"
+            >
+              Year-end tax {projectYear} checklist →
+            </Link>
+          )}
         </div>
 
         {/* Status transitions (§20) - the engine re-guards every move. */}

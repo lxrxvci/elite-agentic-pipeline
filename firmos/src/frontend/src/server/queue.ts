@@ -1,4 +1,4 @@
-import { and, isNull, notInArray } from "drizzle-orm";
+import { and, eq, gt, isNull, notInArray, or } from "drizzle-orm";
 import {
   compareLocalDate,
   countsForScoring,
@@ -7,8 +7,11 @@ import {
   formatLocalDate,
   isSettled,
   parseLocalDate,
+  planBumperLane,
   workPeriodForRow,
   workPeriodForDue,
+  type LaneCard,
+  type LaneStage,
   type LocalDate,
   type Month,
 } from "@firmos/domain";
@@ -17,9 +20,11 @@ import { db } from "@/db";
 import {
   accountReconciliations,
   accounts,
+  bumperLaneOverrideRequests,
   clientReports,
   clients,
   tasks,
+  users,
   weeklyBankFeeds,
 } from "@/db/schema";
 
@@ -97,11 +102,26 @@ export interface WorkCard {
   statementAvailable?: boolean;
   /** Reconciliation cards only: the statement's ending balance (numeric string), when captured at upload. */
   statementBalance?: string | null;
+  /** Bumper lanes (D6/D8): when the user's lane locks this card - render with a lock + reason, never hidden. */
+  laneLocked?: boolean;
+  laneLockReason?: string | null;
+  /** Override state on a lane-locked card: a pending request or an active grant. */
+  laneOverride?: "pending" | "active" | null;
+}
+
+/** Bumper-lane summary for the workstation chrome (state chip). */
+export interface BumperLaneSummary {
+  enabled: boolean;
+  /** The client currently being served; null when the user has no assigned open work. */
+  activeClientId: number | null;
+  activeClientName: string | null;
+  activeStage: LaneStage | null;
 }
 
 export interface UnifiedQueue {
   today: string;
   buckets: Record<QueueBucket, WorkCard[]>;
+  bumperLanes: BumperLaneSummary;
 }
 
 /**
@@ -128,6 +148,106 @@ const ORDER_CLASS_RANK: Record<WorkOrderClass, number> = {
   reconciliation: 2,
   report: 3,
 };
+
+// ── Bumper lanes (D6/D8): per-employee sequential enforcement ─────────────
+
+/** Only the actionable buckets are lane-governed; parked/gated keep their own semantics. */
+const LANE_BUCKETS = ["overdue", "due_today", "upcoming"] as const;
+const LANE_BUCKET_RANK: Record<(typeof LANE_BUCKETS)[number], 0 | 1 | 2> = {
+  overdue: 0,
+  due_today: 1,
+  upcoming: 2,
+};
+
+const LANE_OFF: BumperLaneSummary = {
+  enabled: false,
+  activeClientId: null,
+  activeClientName: null,
+  activeStage: null,
+};
+
+/**
+ * Annotate the bucketed cards with the user's bumper-lane state (D6/D8).
+ * Ordering/locking comes from the domain's planBumperLane over the user's
+ * ASSIGNED actionable cards; the override lifecycle reads
+ * bumper_lane_override_requests (an approved, unexpired grant unlocks its
+ * card; a pending request is marked so the UI can say so).
+ */
+async function applyBumperLanes(
+  buckets: Record<QueueBucket, WorkCard[]>,
+  userId: number,
+): Promise<BumperLaneSummary> {
+  const [me] = await db
+    .select({ bumperLanesEnabled: users.bumperLanesEnabled })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!me?.bumperLanesEnabled) return LANE_OFF;
+
+  const actionable = LANE_BUCKETS.flatMap((b) => buckets[b]);
+  const laneCards: LaneCard[] = actionable.map((c) => ({
+    kind: c.kind,
+    id: c.id,
+    clientId: c.clientId,
+    clientName: c.clientName,
+    assigneeId: c.assigneeId,
+    // Recurring-rule tasks are the MQY "recurring" stage; the rest are tasks.
+    recurring: c.kind === "task" && c.orderClass === "periodic",
+    bucketRank: LANE_BUCKET_RANK[c.status as (typeof LANE_BUCKETS)[number]],
+    dueDate: c.dueDate,
+    title: c.title,
+  }));
+  const plan = planBumperLane(laneCards, userId);
+  if (plan.activeClientId == null) {
+    // No assigned open work: the lane is on but there is nothing to enforce.
+    return { ...LANE_OFF, enabled: true };
+  }
+
+  const now = new Date();
+  const overrideRows = await db
+    .select()
+    .from(bumperLaneOverrideRequests)
+    .where(
+      and(
+        eq(bumperLaneOverrideRequests.userId, userId),
+        or(
+          eq(bumperLaneOverrideRequests.status, "pending"),
+          and(
+            eq(bumperLaneOverrideRequests.status, "approved"),
+            gt(bumperLaneOverrideRequests.expiresAt, now),
+          ),
+        ),
+      ),
+    );
+  const overrideState = new Map<string, "pending" | "active">();
+  for (const o of overrideRows) {
+    overrideState.set(`${o.kind}:${o.workItemId}`, o.status === "pending" ? "pending" : "active");
+  }
+
+  const lockReason = new Map(plan.locks.map((l) => [`${l.kind}:${l.id}`, l.reason] as const));
+  for (const bucket of Object.values(buckets)) {
+    for (const card of bucket) {
+      const reason = lockReason.get(`${card.kind}:${card.id}`);
+      if (reason == null) continue;
+      const override = overrideState.get(`${card.kind}:${card.id}`);
+      if (override === "active") {
+        // The grant unlocks this card (and only this card) until expiry.
+        card.laneLocked = false;
+        card.laneOverride = "active";
+      } else {
+        card.laneLocked = true;
+        card.laneLockReason = reason;
+        card.laneOverride = override ?? null;
+      }
+    }
+  }
+  return {
+    enabled: true,
+    activeClientId: plan.activeClientId,
+    activeClientName: plan.activeClientName,
+    activeStage: plan.activeStage,
+  };
+}
 
 /**
  * Within a bucket: the owner's daily order first (periodic → ad-hoc →
@@ -423,5 +543,7 @@ export async function getUnifiedQueue(
 
   for (const bucket of Object.values(buckets)) bucket.sort(compareCards);
 
-  return { today: formatLocalDate(today), buckets };
+  const bumperLanes = await applyBumperLanes(buckets, userId);
+
+  return { today: formatLocalDate(today), buckets, bumperLanes };
 }

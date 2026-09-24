@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { addTaskNoteAction, getTaskDetailAction, setSubtaskCompletedAction } from '@/server/actions/tasks'
+import { addTaskNoteAction, assignTaskAction, getTaskDetailAction, setSubtaskCompletedAction } from '@/server/actions/tasks'
 import { getCloseStepsAction } from '@/server/actions/close-steps'
 import type { TaskDetail } from '@/server/task-detail'
 import type { CloseSteps } from '@/server/year-grid'
@@ -16,12 +16,14 @@ beforeEach(() => {
     Element.prototype.setPointerCapture = () => {}
     Element.prototype.releasePointerCapture = () => {}
   }
+  Element.prototype.scrollIntoView = vi.fn()
 })
 
 vi.mock('@/server/actions/tasks', () => ({
   getTaskDetailAction: vi.fn(),
   setSubtaskCompletedAction: vi.fn(),
   addTaskNoteAction: vi.fn(),
+  assignTaskAction: vi.fn(),
 }))
 
 // The month-close context strip dynamic-imports this action.
@@ -39,6 +41,7 @@ vi.mock('@/server/actions/time', () => ({
 const mockDetail = vi.mocked(getTaskDetailAction)
 const mockToggle = vi.mocked(setSubtaskCompletedAction)
 const mockAddNote = vi.mocked(addTaskNoteAction)
+const mockAssign = vi.mocked(assignTaskAction)
 
 function detail(partial?: Partial<TaskDetail>): TaskDetail {
   return {
@@ -83,6 +86,10 @@ function detail(partial?: Partial<TaskDetail>): TaskDetail {
     manualEntries: [
       { id: 41, title: 'Harborline-only quirk', content: 'They round cash deposits.', updatedAt: '2026-07-15T12:00:00.000Z' },
     ],
+    assignableStaff: [
+      { id: 3, name: 'Jorge Medina', openCount: 12 },
+      { id: 6, name: 'Sofia Lindqvist', openCount: 4 },
+    ],
     today: '2026-08-15',
     ...partial,
   }
@@ -100,6 +107,7 @@ beforeEach(() => {
   mockDetail.mockResolvedValue({ ok: true, data: detail() })
   mockToggle.mockResolvedValue({ ok: true, data: { subtaskId: 12, isCompleted: true } })
   mockAddNote.mockResolvedValue({ ok: true, data: { noteId: 99 } })
+  mockAssign.mockResolvedValue({ ok: true, data: { assigneeId: 6 } })
 })
 
 describe('TaskDrawer', () => {
@@ -156,6 +164,20 @@ describe('TaskDrawer', () => {
     await user.click(screen.getByRole('button', { name: /add note/i }))
     expect(mockAddNote).toHaveBeenCalledWith(42, 'Statement arrived today.')
     await waitFor(() => expect(box).toHaveValue(''))
+  })
+
+  it('assigns inline with each candidate’s open-work count (E13)', async () => {
+    const user = userEvent.setup()
+    renderDrawer()
+    await screen.findByTestId('task-drawer-title')
+
+    await user.click(screen.getByTestId('task-assign-select'))
+    // Every candidate option carries the current load.
+    expect(await screen.findByRole('option', { name: 'Sofia Lindqvist (4 open)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Jorge Medina (12 open)' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('option', { name: 'Sofia Lindqvist (4 open)' }))
+    expect(mockAssign).toHaveBeenCalledWith(42, 6)
   })
 
   it('delegates completion to the queue handler once the checklist is done (B4)', async () => {

@@ -15,6 +15,7 @@ import {
 import { requireStaff } from "@/server/auth/guards";
 
 import { logEvent } from "./audit";
+import { getStaffOpenWorkCounts } from "./capacity";
 import { localToday } from "./dates";
 
 /**
@@ -73,6 +74,13 @@ export interface TaskDetailManualEntry {
   updatedAt: string;
 }
 
+export interface TaskDetailAssignableStaff {
+  id: number;
+  name: string;
+  /** E13: current open assigned work count ("don't overload one person"). */
+  openCount: number;
+}
+
 export interface TaskDetail {
   task: {
     id: number;
@@ -93,6 +101,9 @@ export interface TaskDetail {
   notes: TaskDetailNote[];
   sops: TaskDetailSop[];
   manualEntries: TaskDetailManualEntry[];
+  /** E13: every active staff member with their open-work count, for the
+   *  assign select. One batched read (capacity.getStaffOpenWorkCounts). */
+  assignableStaff: TaskDetailAssignableStaff[];
   /** Firm-local today, ISO-local - aging math never uses the client clock. */
   today: string;
 }
@@ -227,6 +238,11 @@ export async function getTaskDetail(taskId: number, today: LocalDate = localToda
         content: m.content,
         updatedAt: m.updatedAt.toISOString(),
       })),
+    assignableStaff: (await getStaffOpenWorkCounts()).map((w) => ({
+      id: w.userId,
+      name: w.name,
+      openCount: w.openCount,
+    })),
     today: formatLocalDate(today),
   };
 }
@@ -269,4 +285,45 @@ export async function addTaskNote(
   const [note] = await db.insert(taskNotes).values({ taskId, body: trimmed, authorId }).returning();
   await logEvent({ userId: authorId, action: "task_note_added", entityType: "task", entityId: taskId });
   return note;
+}
+
+/**
+ * Assign/reassign the task (E13). Any staff member may assign; the assignee
+ * must be an active staff login (portal roles can never hold work). The
+ * change is audit-logged with both sides of the handoff.
+ */
+export async function assignTask(
+  taskId: number,
+  assigneeId: number | null,
+  actorId: number,
+): Promise<typeof tasks.$inferSelect> {
+  const [task] = await db
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt)))
+    .limit(1);
+  if (!task) throw new TaskDetailError(404, `Task ${taskId} not found`);
+
+  if (assigneeId != null) {
+    const [assignee] = await db.select().from(users).where(eq(users.id, assigneeId)).limit(1);
+    if (!assignee || !assignee.isActive) throw new TaskDetailError(404, `User ${assigneeId} not found`);
+    if (["client", "cpa"].includes(assignee.role.toLowerCase())) {
+      throw new TaskDetailError(400, "Portal accounts cannot hold assigned work");
+    }
+  }
+  if (task.assigneeId === assigneeId) return task;
+
+  const [updated] = await db
+    .update(tasks)
+    .set({ assigneeId, updatedAt: new Date() })
+    .where(eq(tasks.id, taskId))
+    .returning();
+  await logEvent({
+    userId: actorId,
+    action: "task_assigned",
+    entityType: "task",
+    entityId: taskId,
+    metadata: { previousAssigneeId: task.assigneeId, assigneeId },
+  });
+  return updated;
 }

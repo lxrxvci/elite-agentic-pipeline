@@ -30,6 +30,7 @@ import { db } from '@/db'
 import { invoices, invoiceLineItems, projects, projectTasks, users } from '@/db/schema'
 import { getClientBilling, getClientDetail, getClientWork } from '@/server/clients'
 import { canAccessStatements, requireStaff } from '@/server/auth/guards'
+import { getStaffOpenWorkCounts } from '@/server/capacity'
 import { localToday } from '@/server/dates'
 import { getClientYearGrid } from '@/server/year-grid'
 import { canDeleteDocument, documentGroupOf, getDocumentTree } from '@/server/documents'
@@ -191,15 +192,17 @@ export default async function ClientDetailPage({
   // only computed for roles allowed to edit.
   const staffNameOf = (u: (typeof staffRows)[number]) =>
     `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `Staff ${u.id}`
+  // E13: the team-assignment selects show each candidate's open-work count.
+  const workloadById = new Map((await getStaffOpenWorkCounts()).map((w) => [w.userId, w.openCount]))
   const managers = canAssignStaff
     ? staffRows
         .filter((u) => u.isActive && ['owner', 'admin', 'manager'].includes(u.role.toLowerCase()))
-        .map((u) => ({ id: u.id, name: staffNameOf(u) }))
+        .map((u) => ({ id: u.id, name: staffNameOf(u), openCount: workloadById.get(u.id) ?? 0 }))
     : []
   const bookkeepers = canAssignStaff
     ? staffRows
         .filter((u) => u.isActive && u.role.toLowerCase() === 'bookkeeper')
-        .map((u) => ({ id: u.id, name: staffNameOf(u) }))
+        .map((u) => ({ id: u.id, name: staffNameOf(u), openCount: workloadById.get(u.id) ?? 0 }))
     : []
   const canManage = canAccessStatements(user)
   const allDocs = Object.values(documentTree.documentsByGroup).flat()

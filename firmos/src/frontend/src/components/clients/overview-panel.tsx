@@ -29,6 +29,13 @@ import { accountTypeLabel, fullDateLabel, qboTierLabel } from './format'
 export interface StaffOption {
   id: number
   name: string
+  /** E13: current open assigned work count ("don't overload one person"). */
+  openCount?: number
+}
+
+/** "Sofia Lindqvist (12 open)" when the workload count is available. */
+export function staffOptionLabel(o: StaffOption): string {
+  return o.openCount == null ? o.name : `${o.name} (${o.openCount} open)`
 }
 
 /**
@@ -185,7 +192,7 @@ function TeamFields({
               <SelectItem value="none">Unassigned</SelectItem>
               {options.map((o) => (
                 <SelectItem key={o.id} value={String(o.id)}>
-                  {o.name}
+                  {staffOptionLabel(o)}
                 </SelectItem>
               ))}
             </SelectContent>

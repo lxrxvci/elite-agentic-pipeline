@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Check, ChevronLeft, ChevronRight, Users } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, ChevronsDownUp, ChevronsUpDown, Flag, Users } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -27,6 +28,7 @@ import type {
   ProgressionRow,
   ProgressionStreamSummary,
 } from '@/server/progression'
+import type { YearGridStream } from '@/server/year-grid'
 import type { WorkCardKind } from '@/server/queue'
 import { monthLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
@@ -53,6 +55,15 @@ const HEALTH_STATUS: Record<'overdue' | 'up_to_date' | 'in_progress', WorkStatus
 /** Streams present on the row this year, in year-grid order (kind identity dots). */
 const BOARD_STREAMS: WorkCardKind[] = ['bank_feed', 'reconciliation', 'report', 'task']
 
+/** Stream order for the expand-all sub-rows (mirrors the server YEAR_GRID_STREAMS;
+ *  redeclared here - the server module pulls in the DB and is type-only here). */
+const YEAR_GRID_STREAM_ORDER: YearGridStream[] = [
+  'bank_feeds',
+  'reconciliations',
+  'reports',
+  'tasks',
+]
+
 /** "2 of 3 done" / "Done" / "1 overdue" - the per-stream tooltip clause. */
 function streamSummary(s: ProgressionStreamSummary): string {
   if (s.total === 0) return 'No work'
@@ -63,6 +74,21 @@ function streamSummary(s: ProgressionStreamSummary): string {
   return parts.join(', ')
 }
 
+/**
+ * D10 (02:15:04): the incomplete-item count behind a cell ("10 of 11 -> flag
+ * that something's going on"). Zero for complete/no_work cells.
+ */
+function incompleteCount(cell: ProgressionCell): number {
+  return cell.streams.reduce((n, s) => n + (s.total - s.completed), 0)
+}
+
+/** The states that flag: work exists and some of it is not done yet. */
+const FLAGGED_STATES = new Set(['behind', 'in_progress', 'waiting'])
+
+function isFlagged(cell: ProgressionCell): boolean {
+  return cell.onCadence && FLAGGED_STATES.has(cell.state) && incompleteCount(cell) > 0
+}
+
 function cellAriaLabel(row: ProgressionRow, cell: ProgressionCell, year: number): string {
   const meta = YEAR_GRID_CELL_META[cell.state]
   if (!cell.onCadence) {
@@ -71,9 +97,11 @@ function cellAriaLabel(row: ProgressionRow, cell: ProgressionCell, year: number)
   const streams = cell.streams
     .filter((s) => s.total > 0)
     .map((s) => `${STREAM_LABEL[s.stream]} ${YEAR_GRID_CELL_META[s.state].label.toLowerCase()}`)
+  const flagged = isFlagged(cell)
+  const incomplete = flagged ? incompleteCount(cell) : 0
   return `${row.name}, ${monthLabel(year, cell.month)}: ${meta.label}${
     streams.length > 0 ? `. ${streams.join(', ')}` : ''
-  }`
+  }${flagged ? `. ${incomplete} item${incomplete === 1 ? '' : 's'} incomplete` : ''}`
 }
 
 /** Rich tooltip: the per-stream breakdown that answers "are my reports ready?" */
@@ -118,9 +146,10 @@ function CellBreakdown({ row, cell, year }: { row: ProgressionRow; cell: Progres
 function BoardCell({ row, cell, year }: { row: ProgressionRow; cell: ProgressionCell; year: number }) {
   const meta = YEAR_GRID_CELL_META[cell.state]
   const clickable = cell.state !== 'no_work'
+  const flagged = isFlagged(cell)
   const label = cellAriaLabel(row, cell, year)
   const classes = cn(
-    'flex h-9 w-full items-center justify-center rounded-md transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+    'relative flex h-9 w-full items-center justify-center rounded-md transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
     meta.classes,
     clickable && 'hover:ring-1 hover:ring-ring/60',
     !clickable && 'cursor-default',
@@ -131,23 +160,23 @@ function BoardCell({ row, cell, year }: { row: ProgressionRow; cell: Progression
     ) : (
       <meta.Icon className="h-3.5 w-3.5" aria-hidden />
     )
+  // D10: the flag marker is icon + label text (the aria label carries "N
+  // items incomplete") - never color alone.
+  const flag = flagged && (
+    <Flag
+      aria-hidden
+      className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-status-overdue"
+      data-testid="cell-flag"
+    />
+  )
 
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        {clickable ? (
-          <Link
-            href={`/clients/${row.clientId}?tab=work&year=${year}`}
-            aria-label={label}
-            data-testid="progression-cell"
-            data-client-id={row.clientId}
-            data-state={cell.state}
-            data-month={cell.month}
-            className={classes}
-          >
-            {icon}
-          </Link>
-        ) : (
+  // D9/D12 (02:15:57/02:18:07): hover peeks the per-stream breakdown
+  // (tooltip), click opens the same detail as an overlay popover with a
+  // deep link - the board never forces navigation just to see the detail.
+  if (!clickable) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
           <span
             aria-label={label}
             data-testid="progression-cell"
@@ -158,18 +187,133 @@ function BoardCell({ row, cell, year }: { row: ProgressionRow; cell: Progression
           >
             {icon}
           </span>
-        )}
-      </TooltipTrigger>
-      <TooltipContent>
+        </TooltipTrigger>
+        <TooltipContent>
+          <CellBreakdown row={row} cell={cell} year={year} />
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  return (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={label}
+              data-testid="progression-cell"
+              data-client-id={row.clientId}
+              data-state={cell.state}
+              data-month={cell.month}
+              className={classes}
+            >
+              {icon}
+              {flag}
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>
+          <CellBreakdown row={row} cell={cell} year={year} />
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent align="center" className="w-64 p-3" data-testid="cell-popover">
         <CellBreakdown row={row} cell={cell} year={year} />
-      </TooltipContent>
-    </Tooltip>
+        <Link
+          href={`/clients/${row.clientId}?tab=work&year=${year}`}
+          className="mt-2 flex items-center justify-center gap-1 rounded-md border border-border px-2 py-1.5 text-[11px] font-semibold text-foreground transition-colors hover:bg-muted"
+        >
+          Open {row.name}&rsquo;s work tab
+        </Link>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+/**
+ * D9 expand-all: one mini row per stream under the client row - the same
+ * per-month cells the client-level cell aggregates, so the full breakdown is
+ * on the board itself (no hover, no navigation). Flag markers repeat per
+ * stream cell (D10).
+ */
+function StreamSubRow({
+  row,
+  stream,
+  year,
+}: {
+  row: ProgressionRow
+  stream: YearGridStream
+  year: number
+}) {
+  const { Icon } = KIND_META[STREAM_KIND[stream]]
+  return (
+    <div className="contents" data-testid="stream-row" data-stream={stream}>
+      <div className="sticky left-0 z-10 flex items-center gap-1.5 border-r border-border bg-muted/40 py-0.5 pl-9 pr-3">
+        <span
+          className={cn(
+            'flex h-4 w-4 shrink-0 items-center justify-center rounded',
+            KIND_STYLE[STREAM_KIND[stream]].chip,
+          )}
+        >
+          <Icon className="h-2.5 w-2.5" aria-hidden />
+        </span>
+        <span className="truncate text-[11px] text-muted-foreground">{STREAM_LABEL[stream]}</span>
+      </div>
+      {row.cells.map((cell) => {
+        const s = cell.streams.find((x) => x.stream === stream)
+        if (!cell.onCadence || s == null) {
+          return <span key={cell.month} aria-hidden className="py-0.5" />
+        }
+        const meta = YEAR_GRID_CELL_META[s.state]
+        const incomplete = s.total - s.completed
+        const flagged = s.total > 0 && incomplete > 0 && FLAGGED_STATES.has(s.state)
+        const label = `${row.name} ${STREAM_LABEL[stream]}, ${monthLabel(year, cell.month)}: ${
+          meta.label
+        }. ${streamSummary(s)}${flagged ? `. ${incomplete} incomplete` : ''}`
+        return (
+          <div key={cell.month} className="py-0.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  role="img"
+                  aria-label={label}
+                  data-testid="stream-cell"
+                  data-state={s.state}
+                  className={cn(
+                    'relative flex h-6 w-full items-center justify-center rounded',
+                    meta.classes,
+                  )}
+                >
+                  {meta.Icon == null ? (
+                    <span aria-hidden className="h-1 w-1 rounded-full bg-current" />
+                  ) : (
+                    <meta.Icon className="h-2.5 w-2.5" aria-hidden />
+                  )}
+                  {flagged && (
+                    <Flag
+                      aria-hidden
+                      className="absolute right-0 top-0 h-2 w-2 text-status-overdue"
+                      data-testid="cell-flag"
+                    />
+                  )}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <span className="text-xs">
+                  {STREAM_LABEL[stream]} · {streamSummary(s)}
+                </span>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
 /** Sticky name cell: health ring, name, cadence, streak badge, kind stream dots. */
-function ClientCell({ row }: { row: ProgressionRow }) {
-  const presentKinds = BOARD_STREAMS.filter((kind) =>
+function ClientCell({ row }: { row: ProgressionRow }) {  const presentKinds = BOARD_STREAMS.filter((kind) =>
     row.cells.some((c) => c.streams.some((s) => STREAM_KIND[s.stream] === kind && s.total > 0)),
   )
   return (
@@ -227,6 +371,8 @@ export function ProgressionBoard({ board }: { board: FirmProgressionBoard }) {
   const [assigneeFilter, setAssigneeFilter] = useState('all')
   const [cadenceFilter, setCadenceFilter] = useState('all')
   const [needsAttention, setNeedsAttention] = useState(false)
+  // D9: expand/collapse-all - every client row unfolds its four stream rows.
+  const [expandedAll, setExpandedAll] = useState(false)
 
   const assigneeOptions = useMemo(() => {
     const byId = new Map<number, string>()
@@ -363,6 +509,27 @@ export function ProgressionBoard({ board }: { board: FirmProgressionBoard }) {
           Needs attention
         </button>
 
+        {/* D9: unfold every client row into its four stream rows. */}
+        <button
+          type="button"
+          aria-pressed={expandedAll}
+          data-testid="expand-all-toggle"
+          onClick={() => setExpandedAll((v) => !v)}
+          className={cn(
+            'ml-auto flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-semibold transition-colors duration-150',
+            expandedAll
+              ? 'border-ring/40 bg-accent text-accent-foreground'
+              : 'border-border text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {expandedAll ? (
+            <ChevronsDownUp className="h-3.5 w-3.5" aria-hidden />
+          ) : (
+            <ChevronsUpDown className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {expandedAll ? 'Collapse all' : 'Expand all'}
+        </button>
+
         {filtersActive && (
           <Button type="button" variant="ghost" size="sm" className="h-8 text-xs" onClick={resetFilters}>
             Clear
@@ -412,6 +579,10 @@ export function ProgressionBoard({ board }: { board: FirmProgressionBoard }) {
                     <BoardCell row={row} cell={cell} year={board.year} />
                   </div>
                 ))}
+                {expandedAll &&
+                  YEAR_GRID_STREAM_ORDER.map((stream) => (
+                    <StreamSubRow key={stream} row={row} stream={stream} year={board.year} />
+                  ))}
               </div>
             ))}
 
