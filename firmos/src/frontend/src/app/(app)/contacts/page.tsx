@@ -110,6 +110,13 @@ export default async function ContactsPage() {
                               {' '}
                               · {RELATIONSHIP_LABELS[c.relationshipType] ?? c.relationshipType}
                             </span>
+                            {/* Correspondence hub: straight to the two-way history. */}
+                            <Link
+                              href={`/clients/${c.clientId}?tab=correspondence`}
+                              className="ml-1.5 text-muted-foreground hover:text-primary hover:underline"
+                            >
+                              correspondence
+                            </Link>
                           </span>
                         ))}
                       </div>

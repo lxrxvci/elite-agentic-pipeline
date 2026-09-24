@@ -2,10 +2,12 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, ArrowRight, CheckCircle2, Pencil } from 'lucide-react'
+import { AlertTriangle, ArrowRight, CheckCircle2, Mail, Pencil } from 'lucide-react'
+import { toast } from 'sonner'
 import type { Quote } from '@firmos/domain'
 
 import { Button } from '@/components/ui/button'
+import { sendIntakeQuoteEmailAction } from '@/server/actions/correspondence'
 import { checkDuplicates, submitIntakeForReview } from '@/server/actions/intake'
 import type { DuplicateCandidate } from '@/server/intake'
 import { monthLabel } from '@/shared/lib/date-display'
@@ -51,8 +53,23 @@ export function ReviewScreen({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [convertOpen, setConvertOpen] = useState(false)
+  const [sendingQuote, setSendingQuote] = useState(false)
 
   const chapters = visibleChapters(answers)
+
+  const sendQuote = async () => {
+    setSendingQuote(true)
+    try {
+      const res = await sendIntakeQuoteEmailAction(intakeId)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      toast.success(`Proposal emailed to ${res.data.to}`)
+    } finally {
+      setSendingQuote(false)
+    }
+  }
 
   const submit = async (force: boolean) => {
     setBusy(true)
@@ -176,14 +193,31 @@ export function ReviewScreen({
 
         {quote && quote.lines.length > 0 && (
           <section className="rounded-xl border border-border bg-card" data-testid="review-quote">
-            <header className="flex items-baseline justify-between border-b border-border px-4 py-2.5">
+            <header className="flex items-center justify-between border-b border-border px-4 py-2.5">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Quote
               </h3>
-              <p className="tnum text-sm font-semibold text-money-positive">
-                {formatMoney(quote.totals.effectiveMonthly)}
-                <span className="ml-1 text-xs font-medium text-muted-foreground">/mo effective</span>
-              </p>
+              <div className="flex items-center gap-3">
+                {/* Correspondence hub: email the proposal to the intake's
+                    primary contact (branded template + history row). */}
+                {canConvert && (status === 'draft' || status === 'pending_review') && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="email-proposal"
+                    disabled={sendingQuote}
+                    onClick={() => void sendQuote()}
+                  >
+                    <Mail className="h-3.5 w-3.5" aria-hidden />
+                    {sendingQuote ? 'Sending…' : 'Email proposal'}
+                  </Button>
+                )}
+                <p className="tnum text-sm font-semibold text-money-positive">
+                  {formatMoney(quote.totals.effectiveMonthly)}
+                  <span className="ml-1 text-xs font-medium text-muted-foreground">/mo effective</span>
+                </p>
+              </div>
             </header>
             <ul className="divide-y divide-border px-4">
               {quote.lines

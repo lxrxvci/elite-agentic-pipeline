@@ -8,6 +8,7 @@ import { localToday } from '@/server/dates'
 import { getDocumentTree } from '@/server/documents'
 import { getPortalInvoices } from '@/server/portal-invoices'
 import { getPortalYearGrid } from '@/server/portal-progress'
+import { listPortalCorrespondence } from '@/server/correspondence'
 import { YEAR_GRID_STREAMS, type YearGridStream } from '@/server/year-grid'
 import {
   PortalCapabilityError,
@@ -45,11 +46,12 @@ export default async function PortalHomePage({
       ? parsedYear
       : today.year
 
-  const [waiting, tree, portalInvoices, progressGrid] = await Promise.all([
+  const [waiting, tree, portalInvoices, progressGrid, correspondence] = await Promise.all([
     getWaitingOnYou(user, access.clientId),
     getDocumentTree(access.clientId),
     getPortalInvoices(user, access.clientId),
     getPortalYearGrid(user, access.clientId, year, today),
+    listPortalCorrespondence(user, access.clientId),
   ])
 
   // Task overview is gated on can_view_tasks (§29); without it the summary
@@ -78,12 +80,15 @@ export default async function PortalHomePage({
     <PortalHomeView
       firstName={user.firstName}
       clientName={access.clientName}
+      clientId={access.clientId}
       waiting={waiting}
       openRequestCount={openRequestCount}
       recentUploads={recentUploads}
       invoiceCount={portalInvoices.length}
       progressGrid={progressGrid}
       progressStreams={progressStreams}
+      correspondence={correspondence.rows}
+      unreadCorrespondence={correspondence.unreadOutbound}
     />
   )
 }

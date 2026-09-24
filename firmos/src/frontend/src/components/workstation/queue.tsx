@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   BookmarkPlus,
@@ -9,6 +10,7 @@ import {
   Crosshair,
   Keyboard,
   Lock,
+  Mail,
   Play,
   Search,
   Undo2,
@@ -186,6 +188,8 @@ interface WorkstationQueueProps {
   currentUserId?: number | null
   /** D4 firm-wide flag from app_settings (default on; prop default on). */
   celebrationsEnabled?: boolean
+  /** Correspondence hub: unread inbound replies per client (badge chips). */
+  unreadByClient?: Record<number, number>
 }
 
 function completedStorageKey(today: string): string {
@@ -238,6 +242,7 @@ export function WorkstationQueue({
   assignees,
   currentUserId = null,
   celebrationsEnabled = true,
+  unreadByClient = {},
 }: WorkstationQueueProps) {
   // ── Filters ──
   const [bucketFilter, setBucketFilter] = useState<BucketFilter>('all')
@@ -1582,8 +1587,22 @@ export function WorkstationQueue({
                 className="overflow-hidden rounded-xl border border-border bg-card shadow-card"
               >
                 <h2 className="flex items-center justify-between gap-2 border-b border-border bg-muted/40 px-4 py-2">
-                  <span className="truncate text-sm font-semibold text-foreground">
-                    {group.clientName}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-foreground">
+                      {group.clientName}
+                    </span>
+                    {/* Correspondence hub: unread client replies badge. */}
+                    {(unreadByClient[group.clientId] ?? 0) > 0 && (
+                      <Link
+                        href={`/clients/${group.clientId}?tab=correspondence`}
+                        data-testid="my-day-correspondence-badge"
+                        title={`${unreadByClient[group.clientId]} unread repl${unreadByClient[group.clientId] === 1 ? 'y' : 'ies'} - open correspondence`}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground"
+                      >
+                        <Mail className="h-2.5 w-2.5" aria-hidden />
+                        <span className="tnum">{unreadByClient[group.clientId]}</span>
+                      </Link>
+                    )}
                   </span>
                   <span className="tnum shrink-0 text-[11px] font-medium text-muted-foreground">
                     {group.cards.length} left

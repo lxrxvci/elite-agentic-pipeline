@@ -15,7 +15,7 @@
  *   billing.ts        billing (3)
  *   tax.ts            tax & compliance (3)
  *   time.ts           time tracking (3)
- *   communications.ts communications & notifications (5)
+ *   communications.ts communications & notifications (6)
  *   admin.ts          admin, audit & settings (4)
  *   saved-views.ts    per-user saved views (1)
  */

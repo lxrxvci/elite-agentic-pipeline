@@ -6,6 +6,7 @@ import { WorkstationQueue } from '@/components/workstation/queue'
 import { db } from '@/db'
 import { users } from '@/db/schema'
 import { isCelebrationEnabled } from '@/server/feature-flags'
+import { getUnreadInboundByClient } from '@/server/correspondence'
 import { getUnifiedQueue } from '@/server/queue'
 import { getCurrentUserId } from '@/server/session'
 
@@ -24,13 +25,14 @@ export const dynamic = 'force-dynamic'
  */
 export default async function WorkstationPage() {
   const userId = await getCurrentUserId()
-  const [queue, staff, celebrationsEnabled] = await Promise.all([
+  const [queue, staff, celebrationsEnabled, unreadCorrespondence] = await Promise.all([
     getUnifiedQueue(userId),
     db
       .select({ id: users.id, firstName: users.firstName, lastName: users.lastName })
       .from(users)
       .orderBy(asc(users.firstName)),
     isCelebrationEnabled(),
+    getUnreadInboundByClient(),
   ])
 
   const assignees = staff.map((u) => ({
@@ -45,6 +47,7 @@ export default async function WorkstationPage() {
       assignees={assignees}
       currentUserId={userId}
       celebrationsEnabled={celebrationsEnabled}
+      unreadByClient={Object.fromEntries(unreadCorrespondence)}
     />
   )
 }

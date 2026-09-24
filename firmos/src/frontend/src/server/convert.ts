@@ -21,6 +21,7 @@ import {
   clients,
   contactClientLinks,
   contacts,
+  correspondence,
   intakeOwners,
   onboardingTemplateTasks,
   projects,
@@ -35,6 +36,7 @@ import { DEFAULT_RECURRING_RULES } from "@/shared/lib/default-rules";
 
 import { defaultStatementDayFor, seedDefaultAccounts, type DbOrTx } from "./accounts-seed";
 import { autoLinkInstitutionSops } from "./templates";
+import { sendWelcomeEmail } from "./correspondence";
 import { localToday } from "./dates";
 import {
   assertIntakeTransition,
@@ -110,6 +112,8 @@ export interface ConversionResult {
   reportRowsCreated: number;
   /** null when the post-commit generation pass failed (see header). */
   tasksGenerated: number | null;
+  /** Correspondence hub: the welcome mail went out (portal on + contact with email). */
+  welcomeEmailSent: boolean;
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -722,7 +726,13 @@ export async function convertIntakeToClient(
       }
     }
 
-    // 9. Link the intake and stamp converted_at - same transaction.
+    // 9. Link the intake and stamp converted_at - same transaction. Any
+    //    pre-conversion correspondence (the quote mail) joins the client's
+    //    history here so the record reads continuously (correspondence hub).
+    await tx
+      .update(correspondence)
+      .set({ clientId })
+      .where(sql`${correspondence.intakeId} = ${intakeId} and ${correspondence.clientId} is null`);
     await tx
       .update(clientIntakes)
       .set({
@@ -771,6 +781,16 @@ export async function convertIntakeToClient(
     console.error(`[convert] SOP auto-link failed for client ${result.clientId}:`, err);
   }
 
+  // Correspondence hub (walkthrough 02:28:57): auto-send the welcome /
+  // portal-setup mail when a portal contact exists. Respects the portal kill
+  // switch inside sendWelcomeEmail; a failure is logged, never rolled back.
+  let welcomeEmailSent = false;
+  try {
+    welcomeEmailSent = (await sendWelcomeEmail(result.clientId, userId)).sent;
+  } catch (err) {
+    console.error(`[convert] welcome email failed for client ${result.clientId}:`, err);
+  }
+
   return {
     intakeId,
     clientId: result.clientId,
@@ -784,5 +804,6 @@ export async function convertIntakeToClient(
     catchUpProjectsCreated: result.catchUpProjectsCreated,
     reportRowsCreated: result.reportRowsCreated,
     tasksGenerated,
+    welcomeEmailSent,
   };
 }

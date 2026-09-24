@@ -112,6 +112,28 @@ describe('ClientDetailTabs visibility rules', () => {
     expect(screen.getByRole('tab', { name: /Properties/ })).toBeEnabled()
   })
 
+  it('renders the Correspondence tab with the unread-reply badge', async () => {
+    const user = userEvent.setup()
+    render(
+      <TooltipProvider>
+        <ClientDetailTabs
+          detail={makeDetail()}
+          work={makeWork()}
+          yearGrid={makeYearGrid()}
+          yearGridPrevHref="/clients/1?tab=work&year=2025"
+          yearGridNextHref="/clients/1?tab=work&year=2027"
+          billing={null}
+          showBilling={false}
+          unreadCorrespondence={3}
+          correspondencePanel={<div data-testid="correspondence-panel-stub" />}
+        />
+      </TooltipProvider>,
+    )
+    expect(screen.getByTestId('correspondence-tab-badge')).toHaveTextContent('3')
+    await user.click(screen.getByTestId('correspondence-tab'))
+    expect(screen.getByTestId('correspondence-panel-stub')).toBeInTheDocument()
+  })
+
   it('project-engagement clients get the explanatory Work empty state, no periodic rows', async () => {
     const user = userEvent.setup()
     renderTabs({

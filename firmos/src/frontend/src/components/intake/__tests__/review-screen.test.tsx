@@ -16,6 +16,16 @@ vi.mock('@/server/actions/intake', () => ({
   submitIntakeForReview: vi.fn(async () => ({ ok: true, data: {} })),
 }))
 
+// The quote section's "Email proposal" button (correspondence hub).
+const sendIntakeQuoteEmailAction = vi.fn(async (_id: unknown) => ({
+  ok: true as const,
+  data: { correspondenceId: 5, to: 'wren@fernfeather.shop' },
+}))
+vi.mock('@/server/actions/correspondence', () => ({
+  sendIntakeQuoteEmailAction: (id: unknown) => sendIntakeQuoteEmailAction(id),
+}))
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+
 const QUOTE: Quote = {
   billingCycle: 1,
   lines: [
@@ -92,5 +102,30 @@ describe('ReviewScreen quote discounts (C1)', () => {
     renderReview({ ...QUOTE, lines: QUOTE.lines.map((l) => ({ ...l, discount: 0 })) })
     expect(screen.queryByTestId('review-discount-bank_feed_management')).toBeNull()
     expect(screen.getByTestId('review-quote')).toHaveTextContent('Bank Feed Management')
+  })
+
+  it('offers Email proposal to manager+ and sends through the action', async () => {
+    const user = (await import('@testing-library/user-event')).default.setup()
+    sendIntakeQuoteEmailAction.mockClear()
+    render(
+      <ReviewScreen
+        intakeId={7}
+        answers={ANSWERS}
+        quote={QUOTE}
+        status="pending_review"
+        canConvert
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+      />,
+    )
+    await user.click(screen.getByTestId('email-proposal'))
+    expect(sendIntakeQuoteEmailAction).toHaveBeenCalledWith(7)
+  })
+
+  it('hides Email proposal from read-only reviewers', () => {
+    renderReview()
+    expect(screen.queryByTestId('email-proposal')).not.toBeInTheDocument()
   })
 })

@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 
 import { requirePortalUser } from '@/server/auth/guards'
+import { markPortalCorrespondenceRead } from '@/server/correspondence'
 import {
   createPortalRequest as engineCreatePortalRequest,
   PORTAL_CLIENT_COOKIE,
@@ -132,6 +133,23 @@ export async function createPortalRequest(
     const user = await requirePortalUser()
     const task = await engineCreatePortalRequest(user, clientId, kind, details)
     return { ok: true, data: { taskId: task.id, title: task.title, dueDate: task.dueDate } }
+  } catch (error) {
+    return failure(error)
+  }
+}
+
+/**
+ * Correspondence hub: reading the portal messages section marks the firm's
+ * unread mail read (the government-portal model - the badge clears on read).
+ * Membership + kill switch are enforced inside the engine.
+ */
+export async function markPortalMessagesRead(
+  clientId: number,
+): Promise<ActionResult<{ marked: number }>> {
+  try {
+    const user = await requirePortalUser()
+    const marked = await markPortalCorrespondenceRead(user, clientId)
+    return { ok: true, data: { marked } }
   } catch (error) {
     return failure(error)
   }

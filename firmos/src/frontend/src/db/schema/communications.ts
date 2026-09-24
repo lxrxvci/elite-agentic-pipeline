@@ -13,7 +13,8 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { chatChannelKindEnum, notificationPriorityEnum } from "./enums";
 import { createdAt } from "./shared";
-import { clients } from "./clients";
+import { clients, contacts } from "./clients";
+import { tasks } from "./tasks";
 import { users } from "./users";
 
 /**
@@ -156,4 +157,76 @@ export const chatMessages = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("chat_messages_channel_idx").on(t.channelId, t.createdAt)],
+);
+
+/**
+ * Client correspondence (walkthrough 02:28:57-02:34:03): one row per email
+ * or portal message, both directions. The staff client record and the portal
+ * home read the same history; portal rows are limited to portal_visible.
+ *
+ * direction/channel/status/template stay TEXT (notifications precedent - the
+ * sets are extended by app code): direction outbound|inbound, channel
+ * email|portal, status queued|sent|failed|received, template names the
+ * branded mail that produced the row (welcome, missing_info_reminder,
+ * quote_ready, waiting_on_client, staff_composer) or "inbound".
+ *
+ * Thread matching for inbound replies: the subject token [firmOS #t-<id>]
+ * (task-linked outbound mail) and resend_message_id (In-Reply-To/References).
+ *
+ * Read markers are per side: outbound rows carry portal_read_at (the client
+ * read it), inbound rows carry staff_read_at (staff read it); the writer's
+ * own side is stamped at write time. Badge counts derive from these.
+ *
+ * client_id is nullable for intake-stage mail (the quote email goes out
+ * before conversion); intake_id links it, and conversion backfills client_id
+ * so the client's history is continuous.
+ */
+export const correspondence = pgTable(
+  "correspondence",
+  {
+    id: serial("id").primaryKey(),
+    clientId: integer("client_id").references(() => clients.id, { onDelete: "cascade" }),
+    contactId: integer("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    direction: text("direction").notNull(), // outbound | inbound
+    channel: text("channel").notNull(), // email | portal
+    subject: text("subject"),
+    bodyText: text("body_text").notNull(),
+    fromEmail: text("from_email"),
+    toEmail: text("to_email"),
+    /** Optional thread link to the work item the mail is about. */
+    taskId: integer("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    /** Internal context: what this mail was about (never portal-rendered). */
+    note: text("note"),
+    /** Which branded template produced it (outbound), or "inbound". */
+    template: text("template").notNull().default("staff_composer"),
+    status: text("status").notNull().default("queued"), // queued | sent | failed | received
+    resendMessageId: text("resend_message_id"),
+    /** Portal renders only portal_visible rows (§12 surface isolation). */
+    portalVisible: boolean("portal_visible").notNull().default(true),
+    /** The staff user who sent it; null for job/inbound mail. */
+    sentById: integer("sent_by_id").references((): AnyPgColumn => users.id),
+    /** Intake-stage mail link; conversion backfills client_id from it. */
+    intakeId: integer("intake_id"),
+    portalReadAt: timestamp("portal_read_at", { withTimezone: true, mode: "date" }),
+    staffReadAt: timestamp("staff_read_at", { withTimezone: true, mode: "date" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // Per-client history (staff tab + portal home).
+    index("correspondence_client_idx").on(t.clientId, t.createdAt),
+    index("correspondence_contact_idx").on(t.contactId),
+    index("correspondence_task_idx").on(t.taskId),
+    // Staff badge: unread inbound replies per client.
+    index("correspondence_staff_unread_idx")
+      .on(t.clientId)
+      .where(sql`${t.direction} = 'inbound' and ${t.staffReadAt} is null`),
+    // Portal badge: unread firm mail per client.
+    index("correspondence_portal_unread_idx")
+      .on(t.clientId)
+      .where(
+        sql`${t.direction} = 'outbound' and ${t.portalVisible} = true and ${t.portalReadAt} is null`,
+      ),
+    // Inbound thread matching on In-Reply-To/References.
+    index("correspondence_resend_message_idx").on(t.resendMessageId),
+  ],
 );

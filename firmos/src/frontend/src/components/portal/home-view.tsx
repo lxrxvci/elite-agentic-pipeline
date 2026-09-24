@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { CheckCircle2, FileUp, Inbox, ReceiptText } from 'lucide-react'
 
 import type { WaitingOnYouItem } from '@/server/portal'
+import type { CorrespondenceItem } from '@/server/correspondence'
 import type { ClientYearGrid, YearGridStream } from '@/server/year-grid'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KIND_META, KIND_STYLE } from '@/components/workstation/work-card'
@@ -11,6 +12,7 @@ import { WorkStatusBadge } from '@/shared/ui/work'
 import { monthLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 
+import { PortalCorrespondenceList } from './correspondence-list'
 import { formatInstant } from './format'
 import { PortalYearProgress } from './year-progress'
 
@@ -32,6 +34,8 @@ export interface RecentUpload {
 interface PortalHomeViewProps {
   firstName: string
   clientName: string
+  /** The acting client id (the messages section's read-marking scope). */
+  clientId?: number
   waiting: WaitingOnYouItem[]
   openRequestCount: number | null
   recentUploads: RecentUpload[]
@@ -41,6 +45,9 @@ interface PortalHomeViewProps {
   progressGrid: ClientYearGrid | null
   /** Streams the acting account may see (tasks row needs can_view_tasks). */
   progressStreams: YearGridStream[]
+  /** Correspondence hub: portal-visible history + unread firm-mail count. */
+  correspondence?: CorrespondenceItem[]
+  unreadCorrespondence?: number
 }
 
 function WaitingRow({ item }: { item: WaitingOnYouItem }) {
@@ -92,12 +99,15 @@ function WaitingRow({ item }: { item: WaitingOnYouItem }) {
 export function PortalHomeView({
   firstName,
   clientName,
+  clientId,
   waiting,
   openRequestCount,
   recentUploads,
   invoiceCount,
   progressGrid,
   progressStreams,
+  correspondence,
+  unreadCorrespondence = 0,
 }: PortalHomeViewProps) {
   return (
     <div className="flex flex-col gap-6">
@@ -148,6 +158,14 @@ export function PortalHomeView({
           </ul>
         )}
       </section>
+
+      {clientId != null && correspondence != null && (
+        <PortalCorrespondenceList
+          clientId={clientId}
+          rows={correspondence}
+          unreadCount={unreadCorrespondence}
+        />
+      )}
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>

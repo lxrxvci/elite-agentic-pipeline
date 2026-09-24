@@ -714,3 +714,23 @@ describe('Completion check-draw (Wave 3 dopamine hit)', () => {
     expect(within(button).getByTestId('check-draw')).toBeInTheDocument()
   })
 })
+
+describe('WorkstationQueue - correspondence badge', () => {
+  it('shows the unread-reply chip on the My Day client card, linked to the tab', () => {
+    render(
+      <TooltipProvider>
+        <WorkstationQueue queue={queue} assignees={assignees} unreadByClient={{ 1: 2 }} />
+      </TooltipProvider>,
+    )
+    const group = screen.getByTestId('my-day-client')
+    const badge = within(group).getByTestId('my-day-correspondence-badge')
+    expect(badge).toHaveTextContent('2')
+    expect(badge.closest('a')).toHaveAttribute('href', '/clients/1?tab=correspondence')
+  })
+
+  it('no chip when the client has no unread replies', () => {
+    renderQueue()
+    const group = screen.getByTestId('my-day-client')
+    expect(within(group).queryByTestId('my-day-correspondence-badge')).not.toBeInTheDocument()
+  })
+})

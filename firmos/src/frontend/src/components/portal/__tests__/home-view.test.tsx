@@ -1,10 +1,15 @@
 import { render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { PortalHomeView } from '../home-view'
 import { makeCloseSteps, makeYearGrid } from '@/components/clients/__tests__/fixtures'
 import type { WaitingOnYouItem } from '@/server/portal'
 import type { YearGridStream } from '@/server/year-grid'
+
+// The messages section marks mail read through this action (DB boundary).
+vi.mock('@/server/actions/portal', () => ({
+  markPortalMessagesRead: vi.fn(async () => ({ ok: true, data: { marked: 0 } })),
+}))
 
 /** Value copy of the engine's stream order (the module itself is db-backed). */
 const ALL_STREAMS: YearGridStream[] = ['bank_feeds', 'reconciliations', 'reports', 'tasks']
@@ -129,5 +134,39 @@ describe('PortalHomeView waiting-on-you kind chips', () => {
     expect(items[1]).toHaveTextContent('Jul 2026')
     // The status badge survives: kind color means type, not state.
     expect(items[0]).toHaveTextContent('Needs you')
+  })
+})
+
+describe('PortalHomeView correspondence section', () => {
+  const firmMail = {
+    id: 1,
+    direction: 'outbound' as const,
+    channel: 'email' as const,
+    subject: 'A few things we still need',
+    bodyText: 'Here is the list',
+    fromEmail: null,
+    toEmail: 'alison@harborlinemarine.com',
+    status: 'sent' as const,
+    template: 'missing_info_reminder',
+    taskId: null,
+    taskTitle: null,
+    contactName: null,
+    sentByName: 'Dana',
+    portalVisible: true,
+    staffReadAt: null,
+    portalReadAt: null,
+    createdAt: '2026-08-20T10:00:00.000Z',
+  }
+
+  it('renders the messages history with the unread badge when correspondence is provided', () => {
+    renderHome({ clientId: 1, correspondence: [firmMail], unreadCorrespondence: 1 })
+    expect(screen.getByRole('heading', { name: /Messages/ })).toBeInTheDocument()
+    expect(screen.getByTestId('portal-messages-badge')).toHaveTextContent('1 new')
+    expect(screen.getAllByTestId('portal-message-row')).toHaveLength(1)
+  })
+
+  it('omits the section entirely when the page supplies no correspondence', () => {
+    renderHome()
+    expect(screen.queryByRole('heading', { name: /Messages/ })).not.toBeInTheDocument()
   })
 })

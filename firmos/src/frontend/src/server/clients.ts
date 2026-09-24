@@ -28,6 +28,7 @@ import {
 } from "@/db/schema";
 
 import { requireRole, requireStaff } from "./auth/guards";
+import { getUnreadInboundByClient } from "./correspondence";
 import { catchupOf, toDomainClient, type ClientRow } from "./domain-adapters";
 import { localToday } from "./dates";
 import { getFirmProfitability } from "./profitability";
@@ -81,6 +82,8 @@ export interface ClientListRow {
   bookkeeper: StaffRef | null;
   /** Open work rows across all four kinds; 0 for on-hold clients (frozen). */
   openWorkCount: number;
+  /** Unread inbound client replies (correspondence hub); the row chip. */
+  unreadCorrespondence: number;
   /** Consecutive closed periods this year (shared closeStreak engine); 0 for
    *  on-hold clients. Rendered as a pill when >= 3. */
   closeStreak: number;
@@ -248,6 +251,8 @@ export async function listClients(): Promise<ClientList> {
       .from(tasks)
       .where(and(isNull(tasks.deletedAt), notInArray(tasks.status, ["cancelled"]))),
   ]);
+  // Correspondence hub: one grouped unread-inbound read for the row chips.
+  const unreadCorrespondence = await getUnreadInboundByClient();
 
   const userById = new Map(userRows.map((u) => [u.id, u]));
 
@@ -304,6 +309,7 @@ export async function listClients(): Promise<ClientList> {
       manager: c.managerId != null ? refOf(userById.get(c.managerId)) : null,
       bookkeeper: c.bookkeeperId != null ? refOf(userById.get(c.bookkeeperId)) : null,
       openWorkCount,
+      unreadCorrespondence: unreadCorrespondence.get(c.id) ?? 0,
       closeStreak: streak,
       health,
     };

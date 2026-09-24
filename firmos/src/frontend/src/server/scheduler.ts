@@ -9,6 +9,7 @@ import {
   dueSoonCheckJob,
   materializeJob,
   mentionEscalationJob,
+  missingInfoReminderJob,
   notClockedInAlertJob,
   overdueCheckJob,
   recurringJob,
@@ -47,6 +48,7 @@ export type JobName =
   | "due-soon-check"
   | "bank-feed-alerts"
   | "statement-overdue"
+  | "missing-info-reminders"
   | "mention-sms"
   | "deferred-push"
   | "not-clocked-in-alert";
@@ -80,6 +82,9 @@ export const JOB_SCHEDULE: readonly JobDefinition[] = [
   { name: "due-soon-check", run: dueSoonCheckJob, schedule: { kind: "daily", hour: 7, minute: 0 }, startup: "seed_yesterday" },
   { name: "bank-feed-alerts", run: bankFeedAlertsJob, schedule: { kind: "daily", hour: 7, minute: 0 }, startup: "seed_yesterday" },
   { name: "statement-overdue", run: statementOverdueJob, schedule: { kind: "daily", hour: 7, minute: 30 }, startup: "seed_yesterday" },
+  // Correspondence hub: daily missing-info reminders (3-day cadence dedup
+  // lives inside the job, so an early fire is harmless).
+  { name: "missing-info-reminders", run: missingInfoReminderJob, schedule: { kind: "daily", hour: 7, minute: 45 }, startup: "seed_yesterday" },
   { name: "mention-sms", run: mentionEscalationJob, schedule: { kind: "every_tick" }, startup: "run" },
   { name: "deferred-push", run: deferredPushJob, schedule: { kind: "every_tick" }, startup: "run" },
   // F4: the check is cheap (three reads) and self-dedups per user/day; the

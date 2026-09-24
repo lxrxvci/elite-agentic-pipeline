@@ -57,6 +57,12 @@ vi.mock('@/server/actions/intake', () => ({
   convertIntake: (id: unknown, staff: unknown) => convertIntake(id, staff),
 }))
 
+// The review screen's "Email proposal" button (correspondence hub) - mocked
+// so the wizard suite never loads the server DB layer.
+vi.mock('@/server/actions/correspondence', () => ({
+  sendIntakeQuoteEmailAction: vi.fn(async () => ({ ok: true, data: { correspondenceId: 1, to: 'a@b.c' } })),
+}))
+
 import { IntakeWizard, AUTO_ADVANCE_MS, SAVE_DEBOUNCE_MS, QUOTE_DEBOUNCE_MS } from '../wizard'
 
 const noop = () => {}

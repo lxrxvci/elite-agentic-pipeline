@@ -5,6 +5,10 @@ import { addDays, formatLocalDate, type LocalDate } from "@firmos/domain";
 import { db } from "@/db";
 import { notifications, tasks, users, workstationTimeEntries } from "@/db/schema";
 
+import {
+  computeMissingInfoReminders,
+  sendMissingInfoReminder,
+} from "./correspondence";
 import { materializeOperationalRows, type MaterializeSummary } from "./materialize";
 import {
   emitOncePer24Hours,
@@ -281,8 +285,58 @@ export async function statementOverdueJob(
   return summary;
 }
 
-// ── stale-cleanup (§9: every 5 minutes) ───────────────────────────────────
+// ── missing-info reminders (correspondence hub: daily after 7:45 AM local) ─
 
+export interface MissingInfoReminderSummary {
+  today: string;
+  /** Clients found with at least one missing-onboarding reason. */
+  candidates: number;
+  remindersSent: number;
+  /** Per-client skip reasons (nothing_missing, cadence, no_contact_email). */
+  skipped: { clientId: number; reason: string }[];
+  failures: EntityFailure[];
+}
+
+/**
+ * Correspondence hub (walkthrough 02:28:57-02:34:03): clients with missing
+ * required onboarding info - portal never activated past the grace period,
+ * or accounts still lacking confirmed statement details - get the branded
+ * reminder mail listing exactly what's open. Dedup is cadence-based: at most
+ * one reminder per client per REMINDER_CADENCE_DAYS days, with the
+ * correspondence row itself as the dedup record; every send is audit-logged
+ * by the engine (correspondence_email_sent). Per-client try/catch isolation
+ * follows the §9 rule.
+ */
+export async function missingInfoReminderJob(
+  now: Date = new Date(),
+): Promise<MissingInfoReminderSummary> {
+  const today = firmLocalToday(now);
+  const { plans, skipped } = await computeMissingInfoReminders(now);
+  const summary: MissingInfoReminderSummary = {
+    today: formatLocalDate(today),
+    candidates: plans.length,
+    remindersSent: 0,
+    skipped,
+    failures: [],
+  };
+  for (const plan of plans) {
+    try {
+      const row = await sendMissingInfoReminder(plan.clientId, plan.reasons, null, now);
+      if (row) summary.remindersSent += 1;
+      else summary.skipped.push({ clientId: plan.clientId, reason: "no_contact_email" });
+    } catch (err) {
+      // §9 - per-entity isolation: one bad client cannot abort the batch.
+      summary.failures.push({
+        entityType: "client",
+        entityId: plan.clientId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return summary;
+}
+
+// ── stale-cleanup (§9: every 5 minutes) ───────────────────────────────────
 export async function staleCleanupJob(now: Date = new Date()): Promise<StaleCleanupResult> {
   const result = await runStaleCleanup(now);
   // §16 - idle/auto-clock-out warnings push IMMEDIATELY. runStaleCleanup

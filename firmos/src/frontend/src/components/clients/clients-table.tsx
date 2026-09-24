@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Search, Users } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Mail, Search, Users } from 'lucide-react'
 import type { ClientWorkState } from '@firmos/domain'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -347,6 +347,26 @@ export function ClientsTable({ rows, canSeeRates = false }: ClientsTableProps) {
                           <Check className="h-2.5 w-2.5" aria-hidden />
                           <span className="tnum">{row.closeStreak}</span> in a row
                         </span>
+                      )}
+                      {/* Correspondence hub: unread client replies. The chip
+                          links straight to the Correspondence tab. */}
+                      {row.unreadCorrespondence > 0 && (
+                        <button
+                          type="button"
+                          data-testid="correspondence-badge"
+                          title={`${row.unreadCorrespondence} unread repl${row.unreadCorrespondence === 1 ? 'y' : 'ies'} from this client`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            router.push(`/clients/${row.id}?tab=correspondence`)
+                          }}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground"
+                        >
+                          <Mail className="h-2.5 w-2.5" aria-hidden />
+                          <span className="tnum">{row.unreadCorrespondence}</span>
+                          <span className="sr-only">
+                            unread replies - open correspondence
+                          </span>
+                        </button>
                       )}
                     </div>
                   </TableCell>                  <TableCell className="px-3 py-0">

@@ -12,6 +12,10 @@
  *    in-process so the dev/test helper (src/server/auth/dev-links.ts) can
  *    hand back magic links without a mailbox.
  *
+ * sendEmail returns the provider message id (Resend id, or a synthetic
+ * dev-<n>@firmos.dev id from the dev driver) so correspondence rows can
+ * thread-match inbound replies by In-Reply-To/References.
+ *
  * In production with no RESEND_API_KEY, sendEmail throws rather than
  * silently dropping mail - a misconfigured deploy must be loud.
  */
@@ -23,12 +27,20 @@ export interface EmailMessage {
 }
 
 export interface EmailDriver {
-  send(message: EmailMessage): Promise<void>;
+  /**
+   * Delivers the message and returns the provider message id (used for
+   * correspondence threading - inbound In-Reply-To/References matching).
+   * The dev driver returns a synthetic id so threading works end-to-end in
+   * dev/test; null means the driver does not expose one.
+   */
+  send(message: EmailMessage): Promise<string | null>;
 }
 
 // Latest message per recipient, in-process only. Dev/test convenience for
 // magic-link retrieval; never written in production (guard in send()).
 const lastMessageByEmail = new Map<string, EmailMessage>();
+
+let devMessageCounter = 0;
 
 /** Dev driver: console log + per-recipient stash (non-production only). */
 const devDriver: EmailDriver = {
@@ -38,6 +50,9 @@ const devDriver: EmailDriver = {
     if (process.env.NODE_ENV !== "production") {
       lastMessageByEmail.set(message.to.toLowerCase(), message);
     }
+    // Synthetic id: correspondence rows thread-match against it in dev/test.
+    devMessageCounter += 1;
+    return `dev-${Date.now()}-${devMessageCounter}@firmos.dev`;
   },
 };
 
@@ -51,7 +66,7 @@ function resendDriver(apiKey: string): EmailDriver {
     async send(message) {
       const { Resend } = await import("resend");
       const resend = new Resend(apiKey);
-      const { error } = await resend.emails.send({
+      const { data, error } = await resend.emails.send({
         from,
         to: message.to,
         subject: message.subject,
@@ -60,6 +75,7 @@ function resendDriver(apiKey: string): EmailDriver {
       if (error) {
         throw new Error(`sendEmail: Resend rejected the message (${error.name}: ${error.message})`);
       }
+      return data?.id ?? null;
     },
   };
 }
@@ -73,9 +89,9 @@ function activeDriver(): EmailDriver {
   return devDriver;
 }
 
-/** Send one message through the active driver. */
-export async function sendEmail(message: EmailMessage): Promise<void> {
-  await activeDriver().send({ ...message, to: message.to.toLowerCase() });
+/** Send one message through the active driver; returns the provider message id. */
+export async function sendEmail(message: EmailMessage): Promise<string | null> {
+  return activeDriver().send({ ...message, to: message.to.toLowerCase() });
 }
 
 /**

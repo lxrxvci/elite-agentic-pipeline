@@ -67,6 +67,16 @@ test('client detail has no serious/critical axe violations', async ({ page }) =>
   await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname))
   await page.waitForLoadState('networkidle')
   await expectAccessible(page, 'client detail')
+
+  // Correspondence hub: the tab history and the open composer both scan clean.
+  await page.getByTestId('correspondence-tab').click()
+  await expectAccessible(page, 'client detail - correspondence tab')
+  const composeButton = page.getByTestId('compose-email-open')
+  if (await composeButton.isEnabled().catch(() => false)) {
+    await composeButton.click()
+    await expect(page.getByTestId('compose-panel')).toBeVisible()
+    await expectAccessible(page, 'client detail - email composer')
+  }
 })
 
 test('intake has no serious/critical axe violations', async ({ page }) => {

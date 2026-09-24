@@ -41,6 +41,26 @@ describe('ClientsTable', () => {
     expect(within(northwind).getByText('Northwind Frame & Door')).toBeInTheDocument()
   })
 
+  it('shows the unread-correspondence chip and routes it to the Correspondence tab', async () => {
+    const user = userEvent.setup()
+    const rows = seedListRows.map((r) =>
+      r.id === 1 ? { ...r, unreadCorrespondence: 2 } : r,
+    )
+    renderTable(rows)
+    const harborline = screen
+      .getAllByTestId('client-row')
+      .find((r) => r.getAttribute('data-client-id') === '1')!
+    const badge = within(harborline).getByTestId('correspondence-badge')
+    expect(badge).toHaveTextContent('2')
+    // The chip jumps straight to the tab without triggering the row click.
+    await user.click(badge)
+    expect(push).toHaveBeenCalledWith('/clients/1?tab=correspondence')
+    expect(push).not.toHaveBeenCalledWith('/clients/1')
+
+    // Nobody else has unread replies - no chips.
+    expect(screen.getAllByTestId('correspondence-badge')).toHaveLength(1)
+  })
+
   it('maps lifecycle states to the status-token chips (dot + label)', () => {
     renderTable()
     const row = (id: string) =>

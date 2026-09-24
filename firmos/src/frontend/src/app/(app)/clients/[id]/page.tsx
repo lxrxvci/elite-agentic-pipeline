@@ -9,6 +9,7 @@ import { ClientDetailTabs } from '@/components/clients/client-detail-tabs'
 import { ClientRecurringPanel } from '@/components/clients/client-recurring-panel'
 import { cadenceTierLabel, fullDateLabel, moneyLabel } from '@/components/clients/format'
 import { ClientContactCard } from '@/components/clients/contact-card'
+import { CorrespondencePanel } from '@/components/clients/correspondence-panel'
 import { ClientHero, type ClientHeroStat } from '@/components/clients/client-hero'
 import { ClientStateChip } from '@/components/clients/state-chip'
 import type { ClientInvoiceTimelineItem } from '@/components/clients/billing-panel'
@@ -31,6 +32,7 @@ import { invoices, invoiceLineItems, projects, projectTasks, users } from '@/db/
 import { getClientBilling, getClientDetail, getClientWork } from '@/server/clients'
 import { canAccessStatements, requireStaff } from '@/server/auth/guards'
 import { getStaffOpenWorkCounts } from '@/server/capacity'
+import { listClientCorrespondence, listWaitingContext } from '@/server/correspondence'
 import { localToday } from '@/server/dates'
 import { getClientYearGrid } from '@/server/year-grid'
 import { canDeleteDocument, documentGroupOf, getDocumentTree } from '@/server/documents'
@@ -88,7 +90,7 @@ export default async function ClientDetailPage({
     .orderBy(desc(projects.id))
     .limit(1)
 
-  const [work, billing, statementsGrid, documentTree, staffRows, clientInvoiceRows, taxChecklistRows, w9Rows, offboardingTaskRows, yearGrid, clientRules] = await Promise.all([
+  const [work, billing, statementsGrid, documentTree, staffRows, clientInvoiceRows, taxChecklistRows, w9Rows, offboardingTaskRows, yearGrid, clientRules, correspondence, waitingContext] = await Promise.all([
     getClientWork(id),
     canSeeBilling ? getClientBilling(id) : Promise.resolve(null),
     getStatementsGrid(id, today),
@@ -125,6 +127,9 @@ export default async function ClientDetailPage({
     getClientYearGrid(id, year, today),
     // Recurring tab: the client's schedule rules (§6.4).
     listClientRules(id, today),
+    // Correspondence tab: the two-way history + the composer's waiting links.
+    listClientCorrespondence(id),
+    listWaitingContext(id),
   ])
   if (!work || !yearGrid) notFound()
 
@@ -347,7 +352,7 @@ export default async function ClientDetailPage({
     .filter((u) => u.isActive)
     .map((u) => ({ id: u.id, name: staffNameOf(u) }))
 
-  const deepTab = ['work', 'recurring', 'billing', 'tax', 'w9', 'offboarding', 'projects', 'properties'].includes(tab ?? '') ? tab : undefined
+  const deepTab = ['work', 'recurring', 'billing', 'tax', 'w9', 'offboarding', 'projects', 'properties', 'correspondence'].includes(tab ?? '') ? tab : undefined
 
   // Hero stat row (DESIGN-FRESHBOOKS §5): computed from reads this page
   // already owns - the unified-queue slice and the owner/admin invoice list.
@@ -470,6 +475,18 @@ export default async function ClientDetailPage({
         bookkeepers={bookkeepers}
         clientInvoices={clientInvoices}
         defaultTab={deepTab === 'billing' && !canSeeBilling ? undefined : deepTab}
+        unreadCorrespondence={correspondence.unreadInbound}
+        correspondencePanel={
+          <CorrespondencePanel
+            clientId={id}
+            clientName={detail.dbaName ?? detail.legalName}
+            rows={correspondence.rows}
+            unreadInbound={correspondence.unreadInbound}
+            contacts={detail.contacts}
+            waitingItems={waitingContext}
+            canSendWelcome={canAssignStaff}
+          />
+        }
         documentsPanel={
           <DocumentsPanel
             clientId={id}

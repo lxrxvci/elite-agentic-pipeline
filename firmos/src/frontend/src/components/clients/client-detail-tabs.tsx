@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { DoorOpen, FolderOpen, Landmark, ReceiptText, Repeat, Scale, SquareKanban, Building2 } from 'lucide-react'
+import { DoorOpen, FolderOpen, Landmark, Mail, ReceiptText, Repeat, Scale, SquareKanban, Building2 } from 'lucide-react'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { ClientBilling, ClientDetail, ClientWork } from '@/server/clients'
@@ -65,9 +65,13 @@ interface ClientDetailTabsProps {
   recurringPanel?: ReactNode
   /** Server-composed Properties tab panel (real-estate clients only). */
   propertiesPanel?: ReactNode
+  /** Server-composed Correspondence tab panel (the email hub history). */
+  correspondencePanel?: ReactNode
+  /** Unread inbound replies - the tab badge. */
+  unreadCorrespondence?: number
 }
 
-export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel }: ClientDetailTabsProps) {
+export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel, correspondencePanel, unreadCorrespondence = 0 }: ClientDetailTabsProps) {
   /* Segmented-pill tab strip (DESIGN-FRESHBOOKS §1): the active tab is the
      brand pill (bg-primary/text-primary-foreground keeps AA in both themes);
      icons inherit currentColor, so they follow the pill for free. */
@@ -88,6 +92,18 @@ export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yea
           Recurring
         </TabsTrigger>
         <TabsTrigger value="onboarding" className={triggerCls}>Onboarding</TabsTrigger>
+        <TabsTrigger value="correspondence" data-testid="correspondence-tab" className={triggerCls}>
+          <Mail className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+          Correspondence
+          {unreadCorrespondence > 0 && (
+            <span
+              data-testid="correspondence-tab-badge"
+              className="tnum ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground group-data-[state=active]:bg-primary-foreground group-data-[state=active]:text-primary"
+            >
+              {unreadCorrespondence}
+            </span>
+          )}
+        </TabsTrigger>
         {showBilling && (
           <TabsTrigger value="billing" data-testid="billing-tab" className={triggerCls}>
             Billing
@@ -147,6 +163,9 @@ export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yea
       </TabsContent>
       <TabsContent value="onboarding" className="mt-4">
         <OnboardingPanel rows={detail.onboarding} today={work.today} />
+      </TabsContent>
+      <TabsContent value="correspondence" className="mt-4">
+        {correspondencePanel}
       </TabsContent>
       {showBilling && billing && (
         <TabsContent value="billing" className="mt-4">
