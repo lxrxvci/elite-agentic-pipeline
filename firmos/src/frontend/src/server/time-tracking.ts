@@ -228,6 +228,32 @@ export async function startActivity(
   return entry;
 }
 
+/**
+ * D5 (card timeboxing): stop the user's open activity timer for one work
+ * area - the periodic-row counterpart of "completing a task stops its task
+ * timer". work-items.ts calls it when a bank-feed / reconciliation / report
+ * card completes so a card started from the queue never leaks a running
+ * timer past its completion. Matches on activityType AND client when the
+ * entry carries one; a client-less entry for the same area closes too.
+ * No-op (stopped: false) when nothing matching is open.
+ */
+export async function stopActivityTimer(
+  userId: number,
+  activityType: NonDayActivityType,
+  clientId?: number,
+  now: Date = new Date(),
+): Promise<{ stopped: boolean; entryId: number | null }> {
+  const open = await openActivityEntries(userId);
+  const match = open.find(
+    (e) =>
+      e.activityType === activityType &&
+      (clientId == null || e.clientId == null || e.clientId === clientId),
+  );
+  if (!match) return { stopped: false, entryId: null };
+  await closeWorkstationEntry(match.id, match.startedAt, now, false);
+  return { stopped: true, entryId: match.id };
+}
+
 /** §17: the heartbeat updates last_activity_at on all open entries. */
 export async function heartbeat(userId: number, now: Date = new Date()): Promise<number> {
   const updated = await db

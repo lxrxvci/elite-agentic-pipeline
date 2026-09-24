@@ -3,6 +3,13 @@
  * build, signs in as the seeded owner, and captures the redesigned
  * workstation (light, dark, focus mode, caught-up) plus a client detail page.
  *
+ * Anti-overwhelm D1-D5 shots (2026-09): workstation-my-day (default view,
+ * populated), workstation-up-next, workstation-rollover (dialog open - a
+ * throwaway overdue task is DB-assigned to the owner so the dialog opens;
+ * deleted again at the end), workstation-celebration (the rare big moment
+ * from completing a 30+ day stale item when one exists, else the standard
+ * completed-strip state), and workstation-my-day-dark.
+ *
  * Output: ../../docs/design-preview/*.png
  *
  * NOTE: the caught-up shot runs as its own mode. Some seeded work legitimately
@@ -17,14 +24,30 @@
  */
 import { chromium, expect, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, openSync } from "node:fs";
+import { mkdirSync, openSync, readFileSync } from "node:fs";
 import path from "node:path";
+import postgres from "postgres";
 
 const PORT = 3212;
 const BASE = `http://localhost:${PORT}`;
 const OUT = path.resolve(process.cwd(), "../../docs/design-preview");
 const EMAIL = "mara@blueledgerbooks.com";
 const PASSWORD = "Firm0s-dev!";
+
+/** Local-dev DATABASE_URL (the script mutates the dev DB, as documented). */
+function databaseUrl(): string {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  const env = readFileSync(path.resolve(process.cwd(), ".env"), "utf8");
+  const line = env.split("\n").find((l) => l.startsWith("DATABASE_URL="));
+  if (!line) throw new Error("DATABASE_URL not found in env or .env");
+  return line.slice("DATABASE_URL=".length).trim().replace(/^["']|["']$/g, "");
+}
+
+function localDateIso(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
 
 function startServer(): ChildProcess {
   mkdirSync(OUT, { recursive: true });
@@ -66,15 +89,45 @@ async function setTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.waitForTimeout(250);
 }
 
-async function shot(page: Page, name: string): Promise<void> {
-  await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: true });
+async function shot(page: Page, name: string, fullPage = true): Promise<void> {
+  await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage });
   console.log(`captured ${name}.png`);
 }
 
 async function openFullWeek(page: Page): Promise<void> {
   await page.goto(`${BASE}/workstation`, { waitUntil: "networkidle" });
+  // D1: the populated legacy shots live on the full queue now.
+  await page.getByTestId("view-tab-queue").click();
   await page.getByTestId("work-day-chip-all").click();
   await page.waitForTimeout(300);
+}
+
+/** D3 fixture: one overdue ad-hoc task assigned to the owner, so the first
+ *  visit of the day opens the rollover dialog. Returns the task id. */
+async function seedRolloverFixture(sql: ReturnType<typeof postgres>): Promise<number> {
+  const [owner] = await sql`select id from users where email = ${EMAIL}`;
+  const [client] =
+    await sql`select id from clients where legal_name = 'Harborline Marine Supply'`;
+  const yesterday = localDateIso(new Date(Date.now() - 86_400_000));
+  const [row] = await sql`
+    insert into tasks (client_id, assignee_id, title, task_type, status, due_date)
+    values (${client.id}, ${owner.id}, 'Prep the August close call notes', 'ad_hoc', 'open', ${yesterday})
+    returning id`;
+  return row.id as number;
+}
+
+/** D4 fixture: a 45-day-old open ad-hoc task - completing it earns the rare
+ *  "stale rescue" burst deterministically. Deleted again in cleanup. */
+async function seedCelebrationFixture(sql: ReturnType<typeof postgres>): Promise<number> {
+  const [client] =
+    await sql`select id from clients where legal_name = 'Harborline Marine Supply'`;
+  const [bk] = await sql`select id from users where email = 'jorge@blueledgerbooks.com'`;
+  const stale = localDateIso(new Date(Date.now() - 45 * 86_400_000));
+  const [row] = await sql`
+    insert into tasks (client_id, assignee_id, title, task_type, status, due_date)
+    values (${client.id}, ${bk.id}, 'Old cleanup follow-up from the catch-up', 'ad_hoc', 'open', ${stale})
+    returning id`;
+  return row.id as number;
 }
 
 // Wizard step drivers (same conventions as e2e/intake.spec.ts).
@@ -90,6 +143,9 @@ async function wizardAdvance(page: Page, nextQuestion: string): Promise<void> {
 async function main(): Promise<void> {
   const caughtUpOnly = process.argv.includes("--caught-up");
   const server = startServer();
+  const sql = postgres(databaseUrl());
+  let rolloverTaskId: number | null = null;
+  let rescuedTaskId: number | null = null;
   try {
     await waitForServer();
     const browser = await chromium.launch();
@@ -108,18 +164,73 @@ async function main(): Promise<void> {
       return;
     }
 
-    // 1. Workstation, populated queue, light theme.
+    // ── Anti-overwhelm D1-D5 workstation shots ──
     await setTheme(page, "light");
+
+    // 0. D3 rollover: the fixture task makes the first visit of the day open
+    //    the decision dialog. The D4 stale fixture seeds here too - the
+    //    server-rendered queue only sees rows that exist before navigation.
+    rolloverTaskId = await seedRolloverFixture(sql);
+    rescuedTaskId = await seedCelebrationFixture(sql);
+    await page.goto(`${BASE}/workstation`, { waitUntil: "networkidle" });
+    await page.getByTestId("rollover-dialog").waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(300);
+    await shot(page, "workstation-rollover");
+    await page.getByTestId("rollover-later").click();
+
+    // 1. D1 My Day, populated (all days' actionable work, grouped by client).
+    await page.getByTestId("work-day-chip-all").click();
+    await page.waitForTimeout(300);
+    await shot(page, "workstation-my-day");
+
+    // 2. D2 Up Next: the frozen one-card lane entered from Start my day.
+    await page.getByTestId("start-my-day").click();
+    await page.waitForTimeout(300);
+    await shot(page, "workstation-up-next");
+    await page.getByTestId("up-next-exit").click();
+    await page.waitForTimeout(200);
+
+    // 3. D4 celebration: rescue the seeded 45-day-old item - the rare burst
+    //    fires deterministically. Viewport-height shot (the toast is fixed).
+    await page.getByTestId("view-tab-queue").click();
+    await page.getByTestId("work-day-chip-all").click();
+    {
+      // The fixture sorts into the overdue bucket by due date; jump straight
+      // to the card instead of scanning the full list.
+      const target = page.locator(`[data-card-key="task:${rescuedTaskId}"]`);
+      await target.scrollIntoViewIfNeeded();
+      await target.hover();
+      const title = await target.getAttribute("data-card-title");
+      await target.getByRole("button", { name: `Complete: ${title}` }).click();
+      try {
+        await page.getByTestId("celebration-burst").waitFor({ timeout: 3_000 });
+        // Let the burst bars finish their entrance before the capture.
+        await page.waitForTimeout(500);
+      } catch {
+        // Burst missed (timing) - the completed strip is the fallback state.
+      }
+      await shot(page, "workstation-celebration", false);
+    }
+
+    // 4. D1 dark variant of My Day.
+    await setTheme(page, "dark");
+    await page.goto(`${BASE}/workstation`, { waitUntil: "networkidle" });
+    await page.getByTestId("work-day-chip-all").click();
+    await page.waitForTimeout(300);
+    await shot(page, "workstation-my-day-dark");
+    await setTheme(page, "light");
+
+    // 5. Workstation, populated queue (legacy full-week shot).
     await openFullWeek(page);
     await shot(page, "workstation-light");
 
-    // 2. Focus mode (single-card auto-prioritizer).
+    // 6. Focus mode (single-card auto-prioritizer).
     await page.getByTestId("focus-toggle").click();
     await page.waitForTimeout(300);
     await shot(page, "workstation-focus");
     await page.getByTestId("focus-toggle").click();
 
-    // 3. Dark-mode workstation.
+    // 7. Dark-mode workstation (full queue).
     await setTheme(page, "dark");
     await page.waitForTimeout(300);
     await shot(page, "workstation-dark");
@@ -260,7 +371,7 @@ async function main(): Promise<void> {
     //    (progress every 6 months + bill on completion) on its detail page.
     await page.goto(`${BASE}/projects`, { waitUntil: "networkidle" });
     await page.getByTestId("new-project-button").click();
-    await page.getByLabel("Client").click();
+    await page.getByRole("combobox", { name: "Client" }).click();
     await page.getByRole("option", { name: "Harborline Marine Supply" }).click();
     await page.getByLabel("Name").fill("2025 books catch-up");
     await page.getByTestId("create-project-submit").click();
@@ -286,6 +397,18 @@ async function main(): Promise<void> {
 
     await browser.close();
   } finally {
+    // Undo the D3/D4 fixtures: the throwaway tasks are deleted so the dev DB
+    // keeps exactly its seeded work.
+    try {
+      if (rolloverTaskId != null) {
+        await sql`delete from tasks where id = ${rolloverTaskId}`;
+      }
+      if (rescuedTaskId != null) {
+        await sql`delete from tasks where id = ${rescuedTaskId}`;
+      }
+    } finally {
+      await sql.end({ timeout: 2 }).catch(() => undefined);
+    }
     try {
       if (server.pid) process.kill(-server.pid, "SIGTERM");
     } catch {

@@ -33,17 +33,21 @@ test.beforeEach(async ({ context, baseURL }) => {
 
 /**
  * G2 - the Workstation daily loop, end to end:
- * login → buckets render with seeded work → complete a bank-feed card →
- * updates without reload → survives reload (stays complete) → re-open →
- * verify it's back, and back for good.
+ * login → My Day default lands calm → All work holds the full queue →
+ * complete a bank-feed card → updates without reload → survives reload
+ * (stays complete) → re-open → verify it's back, and back for good.
  */
 test('workstation: complete a bank-feed card, reload, re-open', async ({ page }) => {
   // Signed-in owner via the shared global-setup storageState (the UI login
   // is covered by auth.spec; per-test logins trip the 20/min rate limit).
 
-  // ── Land on /workstation: buckets render with seeded work ──
+  // ── Land on /workstation: My Day is the default view (D1) ──
   await page.goto('/workstation')
   await expect(page.getByRole('heading', { name: 'Workstation' })).toBeVisible()
+  await expect(page.getByTestId('view-tab-my-day')).toHaveAttribute('aria-selected', 'true')
+
+  // ── The full queue stays one tab away (D1): bucket tabs + every bucket ──
+  await page.getByTestId('view-tab-queue').click()
   await expect(page.getByRole('tab', { name: /Overdue/ })).toBeVisible()
   await expect(page.getByRole('tab', { name: /Due Today/ })).toBeVisible()
   // The queue defaults to today's work-day filter (owner call notes) - open

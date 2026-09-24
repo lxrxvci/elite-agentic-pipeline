@@ -150,8 +150,12 @@ describe('Bumper lanes on the workstation (D6/D8)', () => {
     expect(within(feedRow as HTMLElement).getByRole('button', { name: /Complete:/ })).toBeInTheDocument()
   })
 
-  it('a pending request reads as requested; an active grant unlocks the card', () => {
+  it('a pending request reads as requested; an active grant unlocks the card', async () => {
+    const user = userEvent.setup()
     renderQueue()
+    // The pending/active fixtures live in the upcoming bucket - D1 keeps
+    // those out of My Day, so assert them on the full queue.
+    await user.click(screen.getByTestId('view-tab-queue'))
     const pendingRow = screen
       .getAllByTestId('work-card')
       .find((el) => el.getAttribute('data-card-key') === 'reconciliation:3')!

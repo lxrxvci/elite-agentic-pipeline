@@ -2,16 +2,18 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { completeWorkCard } from '@/server/actions/work'
+import { applyRolloverAction, completeWorkCard } from '@/server/actions/work'
 import type { CompleteWorkCardResult } from '@/server/actions/work'
 import type { UnifiedQueue, WorkCard } from '@/server/queue'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
+import { quickCelebrationRoll } from '../my-day'
 import { WorkstationQueue } from '../queue'
 import { WorkCardRow } from '../work-card'
 
 vi.mock('@/server/actions/work', () => ({
   completeWorkCard: vi.fn(),
+  applyRolloverAction: vi.fn(),
 }))
 
 // The saved-views seam talks to /api/saved-views over fetch; stub a minimal
@@ -45,6 +47,7 @@ const fetchStub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
 vi.stubGlobal('fetch', fetchStub)
 
 const mockComplete = vi.mocked(completeWorkCard)
+const mockRollover = vi.mocked(applyRolloverAction)
 
 // This jsdom build ships window.localStorage as a plain object - install a
 // minimal in-memory Storage so saved views / the completed strip work.
@@ -92,24 +95,33 @@ const queue: UnifiedQueue = {
   buckets: {
     overdue: [card({ kind: 'bank_feed', id: 1, status: 'overdue', title: 'Bank feed week of 2026-08-17' })],
     due_today: [card({ kind: 'task', id: 2, status: 'due_today', title: 'Close August books', dueDate: '2026-08-23' })],
-    upcoming: [card({ kind: 'report', id: 3, status: 'upcoming', title: 'August management report', dueDate: '2026-08-31' })],
+    upcoming: [
+      card({ kind: 'report', id: 3, status: 'upcoming', title: 'August management report', dueDate: '2026-08-31', clientId: 2, clientName: 'Copperline Coffee' }),
+    ],
     waiting_on_client: [
-      card({ kind: 'bank_feed', id: 4, status: 'waiting_on_client', title: 'Bank feed week of 2026-08-10', waitingOnClient: true }),
+      card({ kind: 'bank_feed', id: 4, status: 'waiting_on_client', title: 'Bank feed week of 2026-08-10', waitingOnClient: true, clientId: 2, clientName: 'Copperline Coffee' }),
     ],
     deferred: [],
-    gated: [card({ kind: 'reconciliation', id: 5, status: 'gated', title: 'Reconcile Checking' })],
+    gated: [
+      card({ kind: 'reconciliation', id: 5, status: 'gated', title: 'Reconcile Checking', clientId: 2, clientName: 'Copperline Coffee' }),
+    ],
   },
 }
 
 const assignees = [{ id: 1, name: 'Mara Ellison', initials: 'ME' }]
 
-function renderQueue() {
+function renderQueue(q: UnifiedQueue = queue) {
   // AppShell provides TooltipProvider in production.
   return render(
     <TooltipProvider>
-      <WorkstationQueue queue={queue} assignees={assignees} />
+      <WorkstationQueue queue={q} assignees={assignees} />
     </TooltipProvider>,
   )
+}
+
+/** D1: the full queue lives one tab away - most legacy flows assert there. */
+async function switchToAllWork(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByTestId('view-tab-queue'))
 }
 
 beforeEach(() => {
@@ -120,11 +132,71 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn()
   mockComplete.mockReset()
   mockComplete.mockResolvedValue({ ok: true })
+  mockRollover.mockReset()
+  mockRollover.mockResolvedValue({ ok: true, applied: 1, skipped: [] })
 })
 
-describe('WorkstationQueue', () => {
-  it('renders bucket tabs and stat chips with counts', () => {
+describe('WorkstationQueue - My Day default (D1)', () => {
+  it('lands on My Day: actionable cards grouped by client, nothing ambient', () => {
     renderQueue()
+    expect(screen.getByTestId('view-tab-my-day')).toHaveAttribute('aria-selected', 'true')
+    // Actionable now: overdue + due_today, in one per-client group card.
+    expect(screen.getByText('Bank feed week of 2026-08-17')).toBeInTheDocument()
+    expect(screen.getByText('Close August books')).toBeInTheDocument()
+    const group = screen.getByTestId('my-day-client')
+    expect(group).toHaveTextContent('Harborline Marine')
+    expect(group).toHaveTextContent('2 left')
+    // Never in My Day: upcoming backlog, waiting, gated.
+    expect(screen.queryByText('August management report')).not.toBeInTheDocument()
+    expect(screen.queryByText('Bank feed week of 2026-08-10')).not.toBeInTheDocument()
+    expect(screen.queryByText('Reconcile Checking')).not.toBeInTheDocument()
+    // The D2 entry point is offered.
+    expect(screen.getByTestId('start-my-day')).toBeInTheDocument()
+  })
+
+  it('scopes the hero stats to My Day and never shows ambient red upcoming', () => {
+    renderQueue()
+    expect(screen.getByTestId('stat-overdue')).toHaveTextContent('1')
+    expect(screen.getByTestId('stat-due_today')).toHaveTextContent('1')
+    expect(screen.getByTestId('stat-done')).toHaveTextContent('0')
+    expect(screen.getByTestId('stat-waiting_on_client')).toHaveTextContent('1')
+    // No Upcoming hero in the default scope at all.
+    expect(screen.queryByTestId('stat-upcoming')).not.toBeInTheDocument()
+  })
+
+  it('labels the day pills by when they unlock, with actionable counts', () => {
+    renderQueue()
+    // Today (Sunday 2026-08-23) defaults to All; the pills carry per-day
+    // actionable counts - never the raw 5-card backlog.
+    expect(screen.getByTestId('work-day-chip-all')).toHaveTextContent('2')
+  })
+
+  it('the stat chips sub-filter the My Day set', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await user.click(screen.getByTestId('stat-overdue'))
+    expect(screen.getByText('Bank feed week of 2026-08-17')).toBeInTheDocument()
+    expect(screen.queryByText('Close August books')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stat-overdue'))
+    expect(screen.getByText('Close August books')).toBeInTheDocument()
+  })
+
+  it('All work restores the full queue with bucket tabs', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await switchToAllWork(user)
+    expect(screen.getByRole('tab', { name: /Overdue/ })).toBeInTheDocument()
+    expect(screen.getAllByTestId('work-card')).toHaveLength(5)
+    expect(screen.getByText('August management report')).toBeInTheDocument()
+    expect(screen.getByText('Reconcile Checking')).toBeInTheDocument()
+  })
+})
+
+describe('WorkstationQueue - full queue', () => {
+  it('renders bucket tabs and stat chips with counts', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await switchToAllWork(user)
     const overdueTab = screen.getByRole('tab', { name: /Overdue/ })
     expect(overdueTab).toHaveTextContent('1')
     expect(screen.getByRole('tab', { name: /Due Today/ })).toHaveTextContent('1')
@@ -138,6 +210,7 @@ describe('WorkstationQueue', () => {
   it('narrows the list when a bucket tab is selected', async () => {
     const user = userEvent.setup()
     renderQueue()
+    await switchToAllWork(user)
     await user.click(screen.getByRole('tab', { name: /Due Today/ }))
     expect(screen.getByText('Close August books')).toBeInTheDocument()
     expect(screen.queryByText('Bank feed week of 2026-08-17')).not.toBeInTheDocument()
@@ -147,6 +220,7 @@ describe('WorkstationQueue', () => {
   it('filters by search text across title and client', async () => {
     const user = userEvent.setup()
     renderQueue()
+    await switchToAllWork(user)
     await user.type(screen.getByLabelText('Search work items'), 'management')
     expect(screen.getByText('August management report')).toBeInTheDocument()
     expect(screen.queryByText('Close August books')).not.toBeInTheDocument()
@@ -222,6 +296,7 @@ describe('WorkstationQueue', () => {
   it('narrows by kind toggle', async () => {
     const user = userEvent.setup()
     renderQueue()
+    await switchToAllWork(user)
     // Turn off bank feeds: two bank-feed cards disappear, the rest stay.
     await user.click(screen.getByRole('button', { name: 'Bank feed' }))
     expect(screen.queryByText('Bank feed week of 2026-08-17')).not.toBeInTheDocument()
@@ -232,6 +307,7 @@ describe('WorkstationQueue', () => {
   it('saves a filter set as a named view and re-applies it', async () => {
     const user = userEvent.setup()
     renderQueue()
+    await switchToAllWork(user)
     await user.type(screen.getByLabelText('Search work items'), 'management')
     await user.click(screen.getByRole('button', { name: /Save view/ }))
     await user.type(screen.getByLabelText('Save current filters as a view'), 'Reports only')
@@ -251,6 +327,7 @@ describe('Focus mode (auto-prioritizer)', () => {
   it('collapses the queue to a single card and advances with Skip', async () => {
     const user = userEvent.setup()
     renderQueue()
+    await switchToAllWork(user)
     await user.click(screen.getByTestId('focus-toggle'))
 
     const focus = screen.getByTestId('focus-mode')
@@ -301,11 +378,179 @@ describe('Focus mode (auto-prioritizer)', () => {
   it('keeps j/k/E working while focused', async () => {
     const user = userEvent.setup()
     renderQueue()
+    await switchToAllWork(user)
     await user.click(screen.getByTestId('focus-toggle'))
     await user.keyboard('j')
     expect(screen.getByTestId('focus-mode')).toHaveTextContent('Card 2 of 5')
     await user.keyboard('e')
     expect(mockComplete).toHaveBeenCalledWith({ kind: 'task', id: 2 }, true)
+  })
+})
+
+describe('Up Next lane (D2)', () => {
+  it('Start my day enters a frozen one-card sequence in hierarchy order', async () => {
+    const user = userEvent.setup()
+    renderQueue()
+    await user.click(screen.getByTestId('start-my-day'))
+
+    const focus = screen.getByTestId('focus-mode')
+    expect(focus).toHaveTextContent('Up Next')
+    expect(focus).toHaveTextContent('Card 1 of 2')
+    expect(within(focus).getByTestId('work-card')).toHaveAttribute(
+      'data-card-title',
+      'Bank feed week of 2026-08-17',
+    )
+
+    // Complete: the frozen sequence advances, no reshuffle.
+    await user.click(screen.getByTestId('focus-next'))
+    expect(within(focus).getByTestId('work-card')).toHaveAttribute(
+      'data-card-title',
+      'Close August books',
+    )
+
+    // Exit returns to My Day.
+    await user.click(screen.getByTestId('up-next-exit'))
+    expect(screen.queryByTestId('focus-mode')).not.toBeInTheDocument()
+    expect(screen.getByTestId('view-tab-my-day')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('orders by bumper lane when lanes are on: active client first, stage order inside', async () => {
+    const laneQueue: UnifiedQueue = {
+      today: '2026-08-23',
+      bumperLanes: {
+        enabled: true,
+        activeClientId: 2,
+        activeClientName: 'Zebra Outfitters',
+        activeStage: 'tasks',
+      },
+      buckets: {
+        overdue: [],
+        due_today: [
+          // Hierarchy order (kind class first) would serve the Alpha feed;
+          // the lane serves the client whose work is due earliest - Zebra.
+          card({
+            kind: 'task',
+            id: 11,
+            status: 'due_today',
+            title: 'Zebra ad-hoc task',
+            clientId: 2,
+            clientName: 'Zebra Outfitters',
+            dueDate: '2026-08-23',
+            orderClass: 'ad_hoc',
+          }),
+          card({
+            kind: 'bank_feed',
+            id: 12,
+            status: 'due_today',
+            title: 'Alpha feed',
+            clientId: 3,
+            clientName: 'Alpha Bakery',
+            dueDate: '2026-08-24',
+            orderClass: 'periodic',
+          }),
+        ],
+        upcoming: [],
+        waiting_on_client: [],
+        deferred: [],
+        gated: [],
+      },
+    }
+    const user = userEvent.setup()
+    renderQueue(laneQueue)
+    await user.click(screen.getByTestId('start-my-day'))
+
+    const focus = screen.getByTestId('focus-mode')
+    expect(within(focus).getByTestId('work-card')).toHaveAttribute(
+      'data-card-title',
+      'Zebra ad-hoc task',
+    )
+    await user.click(screen.getByTestId('focus-skip'))
+    expect(within(focus).getByTestId('work-card')).toHaveAttribute(
+      'data-card-title',
+      'Alpha feed',
+    )
+  })
+})
+
+describe('Guided rollover (D3)', () => {
+  const rolloverQueue: UnifiedQueue = {
+    today: '2026-08-23',
+    bumperLanes: { enabled: false, activeClientId: null, activeClientName: null, activeStage: null },
+    buckets: {
+      overdue: [
+        card({ kind: 'bank_feed', id: 1, status: 'overdue', title: 'Bank feed week of 2026-08-17', assigneeId: 1 }),
+        card({ kind: 'task', id: 2, status: 'overdue', title: 'Call about payroll', assigneeId: 2 }),
+      ],
+      due_today: [],
+      upcoming: [],
+      waiting_on_client: [],
+      deferred: [],
+      gated: [],
+    },
+  }
+
+  it('opens on the first visit of the day for assigned-to-me overdue items', async () => {
+    render(
+      <TooltipProvider>
+        <WorkstationQueue queue={rolloverQueue} assignees={assignees} currentUserId={1} />
+      </TooltipProvider>,
+    )
+    const dialog = await screen.findByTestId('rollover-dialog')
+    // Only MY overdue item is listed - the other user's task stays out.
+    expect(dialog).toHaveTextContent('Bank feed week of 2026-08-17')
+    expect(dialog).toHaveTextContent('1 item from before today')
+    expect(dialog).not.toHaveTextContent('Call about payroll')
+    // The fast path: one tap keeps everything for today.
+    await userEvent.click(screen.getByTestId('rollover-apply'))
+    expect(mockRollover).toHaveBeenCalledWith([{ kind: 'bank_feed', id: 1, action: 'today' }])
+    await waitFor(() =>
+      expect(screen.queryByTestId('rollover-dialog')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('does not reopen once seen today; the subtle cue re-enters', async () => {
+    window.localStorage.setItem('firmos.workstation.rollover:1', '2026-08-23')
+    render(
+      <TooltipProvider>
+        <WorkstationQueue queue={rolloverQueue} assignees={assignees} currentUserId={1} />
+      </TooltipProvider>,
+    )
+    await waitFor(() => expect(screen.getByTestId('rollover-cue')).toBeInTheDocument())
+    expect(screen.queryByTestId('rollover-dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('rollover-cue'))
+    expect(await screen.findByTestId('rollover-dialog')).toBeInTheDocument()
+    // Later dismisses without applying.
+    await userEvent.click(screen.getByTestId('rollover-later'))
+    expect(mockRollover).not.toHaveBeenCalled()
+  })
+
+  it('per-kind support: feeds offer defer+waiting, tasks offer waiting only', async () => {
+    const mixed: UnifiedQueue = {
+      ...rolloverQueue,
+      buckets: {
+        ...rolloverQueue.buckets,
+        overdue: [
+          card({ kind: 'bank_feed', id: 1, status: 'overdue', title: 'Feed overdue', assigneeId: 1 }),
+          card({ kind: 'task', id: 3, status: 'overdue', title: 'Task overdue', assigneeId: 1 }),
+          card({ kind: 'report', id: 4, status: 'overdue', title: 'Report overdue', assigneeId: 1 }),
+        ],
+      },
+    }
+    render(
+      <TooltipProvider>
+        <WorkstationQueue queue={mixed} assignees={assignees} currentUserId={1} />
+      </TooltipProvider>,
+    )
+    const dialog = await screen.findByTestId('rollover-dialog')
+    const rows = within(dialog).getAllByTestId('rollover-item')
+    const choicesOf = (row: HTMLElement) =>
+      within(row)
+        .getAllByRole('button')
+        .map((b) => b.textContent)
+    expect(choicesOf(rows[0])).toEqual(['Today', 'Defer…', 'Waiting'])
+    expect(choicesOf(rows[1])).toEqual(['Today', 'Waiting'])
+    expect(choicesOf(rows[2])).toEqual(['Today'])
   })
 })
 
@@ -343,24 +588,111 @@ describe('Header green action + caught-up state', () => {
   })
 })
 
-describe('Completion check-draw (Wave 3 dopamine hit)', () => {
-  it('draws the circle-check in the completed strip, motion-safe gated', async () => {
+describe('Variable-ratio celebration (D4)', () => {
+  it('the strip draws CheckDraw only for entries whose seeded roll earns it', async () => {
     const user = userEvent.setup()
     renderQueue()
     await user.keyboard('e')
 
     const strip = await screen.findByTestId('completed-strip')
-    const draw = within(strip).getByTestId('check-draw')
-    const strokes = [...draw.querySelectorAll('circle, path')]
-    expect(strokes).toHaveLength(2)
-    // The draw animation only exists under the motion-safe variant; the
-    // resting stroke state is fully drawn, so reduced motion is a no-op.
-    for (const stroke of strokes) {
-      expect(stroke.getAttribute('class')).toContain('motion-safe:animate-')
-      expect(stroke.getAttribute('stroke-dashoffset')).toBe('0')
+    const earned = quickCelebrationRoll(null, '2026-08-23', 'bank_feed:1')
+    if (earned) {
+      expect(within(strip).getByTestId('check-draw')).toBeInTheDocument()
+    } else {
+      expect(within(strip).queryByTestId('check-draw')).not.toBeInTheDocument()
     }
+    // Either way the strip row itself renders (the undo contract is unchanged).
+    expect(strip).toHaveTextContent('Completed - Bank feed week of 2026-08-17')
   })
 
+  it('the seeded roll is deterministic per user per day per card', () => {
+    const a = quickCelebrationRoll(7, '2026-08-23', 'task:11')
+    const b = quickCelebrationRoll(7, '2026-08-23', 'task:11')
+    expect(a).toBe(b)
+    // Rough rate sanity over a spread of keys: ~35%, not 0% or 100%.
+    let hits = 0
+    for (let i = 0; i < 200; i++) {
+      if (quickCelebrationRoll(7, '2026-08-23', `task:${i}`)) hits += 1
+    }
+    expect(hits).toBeGreaterThan(30)
+    expect(hits).toBeLessThan(110)
+  })
+
+  it('fires the rare big celebration when a client’s last open item completes', async () => {
+    const user = userEvent.setup()
+    // Two cards for Harborline: completing both closes the client's week.
+    renderQueue()
+    await user.keyboard('e') // bank_feed:1 (one remains for the client)
+    await waitFor(() =>
+      expect(screen.queryByText('Bank feed week of 2026-08-17')).not.toBeInTheDocument(),
+    )
+    expect(screen.queryByTestId('celebration-burst')).not.toBeInTheDocument()
+
+    await user.keyboard('e') // task:2 - the client's last open item
+    const burst = await screen.findByTestId('celebration-burst')
+    expect(burst).toHaveTextContent("Harborline Marine's week is closed")
+  })
+
+  it('fires the big celebration for rescuing a 30+ day stale item', async () => {
+    const staleQueue: UnifiedQueue = {
+      today: '2026-08-23',
+      bumperLanes: { enabled: false, activeClientId: null, activeClientName: null, activeStage: null },
+      buckets: {
+        overdue: [
+          card({
+            kind: 'task',
+            id: 8,
+            status: 'overdue',
+            title: 'Ancient cleanup',
+            dueDate: '2026-06-01',
+            clientId: 9,
+            clientName: 'Copperline Coffee',
+          }),
+        ],
+        due_today: [],
+        upcoming: [
+          // Another open item for the same client: NOT a week-close, but the
+          // 83-day stale rescue still earns the rare moment.
+          card({
+            kind: 'task',
+            id: 9,
+            status: 'upcoming',
+            title: 'Future thing',
+            dueDate: '2026-09-01',
+            clientId: 9,
+            clientName: 'Copperline Coffee',
+          }),
+        ],
+        waiting_on_client: [],
+        deferred: [],
+        gated: [],
+      },
+    }
+    const user = userEvent.setup()
+    renderQueue(staleQueue)
+    await user.keyboard('e')
+    const burst = await screen.findByTestId('celebration-burst')
+    expect(burst).toHaveTextContent('Nice recovery')
+    expect(burst).toHaveTextContent('83 days overdue')
+  })
+
+  it('the admin flag quiets the big celebration firm-wide', async () => {
+    const user = userEvent.setup()
+    render(
+      <TooltipProvider>
+        <WorkstationQueue queue={queue} assignees={assignees} celebrationsEnabled={false} />
+      </TooltipProvider>,
+    )
+    await user.keyboard('e')
+    await user.keyboard('e')
+    await waitFor(() =>
+      expect(screen.queryByText('Close August books')).not.toBeInTheDocument(),
+    )
+    expect(screen.queryByTestId('celebration-burst')).not.toBeInTheDocument()
+  })
+})
+
+describe('Completion check-draw (Wave 3 dopamine hit)', () => {
   it('swaps the work-card complete button to the drawing check on click', async () => {
     const user = userEvent.setup()
     const onComplete = vi.fn()

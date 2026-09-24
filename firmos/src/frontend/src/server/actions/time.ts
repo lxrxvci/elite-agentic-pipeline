@@ -28,6 +28,7 @@ import {
   heartbeat,
   startActivity,
   startTaskTimer,
+  stopActivityTimer,
   stopTaskTimer,
   type ClockStatus,
   type DailyHours,
@@ -92,7 +93,26 @@ export async function startActivityAction(
 ): Promise<ActionResult<ClockStatus>> {
   try {
     const userId = await getCurrentUserId();
+    // D5 card Start: the card path never makes the user clock in first -
+    // the day umbrella opens implicitly, then the activity timer starts.
+    await clockIn(userId);
     await startActivity(userId, activityType, clientId);
+    const status = await getClockStatus(userId);
+    revalidatePath("/workstation");
+    return { ok: true, data: status };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** D5: stop the running activity timer for one work area (card Stop). */
+export async function stopActivityAction(
+  activityType: NonDayActivityType,
+  clientId?: number,
+): Promise<ActionResult<ClockStatus>> {
+  try {
+    const userId = await getCurrentUserId();
+    await stopActivityTimer(userId, activityType, clientId);
     const status = await getClockStatus(userId);
     revalidatePath("/workstation");
     return { ok: true, data: status };

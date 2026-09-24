@@ -5,7 +5,9 @@ import { revalidatePath } from 'next/cache'
 import { requireStaff } from '@/server/auth/guards'
 import { BumperLaneLockedError } from '@/server/bumper-lanes'
 import type { WorkCardKind } from '@/server/queue'
+import type { RolloverDecision } from '@/shared/lib/rollover'
 import {
+  applyRolloverDecisions,
   completeTask,
   ReportDocumentRequiredError,
   setBankFeedCompleted,
@@ -80,4 +82,37 @@ export async function completeWorkCard(
 
   revalidatePath('/workstation')
   return { ok: true }
+}
+
+// ── Guided rollover (anti-overwhelm D3) ───────────────────────────────────
+
+export type RolloverActionResult =
+  | { ok: true; applied: number; skipped: { kind: string; id: number; reason: string }[] }
+  | { ok: false; error: string }
+
+/**
+ * Batch entry point behind the rollover dialog. The engine owns per-kind
+ * support + assignment scope; unsupported/unassigned rows come back as
+ * skips so the dialog can say exactly what happened.
+ */
+export async function applyRolloverAction(
+  decisions: RolloverDecision[],
+): Promise<RolloverActionResult> {
+  let userId: number
+  try {
+    const user = await requireStaff()
+    userId = user.id
+  } catch {
+    return { ok: false, error: 'Your session expired - sign in again.' }
+  }
+  if (!Array.isArray(decisions) || decisions.length === 0) {
+    return { ok: false, error: 'Nothing to apply.' }
+  }
+  try {
+    const result = await applyRolloverDecisions(userId, decisions)
+    revalidatePath('/workstation')
+    return { ok: true, applied: result.applied.length, skipped: result.skipped }
+  } catch {
+    return { ok: false, error: 'Couldn’t apply the rollover - try again.' }
+  }
 }

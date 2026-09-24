@@ -17,6 +17,7 @@ const SETTINGS: AdminSettings = {
   orgName: 'Blue Ledger Books',
   purgeEnabled: false,
   clientPortalEnabled: false,
+  celebrationsEnabled: true,
   maxClockInHours: 10,
   commissionPayout: 'next_month_first',
 }
@@ -43,6 +44,7 @@ describe('SettingsForm', () => {
       orgName: 'Blue Ledger Books',
       purgeEnabled: true,
       clientPortalEnabled: true,
+      celebrationsEnabled: true,
       maxClockInHours: 10,
       commissionPayout: 'next_month_first',
     })

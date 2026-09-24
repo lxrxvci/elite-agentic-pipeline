@@ -1,12 +1,15 @@
 import { and, eq, isNull, ne } from "drizzle-orm";
 import {
+  compareLocalDate,
   incompleteSubtaskCount,
   isReportTaskName,
   isSettled,
+  parseLocalDate,
   reverseSyncTargetForTaskTitle,
   setWorkItemCompleted,
   workPeriodForDue,
   workPeriodForRow,
+  type LocalDate,
   type Month,
   type ReverseSyncTarget,
 } from "@firmos/domain";
@@ -15,15 +18,26 @@ import { db } from "@/db";
 import {
   accountReconciliations,
   clientReports,
+  clients,
   documents,
   tasks,
   taskSubtasks,
+  users,
   weeklyBankFeeds,
 } from "@/db/schema";
+import {
+  KIND_ACTIVITY_TYPE,
+  type PeriodicWorkKind,
+} from "@/shared/lib/work-kind";
+import {
+  ROLLOVER_SUPPORT,
+  type RolloverAction,
+  type RolloverDecision,
+} from "@/shared/lib/rollover";
 
 import { assertBumperLaneAllows } from "./bumper-lanes";
 import { localToday, nowIso } from "./dates";
-import { stopTaskTimer } from "./time-tracking";
+import { stopActivityTimer, stopTaskTimer, type NonDayActivityType } from "./time-tracking";
 
 /**
  * Completion mutations + bidirectional sync (HANDOFF §6.3).
@@ -261,8 +275,18 @@ async function setRowCompleted(
   if (!row) throw new Error(`${kind} row ${id} not found`);
   const now = nowIso();
   await applyRowTransition(kind, row, completed, userId, now);
-  const clientId = row.clientId;
-  await syncSummaryTask(kind, clientId, periodOfRow(row), userId, now);
+  await syncSummaryTask(kind, row.clientId, periodOfRow(row), userId, now);
+  // D5: completing a periodic card stops the user's matching activity timer,
+  // mirroring the task rule ("once the task is done, it clocks you out of
+  // it"). No-op when no matching activity is running.
+  if (completed) {
+    await stopActivityTimer(
+      userId,
+      KIND_ACTIVITY_TYPE[CARD_KIND[kind]] as NonDayActivityType,
+      row.clientId,
+      new Date(now),
+    );
+  }
   const updated = await load();
   return updated as AnyRow;
 }
@@ -371,4 +395,193 @@ export async function completeTask(
 
   const [updated] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
   return updated;
+}
+
+// ── Guided rollover (anti-overwhelm D3) ───────────────────────────────────
+
+/**
+ * The morning rollover ritual: yesterday's unfinished items get an explicit
+ * decision instead of silently turning red. One batch entry point for the
+ * rollover dialog; per-kind support comes from the shared ROLLOVER_SUPPORT
+ * matrix (schema truth: feeds defer + wait, tasks wait via status,
+ * reconciliations/reports re-anchor to today only).
+ *
+ * Re-anchor semantics ("Today"): feeds set deferred_until = today (the
+ * queue's effectiveDueDate then lands them in due_today without touching the
+ * original due date); tasks/reconciliations/reports move due_date to today.
+ * Deliberately audit-event-free: defer/waiting are parked-state transitions,
+ * which §6.3 does not audit.
+ */
+
+export interface RolloverSkip {
+  kind: RolloverDecision["kind"];
+  id: number;
+  reason: string;
+}
+
+export interface RolloverResult {
+  applied: RolloverDecision[];
+  skipped: RolloverSkip[];
+}
+
+function formatToday(today: LocalDate): string {
+  const m = String(today.month).padStart(2, "0");
+  const d = String(today.day).padStart(2, "0");
+  return `${today.year}-${m}-${d}`;
+}
+
+export async function applyRolloverDecisions(
+  userId: number,
+  decisions: RolloverDecision[],
+  today: LocalDate = localToday(),
+): Promise<RolloverResult> {
+  const todayIso = formatToday(today);
+  const result: RolloverResult = { applied: [], skipped: [] };
+  const now = new Date();
+
+  const skip = (d: RolloverDecision, reason: string) =>
+    result.skipped.push({ kind: d.kind, id: d.id, reason });
+
+  // Assignment scope (same derivation as the queue): tasks assign directly;
+  // feeds/reconciliations follow the client's bookkeeper, reports its
+  // manager. The dialog only offers the user's own overdue items - this is
+  // the server-side enforcement of that scope.
+  const [me] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!me) throw new Error(`user ${userId} not found`);
+  const clientRows = await db
+    .select({
+      id: clients.id,
+      bookkeeperId: clients.bookkeeperId,
+      managerId: clients.managerId,
+    })
+    .from(clients);
+  const clientById = new Map(clientRows.map((c) => [c.id, c]));
+  const assignedToMe = (kind: RolloverDecision["kind"], assigneeId: number | null, clientId: number | null) => {
+    if (kind === "task") return assigneeId === userId;
+    const client = clientId != null ? clientById.get(clientId) : undefined;
+    if (!client) return false;
+    return kind === "report" ? client.managerId === userId : client.bookkeeperId === userId;
+  };
+
+  for (const d of decisions) {
+    if (!ROLLOVER_SUPPORT[d.kind].includes(d.action)) {
+      skip(d, `${d.kind} does not support "${d.action}"`);
+      continue;
+    }
+    if (d.action === "defer") {
+      const until = d.until;
+      if (until == null || !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+        skip(d, "Defer needs a date (YYYY-MM-DD)");
+        continue;
+      }
+      // Deferring into the past is a no-op decision; today-or-later only.
+      if (compareLocalDate(parseLocalDate(until), today) < 0) {
+        skip(d, "Defer date cannot be in the past");
+        continue;
+      }
+    }
+
+    switch (d.kind) {
+      case "bank_feed": {
+        const [row] = await db
+          .select()
+          .from(weeklyBankFeeds)
+          .where(eq(weeklyBankFeeds.id, d.id))
+          .limit(1);
+        if (!row || row.completedAt != null) {
+          skip(d, "Not found or already complete");
+          continue;
+        }
+        if (!assignedToMe(d.kind, null, row.clientId)) {
+          skip(d, "Not assigned to you");
+          continue;
+        }
+        if (d.action === "waiting_on_client") {
+          await db
+            .update(weeklyBankFeeds)
+            .set({ waitingOnClient: true, deferredUntil: null, updatedAt: now })
+            .where(eq(weeklyBankFeeds.id, d.id));
+        } else {
+          // today -> re-anchor to today; defer -> re-anchor to the pick.
+          await db
+            .update(weeklyBankFeeds)
+            .set({
+              deferredUntil: d.action === "defer" ? (d.until as string) : todayIso,
+              updatedAt: now,
+            })
+            .where(eq(weeklyBankFeeds.id, d.id));
+        }
+        result.applied.push(d);
+        continue;
+      }
+      case "task": {
+        const [row] = await db.select().from(tasks).where(eq(tasks.id, d.id)).limit(1);
+        if (!row || row.deletedAt != null || row.status === "completed" || row.status === "cancelled") {
+          skip(d, "Not found or already complete");
+          continue;
+        }
+        if (!assignedToMe(d.kind, row.assigneeId, row.clientId)) {
+          skip(d, "Not assigned to you");
+          continue;
+        }
+        if (d.action === "waiting_on_client") {
+          await db
+            .update(tasks)
+            .set({ status: "waiting_on_client", updatedAt: now })
+            .where(eq(tasks.id, d.id));
+        } else {
+          await db
+            .update(tasks)
+            .set({ dueDate: todayIso, updatedAt: now })
+            .where(eq(tasks.id, d.id));
+        }
+        result.applied.push(d);
+        continue;
+      }
+      case "reconciliation": {
+        const [row] = await db
+          .select()
+          .from(accountReconciliations)
+          .where(eq(accountReconciliations.id, d.id))
+          .limit(1);
+        if (!row || row.completedAt != null) {
+          skip(d, "Not found or already complete");
+          continue;
+        }
+        if (!assignedToMe(d.kind, null, row.clientId)) {
+          skip(d, "Not assigned to you");
+          continue;
+        }
+        // Today is the only supported action (enforced above).
+        await db
+          .update(accountReconciliations)
+          .set({ dueDate: todayIso, updatedAt: now })
+          .where(eq(accountReconciliations.id, d.id));
+        result.applied.push(d);
+        continue;
+      }
+      case "report": {
+        const [row] = await db
+          .select()
+          .from(clientReports)
+          .where(eq(clientReports.id, d.id))
+          .limit(1);
+        if (!row || row.completedAt != null) {
+          skip(d, "Not found or already complete");
+          continue;
+        }
+        if (!assignedToMe(d.kind, null, row.clientId)) {
+          skip(d, "Not assigned to you");
+          continue;
+        }
+        await db
+          .update(clientReports)
+          .set({ dueDate: todayIso, updatedAt: now })
+          .where(eq(clientReports.id, d.id));
+        result.applied.push(d);
+        continue;
+      }
+    }
+  }
+  return result;
 }

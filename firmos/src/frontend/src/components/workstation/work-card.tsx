@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Check, FileText, Landmark, Lock, RefreshCw, SquareCheck, Timer } from 'lucide-react'
+import { Check, FileText, Landmark, Lock, RefreshCw, SquareCheck, Square, Timer } from 'lucide-react'
 
 import { moneyLabel } from '@/components/clients/format'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -10,6 +10,11 @@ import { refreshClockStatus, useClockStatus } from '@/shared/lib/clock-status'
 import { avatarStyle } from '@/shared/lib/avatar-hue'
 import { dayLabel, dueAging, periodLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
+import {
+  KIND_ACTIVITY_TYPE,
+  WORK_ESTIMATE_MINUTES,
+  type PeriodicWorkKind,
+} from '@/shared/lib/work-kind'
 import { StatusSpine, WorkStatusBadge, type WorkStatus } from '@/shared/ui/work'
 import type { QueueBucket, WorkCard, WorkCardKind } from '@/server/queue'
 
@@ -133,6 +138,116 @@ export function TaskTimerToggle({
   )
 }
 
+/**
+ * D5 card timeboxing: every card carries its kind-based estimate (one shared
+ * WORK_ESTIMATE_MINUTES table) plus a prominent Start that drives the
+ * EXISTING timer paths - the per-task timer for task cards, the §17 activity
+ * timer (kind-mapped, client-scoped) for periodic rows. The running state
+ * reads from the shared clock-status store, so the card, the clock widget,
+ * and the hours reports never disagree. Completing a card stops its timer
+ * server-side (completeTask already does; periodic rows got the same rule in
+ * work-items.ts), and the post-complete refreshClockStatus syncs the chip.
+ */
+export function CardTimerControl({
+  card,
+  revealed,
+}: {
+  card: WorkCard
+  /** Keyboard-selected rows reveal the idle Start, matching the complete action. */
+  revealed: boolean
+}) {
+  const clock = useClockStatus()
+  const [busy, setBusy] = React.useState(false)
+  const [, setTick] = React.useState(0)
+
+  const isTask = card.kind === 'task'
+  const activityType = isTask
+    ? null
+    : KIND_ACTIVITY_TYPE[card.kind as PeriodicWorkKind]
+  const taskTimer = isTask
+    ? clock?.openTaskTimers.find((t) => t.taskId === card.id)
+    : undefined
+  const activityRunning =
+    !isTask &&
+    clock?.currentActivity != null &&
+    clock.currentActivity.activityType === activityType &&
+    (clock.currentActivity.clientId == null || clock.currentActivity.clientId === card.clientId)
+  const running = isTask ? taskTimer != null : activityRunning === true
+  const startedAt = isTask ? taskTimer?.startedAt : running ? clock?.currentActivity?.startedAt : undefined
+
+  // Display tick only while running; the store's 30s poll stays the truth.
+  React.useEffect(() => {
+    if (!running) return
+    const t = setInterval(() => setTick((x) => x + 1), 30_000)
+    return () => clearInterval(t)
+  }, [running])
+
+  async function toggle(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (busy) return
+    setBusy(true)
+    try {
+      const m = await import('@/server/actions/time')
+      if (isTask) {
+        if (running) await m.stopTaskTimerAction(card.id)
+        else await m.startTaskTimerAction(card.id)
+      } else if (activityType) {
+        if (running) await m.stopActivityAction(activityType, card.clientId)
+        else await m.startActivityAction(activityType, card.clientId)
+      }
+      // Applied or rejected (409), resync everyone from the shared store.
+      await refreshClockStatus()
+    } catch {
+      // no server reach in tests; leave state as-is
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const elapsedMinutes = startedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60_000))
+    : 0
+
+  if (running) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => void toggle(e)}
+        disabled={busy}
+        aria-label={`Stop timer: ${card.title}`}
+        aria-pressed="true"
+        title={`Stop the timer (${elapsedMinutes}m elapsed)`}
+        data-testid="card-timer-running"
+        className="tnum flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-status-on-track bg-status-on-track-bg px-2 text-[11px] font-semibold text-status-on-track transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span aria-hidden className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+        {elapsedMinutes}m
+        <Square className="h-3 w-3" aria-hidden />
+        <span className="sr-only">Stop</span>
+      </button>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => void toggle(e)}
+      disabled={busy}
+      aria-label={`Start timer: ${card.title}`}
+      aria-pressed="false"
+      title="Start the timer for this card"
+      data-testid="card-timer-start"
+      className={cn(
+        'flex h-7 shrink-0 items-center gap-1 rounded-md border border-input px-2 text-[11px] font-semibold text-muted-foreground transition-all duration-150 hover:border-status-on-track hover:bg-status-on-track-bg hover:text-status-on-track focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        revealed ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+      )}
+    >
+      <Timer className="h-3 w-3" aria-hidden />
+      Start
+    </button>
+  )
+}
+
 interface WorkCardRowProps {
   card: WorkCard
   /** Firm-local today, ISO-local - from the server, never the client clock. */
@@ -143,6 +258,9 @@ interface WorkCardRowProps {
   onComplete: (card: WorkCard) => void
   /** Bumper lanes (D7): opens the override-request dialog for a locked card. */
   onRequestOverride?: (card: WorkCard) => void
+  /** D1 My Day groups: render row content without the outer card chrome -
+      the per-client group card is the container (divide-y separators). */
+  embedded?: boolean
 }
 
 /**
@@ -167,6 +285,7 @@ export const WorkCardRow = React.memo(function WorkCardRow({
   onSelect,
   onComplete,
   onRequestOverride,
+  embedded = false,
 }: WorkCardRowProps) {
   const { status, label } = BUCKET_STATUS[card.status]
   const { Icon, label: kindLabel } = KIND_META[card.kind]
@@ -193,7 +312,9 @@ export const WorkCardRow = React.memo(function WorkCardRow({
       className={cn(
         // White card on the cool-gray canvas: 1px border, subtle shadow,
         // slight hover lift; the 3px status spine is the left edge.
-        'group relative flex h-12 cursor-pointer items-center gap-3 overflow-hidden rounded-lg border border-border bg-card pl-5 pr-3 shadow-card transition-[background-color,box-shadow,transform] duration-150 hover:shadow-pop motion-safe:hover:-translate-y-0.5',
+        embedded
+          ? 'group relative flex h-11 cursor-pointer items-center gap-3 overflow-hidden pl-4 pr-2 transition-colors duration-150'
+          : 'group relative flex h-12 cursor-pointer items-center gap-3 overflow-hidden rounded-lg border border-border bg-card pl-5 pr-3 shadow-card transition-[background-color,box-shadow,transform] duration-150 hover:shadow-pop motion-safe:hover:-translate-y-0.5',
         selected ? 'bg-muted' : 'hover:bg-muted/60',
         card.status === 'waiting_on_client' && 'bg-status-waiting-client-bg/30',
         card.status === 'deferred' && 'bg-status-deferred-bg/30',
@@ -229,9 +350,11 @@ export const WorkCardRow = React.memo(function WorkCardRow({
         </span>
       </div>
 
-      <span className="hidden w-36 shrink-0 truncate text-xs text-muted-foreground md:block">
-        {card.clientName}
-      </span>
+      {!embedded && (
+        <span className="hidden w-36 shrink-0 truncate text-xs text-muted-foreground md:block">
+          {card.clientName}
+        </span>
+      )}
 
       {/* Reconciliation readiness (owner call notes: statement in + feeds
           done = ready to reconcile). Informational only - completion is
@@ -268,6 +391,16 @@ export const WorkCardRow = React.memo(function WorkCardRow({
           </span>
         )
       )}
+
+      {/* D5 estimate chip: the kind-based default, always visible (muted,
+          tabular) - the timebox contract before the Start button. */}
+      <span
+        data-testid="estimate-chip"
+        title="Estimated effort"
+        className="tnum hidden shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground sm:block"
+      >
+        ≈{WORK_ESTIMATE_MINUTES[card.kind]}m
+      </span>
 
       <span
         className={cn(
@@ -335,9 +468,10 @@ export const WorkCardRow = React.memo(function WorkCardRow({
         <span className="h-6 w-6 shrink-0" aria-hidden />
       )}
 
-      {card.kind === 'task' && (
-        <TaskTimerToggle taskId={card.id} taskTitle={card.title} revealed={selected} />
-      )}
+      {/* D5: the Start/timer control on every non-locked card (task timer
+          for tasks, activity timer for periodic rows). Lane-locked cards
+          cannot be worked, so they carry no timer affordance. */}
+      {!laneLocked && <CardTimerControl card={card} revealed={selected} />}
 
       {laneLocked ? (
         // Bumper lanes: the complete affordance is replaced by the lock +

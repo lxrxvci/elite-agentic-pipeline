@@ -44,10 +44,14 @@ test.beforeEach(async ({ context, baseURL }) => {
 test('workstation has no serious/critical axe violations', async ({ page }) => {
   await page.goto('/workstation')
   await expect(page.getByRole('heading', { name: 'Workstation' })).toBeVisible()
-  // Open the full week so the populated queue (not just the empty state) is scanned.
+  // D1: the default landing is My Day - scan it first (grouped client cards
+  // or the calm empty state, both are valid populated surfaces).
+  await expectAccessible(page, 'workstation (My Day)')
+  // Then the full queue: all days, so the populated bucket list is scanned.
+  await page.getByTestId('view-tab-queue').click()
   await page.getByTestId('work-day-chip-all').click()
   await expect(page.getByTestId('work-card').first()).toBeVisible()
-  await expectAccessible(page, 'workstation')
+  await expectAccessible(page, 'workstation (All work)')
 })
 
 test('clients list has no serious/critical axe violations', async ({ page }) => {

@@ -242,6 +242,7 @@ export interface AdminSettings {
   orgName: string;
   purgeEnabled: boolean;
   clientPortalEnabled: boolean;
+  celebrationsEnabled: boolean;
   maxClockInHours: number;
   commissionPayout: PayrollConfig["commission_payout"];
 }
@@ -262,6 +263,8 @@ export async function getAdminSettings(): Promise<AdminSettings> {
     orgName: typeof orgProfile?.name === "string" ? orgProfile.name : "",
     purgeEnabled: flags?.purge_enabled === true,
     clientPortalEnabled: flags?.client_portal_enabled === true,
+    // D4: celebrations default ON - only an explicit false quiets them.
+    celebrationsEnabled: flags?.celebrations_enabled !== false,
     maxClockInHours: await maxClockInHours(),
     commissionPayout: payout.commission_payout,
   };

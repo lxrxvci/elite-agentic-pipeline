@@ -9,6 +9,7 @@ import {
   Crosshair,
   Keyboard,
   Lock,
+  Play,
   Search,
   Undo2,
   X,
@@ -28,6 +29,7 @@ import {
 } from '@/components/ui/select'
 import { completeWorkCard } from '@/server/actions/work'
 import type { QueueBucket, UnifiedQueue, WorkCard, WorkCardKind } from '@/server/queue'
+import { refreshClockStatus } from '@/shared/lib/clock-status'
 import { weekdayLabel, weekdayOf } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 
@@ -38,8 +40,18 @@ import {
   type BucketFilter,
   type SavedView,
 } from './saved-views'
+import { CelebrationBurst } from './celebration'
 import { CheckDraw } from './check-draw'
+import {
+  MY_DAY_BUCKETS,
+  bigCelebrationFor,
+  groupByClient,
+  quickCelebrationRoll,
+  upNextSequence,
+  type BigCelebration,
+} from './my-day'
 import { RequestOverrideDialog } from './request-override-dialog'
+import { RolloverDialog } from './rollover-dialog'
 import { TaskDrawer } from './task-drawer'
 import {
   KIND_META,
@@ -116,16 +128,23 @@ interface CompletedEntry {
 
 /**
  * The optimistic-completions strip: green-tinted rows with one-click undo.
- * Rendered per bucket in the full queue, or once globally in focus mode and
- * the caught-up state.
+ * Rendered per bucket in the full queue, or once globally in My Day, focus
+ * mode, and the caught-up state.
+ *
+ * D4 variable-ratio: the CheckDraw moment fires only for entries whose
+ * seeded roll earned it (~35%); the rest get a plain static check - same
+ * truth, quieter reward.
  */
 function CompletedStrip({
   entries,
   onReopen,
+  celebrated,
   className,
 }: {
   entries: CompletedEntry[]
   onReopen: (entry: CompletedEntry) => void
+  /** Card keys whose seeded roll earned the draw moment (D4). */
+  celebrated?: Set<string>
   className?: string
 }) {
   return (
@@ -138,7 +157,11 @@ function CompletedStrip({
           key={workCardKey(entry.card)}
           className="flex h-9 animate-in fade-in items-center gap-2 border-b border-border bg-status-on-track-bg/30 px-4 pl-5 text-xs text-muted-foreground duration-150 last:border-b-0"
         >
-          <CheckDraw className="h-3.5 w-3.5 shrink-0 text-status-on-track" />
+          {celebrated?.has(workCardKey(entry.card)) ? (
+            <CheckDraw className="h-3.5 w-3.5 shrink-0 text-status-on-track" />
+          ) : (
+            <Check className="h-3.5 w-3.5 shrink-0 text-status-on-track" aria-hidden />
+          )}
           <span className="min-w-0 flex-1 truncate">Completed - {entry.card.title}</span>
           <span className="hidden shrink-0 md:block">{entry.card.clientName}</span>
           <button
@@ -159,10 +182,19 @@ function CompletedStrip({
 interface WorkstationQueueProps {
   queue: UnifiedQueue
   assignees: AssigneeOption[]
+  /** Signed-in user (D2 lane sequencing, D3 rollover scope, D4 seed). */
+  currentUserId?: number | null
+  /** D4 firm-wide flag from app_settings (default on; prop default on). */
+  celebrationsEnabled?: boolean
 }
 
 function completedStorageKey(today: string): string {
   return `firmos.workstation.completed:${today}`
+}
+
+/** D3 rollover: per-user, per-day "dialog seen" marker (localStorage). */
+function rolloverMarkerKey(userId: number): string {
+  return `firmos.workstation.rollover:${userId}`
 }
 
 /* Focus mode (Jason's auto-prioritizer ask, docs/DESIGN-FRESHBOOKS.md §4.6):
@@ -201,7 +233,12 @@ function loadCompleted(today: string): CompletedEntry[] {
   }
 }
 
-export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
+export function WorkstationQueue({
+  queue,
+  assignees,
+  currentUserId = null,
+  celebrationsEnabled = true,
+}: WorkstationQueueProps) {
   // ── Filters ──
   const [bucketFilter, setBucketFilter] = useState<BucketFilter>('all')
   const [search, setSearch] = useState('')
@@ -212,6 +249,11 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
   // persisted per browser. SSR and first paint both use the default so there
   // is no hydration mismatch; the stored choice hydrates after mount.
   const [workDay, setWorkDay] = useState<WorkDaySelection>(() => defaultWorkDay(queue.today))
+
+  // D1: My Day is the default landing - actionable-today cards grouped by
+  // client. The full queue is one tab away ("All work"). Never persisted:
+  // every visit starts on My Day, which is the point of the redesign.
+  const [view, setView] = useState<'my-day' | 'queue'>('my-day')
 
   // ── Keyboard cursor + optimistic completions ──
   const [rawCursor, setRawCursor] = useState(0)
@@ -224,8 +266,17 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
   const [drawerCard, setDrawerCard] = useState<WorkCard | null>(null)
   // Focus mode: collapse the queue to the single next card (view mode only).
   const [focusMode, setFocusMode] = useState(false)
+  // D2 Up Next: the frozen entry sequence for "Start my day". null = the
+  // power-user focus toggle (live order over the visible set, unfrozen).
+  const [upNextKeys, setUpNextKeys] = useState<string[] | null>(null)
   // Bumper lanes (D7): the card an override is being requested for.
   const [overrideCard, setOverrideCard] = useState<WorkCard | null>(null)
+  // D3 rollover: the dialog opens on the first visit of a day when overdue
+  // assigned-to-me items exist; the cue chip is the subtle re-entry point.
+  const [rolloverOpen, setRolloverOpen] = useState(false)
+  // D4: the one visible big celebration (rare); fired keys never refire.
+  const [celebration, setCelebration] = useState<(BigCelebration & { key: string }) | null>(null)
+  const firedCelebrations = useRef<Set<string>>(new Set())
 
   const router = useRouter()
 
@@ -264,6 +315,49 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
       // Storage blocked - undo simply won't survive reload this session.
     }
   }, [completed, queue.today, storageHydrated])
+
+  // D3 rollover: first visit of the day, with overdue assigned-to-me work
+  // waiting, opens the decision dialog. The marker is written when the
+  // dialog closes (apply or Later), so a mid-day reload never reopens it.
+  useEffect(() => {
+    if (!storageHydrated || currentUserId == null) return
+    try {
+      if (window.localStorage.getItem(rolloverMarkerKey(currentUserId)) === queue.today) return
+    } catch {
+      // Storage blocked - treat as unseen.
+    }
+    if (rolloverCandidates.length > 0) setRolloverOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageHydrated])
+
+  function handleRolloverOpenChange(open: boolean) {
+    setRolloverOpen(open)
+    if (!open && currentUserId != null) {
+      try {
+        window.localStorage.setItem(rolloverMarkerKey(currentUserId), queue.today)
+      } catch {
+        // Storage blocked - the dialog may reappear on reload today.
+      }
+    }
+  }
+
+  // D2 Up Next: freeze the sequence at entry (hierarchy order, or the user's
+  // bumper-lane order when lanes are on). Nothing reshuffles mid-session.
+  function startMyDay() {
+    const seq = upNextSequence(myDayCards, queue.bumperLanes.enabled)
+    if (seq.length === 0) return
+    setUpNextKeys(seq.map(workCardKey))
+    setFocusMode(true)
+    setRawCursor(0)
+  }
+
+  /** Exit the Up Next lane back to My Day (D2's return path). */
+  function exitUpNext() {
+    setUpNextKeys(null)
+    setFocusMode(false)
+    setView('my-day')
+    setRawCursor(0)
+  }
 
   const assigneeById = useMemo(
     // Store the row-prop object itself so memoized rows see a stable
@@ -318,16 +412,22 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
   }
 
   // Chip counts reflect the day's OPEN cards (after optimistic completions),
-  // independent of the other filters so the row is stable navigation.
+  // independent of the other filters so the row is stable navigation. My Day
+  // counts only the actionable set (D1: labeled by when a day unlocks, never
+  // raw ambient backlog); All work keeps the full open counts.
   const workDayCounts = useMemo(() => {
-    const c = { all: openCards.length, any: 0, byDay: [0, 0, 0, 0, 0, 0, 0] }
-    for (const card of openCards) {
+    const source =
+      view === 'my-day'
+        ? openCards.filter((c) => (MY_DAY_BUCKETS as readonly QueueBucket[]).includes(c.status))
+        : openCards
+    const c = { all: source.length, any: 0, byDay: [0, 0, 0, 0, 0, 0, 0] }
+    for (const card of source) {
       const day = card.clientWorkDay ?? null
       if (day == null) c.any += 1
       else if (day >= 0 && day <= 6) c.byDay[day] += 1
     }
     return c
-  }, [openCards])
+  }, [openCards, view])
 
   const dayChips: { key: WorkDaySelection; label: string; count: number; isToday: boolean }[] = [
     ...[1, 2, 3, 4, 5].map((d) => ({
@@ -340,8 +440,9 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
     { key: 'all', label: 'All', count: workDayCounts.all, isToday: false },
   ]
 
-  // Filtered across every bucket (drives tab/KPI counts), then bucket-scoped
-  // for rendering. Counts never mix filtered and unfiltered data.
+  // Filtered across every bucket (drives the full-queue tab/KPI counts),
+  // then bucket-scoped for rendering. Counts never mix filtered and
+  // unfiltered data.
   const filtered = useMemo(
     () => openCards.filter((c) => matchesWorkDay(c) && matchesFilters(c)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -364,34 +465,123 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
     return grouped
   }, [filtered, bucketFilter])
 
-  const flatVisible = useMemo(
+  const queueFlatVisible = useMemo(
     () => BUCKET_ORDER.flatMap((b) => visibleByBucket.get(b) ?? []),
     [visibleByBucket],
   )
 
+  // ── D1 My Day: only what's actionable now (overdue + due_today) ──
+  // Gated items never enter (they are not actionable); upcoming/waiting/
+  // deferred stay in the full queue. The hero stats run on the scope WITHOUT
+  // the stat-click sub-filter so the row is stable navigation.
+  const myDayScope = useMemo(
+    () =>
+      openCards.filter(
+        (c) =>
+          (MY_DAY_BUCKETS as readonly QueueBucket[]).includes(c.status) &&
+          matchesWorkDay(c) &&
+          matchesFilters(c),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [openCards, search, kinds, assigneeId, clientId, workDay],
+  )
+
+  const myDayCards = useMemo(
+    () =>
+      myDayScope.filter((c) => bucketFilter === 'all' || c.status === bucketFilter),
+    [myDayScope, bucketFilter],
+  )
+
+  // Grouped by client into compact client cards (D1): the group header owns
+  // the client name, rows inside render embedded.
+  const myDayGroups = useMemo(() => groupByClient(myDayCards), [myDayCards])
+  const myDayFlat = useMemo(() => myDayGroups.flatMap((g) => g.cards), [myDayGroups])
+
+  const flatVisible = view === 'my-day' ? myDayFlat : queueFlatVisible
+
+  const openByKey = useMemo(
+    () => new Map(openCards.map((c) => [workCardKey(c), c] as const)),
+    [openCards],
+  )
+
+  // D2 Up Next: the frozen entry sequence (Start my day) or - for the
+  // power-user filter-bar toggle - the live visible set, unfrozen.
+  const focusCards = useMemo(() => {
+    if (upNextKeys == null) return flatVisible
+    return upNextKeys
+      .map((k) => openByKey.get(k))
+      .filter((c): c is WorkCard => c != null)
+  }, [upNextKeys, openByKey, flatVisible])
+
+  const navCards = focusMode ? focusCards : flatVisible
+
   const flatIndexByKey = useMemo(() => {
     const m = new Map<string, number>()
-    flatVisible.forEach((c, i) => m.set(workCardKey(c), i))
+    navCards.forEach((c, i) => m.set(workCardKey(c), i))
     return m
-  }, [flatVisible])
+  }, [navCards])
 
-  const cursor = Math.min(rawCursor, Math.max(flatVisible.length - 1, 0))
+  const cursor = Math.min(rawCursor, Math.max(navCards.length - 1, 0))
+
+  // D3 rollover: overdue items assigned to me, minus anything completed this
+  // session. The server queue is the truth; localStorage only remembers that
+  // the dialog was seen today.
+  const rolloverCandidates = useMemo(
+    () =>
+      currentUserId == null
+        ? []
+        : openCards.filter((c) => c.status === 'overdue' && c.assigneeId === currentUserId),
+    [openCards, currentUserId],
+  )
+
+  // D4: which completed-strip entries earned the seeded draw moment.
+  const celebratedKeys = useMemo(() => {
+    if (!celebrationsEnabled) return new Set<string>()
+    return new Set(
+      activeCompleted
+        .filter((e) => quickCelebrationRoll(currentUserId, queue.today, workCardKey(e.card)))
+        .map((e) => workCardKey(e.card)),
+    )
+  }, [activeCompleted, celebrationsEnabled, currentUserId, queue.today])
 
   // ── Optimistic mutations (rollback + toast on failure) ──
   // useCallback so the memoized WorkCardRow props stay referentially stable
-  // across cursor moves; identity changes only when `completed` does.
+  // across cursor moves; identity changes only when its real inputs do.
   const complete = useCallback(
     async (card: WorkCard) => {
       const key = workCardKey(card)
       if (completed.some((e) => workCardKey(e.card) === key)) return
       setCompleted((prev) => [...prev, { card }])
+
+      // D4 variable-ratio: the RARE big moment - closing a client's week (no
+      // open actionable cards left for them) or rescuing a 30+ day stale
+      // item. Deterministic + once-per-session per card; the quick CheckDraw
+      // roll lives on the completed strip (35%).
+      if (celebrationsEnabled && !firedCelebrations.current.has(key)) {
+        const remainingForClient = openCards.filter(
+          (c) =>
+            c.clientId === card.clientId &&
+            workCardKey(c) !== key &&
+            (c.status === 'overdue' || c.status === 'due_today' || c.status === 'upcoming'),
+        ).length
+        const big = bigCelebrationFor(card, queue.today, remainingForClient)
+        if (big) {
+          firedCelebrations.current.add(key)
+          setCelebration({ ...big, key })
+        }
+      }
+
       const result = await completeWorkCard({ kind: card.kind, id: card.id }, true)
       if (!result.ok) {
         setCompleted((prev) => prev.filter((e) => workCardKey(e.card) !== key))
         toast.error(result.error)
+      } else {
+        // D5: completing stops the card's timer server-side - resync the
+        // shared clock store so the running chip clears without a poll wait.
+        void refreshClockStatus()
       }
     },
-    [completed],
+    [completed, openCards, celebrationsEnabled, queue.today],
   )
 
   async function reopen(entry: CompletedEntry) {
@@ -429,7 +619,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
   const handleCardComplete = useCallback((card: WorkCard) => void complete(card), [complete])
 
   // ── Keyboard loop: j/k move · E complete · X re-open · Enter opens the
-  //    task drawer · / search · ? help ──
+  //    task drawer · / search · ? help · Escape leaves the Up Next lane ──
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null
@@ -446,19 +636,21 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
       // The drawer owns the keyboard while it is open (Radix traps focus and
       // handles Escape itself).
       if (drawerCard != null) return
+      // The rollover dialog owns the keyboard while it is open.
+      if (rolloverOpen) return
 
       if (e.key === 'j') {
         e.preventDefault()
-        setRawCursor((c) => Math.min(c + 1, Math.max(flatVisible.length - 1, 0)))
+        setRawCursor((c) => Math.min(c + 1, Math.max(navCards.length - 1, 0)))
       } else if (e.key === 'k') {
         e.preventDefault()
         setRawCursor((c) => Math.max(c - 1, 0))
-      } else if ((e.key === 'e' || e.key === 'E') && flatVisible[cursor]) {
+      } else if ((e.key === 'e' || e.key === 'E') && navCards[cursor]) {
         e.preventDefault()
-        void complete(flatVisible[cursor])
-      } else if (e.key === 'Enter' && flatVisible[cursor]?.kind === 'task') {
+        void complete(navCards[cursor])
+      } else if (e.key === 'Enter' && navCards[cursor]?.kind === 'task') {
         e.preventDefault()
-        setDrawerCard(flatVisible[cursor])
+        setDrawerCard(navCards[cursor])
       } else if (e.key === 'x' || e.key === 'X') {
         const last = activeCompleted[activeCompleted.length - 1]
         if (last) {
@@ -481,21 +673,22 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
       } else if (e.key === 'Escape') {
         setShortcutsOpen(false)
         setSaveOpen(false)
+        if (upNextKeys != null) exitUpNext()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flatVisible, cursor, activeCompleted, completed, drawerCard])
+  }, [navCards, cursor, activeCompleted, completed, drawerCard, rolloverOpen, upNextKeys])
 
   // Keep the selected row on screen while keyboard-navigating.
   useEffect(() => {
-    const card = flatVisible[cursor]
+    const card = navCards[cursor]
     if (!card) return
     document
       .querySelector(`[data-card-key="${workCardKey(card)}"]`)
       ?.scrollIntoView({ block: 'nearest' })
-  }, [cursor, flatVisible])
+  }, [cursor, navCards])
 
   function resetFilters() {
     setSearch('')
@@ -507,6 +700,9 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
   }
 
   function applyView(view: SavedView) {
+    // Saved views are bucket-scoped over the full queue - applying one is an
+    // explicit jump out of My Day into All work.
+    setView('queue')
     setBucketFilter(view.bucket)
     setSearch(view.search)
     setKinds(view.kinds)
@@ -546,11 +742,30 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
     }
   }
 
-  // Hero stat row (docs/DESIGN-FRESHBOOKS.md §4.2): 4 white cards, huge blue
-  // tabular numerals (brand-strong = AA on white), small gray captions,
-  // click-to-filter. Overdue takes the red accent whenever it is nonzero;
-  // zeros stay muted so an empty bucket never shouts.
-  const statChips: { bucket: QueueBucket; label: string; figure: (nonzero: boolean) => string }[] = [
+  // Hero stat row (docs/DESIGN-FRESHBOOKS.md §4.2): white cards, huge tabular
+  // numerals, small gray captions. D1 scope rules:
+  //  - My Day: counts of what's actually in front of you (Overdue / Due
+  //    today / Done this session / Waiting). "Upcoming" as an ambient hero
+  //    is gone; red is sacred - only Overdue ever takes the red accent.
+  //  - All work: the original four-bucket row, click-to-filter.
+  const myDayCounts = useMemo(() => {
+    let overdue = 0
+    let dueToday = 0
+    for (const c of myDayScope) {
+      if (c.status === 'overdue') overdue += 1
+      else if (c.status === 'due_today') dueToday += 1
+    }
+    return { overdue, dueToday }
+  }, [myDayScope])
+
+  const waitingScopeCount = useMemo(
+    () =>
+      openCards.filter((c) => c.status === 'waiting_on_client' && matchesWorkDay(c)).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [openCards, workDay],
+  )
+
+  const queueStatChips: { bucket: QueueBucket; label: string; figure: (nonzero: boolean) => string }[] = [
     {
       bucket: 'overdue',
       label: 'Overdue',
@@ -587,7 +802,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
 
   // Bumper lanes (D6/D8): the header chip names the active client + stage.
   const lane = queue.bumperLanes
-  const cursorCard = flatVisible[cursor]
+  const cursorCard = navCards[cursor]
 
   return (
     <div className="space-y-5 pb-10">
@@ -599,7 +814,9 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
             Workstation
           </h1>
           <p className="text-xs text-muted-foreground">
-            One queue of everything due across every client.
+            {view === 'my-day'
+              ? 'What to do now - today’s work, grouped by client.'
+              : 'One queue of everything due across every client.'}
           </p>
           {lane.enabled && (
             <p
@@ -617,13 +834,28 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {/* D2: the Up Next lane's first-class entry - one card at a time in
+              the frozen day order. Only offered when My Day has work. */}
+          {view === 'my-day' && !focusMode && (
+            <button
+              type="button"
+              data-testid="start-my-day"
+              disabled={myDayCards.length === 0}
+              onClick={startMyDay}
+              title="Work through today one card at a time, in order"
+              className="flex h-8 items-center gap-1.5 rounded-md bg-firm-action px-3 text-xs font-semibold text-firm-action-foreground shadow-sm transition-colors duration-150 hover:bg-firm-action-strong disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Play className="h-3.5 w-3.5" aria-hidden />
+              Start my day
+            </button>
+          )}
           <div className="flex items-stretch">
             <button
               type="button"
               data-testid="complete-next"
-              disabled={flatVisible.length === 0 || cursorCard?.laneLocked === true}
+              disabled={navCards.length === 0 || cursorCard?.laneLocked === true}
               onClick={() => {
-                const next = flatVisible[cursor]
+                const next = navCards[cursor]
                 if (next) void complete(next)
               }}
               title={
@@ -701,48 +933,164 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
         </div>
       </div>
 
-      {/* Hero stat row: white cards, huge blue tabular numerals, click-to-filter */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {statChips.map((s) => {
-          const n = counts[s.bucket]
-          return (
+      {/* D1 view switch: My Day (default) answers "what do I do now"; All
+          work is the full unified queue one tab away. No backlog counts on
+          the tabs themselves - the day pills below carry the unlock counts. */}
+      <div
+        role="tablist"
+        aria-label="Workstation view"
+        className="flex w-fit items-center gap-1 rounded-full bg-muted p-1"
+      >
+        {(
+          [
+            { key: 'my-day', label: 'My Day' },
+            { key: 'queue', label: 'All work' },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={view === t.key}
+            data-testid={`view-tab-${t.key}`}
+            onClick={() => {
+              setView(t.key)
+              setBucketFilter('all')
+              setRawCursor(0)
+            }}
+            className={cn(
+              'rounded-full px-4 py-1.5 text-xs font-semibold transition-colors duration-150',
+              view === t.key
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Hero stat row: white cards, huge tabular numerals. My Day counts the
+          scope in front of you; red is reserved for overdue. */}
+      {view === 'my-day' ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {(
+            [
+              {
+                key: 'overdue',
+                label: 'Overdue',
+                n: myDayCounts.overdue,
+                figure: myDayCounts.overdue > 0 ? 'text-status-overdue' : 'text-muted-foreground',
+                onClick: () => {
+                  setBucketFilter(bucketFilter === 'overdue' ? 'all' : 'overdue')
+                  setRawCursor(0)
+                },
+                pressed: bucketFilter === 'overdue',
+              },
+              {
+                key: 'due_today',
+                label: 'Due today',
+                n: myDayCounts.dueToday,
+                figure:
+                  myDayCounts.dueToday > 0 ? 'text-firm-brand-strong' : 'text-muted-foreground',
+                onClick: () => {
+                  setBucketFilter(bucketFilter === 'due_today' ? 'all' : 'due_today')
+                  setRawCursor(0)
+                },
+                pressed: bucketFilter === 'due_today',
+              },
+              {
+                key: 'waiting_on_client',
+                label: 'Waiting on client',
+                n: waitingScopeCount,
+                figure:
+                  waitingScopeCount > 0 ? 'text-status-waiting-client' : 'text-muted-foreground',
+                onClick: () => {
+                  setView('queue')
+                  setBucketFilter('waiting_on_client')
+                  setRawCursor(0)
+                },
+                pressed: false,
+              },
+            ] as const
+          ).map((s) => (
             <button
-              key={s.bucket}
+              key={s.key}
               type="button"
-              data-testid={`stat-${s.bucket}`}
-              onClick={() => {
-                setBucketFilter(bucketFilter === s.bucket ? 'all' : s.bucket)
-                setRawCursor(0)
-              }}
-              aria-pressed={bucketFilter === s.bucket}
+              data-testid={`stat-${s.key}`}
+              onClick={s.onClick}
+              aria-pressed={s.pressed}
               className={cn(
                 'rounded-xl border border-border bg-card px-4 py-3 text-left shadow-card transition-[box-shadow,transform,border-color] duration-150 hover:shadow-pop motion-safe:hover:-translate-y-0.5',
-                bucketFilter === s.bucket && 'border-ring/60 ring-1 ring-ring/30',
+                s.pressed && 'border-ring/60 ring-1 ring-ring/30',
               )}
             >
-              <div
-                className={cn(
-                  'tnum font-display text-[32px] font-bold leading-none',
-                  s.figure(n > 0),
-                )}
-              >
-                {n}
+              <div className={cn('tnum font-display text-[32px] font-bold leading-none', s.figure)}>
+                {s.n}
               </div>
               <div className="mt-1.5 text-xs font-medium text-muted-foreground">{s.label}</div>
             </button>
-          )
-        })}
-      </div>
+          ))}
+          {/* Done today: the session's completions - progress, not a filter. */}
+          <div
+            data-testid="stat-done"
+            className="rounded-xl border border-border bg-card px-4 py-3 text-left shadow-card"
+          >
+            <div
+              className={cn(
+                'tnum font-display text-[32px] font-bold leading-none',
+                activeCompleted.length > 0 ? 'text-status-on-track' : 'text-muted-foreground',
+              )}
+            >
+              {activeCompleted.length}
+            </div>
+            <div className="mt-1.5 text-xs font-medium text-muted-foreground">Done today</div>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {queueStatChips.map((s) => {
+            const n = counts[s.bucket]
+            return (
+              <button
+                key={s.bucket}
+                type="button"
+                data-testid={`stat-${s.bucket}`}
+                onClick={() => {
+                  setBucketFilter(bucketFilter === s.bucket ? 'all' : s.bucket)
+                  setRawCursor(0)
+                }}
+                aria-pressed={bucketFilter === s.bucket}
+                className={cn(
+                  'rounded-xl border border-border bg-card px-4 py-3 text-left shadow-card transition-[box-shadow,transform,border-color] duration-150 hover:shadow-pop motion-safe:hover:-translate-y-0.5',
+                  bucketFilter === s.bucket && 'border-ring/60 ring-1 ring-ring/30',
+                )}
+              >
+                <div
+                  className={cn(
+                    'tnum font-display text-[32px] font-bold leading-none',
+                    s.figure(n > 0),
+                  )}
+                >
+                  {n}
+                </div>
+                <div className="mt-1.5 text-xs font-medium text-muted-foreground">{s.label}</div>
+              </button>
+            )
+          })}
+        </div>
+      )}
 
-      {/* Work-day pills - the owner's daily client rotation (call notes),
-          FreshBooks segmented-pill styling */}
+      {/* Work-day pills - the owner's daily client rotation (call notes).
+          In My Day these are the unlock tabs: each day is labeled by WHEN its
+          clients unlock, with that day's actionable count - never the raw
+          ambient backlog (D1). */}
       <div
         role="group"
         aria-label="Filter by client work day"
         className="flex flex-wrap items-center gap-1 rounded-full bg-muted p-1"
       >
         <span className="px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Work day
+          {view === 'my-day' ? 'Unlocks' : 'Work day'}
         </span>
         {dayChips.map((chip) => (
           <button
@@ -762,40 +1110,43 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
                 : 'text-muted-foreground hover:text-foreground',
             )}
           >
-            {chip.label}
+            {view === 'my-day' && chip.isToday ? 'Today' : chip.label}
             {chip.isToday && <span className="sr-only"> (today)</span>}
             <span className="tnum ml-1.5 text-[11px] text-muted-foreground">{chip.count}</span>
           </button>
         ))}
       </div>
 
-      {/* Bucket segmented pill group */}
-      <div
-        role="tablist"
-        aria-label="Filter by bucket"
-        className="flex flex-wrap items-center gap-1 rounded-full bg-muted p-1"
-      >
-        {bucketTabs.map((t) => (
-          <button
-            key={t.key}
-            role="tab"
-            aria-selected={bucketFilter === t.key}
-            onClick={() => {
-              setBucketFilter(t.key)
-              setRawCursor(0)
-            }}
-            className={cn(
-              'rounded-full px-3 py-1.5 text-xs font-semibold transition-colors duration-150',
-              bucketFilter === t.key
-                ? 'bg-card text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {t.label}
-            <span className="tnum ml-1.5 text-[11px] text-muted-foreground">{t.count}</span>
-          </button>
-        ))}
-      </div>
+      {/* Bucket segmented pill group (full queue only - My Day's scope is
+          already the actionable buckets) */}
+      {view === 'queue' && (
+        <div
+          role="tablist"
+          aria-label="Filter by bucket"
+          className="flex flex-wrap items-center gap-1 rounded-full bg-muted p-1"
+        >
+          {bucketTabs.map((t) => (
+            <button
+              key={t.key}
+              role="tab"
+              aria-selected={bucketFilter === t.key}
+              onClick={() => {
+                setBucketFilter(t.key)
+                setRawCursor(0)
+              }}
+              className={cn(
+                'rounded-full px-3 py-1.5 text-xs font-semibold transition-colors duration-150',
+                bucketFilter === t.key
+                  ? 'bg-card text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {t.label}
+              <span className="tnum ml-1.5 text-[11px] text-muted-foreground">{t.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
@@ -895,13 +1246,19 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
 
         {/* Focus mode toggle (auto-prioritizer): collapse the queue to the
             single next card. View mode only - queue data untouched. Kept out
-            of the tablist row: a non-tab child trips axe required-children. */}
+            of the tablist row: a non-tab child trips axe required-children.
+            D2: "Start my day" is the first-class entry; this toggle is the
+            power-user path over the live visible set (unfrozen). */}
         <button
           type="button"
           aria-pressed={focusMode}
           data-testid="focus-toggle"
           title="Focus mode: one card at a time"
-          onClick={() => setFocusMode((v) => !v)}
+          onClick={() => {
+            if (focusMode) setUpNextKeys(null)
+            setFocusMode((v) => !v)
+            setRawCursor(0)
+          }}
           className={cn(
             'ml-auto flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors duration-150',
             focusMode
@@ -982,6 +1339,19 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
         </div>
       )}
 
+      {/* D3 rollover cue: subtle re-entry to the morning decisions once the
+          dialog has been dismissed and undecided items remain. */}
+      {view === 'my-day' && !rolloverOpen && rolloverCandidates.length > 0 && (
+        <button
+          type="button"
+          data-testid="rollover-cue"
+          onClick={() => setRolloverOpen(true)}
+          className="flex w-fit items-center gap-1.5 rounded-full border border-dashed border-border bg-card px-3 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground"
+        >
+          {rolloverCandidates.length} from before today - decide where they go
+        </button>
+      )}
+
       {/* The queue. Plain grouped markup, not role="listbox": options nested
           under the per-bucket <section> regions are not "owned" by a listbox
           (axe aria-required-children / aria-required-parent), option is not
@@ -1008,7 +1378,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
               </p>
             </div>
             {activeCompleted.length > 0 && (
-              <CompletedStrip entries={activeCompleted} onReopen={reopen} />
+              <CompletedStrip entries={activeCompleted} onReopen={reopen} celebrated={celebratedKeys} />
             )}
           </>
         ) : flatVisible.length === 0 && filtersActive ? (
@@ -1020,6 +1390,65 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
             <Button type="button" size="sm" className="mt-4 h-8" onClick={resetFilters}>
               Clear filters
             </Button>
+          </div>
+        ) : view === 'my-day' && flatVisible.length === 0 && bucketFilter !== 'all' ? (
+          /* My Day stat sub-filter landed on an empty bucket - calm, not red. */
+          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 py-14 text-center">
+            <p className="text-sm font-semibold text-foreground">
+              {bucketFilter === 'overdue' ? BUCKET_EMPTY.overdue : BUCKET_EMPTY.due_today}
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className="mt-4 h-8"
+              onClick={() => {
+                setBucketFilter('all')
+                setRawCursor(0)
+              }}
+            >
+              Show everything for today
+            </Button>
+          </div>
+        ) : view === 'my-day' &&
+          flatVisible.length === 0 &&
+          (workDay === 'all' || workDay === weekdayOf(queue.today)) ? (
+          /* My Day is clear (today's clients, or every client, have nothing
+             actionable) - the calm default the wall-of-red used to preclude. */
+          <div
+            data-testid="my-day-clear"
+            className="flex flex-col items-center justify-center rounded-xl border border-border bg-card px-6 py-14 text-center shadow-card"
+          >
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-status-on-track-bg">
+              <CheckDraw className="h-7 w-7 text-status-on-track" />
+            </span>
+            <h2 className="mt-4 font-display text-lg font-semibold text-foreground">
+              Nothing due right now
+            </h2>
+            <p className="mt-1 max-w-sm text-[13px] text-muted-foreground">
+              {workDay === 'all'
+                ? 'Nothing due or overdue across the firm. All work holds everything upcoming.'
+                : 'Today’s clients are clear. All work holds everything upcoming.'}
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className="mt-4 h-8"
+              data-testid="my-day-view-all"
+              onClick={() => {
+                setView('queue')
+                setRawCursor(0)
+              }}
+            >
+              View all work
+            </Button>
+            {activeCompleted.length > 0 && (
+              <CompletedStrip
+                entries={activeCompleted}
+                onReopen={reopen}
+                celebrated={celebratedKeys}
+                className="mt-6 w-full max-w-xl text-left"
+              />
+            )}
           </div>
         ) : flatVisible.length === 0 && workDay !== 'all' ? (
           <div
@@ -1047,59 +1476,145 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
             </Button>
           </div>
         ) : focusMode ? (
-          /* Focus mode (auto-prioritizer): the queue collapses to the single
-             next card. Next = complete and move on (E), Skip = move without
-             completing (j). The keyboard loop keeps working untouched. */
-          <section aria-label="Focus mode" data-testid="focus-mode" className="space-y-3">
-            <p className="tnum px-1 text-xs font-medium text-muted-foreground">
-              Card {cursor + 1} of {flatVisible.length}
-            </p>
-            <WorkCardRow
-              card={flatVisible[cursor]}
-              today={queue.today}
-              selected
-              assignee={
-                flatVisible[cursor].assigneeId != null
-                  ? assigneeById.get(flatVisible[cursor].assigneeId)
-                  : undefined
-              }
-              onSelect={handleCardSelect}
-              onComplete={handleCardComplete}
-              onRequestOverride={setOverrideCard}
-            />
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8"
-                data-testid="focus-skip"
-                disabled={cursor >= flatVisible.length - 1}
-                onClick={() => setRawCursor((c) => Math.min(c + 1, flatVisible.length - 1))}
-                title="Skip to the next card (j)"
-              >
-                Skip
-              </Button>
-              <button
-                type="button"
-                data-testid="focus-next"
-                disabled={flatVisible[cursor]?.laneLocked === true}
-                onClick={() => void complete(flatVisible[cursor])}
-                title={
-                  flatVisible[cursor]?.laneLocked === true
-                    ? (flatVisible[cursor].laneLockReason ?? 'Locked by bumper lanes')
-                    : 'Complete and move to the next card (E)'
-                }
-                className="flex h-8 items-center gap-1.5 rounded-md bg-firm-action px-3 text-xs font-semibold text-firm-action-foreground shadow-sm transition-colors duration-150 hover:bg-firm-action-strong disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Check className="h-3.5 w-3.5" aria-hidden />
-                Next
-              </button>
+          /* Focus mode / D2 Up Next: the queue collapses to the single next
+             card. Next = complete and move on (E), Skip = move without
+             completing (j). The keyboard loop keeps working untouched. With
+             an Up Next session the sequence is the frozen entry order. */
+          <section
+            aria-label={upNextKeys != null ? 'Up Next' : 'Focus mode'}
+            data-testid="focus-mode"
+            className="space-y-3"
+          >
+            <div className="flex items-center justify-between px-1">
+              <p className="tnum text-xs font-medium text-muted-foreground">
+                {upNextKeys != null ? 'Up Next · ' : ''}Card {Math.min(cursor + 1, focusCards.length)} of{' '}
+                {focusCards.length}
+              </p>
+              {upNextKeys != null && (
+                <button
+                  type="button"
+                  data-testid="up-next-exit"
+                  onClick={exitUpNext}
+                  className="text-xs font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground"
+                >
+                  Exit to My Day
+                </button>
+              )}
             </div>
+            {focusCards.length === 0 ? (
+              /* Up Next session fully worked through - the scripted win. */
+              <div
+                data-testid="up-next-done"
+                className="flex flex-col items-center justify-center rounded-xl border border-border bg-card px-6 py-12 text-center shadow-card"
+              >
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-status-on-track-bg">
+                  <CheckDraw className="h-7 w-7 text-status-on-track" />
+                </span>
+                <h2 className="mt-3 font-display text-base font-semibold text-foreground">
+                  That’s the whole list
+                </h2>
+                <p className="mt-1 max-w-sm text-[13px] text-muted-foreground">
+                  Every card in today’s sequence is handled.
+                </p>
+                <Button type="button" size="sm" className="mt-4 h-8" onClick={exitUpNext}>
+                  Back to My Day
+                </Button>
+              </div>
+            ) : (
+              <>
+                <WorkCardRow
+                  card={focusCards[cursor]}
+                  today={queue.today}
+                  selected
+                  assignee={
+                    focusCards[cursor].assigneeId != null
+                      ? assigneeById.get(focusCards[cursor].assigneeId)
+                      : undefined
+                  }
+                  onSelect={handleCardSelect}
+                  onComplete={handleCardComplete}
+                  onRequestOverride={setOverrideCard}
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    data-testid="focus-skip"
+                    disabled={cursor >= focusCards.length - 1}
+                    onClick={() => setRawCursor((c) => Math.min(c + 1, focusCards.length - 1))}
+                    title="Skip to the next card (j)"
+                  >
+                    Skip
+                  </Button>
+                  <button
+                    type="button"
+                    data-testid="focus-next"
+                    disabled={focusCards[cursor]?.laneLocked === true}
+                    onClick={() => void complete(focusCards[cursor])}
+                    title={
+                      focusCards[cursor]?.laneLocked === true
+                        ? (focusCards[cursor].laneLockReason ?? 'Locked by bumper lanes')
+                        : 'Complete and move to the next card (E)'
+                    }
+                    className="flex h-8 items-center gap-1.5 rounded-md bg-firm-action px-3 text-xs font-semibold text-firm-action-foreground shadow-sm transition-colors duration-150 hover:bg-firm-action-strong disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Check className="h-3.5 w-3.5" aria-hidden />
+                    Next
+                  </button>
+                </div>
+              </>
+            )}
             {activeCompleted.length > 0 && (
-              <CompletedStrip entries={activeCompleted} onReopen={reopen} />
+              <CompletedStrip entries={activeCompleted} onReopen={reopen} celebrated={celebratedKeys} />
             )}
           </section>
+        ) : view === 'my-day' ? (
+          /* D1 My Day: compact per-client cards instead of one interleaved
+             list. Rows render embedded - the group card is the container. */
+          <>
+            {myDayGroups.map((group) => (
+              <section
+                key={group.clientId}
+                aria-label={group.clientName}
+                data-testid="my-day-client"
+                className="overflow-hidden rounded-xl border border-border bg-card shadow-card"
+              >
+                <h2 className="flex items-center justify-between gap-2 border-b border-border bg-muted/40 px-4 py-2">
+                  <span className="truncate text-sm font-semibold text-foreground">
+                    {group.clientName}
+                  </span>
+                  <span className="tnum shrink-0 text-[11px] font-medium text-muted-foreground">
+                    {group.cards.length} left
+                  </span>
+                </h2>
+                <div className="divide-y divide-border">
+                  {group.cards.map((card) => {
+                    const flatIndex = flatIndexByKey.get(workCardKey(card)) ?? -1
+                    return (
+                      <WorkCardRow
+                        key={workCardKey(card)}
+                        card={card}
+                        today={queue.today}
+                        selected={flatIndex === cursor}
+                        embedded
+                        assignee={
+                          card.assigneeId != null ? assigneeById.get(card.assigneeId) : undefined
+                        }
+                        onSelect={handleCardSelect}
+                        onComplete={handleCardComplete}
+                        onRequestOverride={setOverrideCard}
+                      />
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
+            {activeCompleted.length > 0 && (
+              <CompletedStrip entries={activeCompleted} onReopen={reopen} celebrated={celebratedKeys} />
+            )}
+          </>
         ) : (
           bucketsToRender.map((bucket) => {
             const rows = visibleByBucket.get(bucket) ?? []
@@ -1145,7 +1660,7 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
                   })}
                 </div>
                 {strip.length > 0 && (
-                  <CompletedStrip entries={strip} onReopen={reopen} className="mt-2" />
+                  <CompletedStrip entries={strip} onReopen={reopen} celebrated={celebratedKeys} className="mt-2" />
                 )}
               </section>
             )
@@ -1182,6 +1697,25 @@ export function WorkstationQueue({ queue, assignees }: WorkstationQueueProps) {
         }}
         onRequested={() => router.refresh()}
       />
+
+      {/* D3 guided rollover: first visit of the day, yesterday's assigned
+          leftovers as explicit decisions (Today / Defer / Waiting). */}
+      <RolloverDialog
+        items={rolloverCandidates}
+        today={queue.today}
+        open={rolloverOpen}
+        onOpenChange={handleRolloverOpenChange}
+      />
+
+      {/* D4: the rare big celebration (client week closed / stale rescue).
+          Quick completions roll quietly through the completed strip. */}
+      {celebrationsEnabled && celebration != null && (
+        <CelebrationBurst
+          headline={celebration.headline}
+          detail={celebration.detail}
+          onDone={() => setCelebration(null)}
+        />
+      )}
     </div>
   )
 }

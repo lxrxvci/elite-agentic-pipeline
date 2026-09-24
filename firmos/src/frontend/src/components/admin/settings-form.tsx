@@ -57,6 +57,7 @@ export function SettingsForm({ settings }: SettingsFormProps) {
   const [orgName, setOrgName] = React.useState(settings.orgName)
   const [purgeEnabled, setPurgeEnabled] = React.useState(settings.purgeEnabled)
   const [portalEnabled, setPortalEnabled] = React.useState(settings.clientPortalEnabled)
+  const [celebrationsEnabled, setCelebrationsEnabled] = React.useState(settings.celebrationsEnabled)
   const [maxHours, setMaxHours] = React.useState(String(settings.maxClockInHours))
   const [payout, setPayout] = React.useState<PayoutConfig>(settings.commissionPayout)
   const [saving, setSaving] = React.useState(false)
@@ -65,6 +66,7 @@ export function SettingsForm({ settings }: SettingsFormProps) {
     orgName !== settings.orgName ||
     purgeEnabled !== settings.purgeEnabled ||
     portalEnabled !== settings.clientPortalEnabled ||
+    celebrationsEnabled !== settings.celebrationsEnabled ||
     maxHours !== String(settings.maxClockInHours) ||
     payout !== settings.commissionPayout
 
@@ -75,6 +77,7 @@ export function SettingsForm({ settings }: SettingsFormProps) {
         orgName,
         purgeEnabled,
         clientPortalEnabled: portalEnabled,
+        celebrationsEnabled,
         maxClockInHours: Number(maxHours),
         commissionPayout: payout,
       })
@@ -136,6 +139,23 @@ export function SettingsForm({ settings }: SettingsFormProps) {
             </Label>
             <p className="text-xs text-muted-foreground">
               Opens portal routes to client and CPA logins.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-start gap-2.5">
+          <Checkbox
+            id="flag-celebrations"
+            checked={celebrationsEnabled}
+            onCheckedChange={(v) => setCelebrationsEnabled(v === true)}
+            aria-label="Enable workstation celebrations"
+          />
+          <div>
+            <Label htmlFor="flag-celebrations" className="text-[13px] font-medium">
+              Workstation celebrations
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Completion moments on the workstation (variable schedule, reduced-motion safe).
+              On by default; turn off to quiet the whole firm.
             </p>
           </div>
         </div>

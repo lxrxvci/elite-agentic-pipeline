@@ -156,6 +156,7 @@ export interface AdminSettingsPatch {
   orgName?: string;
   purgeEnabled?: boolean;
   clientPortalEnabled?: boolean;
+  celebrationsEnabled?: boolean;
   maxClockInHours?: number;
   commissionPayout?: PayoutConfig;
 }
@@ -196,7 +197,7 @@ export async function updateAdminSettingsAction(
       changed.orgName = name;
     }
 
-    if (patch.purgeEnabled !== undefined || patch.clientPortalEnabled !== undefined) {
+    if (patch.purgeEnabled !== undefined || patch.clientPortalEnabled !== undefined || patch.celebrationsEnabled !== undefined) {
       const [row] = await db
         .select()
         .from(appSettings)
@@ -208,6 +209,9 @@ export async function updateAdminSettingsAction(
         ...(patch.purgeEnabled !== undefined ? { purge_enabled: patch.purgeEnabled } : {}),
         ...(patch.clientPortalEnabled !== undefined
           ? { client_portal_enabled: patch.clientPortalEnabled }
+          : {}),
+        ...(patch.celebrationsEnabled !== undefined
+          ? { celebrations_enabled: patch.celebrationsEnabled }
           : {}),
       };
       await upsertSetting("feature_flags", next, actor.id);

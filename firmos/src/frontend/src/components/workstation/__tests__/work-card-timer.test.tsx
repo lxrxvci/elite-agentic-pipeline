@@ -2,7 +2,13 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getClockStatusAction, startTaskTimerAction, stopTaskTimerAction } from '@/server/actions/time'
+import {
+  getClockStatusAction,
+  startActivityAction,
+  startTaskTimerAction,
+  stopActivityAction,
+  stopTaskTimerAction,
+} from '@/server/actions/time'
 import { __resetClockStatusForTests } from '@/shared/lib/clock-status'
 import type { ClockStatus } from '@/server/time-tracking'
 import type { WorkCard } from '@/server/queue'
@@ -10,16 +16,20 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 
 import { WorkCardRow } from '../work-card'
 
-// The toggle dynamically imports the actions module - vitest intercepts it.
+// The control dynamically imports the actions module - vitest intercepts it.
 vi.mock('@/server/actions/time', () => ({
   getClockStatusAction: vi.fn(),
   startTaskTimerAction: vi.fn(),
   stopTaskTimerAction: vi.fn(),
+  startActivityAction: vi.fn(),
+  stopActivityAction: vi.fn(),
 }))
 
 const mockStatus = vi.mocked(getClockStatusAction)
 const mockStart = vi.mocked(startTaskTimerAction)
 const mockStop = vi.mocked(stopTaskTimerAction)
+const mockStartActivity = vi.mocked(startActivityAction)
+const mockStopActivity = vi.mocked(stopActivityAction)
 
 function status(partial: Partial<ClockStatus>): ClockStatus {
   return {
@@ -78,38 +88,49 @@ const RUNNING_TIMER = {
   elapsedMinutes: 0,
 }
 
-describe('WorkCardRow task timer', () => {
-  it('renders the timer toggle only on task-kind cards', async () => {
+const RUNNING_ACTIVITY = {
+  entryId: 9,
+  activityType: 'bank_feeds',
+  clientId: 1,
+  startedAt: new Date().toISOString(),
+  elapsedMinutes: 0,
+}
+
+describe('WorkCardRow card timer (D5 timeboxing)', () => {
+  it('renders the estimate chip on every kind, from the shared table', () => {
+    renderRow(taskCard())
+    expect(screen.getByTestId('estimate-chip')).toHaveTextContent('≈25m')
+    renderRow({ ...taskCard(), kind: 'bank_feed', id: 43 })
+    expect(screen.getAllByTestId('estimate-chip')[1]).toHaveTextContent('≈15m')
+  })
+
+  it('renders the Start action on task and periodic cards alike', async () => {
     renderRow(taskCard())
     expect(
-      await screen.findByRole('button', { name: /start task timer: reconcile august/i }),
+      await screen.findByRole('button', { name: /start timer: reconcile august/i }),
     ).toBeInTheDocument()
   })
 
-  it('does not render the toggle on non-task cards', () => {
-    renderRow({ ...taskCard(), kind: 'bank_feed' })
-    expect(screen.queryByTestId('task-timer-toggle')).not.toBeInTheDocument()
-  })
-
-  it('starts the timer and reflects the running state from the server', async () => {
+  it('starts the task timer and reflects the running state from the server', async () => {
     mockStart.mockResolvedValue({ ok: true, data: status({}) })
     // Mount reads empty timers; the post-toggle refresh reads them running.
     mockStatus
       .mockResolvedValueOnce({ ok: true, data: status({}) })
       .mockResolvedValue({ ok: true, data: status({ openTaskTimers: [RUNNING_TIMER] }) })
     renderRow(taskCard())
-    const toggle = await screen.findByTestId('task-timer-toggle')
-    expect(toggle).toHaveAttribute('data-running', 'false')
+    const start = await screen.findByTestId('card-timer-start')
 
-    await userEvent.click(toggle)
+    await userEvent.click(start)
     expect(mockStart).toHaveBeenCalledWith(42)
-    await waitFor(() => expect(toggle).toHaveAttribute('data-running', 'true'))
+    await waitFor(() =>
+      expect(screen.getByTestId('card-timer-running')).toBeInTheDocument(),
+    )
     expect(
-      screen.getByRole('button', { name: /stop task timer: reconcile august/i }),
+      screen.getByRole('button', { name: /stop timer: reconcile august/i }),
     ).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('stops a running timer', async () => {
+  it('stops a running task timer', async () => {
     // Mount reads the running timer; the post-toggle refresh reads none.
     mockStatus
       .mockResolvedValueOnce({ ok: true, data: status({ openTaskTimers: [RUNNING_TIMER] }) })
@@ -117,11 +138,11 @@ describe('WorkCardRow task timer', () => {
     mockStop.mockResolvedValue({ ok: true, data: status({}) })
     renderRow(taskCard())
 
-    const toggle = await screen.findByRole('button', { name: /stop task timer/i })
-    await userEvent.click(toggle)
+    const stop = await screen.findByRole('button', { name: /stop timer/i })
+    await userEvent.click(stop)
     expect(mockStop).toHaveBeenCalledWith(42)
     await waitFor(() =>
-      expect(screen.getByTestId('task-timer-toggle')).toHaveAttribute('data-running', 'false'),
+      expect(screen.getByTestId('card-timer-start')).toBeInTheDocument(),
     )
   })
 
@@ -142,8 +163,44 @@ describe('WorkCardRow task timer', () => {
       }),
     })
     renderRow(taskCard())
-    const toggle = await screen.findByTestId('task-timer-toggle')
-    await userEvent.click(toggle)
-    await waitFor(() => expect(toggle).toHaveAttribute('data-running', 'true'))
+    const start = await screen.findByTestId('card-timer-start')
+    await userEvent.click(start)
+    await waitFor(() =>
+      expect(screen.getByTestId('card-timer-running')).toBeInTheDocument(),
+    )
+  })
+
+  it('periodic cards drive the activity timer (kind-mapped, client-scoped)', async () => {
+    mockStartActivity.mockResolvedValue({ ok: true, data: status({}) })
+    mockStatus
+      .mockResolvedValueOnce({ ok: true, data: status({}) })
+      .mockResolvedValue({ ok: true, data: status({ currentActivity: RUNNING_ACTIVITY }) })
+    renderRow({ ...taskCard(), kind: 'bank_feed', id: 50, title: 'Bank feed week of 2026-08-17' })
+
+    const start = await screen.findByTestId('card-timer-start')
+    await userEvent.click(start)
+    // bank_feed maps to the bank_feeds activity with the card's client.
+    expect(mockStartActivity).toHaveBeenCalledWith('bank_feeds', 1)
+    await waitFor(() =>
+      expect(screen.getByTestId('card-timer-running')).toBeInTheDocument(),
+    )
+
+    mockStopActivity.mockResolvedValue({ ok: true, data: status({}) })
+    mockStatus.mockResolvedValue({ ok: true, data: status({}) })
+    await userEvent.click(screen.getByTestId('card-timer-running'))
+    expect(mockStopActivity).toHaveBeenCalledWith('bank_feeds', 1)
+    await waitFor(() =>
+      expect(screen.getByTestId('card-timer-start')).toBeInTheDocument(),
+    )
+  })
+
+  it('does not mark a card running for another client’s activity', async () => {
+    mockStatus.mockResolvedValue({
+      ok: true,
+      data: status({ currentActivity: { ...RUNNING_ACTIVITY, clientId: 999 } }),
+    })
+    renderRow({ ...taskCard(), kind: 'bank_feed', id: 51 })
+    expect(await screen.findByTestId('card-timer-start')).toBeInTheDocument()
+    expect(screen.queryByTestId('card-timer-running')).not.toBeInTheDocument()
   })
 })
