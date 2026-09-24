@@ -85,6 +85,26 @@ test('intake has no serious/critical axe violations', async ({ page }) => {
   await expectAccessible(page, 'intake')
 })
 
+test('calendar has no serious/critical axe violations', async ({ page }) => {
+  await page.goto('/calendar')
+  await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()
+  await expect(page.getByTestId('calendar-day-detail')).toBeVisible()
+  await expectAccessible(page, 'calendar (month + day detail)')
+  // The meeting dialog scans clean too (open it, let the enter animation
+  // settle so axe measures final colors, scan, close).
+  await page.getByTestId('new-meeting-button').click()
+  await expect(page.getByTestId('meeting-dialog')).toBeVisible()
+  await page.waitForTimeout(400)
+  await expectAccessible(page, 'calendar (meeting dialog)')
+  await page.keyboard.press('Escape')
+})
+
+test('admin hub has no serious/critical axe violations', async ({ page }) => {
+  await page.goto('/admin')
+  await expect(page.getByTestId('admin-hub')).toBeVisible()
+  await expectAccessible(page, 'admin hub')
+})
+
 test('portal home has no serious/critical axe violations', async ({ page, context }) => {
   // Drop the injected staff session: cookies are domain-scoped (both ports),
   // and /login bounces signed-in users to / before the form renders.

@@ -113,6 +113,12 @@ export function w9SummaryOf(items: W9RecipientItem[]): {
   }
 }
 
+/** "Aug 10" - short label for the request stamp (ISO timestamp in). */
+export function requestLabel(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
 // ── Add / edit dialog ─────────────────────────────────────────────────────
 
 interface RecipientFormProps {
@@ -404,7 +410,9 @@ export function ClientW9Panel({ clientId, year, recipients }: ClientW9PanelProps
                     <td className="px-4 py-2.5">
                       <WorkStatusBadge status={meta.status} label={meta.label} />
                       {r.w9RequestedAt && r.status === 'pending_w9' && (
-                        <p className="mt-1 text-[11px] text-muted-foreground">Request emailed</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground" data-testid="w9-request-status">
+                          Requested {requestLabel(r.w9RequestedAt)} · weekly reminders on
+                        </p>
                       )}
                     </td>
                     <td className="px-4 py-2.5">
@@ -460,16 +468,17 @@ export function ClientW9Panel({ clientId, year, recipients }: ClientW9PanelProps
                         {actions.canEmailRequest && (
                           <Button
                             type="button"
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
                             disabled={busy}
-                            aria-label={`Email W-9 request for ${r.vendorName}`}
+                            data-testid={`w9-request-${r.id}`}
                             onClick={() => {
                               setEmailAddress(r.email ?? '')
                               setEmailTarget(r)
                             }}
                           >
-                            <Mail aria-hidden className="h-3.5 w-3.5" />
+                            <Mail aria-hidden className="mr-1.5 h-3.5 w-3.5" />
+                            {r.w9RequestedAt ? 'Re-request' : 'Request W-9'}
                           </Button>
                         )}
                         <Button
@@ -512,8 +521,9 @@ export function ClientW9Panel({ clientId, year, recipients }: ClientW9PanelProps
           <DialogHeader>
             <DialogTitle>Email W-9 request</DialogTitle>
             <DialogDescription>
-              Sends the request to the address below and stamps the request date. There is no
-              automated reminder - resend from here when needed.
+              Sends the branded request (with the portal upload link) to the address below and
+              records it on the client&apos;s correspondence history. The weekly reminder job keeps
+              chasing until the W-9 arrives.
             </DialogDescription>
           </DialogHeader>
           <div>

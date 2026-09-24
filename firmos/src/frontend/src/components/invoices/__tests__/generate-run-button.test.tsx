@@ -29,6 +29,7 @@ function summary(partial: Partial<GenerateSummary> = {}): GenerateSummary {
     emptySkipped: 0,
     tasksAttached: 3,
     milestoneInvoicesCreated: 0,
+    meetingsAttached: 0,
     failures: [],
     ...partial,
   }
@@ -41,7 +42,7 @@ beforeEach(() => {
 describe('GenerateRunButton', () => {
   it('opens a confirm dialog that spells out what the run will do', async () => {
     const user = userEvent.setup()
-    render(<GenerateRunButton year={2026} month={8} pendingTaskCount={3} />)
+    render(<GenerateRunButton year={2026} month={8} pendingTaskCount={3} pendingMeetingCount={1} />)
     await user.click(screen.getByTestId('generate-run-button'))
 
     const dialog = await screen.findByTestId('generate-run-dialog')
@@ -59,7 +60,7 @@ describe('GenerateRunButton', () => {
     const onResult = vi.fn()
     const user = userEvent.setup()
     render(
-      <GenerateRunButton year={2026} month={8} pendingTaskCount={3} onResult={onResult} />,
+      <GenerateRunButton year={2026} month={8} pendingTaskCount={3} pendingMeetingCount={0} onResult={onResult} />,
     )
     await user.click(screen.getByTestId('generate-run-button'))
     await user.click(await screen.findByRole('button', { name: 'Run for Aug 2026' }))
@@ -74,7 +75,7 @@ describe('GenerateRunButton', () => {
     mockGenerate.mockResolvedValue({ ok: false, error: 'You do not have permission to do that.' })
     const { toast } = await import('sonner')
     const user = userEvent.setup()
-    render(<GenerateRunButton year={2026} month={8} pendingTaskCount={0} />)
+    render(<GenerateRunButton year={2026} month={8} pendingTaskCount={0} pendingMeetingCount={0} />)
     await user.click(screen.getByTestId('generate-run-button'))
     await user.click(await screen.findByRole('button', { name: 'Run for Aug 2026' }))
 

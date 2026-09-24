@@ -58,6 +58,7 @@ export function SettingsForm({ settings }: SettingsFormProps) {
   const [purgeEnabled, setPurgeEnabled] = React.useState(settings.purgeEnabled)
   const [portalEnabled, setPortalEnabled] = React.useState(settings.clientPortalEnabled)
   const [celebrationsEnabled, setCelebrationsEnabled] = React.useState(settings.celebrationsEnabled)
+  const [slackEnabled, setSlackEnabled] = React.useState(settings.slackEnabled)
   const [maxHours, setMaxHours] = React.useState(String(settings.maxClockInHours))
   const [payout, setPayout] = React.useState<PayoutConfig>(settings.commissionPayout)
   const [saving, setSaving] = React.useState(false)
@@ -67,6 +68,7 @@ export function SettingsForm({ settings }: SettingsFormProps) {
     purgeEnabled !== settings.purgeEnabled ||
     portalEnabled !== settings.clientPortalEnabled ||
     celebrationsEnabled !== settings.celebrationsEnabled ||
+    slackEnabled !== settings.slackEnabled ||
     maxHours !== String(settings.maxClockInHours) ||
     payout !== settings.commissionPayout
 
@@ -78,6 +80,7 @@ export function SettingsForm({ settings }: SettingsFormProps) {
         purgeEnabled,
         clientPortalEnabled: portalEnabled,
         celebrationsEnabled,
+        slackEnabled,
         maxClockInHours: Number(maxHours),
         commissionPayout: payout,
       })
@@ -156,6 +159,31 @@ export function SettingsForm({ settings }: SettingsFormProps) {
             <p className="text-xs text-muted-foreground">
               Completion moments on the workstation (variable schedule, reduced-motion safe).
               On by default; turn off to quiet the whole firm.
+            </p>
+          </div>
+        </div>
+      </Section>
+
+      <Section
+        title="Slack notifications"
+        description="Bridges the urgent notification types - mentions, client replies, bumper-lane override requests, not-clocked-in alerts - into the firm's Slack channel."
+      >
+        <div className="flex items-start gap-2.5">
+          <Checkbox
+            id="flag-slack"
+            checked={slackEnabled}
+            onCheckedChange={(v) => setSlackEnabled(v === true)}
+            aria-label="Enable Slack notifications"
+          />
+          <div>
+            <Label htmlFor="flag-slack" className="text-[13px] font-medium">
+              Post to Slack
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Requires the <code className="rounded bg-muted px-1">SLACK_WEBHOOK_URL</code>{' '}
+              environment variable on the server (a Slack incoming-webhook URL). Without it the
+              bridge logs to the console in dev and stays silent in production; posts never block
+              or break notifications.
             </p>
           </div>
         </div>

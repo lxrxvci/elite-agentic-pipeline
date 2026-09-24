@@ -1,5 +1,5 @@
 /**
- * FirmOS database schema - 63 tables across 14 domain groups, modeled
+ * FirmOS database schema - 64 tables across 15 domain groups, modeled
  * up front from HANDOFF §7 (ADR-0005). Single tenant: no tenant_id/org_id
  * anywhere.
  *
@@ -19,6 +19,7 @@
  *   admin.ts          admin, audit & settings (4)
  *   saved-views.ts    per-user saved views (1)
  *   vault.ts          client credential vault (2) - Phase 3B
+ *   meetings.ts       meetings (1) - Phase 3C
  */
 export * from "./enums";
 export * from "./shared";
@@ -38,3 +39,4 @@ export * from "./communications";
 export * from "./admin";
 export * from "./saved-views";
 export * from "./vault";
+export * from "./meetings";

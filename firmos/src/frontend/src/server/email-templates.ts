@@ -226,3 +226,61 @@ export function staffComposerEmail(input: { bodyText: string }): string {
     footnote: "You can reply directly to this email - it reaches your bookkeeper's inbox.",
   });
 }
+
+// ── Phase 3C templates ────────────────────────────────────────────────────
+
+/** Meeting details mail ("email the client the meeting info", 02:12:22). */
+export function meetingInfoEmail(input: {
+  clientName: string;
+  title: string;
+  /** Display-ready firm-local span, e.g. "Tue, Aug 18, 2026, 2:00-2:30 PM". */
+  whenLabel: string;
+  link?: string | null;
+  location?: string | null;
+  notes?: string | null;
+}): BrandedEmail {
+  const details = [`When: ${input.whenLabel}`];
+  if (input.location) details.push(`Where: ${input.location}`);
+  const bodyText = [
+    "Hello,",
+    `Here are the details for our upcoming meeting for ${input.clientName}:`,
+    details.join("\n"),
+    ...(input.notes ? [`Agenda / notes:\n${input.notes}`] : []),
+    "If the time stops working, just reply to this email and we will find a new one.",
+  ].join("\n\n");
+  return {
+    subject: `Meeting: ${input.title}`,
+    html: brandedEmail({
+      heading: input.title,
+      bodyText,
+      cta: input.link ? { label: "Join the meeting", url: input.link } : undefined,
+      footnote: "Replying to this email reaches your bookkeeper directly - no login needed.",
+    }),
+    text: `${bodyText}${input.link ? `\n\nJoin the meeting: ${input.link}` : ""}`,
+  };
+}
+
+/** W-9 outreach (§18 + Phase 3C): the request plus the portal upload link. */
+export function w9RequestEmail(input: {
+  clientName: string;
+  vendorName: string;
+  year: number;
+}): BrandedEmail {
+  const portalUrl = `${appUrl()}/portal`;
+  const bodyText = [
+    `Hello ${input.vendorName},`,
+    `${input.clientName} needs a completed Form W-9 from you for ${input.year} tax reporting. It takes about two minutes: the legal name, address, and taxpayer ID exactly as the IRS knows them.`,
+    `You can reply to this email with the signed form attached, or upload it through the secure portal link below.`,
+  ].join("\n\n");
+  return {
+    subject: `W-9 request from ${input.clientName} (${input.year})`,
+    html: brandedEmail({
+      heading: `Form W-9 needed for ${input.year}`,
+      bodyText,
+      cta: { label: "Upload your W-9", url: portalUrl },
+      footnote:
+        "Prefer email? Just reply with the signed form attached - it lands directly with the bookkeeping team.",
+    }),
+    text: `${bodyText}\n\nUpload your W-9: ${portalUrl}`,
+  };
+}

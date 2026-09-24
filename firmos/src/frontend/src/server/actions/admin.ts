@@ -157,6 +157,8 @@ export interface AdminSettingsPatch {
   purgeEnabled?: boolean;
   clientPortalEnabled?: boolean;
   celebrationsEnabled?: boolean;
+  /** Phase 3C: Slack notification bridge on/off. */
+  slackEnabled?: boolean;
   maxClockInHours?: number;
   commissionPayout?: PayoutConfig;
 }
@@ -197,7 +199,7 @@ export async function updateAdminSettingsAction(
       changed.orgName = name;
     }
 
-    if (patch.purgeEnabled !== undefined || patch.clientPortalEnabled !== undefined || patch.celebrationsEnabled !== undefined) {
+    if (patch.purgeEnabled !== undefined || patch.clientPortalEnabled !== undefined || patch.celebrationsEnabled !== undefined || patch.slackEnabled !== undefined) {
       const [row] = await db
         .select()
         .from(appSettings)
@@ -213,6 +215,7 @@ export async function updateAdminSettingsAction(
         ...(patch.celebrationsEnabled !== undefined
           ? { celebrations_enabled: patch.celebrationsEnabled }
           : {}),
+        ...(patch.slackEnabled !== undefined ? { slack_enabled: patch.slackEnabled } : {}),
       };
       await upsertSetting("feature_flags", next, actor.id);
       changed.featureFlags = next;

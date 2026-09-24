@@ -20,13 +20,15 @@ import { requireStaff, type SessionUser } from "./auth/guards";
 import { localToday } from "./dates";
 import { sendEmail } from "./email";
 import {
+  meetingInfoEmail,
   missingInfoReminderEmail,
   quoteReadyEmail,
   staffComposerEmail,
+  w9RequestEmail,
   waitingOnClientEmail,
   welcomePortalEmail,
 } from "./email-templates";
-import { emitNotification } from "./notifications";
+import { emitNotification, firmTimezone } from "./notifications";
 import { isPortalEnabled, requirePortalClientAccess } from "./portal";
 import { calculateIntakeQuoteWithConfig } from "./quote";
 import { listMissingCredentialSlots } from "./vault";
@@ -64,6 +66,8 @@ export type CorrespondenceTemplate =
   | "quote_ready"
   | "waiting_on_client"
   | "staff_composer"
+  | "meeting_info"
+  | "w9_request"
   | "inbound";
 
 export type CorrespondenceRow = typeof correspondence.$inferSelect;
@@ -340,6 +344,101 @@ export async function sendQuoteReadyEmail(
     note: `intake #${intakeId} proposal`,
     sentById,
     now,
+  });
+}
+
+export type SendMeetingInfoResult =
+  | { sent: true; correspondenceId: number }
+  | { sent: false; reason: "no_contact_email" | "client_not_found" };
+
+/** Firm-local display span for the meeting mail ("Tue, Aug 18, 2:00-2:30 PM"). */
+function meetingWhenLabel(startsAt: Date, endsAt: Date): string {
+  const timeZone = firmTimezone();
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(startsAt);
+  const time = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
+  return `${day}, ${time.format(startsAt)} - ${time.format(endsAt)}`;
+}
+
+/**
+ * (Phase 3C) Meeting details mail. Recipient: the client's primary contact
+ * with an email (mailContactFor) - the mail only exists when the client has
+ * a reachable contact.
+ */
+export async function sendMeetingInfoEmail(input: {
+  clientId: number;
+  title: string;
+  startsAt: Date;
+  endsAt: Date;
+  link?: string | null;
+  location?: string | null;
+  notes?: string | null;
+  sentById: number | null;
+  now?: Date;
+}): Promise<SendMeetingInfoResult> {
+  const [client] = await db.select().from(clients).where(eq(clients.id, input.clientId)).limit(1);
+  if (!client) return { sent: false, reason: "client_not_found" };
+  const target = await mailContactFor(input.clientId);
+  if (!target) return { sent: false, reason: "no_contact_email" };
+
+  const mail = meetingInfoEmail({
+    clientName: client.dbaName ?? client.legalName,
+    title: input.title,
+    whenLabel: meetingWhenLabel(input.startsAt, input.endsAt),
+    link: input.link,
+    location: input.location,
+    notes: input.notes,
+  });
+  const row = await sendAndRecord({
+    clientId: input.clientId,
+    contactId: target.contact.id,
+    to: target.email,
+    subject: mail.subject,
+    bodyText: mail.text,
+    html: mail.html,
+    template: "meeting_info",
+    sentById: input.sentById,
+    now: input.now,
+  });
+  return { sent: true, correspondenceId: row.id };
+}
+
+/**
+ * (Phase 3C, §18) W-9 request mail to a vendor address (manually supplied or
+ * the recipient's email on file). The vendor is usually NOT a portal contact,
+ * so the row links by client only and carries the recipient id in `note`.
+ */
+export async function sendW9RequestEmail(input: {
+  clientId: number;
+  to: string;
+  vendorName: string;
+  year: number;
+  recipientId: number;
+  sentById: number | null;
+  now?: Date;
+}): Promise<CorrespondenceRow> {
+  const [client] = await db.select().from(clients).where(eq(clients.id, input.clientId)).limit(1);
+  if (!client) throw new CorrespondenceError(404, `Client ${input.clientId} not found`);
+  const mail = w9RequestEmail({
+    clientName: client.dbaName ?? client.legalName,
+    vendorName: input.vendorName,
+    year: input.year,
+  });
+  return sendAndRecord({
+    clientId: input.clientId,
+    to: input.to,
+    subject: mail.subject,
+    bodyText: mail.text,
+    html: mail.html,
+    template: "w9_request",
+    note: `W-9 request for recipient #${input.recipientId}`,
+    sentById: input.sentById,
+    now: input.now,
   });
 }
 

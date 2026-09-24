@@ -25,3 +25,12 @@ export async function isCelebrationEnabled(): Promise<boolean> {
   const flags = await readFlags();
   return flags.celebrations_enabled !== false;
 }
+
+/**
+ * Slack bridge (Phase 3C): OFF by default - posting internal notifications to
+ * an external channel is an explicit admin decision (/admin/settings toggle).
+ */
+export async function isSlackEnabled(): Promise<boolean> {
+  const flags = await readFlags();
+  return flags.slack_enabled === true;
+}

@@ -19,8 +19,8 @@ import {
 
 /**
  * W-9 / 1099 server actions (HANDOFF §18). Staff-level for the workflow;
- * deletes are manager+. Requests are emailed on demand - there is no
- * automated reminder job.
+ * deletes are manager+. Requests go out through the correspondence engine;
+ * the weekly reminder job (jobs.ts w9ReminderJob) chases until received.
  */
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -123,7 +123,7 @@ export async function exportOregonCsvAction(year: number) {
   }
 }
 
-/** §18 - on demand only; no automated reminder job exists. */
+/** §18 + Phase 3C - staff sends the branded request; the job chases weekly. */
 export async function emailW9RequestAction(recipientId: number, emailAddress: string) {
   try {
     const user = await requireStaff();

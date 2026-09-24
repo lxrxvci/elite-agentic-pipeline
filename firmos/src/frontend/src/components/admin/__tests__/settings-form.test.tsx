@@ -18,6 +18,7 @@ const SETTINGS: AdminSettings = {
   purgeEnabled: false,
   clientPortalEnabled: false,
   celebrationsEnabled: true,
+  slackEnabled: false,
   maxClockInHours: 10,
   commissionPayout: 'next_month_first',
 }
@@ -45,6 +46,7 @@ describe('SettingsForm', () => {
       purgeEnabled: true,
       clientPortalEnabled: true,
       celebrationsEnabled: true,
+      slackEnabled: false,
       maxClockInHours: 10,
       commissionPayout: 'next_month_first',
     })
@@ -59,5 +61,14 @@ describe('SettingsForm', () => {
     await userEvent.type(org, 'Blue Ledger Books')
     // Same value as the baseline - nothing to save.
     expect(save).toBeDisabled()
+  })
+
+  it('saves the Slack bridge toggle with the feature flags', async () => {
+    render(<SettingsForm settings={SETTINGS} />)
+    await userEvent.click(screen.getByRole('checkbox', { name: /enable slack notifications/i }))
+    await userEvent.click(screen.getByRole('button', { name: /save settings/i }))
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ slackEnabled: true }),
+    )
   })
 })

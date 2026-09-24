@@ -5,9 +5,9 @@ import { db } from "@/db";
 import { clients, w9Recipients } from "@/db/schema";
 
 import { logEvent } from "./audit";
+import { sendW9RequestEmail } from "./correspondence";
 import { localToday } from "./dates";
 import { uploadDocument } from "./documents";
-import { sendEmail } from "./email";
 
 /**
  * W-9 / 1099 tracking (HANDOFF §18).
@@ -15,8 +15,14 @@ import { sendEmail } from "./email";
  * Statuses: pending_w9 → w9_received → 1099_sent. The $600 threshold governs
  * the summary counts and the Oregon CSV export (recipients in OR needing a
  * 1099 with at least $600 paid). Uploading the W-9 creates a Document with
- * doc_type='w9' linked to the recipient. W-9 requests are emailed on demand
- * to a manually supplied address - there is no automated reminder job.
+ * doc_type='w9' linked to the recipient.
+ *
+ * Outreach (Phase 3C): "Request W-9" emails the vendor the branded request
+ * (portal upload link included) through the correspondence engine - the send
+ * lands in the client's correspondence history and stamps w9_requested_at.
+ * The weekly reminder job (w9ReminderJob) re-sends to recipients still
+ * pending a week after the last request, cadence-deduped on that stamp,
+ * until the W-9 is received.
  */
 
 export class W9Error extends Error {
@@ -314,38 +320,40 @@ export async function exportOregonCsv(year: number): Promise<string> {
   return [header, ...lines].join("\n");
 }
 
-// ── W-9 request email (§18: on demand, no automated reminders) ────────────
+// ── W-9 outreach (§18 + Phase 3C: request email + weekly reminders) ───────
+
+/** Weekly chase cadence (Phase 3C): re-request at most once per 7 days. */
+export const W9_REMINDER_CADENCE_DAYS = 7;
 
 /**
- * Emails the W-9 request to a manually supplied address and stamps
- * w9_requested_at. Goes through the sendEmail driver interface - the dev
- * driver logs and stashes (see src/server/email.ts).
+ * Emails the W-9 request to a manually supplied address through the
+ * correspondence engine (branded template + portal upload link, recorded in
+ * the client's history) and stamps w9_requested_at - the stamp is the
+ * reminder job's cadence record.
  */
 export async function emailW9Request(
   recipientId: number,
   emailAddress: string,
   userId: number,
+  now: Date = new Date(),
 ): Promise<W9RecipientRow> {
   const row = await requireRecipient(recipientId);
   const to = emailAddress.trim().toLowerCase();
   if (to === "" || !to.includes("@")) throw new W9Error(400, "A valid email address is required");
 
-  const [client] = await db.select().from(clients).where(eq(clients.id, row.clientId)).limit(1);
-  const clientLabel = client ? (client.dbaName ?? client.legalName) : `Client ${row.clientId}`;
-
-  await sendEmail({
+  await sendW9RequestEmail({
+    clientId: row.clientId,
     to,
-    subject: `W-9 request from ${clientLabel}`,
-    html: [
-      `<p>Hello ${row.vendorName},</p>`,
-      `<p>${clientLabel} needs a completed Form W-9 from you for ${row.year} tax reporting.</p>`,
-      "<p>Please reply to this email with the signed form attached.</p>",
-    ].join(""),
+    vendorName: row.vendorName,
+    year: row.year,
+    recipientId: row.id,
+    sentById: userId,
+    now,
   });
 
   const [updated] = await db
     .update(w9Recipients)
-    .set({ w9RequestedAt: new Date(), updatedAt: new Date() })
+    .set({ w9RequestedAt: now, updatedAt: now })
     .where(eq(w9Recipients.id, recipientId))
     .returning();
   await logEvent({
@@ -356,4 +364,74 @@ export async function emailW9Request(
     metadata: { to, clientId: row.clientId, year: row.year },
   });
   return updated;
+}
+
+export interface W9ReminderPlan {
+  recipientId: number;
+  clientId: number;
+  vendorName: string;
+  email: string;
+  year: number;
+  lastRequestedAt: Date;
+}
+
+/**
+ * Recipients due for a weekly reminder: still pending_w9, requested at least
+ * once (outreach starts with a staff "Request W-9" - the job never makes
+ * first contact), last request older than the cadence. Recipients without an
+ * email on file are reported as skipped, never chased.
+ */
+export async function computeW9ReminderPlans(now: Date = new Date()): Promise<{
+  plans: W9ReminderPlan[];
+  skipped: { recipientId: number; reason: string }[];
+}> {
+  const cutoff = new Date(now.getTime() - W9_REMINDER_CADENCE_DAYS * 24 * 60 * 60_000);
+  const rows = await db
+    .select()
+    .from(w9Recipients)
+    .where(and(eq(w9Recipients.status, "pending_w9"), sql`${w9Recipients.w9RequestedAt} is not null`));
+
+  const plans: W9ReminderPlan[] = [];
+  const skipped: { recipientId: number; reason: string }[] = [];
+  for (const row of rows) {
+    if (row.w9RequestedAt == null || row.w9RequestedAt > cutoff) continue; // inside cadence
+    const email = row.email?.trim().toLowerCase() ?? "";
+    if (email === "" || !email.includes("@")) {
+      skipped.push({ recipientId: row.id, reason: "no_email" });
+      continue;
+    }
+    plans.push({
+      recipientId: row.id,
+      clientId: row.clientId,
+      vendorName: row.vendorName,
+      email,
+      year: row.year,
+      lastRequestedAt: row.w9RequestedAt,
+    });
+  }
+  return { plans, skipped };
+}
+
+/** Send one weekly reminder (to the recipient's email on file) and re-stamp. */
+export async function sendW9Reminder(plan: W9ReminderPlan, now: Date = new Date()): Promise<void> {
+  await sendW9RequestEmail({
+    clientId: plan.clientId,
+    to: plan.email,
+    vendorName: plan.vendorName,
+    year: plan.year,
+    recipientId: plan.recipientId,
+    sentById: null, // job send - no staff author
+    now,
+  });
+  await db
+    .update(w9Recipients)
+    .set({ w9RequestedAt: now, updatedAt: now })
+    .where(eq(w9Recipients.id, plan.recipientId));
+  await logEvent({
+    userId: null,
+    action: "w9_request_reminded",
+    entityType: "w9_recipient",
+    entityId: plan.recipientId,
+    metadata: { to: plan.email, clientId: plan.clientId, year: plan.year },
+  });
 }

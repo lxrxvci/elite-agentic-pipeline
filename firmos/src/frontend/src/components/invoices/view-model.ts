@@ -45,6 +45,18 @@ export interface PendingTaskRow {
   unitPrice: string | null
 }
 
+/** Phase 3C: a billable meeting that has happened but is not invoiced yet. */
+export interface PendingMeetingRow {
+  meetingId: number
+  clientId: number
+  clientName: string
+  title: string
+  /** Display-ready firm-local start ("Aug 18, 2026"). */
+  startLabel: string
+  /** Numeric string from the meeting's explicit amount; null = unpriced. */
+  amount: string | null
+}
+
 export interface EmployeeBillingViewRow {
   bookkeeperName: string
   invoiceCount: number

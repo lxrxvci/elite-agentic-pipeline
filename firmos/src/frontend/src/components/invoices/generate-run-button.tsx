@@ -27,11 +27,13 @@ export function GenerateRunButton({
   year,
   month,
   pendingTaskCount,
+  pendingMeetingCount,
   onResult,
 }: {
   year: number
   month: number
   pendingTaskCount: number
+  pendingMeetingCount: number
   onResult?: (summary: GenerateSummary) => void
 }) {
   const router = useRouter()
@@ -81,6 +83,11 @@ export function GenerateRunButton({
               {pendingTaskCount > 0
                 ? `${pendingTaskCount} unbilled completed task${pendingTaskCount === 1 ? '' : 's'} will be attached to the new drafts.`
                 : 'No unbilled completed tasks to attach.'}
+            </li>
+            <li>
+              {pendingMeetingCount > 0
+                ? `${pendingMeetingCount} unbilled billable meeting${pendingMeetingCount === 1 ? '' : 's'} will be attached to the new drafts.`
+                : 'No unbilled billable meetings to attach.'}
             </li>
             <li>Clients already invoiced for {label} are skipped, never duplicated.</li>
             <li>Invoices that would end up empty are not created.</li>

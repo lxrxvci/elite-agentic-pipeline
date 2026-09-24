@@ -24,11 +24,13 @@ import { GenerateRunButton } from './generate-run-button'
 import { GenerateRunResultCard } from './generate-run-result'
 import { InvoicesHero } from './invoices-hero'
 import { InvoicesTable } from './invoices-table'
+import { PendingBillableMeetings } from './pending-billable-meetings'
 import { PendingBillableTasks } from './pending-billable-tasks'
 import type {
   BillingRunGridRow,
   EmployeeBillingViewRow,
   InvoiceListRow,
+  PendingMeetingRow,
   PendingTaskRow,
 } from './view-model'
 
@@ -50,6 +52,7 @@ interface InvoicesSurfaceProps {
   rows: InvoiceListRow[]
   gridRows: BillingRunGridRow[]
   pendingTasks: PendingTaskRow[]
+  pendingMeetings: PendingMeetingRow[]
   employeeRows: EmployeeBillingViewRow[]
   year: number
   month: number
@@ -99,6 +102,7 @@ export function InvoicesSurface({
   rows,
   gridRows,
   pendingTasks,
+  pendingMeetings,
   employeeRows,
   year,
   month,
@@ -176,6 +180,7 @@ export function InvoicesSurface({
             year={year}
             month={month}
             pendingTaskCount={pendingTasks.length}
+            pendingMeetingCount={pendingMeetings.length}
             onResult={setRunResult}
           />
         </div>
@@ -195,6 +200,7 @@ export function InvoicesSurface({
       )}
 
       <PendingBillableTasks rows={pendingTasks} />
+      <PendingBillableMeetings rows={pendingMeetings} />
       <ByEmployeeReport rows={employeeRows} year={year} month={month} />
     </div>
   )

@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { notifications, userWorkingHours } from "@/db/schema";
 
 import { sendPushToUser } from "./push";
+import { postSlackNotification } from "./slack";
 
 /**
  * Notifications engine (HANDOFF §16; jobs wiring in §9).
@@ -22,6 +23,11 @@ import { sendPushToUser } from "./push";
  *
  * push_sent_at stamps the timing decision; actual delivery goes through
  * push.ts, which is a log-only no-op without VAPID config.
+ *
+ * Slack bridge (Phase 3C): the noisy-urgent types (mentions, client replies,
+ * bumper-lane override requests, not-clocked-in alerts) also post to the
+ * firm's Slack channel at emit time - env-gated (SLACK_WEBHOOK_URL) and
+ * flag-gated (slack_enabled), never throwing into the caller. See slack.ts.
  *
  * Firm-local time: FIRMOS_TIMEZONE (default America/New_York, the legacy
  * YB_FIRM_TIMEZONE). "Firm-local today" is always derived from the `now`
@@ -104,6 +110,23 @@ export function firmLocalMidnight(now: Date, timeZone: string = firmTimezone()):
   let midnight = guess - tzOffsetMs(new Date(guess), timeZone);
   midnight = guess - tzOffsetMs(new Date(midnight), timeZone);
   return new Date(midnight);
+}
+
+/**
+ * The UTC instant of a firm-local wall time (Phase 3C meeting times: the
+ * dialog collects "2:30 PM" firm-local; this pins the instant, with the same
+ * two-pass DST correction as firmLocalMidnight).
+ */
+export function firmLocalWallToUtc(
+  day: LocalDate,
+  hour: number,
+  minute: number,
+  timeZone: string = firmTimezone(),
+): Date {
+  const guess = Date.UTC(day.year, day.month - 1, day.day, hour, minute);
+  let utc = guess - tzOffsetMs(new Date(guess), timeZone);
+  utc = guess - tzOffsetMs(new Date(utc), timeZone);
+  return new Date(utc);
 }
 
 // ── Working hours (§16, §22: approved schedule gates deferred push/SMS) ───
@@ -246,6 +269,18 @@ export async function emitNotification(
       createdAt: now,
     })
     .returning();
+
+  // Slack bridge (Phase 3C): the noisy-urgent types also post to the firm
+  // channel. Awaited like push, and postSlackNotification never throws - a
+  // Slack outage cannot break the notification path. Deferred-push timing
+  // does not apply to the bridge: Slack is the shared team channel, not a
+  // personal off-hours delivery.
+  await postSlackNotification({
+    type: input.type,
+    title: input.title,
+    message: input.message ?? null,
+    link: input.link ?? null,
+  });
 
   if (immediate) {
     await sendPushToUser(input.userId, {

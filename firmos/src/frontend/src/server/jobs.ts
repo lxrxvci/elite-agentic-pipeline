@@ -25,6 +25,7 @@ import { getUnifiedQueue, type WorkCard } from "./queue";
 import { runRecurringOnce, backfillRecurringInstanceSubtasks, type RecurringSummary } from "./recurring";
 import { getStatementQueue } from "./statements";
 import { runStaleCleanup, type StaleCleanupResult } from "./time-tracking";
+import { computeW9ReminderPlans, sendW9Reminder } from "./w9";
 
 /**
  * Background jobs (HANDOFF §9). One job function per §9 table row; the
@@ -329,6 +330,51 @@ export async function missingInfoReminderJob(
       summary.failures.push({
         entityType: "client",
         entityId: plan.clientId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return summary;
+}
+
+// ── w9 reminders (§18 + Phase 3C: weekly chase until the W-9 arrives) ─────
+
+export interface W9ReminderSummary {
+  today: string;
+  /** Recipients past the weekly cadence with a usable email. */
+  candidates: number;
+  remindersSent: number;
+  /** Per-recipient skip reasons (no_email). */
+  skipped: { recipientId: number; reason: string }[];
+  failures: EntityFailure[];
+}
+
+/**
+ * Weekly W-9 chase (Phase 3C): recipients still pending_w9 a week after the
+ * last request get the branded request again, until the W-9 lands. Cadence
+ * dedup rides on w9_requested_at (a manual resend resets the weekly clock);
+ * per-recipient try/catch isolation follows the §9 rule; every send is
+ * audit-logged (w9_request_reminded) and recorded in correspondence.
+ */
+export async function w9ReminderJob(now: Date = new Date()): Promise<W9ReminderSummary> {
+  const today = firmLocalToday(now);
+  const { plans, skipped } = await computeW9ReminderPlans(now);
+  const summary: W9ReminderSummary = {
+    today: formatLocalDate(today),
+    candidates: plans.length,
+    remindersSent: 0,
+    skipped,
+    failures: [],
+  };
+  for (const plan of plans) {
+    try {
+      await sendW9Reminder(plan, now);
+      summary.remindersSent += 1;
+    } catch (err) {
+      // §9 - per-entity isolation: one bad recipient cannot abort the batch.
+      summary.failures.push({
+        entityType: "w9_recipient",
+        entityId: plan.recipientId,
         error: err instanceof Error ? err.message : String(err),
       });
     }

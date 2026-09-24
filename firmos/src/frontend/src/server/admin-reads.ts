@@ -1,13 +1,28 @@
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull } from "drizzle-orm";
+
+import type { LocalDate } from "@firmos/domain";
 
 import { db } from "@/db";
-import { appSettings, auditEvents, feedback, users, userWorkingHours } from "@/db/schema";
+import {
+  appSettings,
+  auditEvents,
+  clients,
+  correspondence,
+  feedback,
+  users,
+  userWorkingHours,
+  workstationTimeEntries,
+} from "@/db/schema";
 
 import { getPurgatoryQueue } from "./approvals";
 import { listPendingBumperOverrides } from "./bumper-lanes";
+import { firmLocalMidnight, firmLocalToday } from "./notifications";
 import { getPayoutConfig, type PayrollConfig } from "./payroll";
+import { JOB_SCHEDULE, getLastRan } from "./scheduler";
+import { getStatementQueue } from "./statements";
 import { listTimeEditRequests } from "./time-edits";
 import { maxClockInHours } from "./time-tracking";
+import { listMissingCredentialSlots } from "./vault";
 
 /**
  * Read-only queries behind the /admin surfaces (HANDOFF §11, §16, §22, §27).
@@ -236,6 +251,90 @@ export async function listAuditEvents(opts: { limit?: number } = {}): Promise<{
   };
 }
 
+// ── Admin hub (Phase 3C): the /admin landing overview ─────────────────────
+
+export interface AdminHubJobStamp {
+  name: string;
+  lastRanAt: string | null;
+}
+
+export interface AdminHubOverview {
+  /** Pending approvals across purgatory, working hours, time edits, bumper overrides. */
+  pendingApprovals: number;
+  /** Unread inbound client replies (the correspondence triage count). */
+  unreadClientReplies: number;
+  /** Unfilled expected vault slots across all clients (3B). */
+  missingCredentials: number;
+  /** Statement-track accounts currently overdue (§6.7 queue status). */
+  overdueStatements: number;
+  /** Active staff with no day session started today (firm-local). */
+  notClockedInToday: { count: number; names: string[] };
+  /** Scheduler last-run stamps (app_settings scheduler:last:*), job order. */
+  jobRuns: AdminHubJobStamp[];
+  /** Latest audit events, newest first. */
+  recentAudit: AuditEventRow[];
+}
+
+/**
+ * The /admin hub stats. Read-only assembly - every query is an existing
+ * engine read, and the caller page is already owner/admin-guarded.
+ */
+export async function getAdminHubOverview(now: Date = new Date()): Promise<AdminHubOverview> {
+  const today: LocalDate = firmLocalToday(now);
+  const dayStart = firmLocalMidnight(now);
+
+  const [queue, unreadRows, clientRows, statementRows, audit] = await Promise.all([
+    getAdminApprovalsQueue(),
+    db
+      .select({ id: correspondence.id })
+      .from(correspondence)
+      .where(and(eq(correspondence.direction, "inbound"), isNull(correspondence.staffReadAt))),
+    db.select({ id: clients.id }).from(clients),
+    getStatementQueue(today),
+    listAuditEvents({ limit: 6 }),
+  ]);
+
+  const missingByClient = await listMissingCredentialSlots(clientRows.map((c) => c.id));
+  const missingCredentials = [...missingByClient.values()].reduce((n, slots) => n + slots.length, 0);
+
+  // Staff clock-in status: active staff (portal roles excluded) without a
+  // day session started since firm-local midnight (open or closed - the
+  // question is "showed up today", not "on the clock right now").
+  const [staffRows, todayEntries] = await Promise.all([
+    db.select().from(users).where(eq(users.isActive, true)),
+    db
+      .select({ userId: workstationTimeEntries.userId })
+      .from(workstationTimeEntries)
+      .where(
+        and(
+          eq(workstationTimeEntries.activityType, "day"),
+          gte(workstationTimeEntries.startedAt, dayStart),
+        ),
+      ),
+  ]);
+  const clockedInToday = new Set(todayEntries.map((r) => r.userId));
+  const absent = staffRows
+    .filter((u) => !["client", "cpa"].includes(u.role.toLowerCase()) && !clockedInToday.has(u.id))
+    .map((u) => fullName(u))
+    .sort();
+
+  const jobRuns: AdminHubJobStamp[] = [];
+  for (const def of JOB_SCHEDULE) {
+    const last = await getLastRan(def.name);
+    jobRuns.push({ name: def.name, lastRanAt: last ? last.toISOString() : null });
+  }
+
+  return {
+    pendingApprovals: queue.length,
+    unreadClientReplies: unreadRows.length,
+    missingCredentials,
+    overdueStatements: statementRows.filter((r) => r.status.isOverdue).length,
+    notClockedInToday: { count: absent.length, names: absent },
+    jobRuns,
+    recentAudit: audit.rows,
+  };
+}
+
 // ── Settings (§27) ────────────────────────────────────────────────────────
 
 export interface AdminSettings {
@@ -243,6 +342,8 @@ export interface AdminSettings {
   purgeEnabled: boolean;
   clientPortalEnabled: boolean;
   celebrationsEnabled: boolean;
+  /** Phase 3C: the Slack notification bridge toggle (slack_enabled flag). */
+  slackEnabled: boolean;
   maxClockInHours: number;
   commissionPayout: PayrollConfig["commission_payout"];
 }
@@ -265,6 +366,9 @@ export async function getAdminSettings(): Promise<AdminSettings> {
     clientPortalEnabled: flags?.client_portal_enabled === true,
     // D4: celebrations default ON - only an explicit false quiets them.
     celebrationsEnabled: flags?.celebrations_enabled !== false,
+    // Slack bridge defaults OFF: posting internal notifications to an
+    // external channel is an explicit admin decision.
+    slackEnabled: flags?.slack_enabled === true,
     maxClockInHours: await maxClockInHours(),
     commissionPayout: payout.commission_payout,
   };

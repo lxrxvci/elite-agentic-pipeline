@@ -225,6 +225,20 @@ export const auth = betterAuth({
             code: "PORTAL_LOGIN_ONLY",
           });
         }
+        // BA 1.7 account-linking repair: the verify endpoint runs
+        // revokeUnprovenAccountAccess for any user whose emailVerified flag
+        // is still false, which DELETES every linked account row (the
+        // credential password included) and every standing session before
+        // flipping the flag. That cleanup targets self-serve sign-up - a
+        // password planted on a mailbox before proving control of it. FirmOS
+        // is firm-provisioned single-tenant (disableSignUp everywhere), so
+        // the credential row is always firm-issued and must survive. A
+        // valid, unexpired token IS mailbox proof (the plugin's own consume
+        // applies the same expiry check), so promote the flag here and the
+        // endpoint skips its revocation path entirely.
+        if (!user.emailVerified && verification.expiresAt > new Date()) {
+          await db.update(users).set({ emailVerified: true }).where(eq(users.id, user.id));
+        }
         return;
       }
 

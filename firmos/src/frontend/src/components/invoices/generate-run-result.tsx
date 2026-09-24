@@ -101,6 +101,15 @@ export function GenerateRunResultCard({
             {summary.tasksAttached} billable task{summary.tasksAttached === 1 ? '' : 's'} attached
           </span>
         )}
+        {summary.meetingsAttached > 0 && (
+          <span
+            className="tnum pb-0.5 text-[11px] text-muted-foreground"
+            data-testid="run-meetings-attached"
+          >
+            {summary.meetingsAttached} billable meeting{summary.meetingsAttached === 1 ? '' : 's'}{' '}
+            attached
+          </span>
+        )}
       </div>
 
       {failures.length > 0 && (

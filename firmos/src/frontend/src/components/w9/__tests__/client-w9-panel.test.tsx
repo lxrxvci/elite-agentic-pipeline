@@ -125,13 +125,33 @@ describe('ClientW9Panel rows', () => {
     expect(rowFor('Elm Couriers', '1099_sent').getByText('1099 sent')).toBeInTheDocument()
   })
 
-  it('pending rows offer mark-received / upload / email, not mark-sent', () => {
+  it('pending rows offer mark-received / upload / request, not mark-sent', () => {
     render(<ClientW9Panel clientId={7} year={2025} recipients={rows} />)
     const row = rowFor('Cascade Print Co', 'pending_w9')
     expect(row.getByRole('button', { name: 'Mark W-9 received' })).toBeInTheDocument()
     expect(row.getByRole('button', { name: 'Upload W-9 for Cascade Print Co' })).toBeInTheDocument()
-    expect(row.getByRole('button', { name: 'Email W-9 request for Cascade Print Co' })).toBeInTheDocument()
+    expect(row.getByTestId('w9-request-1')).toHaveTextContent('Request W-9')
     expect(row.queryByRole('button', { name: 'Mark 1099 sent' })).not.toBeInTheDocument()
+  })
+
+  it('a requested pending row shows the stamp + reminder cadence, and offers re-request', () => {
+    render(
+      <ClientW9Panel
+        clientId={7}
+        year={2025}
+        recipients={[
+          recipient({
+            id: 9,
+            vendorName: 'Fern Couriers',
+            status: 'pending_w9',
+            w9RequestedAt: '2026-08-10T15:00:00.000Z',
+          }),
+        ]}
+      />,
+    )
+    const row = rowFor('Fern Couriers', 'pending_w9')
+    expect(row.getByTestId('w9-request-status')).toHaveTextContent('Requested Aug 10 · weekly reminders on')
+    expect(row.getByTestId('w9-request-9')).toHaveTextContent('Re-request')
   })
 
   it('received rows offer mark-sent and the W-9 document link', () => {

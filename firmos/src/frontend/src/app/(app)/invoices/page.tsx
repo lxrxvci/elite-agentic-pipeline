@@ -12,6 +12,7 @@ import type {
   BillingRunGridRow,
   EmployeeBillingViewRow,
   InvoiceListRow,
+  PendingMeetingRow,
   PendingTaskRow,
 } from '@/components/invoices/view-model'
 import { db } from '@/db'
@@ -21,6 +22,7 @@ import { localToday } from '@/server/dates'
 import { toDomainClient } from '@/server/domain-adapters'
 import {
   byEmployeeBillingReport,
+  getPendingBillableMeetings,
   getPendingBillableTasks,
 } from '@/server/invoices'
 
@@ -83,7 +85,7 @@ export default async function InvoicesPage({
   const month = parsed?.month ?? today.month
   const invoiceView: InvoiceView = view === 'grid' ? 'grid' : 'table'
 
-  const [invoiceRows, clientRows, pending, employeeRows] = await Promise.all([
+  const [invoiceRows, clientRows, pending, pendingMeetingsRaw, employeeRows] = await Promise.all([
     db
       .select({
         id: invoices.id,
@@ -105,6 +107,7 @@ export default async function InvoicesPage({
       .orderBy(asc(clients.legalName), asc(invoices.id)),
     db.select().from(clients).orderBy(asc(clients.legalName)),
     getPendingBillableTasks(),
+    getPendingBillableMeetings(undefined, today),
     byEmployeeBillingReport(year, month),
   ])
 
@@ -148,6 +151,15 @@ export default async function InvoicesPage({
     unitPrice: t.unitPrice,
   }))
 
+  const pendingMeetings: PendingMeetingRow[] = pendingMeetingsRaw.map((m) => ({
+    meetingId: m.meetingId,
+    clientId: m.clientId,
+    clientName: m.clientName,
+    title: m.title,
+    startLabel: tsLabel(m.startsAt) ?? '',
+    amount: m.amount,
+  }))
+
   const employeeViewRows: EmployeeBillingViewRow[] = employeeRows.map((r) => ({
     bookkeeperName: r.bookkeeperName,
     invoiceCount: r.invoiceCount,
@@ -171,6 +183,7 @@ export default async function InvoicesPage({
       rows={rows}
       gridRows={gridRows}
       pendingTasks={pendingTasks}
+      pendingMeetings={pendingMeetings}
       employeeRows={employeeViewRows}
       year={year}
       month={month}

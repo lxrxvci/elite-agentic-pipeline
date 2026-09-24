@@ -18,6 +18,7 @@ function summary(partial: Partial<GenerateSummary> = {}): GenerateSummary {
     emptySkipped: 3,
     tasksAttached: 4,
     milestoneInvoicesCreated: 0,
+    meetingsAttached: 0,
     failures: [],
     ...partial,
   }

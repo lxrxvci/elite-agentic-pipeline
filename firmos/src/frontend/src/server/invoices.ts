@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import {
   addDays,
   addMonths,
@@ -25,6 +25,7 @@ import {
   clients,
   invoiceLineItems,
   invoices,
+  meetings,
   projects,
   recurringTasks,
   tasks,
@@ -34,6 +35,7 @@ import {
 import { SECTION_DISCOUNT_KEY } from "./billing-sync";
 import { localToday } from "./dates";
 import { toDomainClient, type ClientRow } from "./domain-adapters";
+import { firmLocalWallToUtc, firmTimezone } from "./notifications";
 import { getPricingOverrides } from "./pricing-config";
 import type { TemplateLineItem } from "./quote";
 
@@ -66,6 +68,11 @@ import type { TemplateLineItem } from "./quote";
  * they close (generateProjectMilestoneInvoices; stamped idempotent on the
  * project row). Milestone invoices are separate one-off rows, never the
  * per-(client, period) auto-generated invoice.
+ *
+ * Phase 3C: the run also picks up billable meetings that have already
+ * happened (getPendingBillableMeetings) as "Billable meeting: {title}
+ * ({date})" lines, stamping billed_invoice_id on the meeting - the same
+ * pickup/idempotency pattern as completed billable tasks.
  */
 
 export class InvoiceError extends Error {
@@ -87,6 +94,8 @@ export interface InvoiceLineSpec {
   discount: number;
   amount: number;
   taskId?: number | null;
+  /** Phase 3C: billable-meeting pickup stamps the meeting row after insert. */
+  meetingId?: number | null;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -367,6 +376,66 @@ async function pendingBillableTasksFor(clientId: number): Promise<PendingBillabl
   return getPendingBillableTasks(clientId);
 }
 
+// ── Pending billable meetings (§6.5 + Phase 3C) ───────────────────────────
+
+export interface PendingBillableMeeting {
+  meetingId: number;
+  clientId: number;
+  clientName: string;
+  title: string;
+  startsAt: Date;
+  /** Explicit price on the meeting; null = billable but unpriced, and the
+   *  invoice line bills 0.00 with the "No price set" flag (same contract as
+   *  unpriced billable tasks). */
+  amount: string | null;
+}
+
+/**
+ * Billable meetings that have happened (started by end of `today`, firm-local)
+ * and are not on any invoice yet - the meeting half of the §6.5
+ * completed-billable pickup. billed_invoice_id is the idempotency stamp.
+ */
+export async function getPendingBillableMeetings(
+  clientId?: number,
+  today: LocalDate = localToday(),
+): Promise<PendingBillableMeeting[]> {
+  // "Happened" = started before firm-local tomorrow 00:00 (exact, no
+  // DB-session-zone dependence).
+  const tomorrowUtc = firmLocalWallToUtc(addDays(today, 1), 0, 0);
+  const conditions = [
+    eq(meetings.billable, true),
+    isNull(meetings.billedInvoiceId),
+    lt(meetings.startsAt, tomorrowUtc),
+  ];
+  if (clientId != null) conditions.push(eq(meetings.clientId, clientId));
+  const rows = await db
+    .select({
+      meetingId: meetings.id,
+      clientId: meetings.clientId,
+      clientName: clients.legalName,
+      title: meetings.title,
+      startsAt: meetings.startsAt,
+      amount: meetings.amount,
+    })
+    .from(meetings)
+    .innerJoin(clients, eq(meetings.clientId, clients.id))
+    .where(and(...conditions))
+    .orderBy(asc(meetings.startsAt), asc(meetings.id));
+  return rows
+    .filter((r) => r.clientId != null)
+    .map((r) => ({ ...r, clientId: r.clientId as number }));
+}
+
+/** "Aug 18, 2026" - firm-local start day of the meeting, for the line item. */
+function meetingDateLabel(startsAt: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: firmTimezone(),
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(startsAt);
+}
+
 // ── Milestone billing (C15) ───────────────────────────────────────────────
 
 /**
@@ -536,6 +605,8 @@ export interface GenerateSummary {
   tasksAttached: number;
   /** C15: progress/completion invoices created from project milestones. */
   milestoneInvoicesCreated: number;
+  /** Phase 3C: billable meetings attached to generated invoices. */
+  meetingsAttached: number;
   failures: GenerateFailure[];
 }
 
@@ -563,6 +634,7 @@ export async function generateMonthlyInvoices(
     emptySkipped: 0,
     tasksAttached: 0,
     milestoneInvoicesCreated: 0,
+    meetingsAttached: 0,
     failures: [],
   };
 
@@ -599,6 +671,7 @@ export async function generateMonthlyInvoices(
       else {
         summary.invoicesCreated += 1;
         summary.tasksAttached += result.tasksAttached;
+        summary.meetingsAttached += result.meetingsAttached;
       }
     } catch (err) {
       // §9 - per-client try/catch: one bad client cannot abort the batch.
@@ -618,7 +691,7 @@ type GenerateOutcome =
   | "cadence"
   | "no_billing"
   | "empty"
-  | { tasksAttached: number };
+  | { tasksAttached: number; meetingsAttached: number };
 
 async function generateForClient(
   client: ClientRow,
@@ -707,6 +780,25 @@ async function generateForClient(
     });
   }
 
+  // Phase 3C: billable meetings that already happened and are not yet
+  // invoiced - same pickup pattern as completed billable tasks. An unpriced
+  // billable meeting bills 0.00 and is flagged "No price set" on the pending
+  // queue, never silently skipped.
+  const pendingMeetings = await getPendingBillableMeetings(client.id, today);
+  for (const meeting of pendingMeetings) {
+    const price = meeting.amount == null ? 0 : Number(meeting.amount);
+    lines.push({
+      lineType: "other",
+      serviceKey: null,
+      description: `Billable meeting: ${meeting.title} (${meetingDateLabel(meeting.startsAt)})`,
+      quantity: 1,
+      unitPrice: price,
+      discount: 0,
+      amount: round2(price),
+      meetingId: meeting.meetingId,
+    });
+  }
+
   // §6.5: invoices that end up with no line items are deleted rather than
   // left empty - they are simply never persisted.
   if (lines.length === 0) return "empty";
@@ -753,7 +845,17 @@ async function generateForClient(
       .where(inArray(tasks.id, taskIds));
   }
 
-  return { tasksAttached: taskIds.length };
+  // Phase 3C: billable meetings are stamped with the invoice they landed on
+  // (billed_invoice_id is the pickup filter - a rerun never double-bills).
+  const meetingIds = lines.map((l) => l.meetingId).filter((id): id is number => id != null);
+  if (meetingIds.length > 0) {
+    await db
+      .update(meetings)
+      .set({ billedInvoiceId: inserted.id, updatedAt: new Date() })
+      .where(inArray(meetings.id, meetingIds));
+  }
+
+  return { tasksAttached: taskIds.length, meetingsAttached: meetingIds.length };
 }
 
 // ── Lifecycle (§7: draft / sent / paid / overdue / void) ──────────────────

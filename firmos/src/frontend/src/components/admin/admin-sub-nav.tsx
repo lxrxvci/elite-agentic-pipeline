@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { DollarSign, FileClock, Flag, Layers, MessageSquareWarning, ShieldAlert, Trash2, Users } from 'lucide-react'
+import { DollarSign, FileClock, Flag, Gauge, Layers, MessageSquareWarning, ShieldAlert, Trash2, Users } from 'lucide-react'
 
 import { cn } from '@/shared/lib/utils'
 
@@ -11,6 +11,7 @@ import { cn } from '@/shared/lib/utils'
  * current plus the accent treatment, never color alone.
  */
 const ITEMS = [
+  { title: 'Overview', href: '/admin', icon: Gauge, exact: true },
   { title: 'Users', href: '/admin/users', icon: Users },
   { title: 'Purgatory', href: '/admin/purgatory', icon: ShieldAlert },
   { title: 'Trash', href: '/admin/trash', icon: Trash2 },
@@ -26,7 +27,10 @@ export function AdminSubNav() {
   return (
     <nav aria-label="Admin sections" className="flex flex-wrap items-center gap-1">
       {ITEMS.map((item) => {
-        const active = pathname === item.href || pathname.startsWith(`${item.href}/`)
+        const active =
+          'exact' in item && item.exact
+            ? pathname === item.href
+            : pathname === item.href || pathname.startsWith(`${item.href}/`)
         return (
           <Link
             key={item.href}
