@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+import { VAULT_E2E_KEY } from './e2e/vault-key'
+
 /**
  * E2E (Phase 2 gate G2). NOT part of `npm test` - run via `npm run test:e2e`.
  * Builds and starts the real app against the dev database, which global
@@ -47,6 +49,7 @@ export default defineConfig({
         // Call-notes import (ADR-0006) runs the deterministic stub extractor -
         // e2e never calls the live Gemini API.
         INTAKE_EXTRACT_MOCK: process.env.INTAKE_EXTRACT_MOCK ?? '1',
+        FIRMOS_ENCRYPTION_KEY: process.env.FIRMOS_ENCRYPTION_KEY ?? VAULT_E2E_KEY,
       },
     },
     {
@@ -62,6 +65,7 @@ export default defineConfig({
         // Portal e2e: kill switch on + dev magic-link retrieval.
         FIRMOS_PORTAL_ENABLED: process.env.FIRMOS_PORTAL_ENABLED ?? '1',
         FIRMOS_DEV_LINKS: process.env.FIRMOS_DEV_LINKS ?? '1',
+        FIRMOS_ENCRYPTION_KEY: process.env.FIRMOS_ENCRYPTION_KEY ?? VAULT_E2E_KEY,
       },
     },
   ],

@@ -43,6 +43,8 @@ import { getClientProperties, getProformaStatus, normalizeDepreciation } from '@
 import { listProjects } from '@/server/projects'
 import { listClientRules } from '@/server/recurring-rules'
 import { listW9Recipients } from '@/server/w9'
+import { listClientCredentials } from '@/server/vault'
+import { ClientCredentialsPanel } from '@/components/clients/vault-panel'
 
 export const metadata: Metadata = { title: 'FirmOS - Client' }
 
@@ -69,6 +71,8 @@ export default async function ClientDetailPage({
 
   const user = await requireStaff()
   const canSeeBilling = user.normalizedRole === 'owner' || user.normalizedRole === 'admin'
+  // 3B vault writes are owner/admin only (§11: no delegated flag covers them).
+  const canManageVault = canSeeBilling
   const canManageTax = ['manager', 'admin', 'owner'].includes(user.normalizedRole)
   // Work-day editor on the Overview tab (manager+; the action re-guards).
   const canEditWorkDay = ['manager', 'admin', 'owner'].includes(user.normalizedRole)
@@ -90,7 +94,7 @@ export default async function ClientDetailPage({
     .orderBy(desc(projects.id))
     .limit(1)
 
-  const [work, billing, statementsGrid, documentTree, staffRows, clientInvoiceRows, taxChecklistRows, w9Rows, offboardingTaskRows, yearGrid, clientRules, correspondence, waitingContext] = await Promise.all([
+  const [work, billing, statementsGrid, documentTree, staffRows, clientInvoiceRows, taxChecklistRows, w9Rows, offboardingTaskRows, yearGrid, clientRules, correspondence, waitingContext, vault] = await Promise.all([
     getClientWork(id),
     canSeeBilling ? getClientBilling(id) : Promise.resolve(null),
     getStatementsGrid(id, today),
@@ -130,6 +134,9 @@ export default async function ClientDetailPage({
     // Correspondence tab: the two-way history + the composer's waiting links.
     listClientCorrespondence(id),
     listWaitingContext(id),
+    // Credentials tab (3B vault): masked list; archived rows ride along for
+    // the owner-only purge review (the panel gates that section).
+    listClientCredentials(user, id, { includeArchived: true }),
   ])
   if (!work || !yearGrid) notFound()
 
@@ -352,7 +359,7 @@ export default async function ClientDetailPage({
     .filter((u) => u.isActive)
     .map((u) => ({ id: u.id, name: staffNameOf(u) }))
 
-  const deepTab = ['work', 'recurring', 'billing', 'tax', 'w9', 'offboarding', 'projects', 'properties', 'correspondence'].includes(tab ?? '') ? tab : undefined
+  const deepTab = ['work', 'recurring', 'billing', 'tax', 'w9', 'offboarding', 'projects', 'properties', 'correspondence', 'credentials'].includes(tab ?? '') ? tab : undefined
 
   // Hero stat row (DESIGN-FRESHBOOKS §5): computed from reads this page
   // already owns - the unified-queue slice and the owner/admin invoice list.
@@ -476,6 +483,17 @@ export default async function ClientDetailPage({
         clientInvoices={clientInvoices}
         defaultTab={deepTab === 'billing' && !canSeeBilling ? undefined : deepTab}
         unreadCorrespondence={correspondence.unreadInbound}
+        missingCredentials={vault.missingCount}
+        credentialsPanel={
+          <ClientCredentialsPanel
+            clientId={id}
+            items={vault.items}
+            missingCount={vault.missingCount}
+            canManage={canManageVault}
+            canPurge={user.normalizedRole === 'owner'}
+            accounts={promoteAccounts}
+          />
+        }
         correspondencePanel={
           <CorrespondencePanel
             clientId={id}

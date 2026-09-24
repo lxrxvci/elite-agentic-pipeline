@@ -29,6 +29,7 @@ import {
 import { emitNotification } from "./notifications";
 import { isPortalEnabled, requirePortalClientAccess } from "./portal";
 import { calculateIntakeQuoteWithConfig } from "./quote";
+import { listMissingCredentialSlots } from "./vault";
 
 /**
  * Correspondence hub (walkthrough 02:28:57-02:34:03): email clients from the
@@ -880,7 +881,9 @@ export interface ClientReminderPlan {
  * Clients with missing required onboarding info (active, not paused):
  *  - portal not activated: portal enabled, client older than the grace
  *    period, and no linked client-role login has ever signed in;
- *  - account confirmations missing: active accounts with no statement day.
+ *  - account confirmations missing: active accounts with no statement day;
+ *  - credentials missing (3B): expected vault slots (conversion's "grant us
+ *    login access" flags) the client has not filled yet - itemized per slot.
  * Cadence: skipped when a missing_info_reminder mail went out within the
  * last REMINDER_CADENCE_DAYS days (the correspondence row is the dedup record).
  */
@@ -895,7 +898,7 @@ export async function computeMissingInfoReminders(now: Date = new Date()): Promi
   if (clientRows.length === 0) return { plans: [], skipped: [] };
 
   const clientIds = clientRows.map((c) => c.id);
-  const [linkRows, accountRows, reminderRows] = await Promise.all([
+  const [linkRows, accountRows, reminderRows, missingCredentialByClient] = await Promise.all([
     db
       .select({ clientId: contactClientLinks.clientId, contact: contacts })
       .from(contactClientLinks)
@@ -920,6 +923,8 @@ export async function computeMissingInfoReminders(now: Date = new Date()): Promi
         ),
       )
       .orderBy(desc(correspondence.createdAt)),
+    // 3B: unfilled vault slots per client (the "grant us login access" set).
+    listMissingCredentialSlots(clientIds),
   ]);
 
   // Latest reminder per client (rows arrived newest-first).
@@ -980,6 +985,13 @@ export async function computeMissingInfoReminders(now: Date = new Date()): Promi
     if (unconfirmed > 0) {
       reasons.push(
         `Confirm the statement details for ${unconfirmed} account${unconfirmed === 1 ? "" : "s"}.`,
+      );
+    }
+    // 3B - itemized per missing slot so the client sees exactly which logins
+    // are still open (automated chase until provided, 01:22:08).
+    for (const slot of missingCredentialByClient.get(client.id) ?? []) {
+      reasons.push(
+        `Add your ${slot.label}${slot.institution ? ` (${slot.institution})` : ""} login through the secure portal vault - we never see the password itself.`,
       );
     }
     if (reasons.length === 0) {

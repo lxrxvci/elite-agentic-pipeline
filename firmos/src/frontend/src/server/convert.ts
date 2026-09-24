@@ -53,6 +53,7 @@ import {
   specialtyReportsFromIntake,
 } from "./quote";
 import { runRecurringOnce } from "./recurring";
+import { seedExpectedCredentialSlots } from "./vault";
 
 /**
  * Intake -> client conversion (HANDOFF §6.8, routes_intake.py).
@@ -110,6 +111,8 @@ export interface ConversionResult {
   /** §20 - one catch-up project per calendar year of retroactive scope. */
   catchUpProjectsCreated: number;
   reportRowsCreated: number;
+  /** 3B - vault slots opened for accounts flagged "grant us login access". */
+  credentialsExpectedCreated: number;
   /** null when the post-commit generation pass failed (see header). */
   tasksGenerated: number | null;
   /** Correspondence hub: the welcome mail went out (portal on + contact with email). */
@@ -493,6 +496,24 @@ export async function convertIntakeToClient(
     insertedAccounts.push(...seededAccounts);
     accountsCreated += seededAccounts.length;
 
+    // 5c. Expected credential slots (Phase 3B, owner call 01:18:40): every
+    //     intake account flagged "grant us login access" opens an unfilled
+    //     vault slot linked to its chart-side account. Inside the transaction
+    //     so slots roll back with a failed conversion.
+    const expectedSlots = (form.accounts ?? [])
+      .filter((a) => a.grantLoginAccess === true)
+      .map((a) => ({
+        accountId: insertedAccounts.find((ia) => ia.name === a.name)?.id ?? null,
+        label: a.name,
+        institution: a.institution ?? null,
+      }));
+    const credentialsExpectedCreated = await seedExpectedCredentialSlots(
+      tx as DbOrTx,
+      clientId,
+      expectedSlots,
+      userId,
+    );
+
     // 5b. Real-estate properties (owner walkthrough: "Are you real estate
     //     specific? Do you have like 10 properties?"). The intake carries a
     //     count, the property types, and the depreciation buckets to track;
@@ -756,6 +777,7 @@ export async function convertIntakeToClient(
       onboardingTasksCreated,
       catchUpProjectsCreated,
       reportRowsCreated,
+      credentialsExpectedCreated,
     };
   });
 
@@ -803,6 +825,7 @@ export async function convertIntakeToClient(
     onboardingTasksCreated: result.onboardingTasksCreated,
     catchUpProjectsCreated: result.catchUpProjectsCreated,
     reportRowsCreated: result.reportRowsCreated,
+    credentialsExpectedCreated: result.credentialsExpectedCreated,
     tasksGenerated,
     welcomeEmailSent,
   };

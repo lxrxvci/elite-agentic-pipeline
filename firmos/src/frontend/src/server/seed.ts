@@ -16,6 +16,7 @@ import {
   accounts,
   authAccounts,
   authVerifications,
+  clientCredentials,
   clientIntakes,
   clientReports,
   clients,
@@ -38,6 +39,7 @@ import { localToday } from "./dates";
 import { materializeOperationalRows } from "./materialize";
 import { runRecurringOnce } from "./recurring";
 import { resyncAllBilling } from "./billing-sync";
+import { encryptSecret } from "./vault-crypto";
 
 /**
  * Idempotent dev seed modeling HANDOFF §26's adversarial world: seven
@@ -339,7 +341,35 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
     ])
     .returning();
 
-  // ── (g) Real-estate properties (§20) ──
+  // ── Credential vault (3B) ──
+  // Harborline carries the two vault states: one client-entered login (Alison
+  // through the portal) and one conversion-style expected slot still waiting
+  // on the client - the staff tab badge and the reminder job read the latter.
+  const ownerMara = byEmail.get("mara@blueledgerbooks.com")!;
+  const harborlineChecking = insertedAccounts.find(
+    (a) => a.clientId === cid("a") && a.name === "Operating Checking",
+  )!;
+  await db.insert(clientCredentials).values([
+    {
+      clientId: cid("a"),
+      accountId: harborlineChecking.id,
+      label: "QuickBooks Online",
+      institution: "Intuit",
+      loginUrl: "https://qbo.intuit.com",
+      username: "books@harborlinemarine.com",
+      secretPacked: encryptSecret("seeded-dev-only-password"),
+      createdById: alisonId,
+      createdVia: "portal",
+    },
+    {
+      clientId: cid("a"),
+      accountId: harborlineChecking.id,
+      label: "Chase operating checking",
+      institution: "Chase",
+      createdById: ownerMara,
+      createdVia: "system",
+    },
+  ]);
   // Inserted BEFORE resyncAllBilling so the mortgage on Maple Court bills
   // through loans_and_liabilities from the start (§15 live-state rebuild).
   const [mapleCourt, cedarStreet] = await db

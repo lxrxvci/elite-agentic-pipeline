@@ -597,6 +597,8 @@ export const CHAPTERS: ChapterDef[] = [
             },
             { key: 'institution', label: 'Bank or institution', kind: 'text', half: true, placeholder: 'Columbia Bank' },
             { key: 'statementDay', label: 'Statement day (optional)', kind: 'number', min: 1, max: 31, half: true, placeholder: '31' },
+            // 3B (01:18:40): conversion opens an expected vault slot per checked account.
+            { key: 'grantLoginAccess', label: 'We get login access (client adds it in the portal)', kind: 'checkbox' },
           ],
           itemValid: (i) => !!str(i.name) && !!str(i.accountType),
           summarize: (i) => String(i.name),

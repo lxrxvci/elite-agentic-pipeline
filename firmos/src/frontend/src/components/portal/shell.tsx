@@ -66,6 +66,8 @@ function clientNav(isRealEstate: boolean, canMessage: boolean): PortalNavItem[] 
     ...(isRealEstate ? [{ href: '/portal/properties', label: 'Properties' }] : []),
     { href: '/portal/invoices', label: 'Invoices' },
     { href: '/portal/requests', label: 'Requests' },
+    // 3B - the credential vault (client self-entry).
+    { href: '/portal/credentials', label: 'Logins' },
     { href: '/portal/profile', label: 'Profile' },
   ]
 }

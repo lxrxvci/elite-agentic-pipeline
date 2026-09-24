@@ -18,6 +18,7 @@
  *   communications.ts communications & notifications (6)
  *   admin.ts          admin, audit & settings (4)
  *   saved-views.ts    per-user saved views (1)
+ *   vault.ts          client credential vault (2) - Phase 3B
  */
 export * from "./enums";
 export * from "./shared";
@@ -36,3 +37,4 @@ export * from "./time";
 export * from "./communications";
 export * from "./admin";
 export * from "./saved-views";
+export * from "./vault";

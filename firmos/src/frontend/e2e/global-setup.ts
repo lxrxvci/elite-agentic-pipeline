@@ -1,6 +1,8 @@
 import { execSync } from 'node:child_process'
 import { request } from '@playwright/test'
 
+import { VAULT_E2E_KEY } from './vault-key'
+
 export const OWNER_COOKIES_FILE = '/tmp/firmos-e2e-owner-cookies.json'
 export const JORGE_COOKIES_FILE = '/tmp/firmos-e2e-jorge-cookies.json'
 
@@ -32,7 +34,13 @@ export default async function globalSetup(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL ?? 'postgres://lxrxcvi@localhost:5432/firmos'
   execSync('npm run db:seed', {
     stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: databaseUrl },
+    // The seeded vault row encrypts with the same key the two e2e servers
+    // decrypt with (vault-crypto prefers the env var over the dev fallback).
+    env: {
+      ...process.env,
+      DATABASE_URL: databaseUrl,
+      FIRMOS_ENCRYPTION_KEY: process.env.FIRMOS_ENCRYPTION_KEY ?? VAULT_E2E_KEY,
+    },
   })
 
   await signInFor('mara@blueledgerbooks.com', OWNER_COOKIES_FILE)

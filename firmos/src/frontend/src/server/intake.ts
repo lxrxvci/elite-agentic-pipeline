@@ -42,6 +42,12 @@ export interface IntakeAccountInput {
   statementDay?: number | null;
   openDate?: string | null;
   requiresManualTransactions?: boolean;
+  /**
+   * 3B (01:18:40): the intake's "grant us login access" per-account flag.
+   * Conversion opens an expected-credential vault slot for each flagged
+   * account; the client fills it in the portal.
+   */
+  grantLoginAccess?: boolean;
 }
 
 /** §29 fix: merchant accounts keep every field and never collapse to one. */
