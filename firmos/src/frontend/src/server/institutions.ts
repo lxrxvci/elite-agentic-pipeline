@@ -2,6 +2,7 @@ import { asc, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { institutions } from "@/db/schema";
+import { normalizeInstitutionKey } from "@/shared/lib/institution-key";
 
 /**
  * The firm-wide bank/institution list (intake restructure I3, plan §3):
@@ -24,7 +25,7 @@ export class InstitutionNameError extends Error {
 }
 
 /** Normalize for duplicate detection: trimmed, case-folded, single-spaced. */
-const fold = (name: string): string => name.trim().replace(/\s+/g, " ").toLowerCase();
+const fold = normalizeInstitutionKey;
 
 /**
  * The firm's known banks (intake restructure §7 open question 2). Migration
@@ -91,4 +92,20 @@ export async function addInstitution(name: string): Promise<InstitutionRow> {
     .where(sql`lower(${institutions.name}) = ${fold(trimmed)}`)
     .limit(1);
   return winner;
+}
+
+/**
+ * I5: normalized name → display name for every known bank. SOPs store a
+ * normalized institution_key, which matches institution names through the
+ * same fold; this map is how surfaces render the pretty name ("Columbia
+ * Bank") instead of the stored key ("columbia bank").
+ */
+export async function institutionNameByKey(): Promise<Map<string, string>> {
+  const rows = await listInstitutions();
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    const key = normalizeInstitutionKey(row.name);
+    if (key != null && !map.has(key)) map.set(key, row.name);
+  }
+  return map;
 }

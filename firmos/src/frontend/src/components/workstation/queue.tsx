@@ -267,7 +267,8 @@ export function WorkstationQueue({
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
   const [viewName, setViewName] = useState('')
-  // Task detail drawer: the open card (task-kind only), null when closed.
+  // Task detail drawer: the open card (task / bank_feed / reconciliation),
+  // null when closed. Reports select without a detail read.
   const [drawerCard, setDrawerCard] = useState<WorkCard | null>(null)
   // Focus mode: collapse the queue to the single next card (view mode only).
   const [focusMode, setFocusMode] = useState(false)
@@ -615,9 +616,13 @@ export function WorkstationQueue({
   const handleCardSelect = useCallback(
     (card: WorkCard) => {
       setRawCursor(flatIndexByKey.get(workCardKey(card)) ?? 0)
-      // Task-kind cards open the detail drawer on click (owner call notes:
-      // SOPs live one click away).
-      if (card.kind === 'task') setDrawerCard(card)
+      // Task-kind cards open the full detail drawer; bank-feed and
+      // reconciliation cards open the lighter institution-SOP drawer (I5:
+      // the learning center lives one click away on exactly the cards whose
+      // bank has quirks). Report cards stay click-to-select only.
+      if (card.kind === 'task' || card.kind === 'bank_feed' || card.kind === 'reconciliation') {
+        setDrawerCard(card)
+      }
     },
     [flatIndexByKey],
   )
@@ -653,7 +658,12 @@ export function WorkstationQueue({
       } else if ((e.key === 'e' || e.key === 'E') && navCards[cursor]) {
         e.preventDefault()
         void complete(navCards[cursor])
-      } else if (e.key === 'Enter' && navCards[cursor]?.kind === 'task') {
+      } else if (
+        e.key === 'Enter' &&
+        navCards[cursor] &&
+        navCards[cursor].kind !== 'report'
+      ) {
+        // Tasks, bank feeds, and reconciliations open the drawer (I5).
         e.preventDefault()
         setDrawerCard(navCards[cursor])
       } else if (e.key === 'x' || e.key === 'X') {
@@ -809,6 +819,14 @@ export function WorkstationQueue({
   const lane = queue.bumperLanes
   const cursorCard = navCards[cursor]
 
+  // Stable identity for the drawer prop: an inline object literal here would
+  // be a new reference on every queue render and retrigger the drawer's
+  // fetch effect (TaskDrawer depends on the kind/id primitives either way).
+  const drawerTarget = useMemo(
+    () => (drawerCard != null ? { kind: drawerCard.kind, id: drawerCard.id } : null),
+    [drawerCard],
+  )
+
   return (
     <div className="space-y-5 pb-10">
       {/* Header: title + the one green primary action (FreshBooks action
@@ -918,7 +936,7 @@ export function WorkstationQueue({
               {[
                 ['j / k', 'Move selection'],
                 ['E', 'Complete selected'],
-                ['Enter', 'Open task detail'],
+                ['Enter', 'Open card detail'],
                 ['X', 'Re-open last completed'],
                 ['N', 'Quick add'],
                 ['?', 'Toggle this panel'],
@@ -1688,7 +1706,7 @@ export function WorkstationQueue({
       </section>
 
       <TaskDrawer
-        taskId={drawerCard?.kind === 'task' ? drawerCard.id : null}
+        card={drawerTarget}
         open={drawerCard != null}
         closeContext={
           drawerCard

@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, notInArray, or } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, notInArray, or } from "drizzle-orm";
 import {
   compareLocalDate,
   countsForScoring,
@@ -23,10 +23,13 @@ import {
   bumperLaneOverrideRequests,
   clientReports,
   clients,
+  institutions,
+  sopTemplates,
   tasks,
   users,
   weeklyBankFeeds,
 } from "@/db/schema";
+import { normalizeInstitutionKey } from "@/shared/lib/institution-key";
 
 import { uploadedStatementMonths } from "./documents";
 import { toDomainClient } from "./domain-adapters";
@@ -102,6 +105,10 @@ export interface WorkCard {
   statementAvailable?: boolean;
   /** Reconciliation cards only: the statement's ending balance (numeric string), when captured at upload. */
   statementBalance?: string | null;
+  /** I5 bank_feed/reconciliation cards only: active institution SOPs matched
+      to the card's account institution(s) - the card icon count. 0 when the
+      bank has no SOPs yet (quiet empty state, no icon). */
+  sopCount?: number;
   /** Bumper lanes (D6/D8): when the user's lane locks this card - render with a lock + reason, never hidden. */
   laneLocked?: boolean;
   laneLockReason?: string | null;
@@ -283,14 +290,51 @@ export async function getUnifiedQueue(
   const clientById = new Map(eligible.map((c) => [c.id, c]));
   const eligibleIds = new Set(eligible.map((c) => c.id));
 
-  const [feedRows, reconRows, reportRows, taskRows, accountRows] = await Promise.all([
-    db.select().from(weeklyBankFeeds),
-    db.select().from(accountReconciliations),
-    db.select().from(clientReports),
-    db.select().from(tasks).where(and(isNull(tasks.deletedAt), notInArray(tasks.status, ["cancelled"]))),
-    db.select().from(accounts),
-  ]);
+  const [feedRows, reconRows, reportRows, taskRows, accountRows, institutionRows, keyedSopRows] =
+    await Promise.all([
+      db.select().from(weeklyBankFeeds),
+      db.select().from(accountReconciliations),
+      db.select().from(clientReports),
+      db.select().from(tasks).where(and(isNull(tasks.deletedAt), notInArray(tasks.status, ["cancelled"]))),
+      db.select().from(accounts),
+      db.select({ id: institutions.id, name: institutions.name }).from(institutions),
+      // I5: active institution-keyed SOPs for the card icon counts. Queried
+      // inline (rather than via templates.ts) to keep this hot read free of
+      // the template/portal dependency graph; the fold-match semantics are
+      // the same as templates.matchInstitutionSops.
+      db
+        .select({ institutionKey: sopTemplates.institutionKey })
+        .from(sopTemplates)
+        .where(and(eq(sopTemplates.isActive, true), isNotNull(sopTemplates.institutionKey))),
+    ]);
   const accountNameById = new Map(accountRows.map((a) => [a.id, a.name]));
+
+  // I5: institution-key → matched SOP count, and the account→key /
+  // client→keys maps (FK-first, text-snapshot fallback for legacy rows).
+  const sopCountByKey = new Map<string, number>();
+  for (const s of keyedSopRows) {
+    const key = normalizeInstitutionKey(s.institutionKey);
+    if (key != null) sopCountByKey.set(key, (sopCountByKey.get(key) ?? 0) + 1);
+  }
+  const institutionNameById = new Map(institutionRows.map((i) => [i.id, i.name]));
+  const keyByAccountId = new Map<number, string>();
+  const keysByClientId = new Map<number, Set<string>>();
+  for (const a of accountRows) {
+    if (!a.isActive) continue;
+    const name =
+      a.institutionId != null ? (institutionNameById.get(a.institutionId) ?? a.institution) : a.institution;
+    const key = normalizeInstitutionKey(name);
+    if (key == null) continue;
+    keyByAccountId.set(a.id, key);
+    const set = keysByClientId.get(a.clientId) ?? new Set<string>();
+    set.add(key);
+    keysByClientId.set(a.clientId, set);
+  }
+  const sopCountForKeys = (keys: Iterable<string>): number => {
+    let n = 0;
+    for (const key of keys) n += sopCountByKey.get(key) ?? 0;
+    return n;
+  };
 
   // ── Gating inputs: every row (complete or not) of the same kind+client,
   // and per (client, rule) for tasks. is_complete is strict completion - a
@@ -448,6 +492,7 @@ export async function getUnifiedQueue(
         deferredUntil: r.deferredUntil,
         clientWorkDay: clientWorkDay(r.clientId),
         orderClass: "periodic",
+        sopCount: sopCountForKeys(keysByClientId.get(r.clientId) ?? []),
       },
       gated,
     );
@@ -481,6 +526,7 @@ export async function getUnifiedQueue(
         readyToReconcile: statementAvailable && feedsSettled,
         statementAvailable,
         statementBalance: statementForPeriod ?? null,
+        sopCount: keyByAccountId.has(r.accountId) ? (sopCountByKey.get(keyByAccountId.get(r.accountId)!) ?? 0) : 0,
       },
       gated,
     );

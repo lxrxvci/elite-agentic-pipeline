@@ -94,3 +94,43 @@ test('workstation: complete a bank-feed card, reload, re-open', async ({ page })
   await page.reload()
   await expect(cardByKey).toHaveCount(1)
 })
+
+/**
+ * I5 - the bank SOP learning center: bank-feed and reconciliation cards open
+ * the drawer (the lighter institution-SOP read) straight from the queue.
+ * Seeded accounts carry no bank yet, so the drawer shows the quiet
+ * "no bank on this account yet" empty state - and the card itself carries
+ * no SOP badge until someone writes one.
+ */
+test('workstation: bank-feed card opens the drawer with the Bank SOPs section', async ({ page }) => {
+  await page.goto('/workstation')
+  await page.getByTestId('view-tab-queue').click()
+  await page.getByTestId('work-day-chip-all').click()
+  await expect(page.getByTestId('work-card').first()).toBeVisible()
+
+  const bankFeedCards = page.locator('[data-kind="bank_feed"]')
+  expect(await bankFeedCards.count()).toBeGreaterThan(0)
+
+  // No SOP badge on the card yet: seeded accounts have no institution, and
+  // no institution-keyed SOPs exist in the seeded firm data.
+  await expect(page.getByTestId('card-sop-count')).toHaveCount(0)
+
+  // Click the card: the drawer opens in the lighter Bank SOPs mode.
+  const target = bankFeedCards.first()
+  const title = await target.getAttribute('data-card-title')
+  await target.click()
+  const drawer = page.getByTestId('task-drawer')
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByTestId('task-drawer-title')).toHaveText(title ?? '')
+  // The learning-center section renders with its quiet empty state - a card
+  // whose account has no bank names the gap instead of erroring.
+  await expect(drawer.getByText('Bank SOPs')).toBeVisible()
+  await expect(drawer.getByTestId('sop-empty')).toContainText('No bank on this account yet')
+  // Lighter mode: no task-only chrome.
+  await expect(drawer.getByText('Checklist')).toHaveCount(0)
+  await expect(drawer.getByText('Notes')).toHaveCount(0)
+
+  // Escape closes it (Radix handles the key inside the sheet).
+  await page.keyboard.press('Escape')
+  await expect(drawer).toHaveCount(0)
+})

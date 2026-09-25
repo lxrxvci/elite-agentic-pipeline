@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
 
 import type { LocalDate } from "@firmos/domain";
 
@@ -9,10 +9,13 @@ import {
   clients,
   correspondence,
   feedback,
+  institutions,
+  sopTemplates,
   users,
   userWorkingHours,
   workstationTimeEntries,
 } from "@/db/schema";
+import { normalizeInstitutionKey } from "@/shared/lib/institution-key";
 
 import { getPurgatoryQueue } from "./approvals";
 import { listPendingBumperOverrides } from "./bumper-lanes";
@@ -22,6 +25,7 @@ import { JOB_SCHEDULE, getLastRan } from "./scheduler";
 import { getStatementQueue } from "./statements";
 import { listTimeEditRequests } from "./time-edits";
 import { maxClockInHours } from "./time-tracking";
+import { countAccountsByInstitutionKey } from "./templates";
 import { listMissingCredentialSlots } from "./vault";
 
 /**
@@ -333,6 +337,57 @@ export async function getAdminHubOverview(now: Date = new Date()): Promise<Admin
     jobRuns,
     recentAudit: audit.rows,
   };
+}
+
+// ── Institution SOP coverage (intake restructure I5) ──────────────────────
+
+export interface InstitutionSopCoverageRow {
+  institutionId: number;
+  name: string;
+  /** Active client accounts at this bank. */
+  accountCount: number;
+  /** Active SOP templates keyed to this bank. */
+  sopCount: number;
+  /** The "no SOPs yet" flag: banks the firm works with but nobody has
+      written a procedure for yet (Jason's new-bank ask). */
+  needsSop: boolean;
+}
+
+/**
+ * One row per known bank that has at least one active client account OR one
+ * active keyed SOP - banks with neither are not actionable and stay hidden.
+ * Sorted so the uncovered banks (the flags) lead the list.
+ */
+export async function getInstitutionSopCoverage(): Promise<InstitutionSopCoverageRow[]> {
+  const [institutionRows, accountCounts, sopRows] = await Promise.all([
+    db.select({ id: institutions.id, name: institutions.name }).from(institutions).orderBy(asc(institutions.name)),
+    countAccountsByInstitutionKey(),
+    db
+      .select({ institutionKey: sopTemplates.institutionKey })
+      .from(sopTemplates)
+      .where(and(eq(sopTemplates.isActive, true), isNotNull(sopTemplates.institutionKey))),
+  ]);
+  const sopCounts = new Map<string, number>();
+  for (const s of sopRows) {
+    const key = normalizeInstitutionKey(s.institutionKey);
+    if (key != null) sopCounts.set(key, (sopCounts.get(key) ?? 0) + 1);
+  }
+  const rows = institutionRows
+    .map((i) => {
+      const key = normalizeInstitutionKey(i.name);
+      const accountCount = key != null ? (accountCounts.get(key) ?? 0) : 0;
+      const sopCount = key != null ? (sopCounts.get(key) ?? 0) : 0;
+      return {
+        institutionId: i.id,
+        name: i.name,
+        accountCount,
+        sopCount,
+        needsSop: accountCount > 0 && sopCount === 0,
+      };
+    })
+    .filter((r) => r.accountCount > 0 || r.sopCount > 0);
+  rows.sort((a, b) => Number(b.needsSop) - Number(a.needsSop) || a.name.localeCompare(b.name));
+  return rows;
 }
 
 // ── Settings (§27) ────────────────────────────────────────────────────────

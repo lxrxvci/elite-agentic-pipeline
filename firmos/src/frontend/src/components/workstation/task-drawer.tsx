@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { BookOpen, CalendarCheck, ExternalLink, ListChecks, MessageSquare, StickyNote, Video } from 'lucide-react'
+import { BookOpen, CalendarCheck, ExternalLink, Flag, ListChecks, MessageSquare, StickyNote, Video } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -17,7 +17,8 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { CloseStepSegments, closeStepTitleKey } from '@/components/clients/close-stepper'
-import type { TaskDetail, TaskDetailSop } from '@/server/task-detail'
+import type { TaskDetail, TaskDetailSop, WorkCardSopDetail } from '@/server/task-detail'
+import type { WorkCardKind } from '@/server/queue'
 import type { CloseStepKey, CloseSteps } from '@/server/year-grid'
 import { avatarStyle } from '@/shared/lib/avatar-hue'
 import { dueAging, monthLabel, periodLabel, stampLabel } from '@/shared/lib/date-display'
@@ -32,9 +33,17 @@ import { KIND_META, KIND_STYLE, TaskTimerToggle } from './work-card'
  * work cards; the server read (getTaskDetail) gathers subtasks, the notes
  * thread, and the linked SOPs (direct + via the originating recurring rule).
  *
+ * I5 (the bank SOP learning center): bank-feed and reconciliation cards open
+ * the same drawer in a lighter mode - getWorkCardSopDetail resolves the
+ * institution SOPs for the card's bank, so "where statements live, check
+ * images, portal quirks" surface exactly where the work happens. Cards whose
+ * bank has no SOPs yet get a quiet empty state, never an error.
+ *
  * Every SOP card carries the staleness failsafe: "Updated {date}" plus the
  * change note when present, so staff can see at a glance whether the
- * procedure they are about to follow is current.
+ * procedure they are about to follow is current. Manager+ can flag a SOP
+ * stale right from the card - the flag is a changeNote marker and
+ * deliberately does not bump the updated date.
  */
 
 const TASK_STATUS_BADGE: Record<string, { status: WorkStatus; label: string }> = {
@@ -63,7 +72,17 @@ function linkLabel(url: string): string {
 }
 
 /** One linked SOP as a readable procedure card. */
-function SopCard({ sop }: { sop: TaskDetailSop }) {
+function SopCard({
+  sop,
+  canFlagStale,
+  onFlagged,
+}: {
+  sop: TaskDetailSop
+  /** I5: manager+ (or can_edit_sops) sees the staleness flag. */
+  canFlagStale: boolean
+  onFlagged: () => void
+}) {
+  const [flagging, setFlagging] = React.useState(false)
   // Content lines become the step list; bare URLs drop out of the steps and
   // render as their own link row below.
   const steps = (sop.content ?? '')
@@ -71,21 +90,59 @@ function SopCard({ sop }: { sop: TaskDetailSop }) {
     .map((line) => line.replace(/https?:\/\/[^\s)>"']+/g, '').trim())
     .map((line) => line.replace(/^\s*(?:\d+[.)]|[-*])\s*/, '').trim())
     .filter((line) => line !== '')
+  const institutionLabel = sop.institutionName ?? sop.institutionKey
+
+  async function flagStale() {
+    if (flagging) return
+    setFlagging(true)
+    try {
+      // Dynamic import: same seam as the other drawer actions (jsdom tests
+      // render without a database).
+      const m = await import('@/server/actions/templates')
+      const res = await m.flagSopStaleAction(sop.id)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      toast.success(`Flagged "${sop.title}" stale - it needs a refresh`)
+      onFlagged()
+    } finally {
+      setFlagging(false)
+    }
+  }
 
   return (
     <article data-testid="sop-card" className="rounded-lg border border-border bg-card p-3">
       <div className="flex items-start justify-between gap-2">
         <h4 className="text-sm font-semibold leading-snug text-foreground">{sop.title}</h4>
-        {sop.institutionKey && (
-          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {sop.institutionKey}
+        {institutionLabel && (
+          <span
+            data-testid="sop-institution-chip"
+            className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+          >
+            {institutionLabel} SOP
           </span>
         )}
       </div>
-      <p className="tnum mt-1 text-[11px] text-muted-foreground" data-testid="sop-updated">
-        Updated {stampLabel(sop.updatedAt)}
-        {sop.changeNote ? ` - ${sop.changeNote}` : ''}
-      </p>
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <p className="tnum text-[11px] text-muted-foreground" data-testid="sop-updated">
+          Updated {stampLabel(sop.updatedAt)}
+          {sop.changeNote ? ` - ${sop.changeNote}` : ''}
+        </p>
+        {/* I5 staleness flag: one click, writes the changeNote marker only. */}
+        {canFlagStale && (
+          <button
+            type="button"
+            data-testid="sop-flag-stale"
+            disabled={flagging}
+            onClick={() => void flagStale()}
+            className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Flag className="h-3 w-3" aria-hidden />
+            {flagging ? 'Flagging…' : 'Flag stale'}
+          </button>
+        )}
+      </div>
       {steps.length > 0 && (
         <ol className="mt-2 space-y-1.5">
           {steps.map((step, i) => (
@@ -133,8 +190,10 @@ function SectionHeading({ icon: Icon, children }: { icon: typeof BookOpen; child
 }
 
 interface TaskDrawerProps {
-  /** The task-kind card id; null closes the drawer. */
-  taskId: number | null
+  /** The open card: task-kind cards get the full detail read; bank-feed and
+   *  reconciliation cards get the lighter institution-SOP read (I5). null
+   *  closes the drawer. */
+  card: { kind: WorkCardKind; id: number } | null
   open: boolean
   /** The card the drawer opened from: client + period + title, used to show
    *  the guided-close stepper in context for recurring close-step tasks. */
@@ -149,14 +208,18 @@ interface TaskDrawerProps {
   onToggleComplete: (completed: boolean) => void
 }
 
-export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, onToggleComplete }: TaskDrawerProps) {
+const DRAWER_KINDS = new Set<WorkCardKind>(['task', 'bank_feed', 'reconciliation'])
+
+export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onToggleComplete }: TaskDrawerProps) {
   const [detail, setDetail] = React.useState<TaskDetail | null>(null)
+  const [cardDetail, setCardDetail] = React.useState<WorkCardSopDetail | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [noteDraft, setNoteDraft] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [assignBusy, setAssignBusy] = React.useState(false)
   const [closeSteps, setCloseSteps] = React.useState<CloseSteps | null>(null)
 
+  const isTaskCard = card?.kind === 'task'
   // Month-close context: only recurring close-step tasks (Categorize /
   // Reconcile / Client Questions / Send Reports) get the stepper strip.
   const ctxClientId = closeContext?.clientId ?? null
@@ -184,30 +247,50 @@ export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, on
     }
   }, [open, stepKey, ctxClientId, ctxYear, ctxMonth])
 
-  const refresh = React.useCallback(async (id: number) => {
+  const refresh = React.useCallback(async (target: { kind: WorkCardKind; id: number }) => {
     // Dynamic import: the actions module pulls in @/db, and queue/drawer
     // jsdom tests render without a database (same seam as the card toggle).
-    const m = await import('@/server/actions/tasks')
-    const res = await m.getTaskDetailAction(id)
-    if (res.ok) {
-      setDetail(res.data)
-      setError(null)
-    } else {
-      setError(res.error)
+    if (target.kind === 'task') {
+      const m = await import('@/server/actions/tasks')
+      const res = await m.getTaskDetailAction(target.id)
+      if (res.ok) {
+        setDetail(res.data)
+        setError(null)
+      } else {
+        setError(res.error)
+      }
+      return
+    }
+    // I5: bank-feed / reconciliation cards resolve their institution SOPs.
+    if (target.kind === 'bank_feed' || target.kind === 'reconciliation') {
+      const m = await import('@/server/actions/tasks')
+      const res = await m.getWorkCardSopDetailAction(target.kind, target.id)
+      if (res.ok) {
+        setCardDetail(res.data)
+        setError(null)
+      } else {
+        setError(res.error)
+      }
     }
   }, [])
 
   React.useEffect(() => {
-    if (open && taskId != null) {
+    // Primitive deps on purpose: the queue passes a fresh card object every
+    // render, and re-fetching the drawer on unrelated re-renders would flash
+    // the loading state (and hammer the read) every cursor move.
+    const kind = card?.kind ?? null
+    const id = card?.id ?? null
+    if (open && kind != null && id != null && DRAWER_KINDS.has(kind)) {
       setDetail(null)
+      setCardDetail(null)
       setError(null)
       setNoteDraft('')
-      void refresh(taskId)
+      void refresh({ kind, id })
     }
-  }, [open, taskId, refresh])
+  }, [open, card?.kind, card?.id, refresh])
 
   async function toggleSubtask(subtaskId: number, completed: boolean) {
-    if (taskId == null) return
+    if (card == null) return
     // Optimistic: flip locally, roll back on failure.
     setDetail((prev) =>
       prev
@@ -221,37 +304,37 @@ export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, on
     const res = await m.setSubtaskCompletedAction(subtaskId, completed)
     if (!res.ok) {
       toast.error(res.error)
-      void refresh(taskId)
+      void refresh(card)
     }
   }
 
   async function addNote() {
-    if (taskId == null || noteDraft.trim() === '') return
+    if (card == null || noteDraft.trim() === '') return
     setBusy(true)
     const m = await import('@/server/actions/tasks')
-    const res = await m.addTaskNoteAction(taskId, noteDraft)
+    const res = await m.addTaskNoteAction(card.id, noteDraft)
     setBusy(false)
     if (!res.ok) {
       toast.error(res.error)
       return
     }
     setNoteDraft('')
-    void refresh(taskId)
+    void refresh(card)
   }
 
   // E13: inline reassignment; the server answer refreshes the drawer.
   async function assignTo(assigneeId: number | null) {
-    if (taskId == null) return
+    if (card == null) return
     setAssignBusy(true)
     try {
       const m = await import('@/server/actions/tasks')
-      const res = await m.assignTaskAction(taskId, assigneeId)
+      const res = await m.assignTaskAction(card.id, assigneeId)
       if (!res.ok) {
         toast.error(res.error)
         return
       }
       toast.success('Task reassigned')
-      void refresh(taskId)
+      void refresh(card)
     } catch {
       toast.error('The assignment could not be saved - try again.')
     } finally {
@@ -272,17 +355,26 @@ export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, on
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent data-testid="task-drawer" aria-label="Task detail">
+      <SheetContent
+        data-testid="task-drawer"
+        aria-label={isTaskCard ? 'Task detail' : 'Work card detail'}
+      >
         {error != null && (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-            <p className="text-sm font-semibold text-foreground">Couldn’t load this task.</p>
+            <p className="text-sm font-semibold text-foreground">
+              Couldn’t load this {isTaskCard ? 'task' : 'card'}.
+            </p>
             <p className="text-xs text-muted-foreground">{error}</p>
           </div>
         )}
-        {error == null && detail == null && (
+        {error == null && detail == null && cardDetail == null && (
           <SheetHeader className="border-b border-border p-5">
-            <SheetTitle>Loading task…</SheetTitle>
-            <SheetDescription>Fetching the detail, checklist, and linked SOPs.</SheetDescription>
+            <SheetTitle>{isTaskCard ? 'Loading task…' : 'Loading card…'}</SheetTitle>
+            <SheetDescription>
+              {isTaskCard
+                ? 'Fetching the detail, checklist, and linked SOPs.'
+                : 'Fetching the bank SOPs for this card.'}
+            </SheetDescription>
           </SheetHeader>
         )}
         {error == null && detail != null && task != null && badge != null && aging != null && (
@@ -423,7 +515,12 @@ export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, on
                 ) : (
                   <div className="space-y-2">
                     {detail.sops.map((sop) => (
-                      <SopCard key={sop.id} sop={sop} />
+                      <SopCard
+                        key={sop.id}
+                        sop={sop}
+                        canFlagStale={detail.canFlagStale}
+                        onFlagged={() => card != null && void refresh(card)}
+                      />
                     ))}
                     {detail.manualEntries.length > 0 && (
                       <div className="space-y-1.5">
@@ -529,6 +626,110 @@ export function TaskDrawer({ taskId, open, closeContext = null, onOpenChange, on
             </div>
           </>
         )}
+
+        {/* I5: bank-feed / reconciliation cards - the lighter learning-center
+            read. Header + institution SOPs + the card's complete action; no
+            checklist, notes, or timer (those belong to task cards). */}
+        {error == null && !isTaskCard && cardDetail != null && card != null &&
+          (() => {
+            const cardKind = cardDetail.kind
+            const meta = KIND_META[cardKind]
+            const cardAging = dueAging(cardDetail.dueDate, cardDetail.today)
+            // Section heading names the banks that actually have SOPs here
+            // (a feed card can span several banks; the empty state below
+            // names the uncovered ones).
+            const matchedNames = [
+              ...new Set(cardDetail.sops.map((s) => s.institutionName ?? s.institutionKey)),
+            ].filter((n): n is string => n != null)
+            const heading =
+              matchedNames.length > 0 ? `${matchedNames.join(', ')} SOPs` : 'Bank SOPs'
+            return (
+              <>
+                <SheetHeader className="gap-2 border-b border-border p-5 pr-10">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold',
+                        KIND_STYLE[cardKind].chip,
+                      )}
+                    >
+                      <meta.Icon className="h-3 w-3" aria-hidden />
+                      {meta.label}
+                    </span>
+                    <span
+                      className={cn(
+                        'tnum rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                        KIND_STYLE[cardKind].chip,
+                      )}
+                    >
+                      {periodLabel(cardDetail.attributedYear, cardDetail.attributedMonth)}
+                    </span>
+                  </div>
+                  <SheetTitle data-testid="task-drawer-title">{cardDetail.title}</SheetTitle>
+                  <SheetDescription asChild>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                      {cardDetail.clientName && (
+                        <span className="font-medium">{cardDetail.clientName}</span>
+                      )}
+                      <span
+                        className={cn(
+                          'tnum font-medium',
+                          cardAging.tone === 'overdue' && 'text-status-overdue',
+                          cardAging.tone === 'today' && 'text-status-due-soon',
+                          (cardAging.tone === 'future' || cardAging.tone === 'none') &&
+                            'text-muted-foreground',
+                        )}
+                      >
+                        {cardAging.label}
+                      </span>
+                    </div>
+                  </SheetDescription>
+                </SheetHeader>
+
+                <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                  <section aria-label="Bank SOPs" className="space-y-2">
+                    <SectionHeading icon={BookOpen}>{heading}</SectionHeading>
+                    {cardDetail.sops.length === 0 ? (
+                      // Quiet empty state (I5): a bank with no SOPs yet is
+                      // normal - the card just carries no badge, and this
+                      // copy names who can close the gap.
+                      <p className="text-xs text-muted-foreground" data-testid="sop-empty">
+                        {cardDetail.hasInstitution
+                          ? `No SOPs yet for ${cardDetail.institutionNames.join(', ')}. ` +
+                            'The admin team can add one from the SOP templates page.'
+                          : 'No bank on this account yet. Set the bank on the account and its SOPs will appear here automatically.'}
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {cardDetail.sops.map((sop) => (
+                          <SopCard
+                            key={sop.id}
+                            sop={sop}
+                            canFlagStale={cardDetail.canFlagStale}
+                            onFlagged={() => void refresh(card)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 border-t border-border p-4">
+                  <Button
+                    type="button"
+                    size="sm"
+                    data-testid="drawer-complete-toggle"
+                    onClick={() => {
+                      onToggleComplete(true)
+                      onOpenChange(false)
+                    }}
+                  >
+                    Complete card
+                  </Button>
+                </div>
+              </>
+            )
+          })()}
       </SheetContent>
     </Sheet>
   )

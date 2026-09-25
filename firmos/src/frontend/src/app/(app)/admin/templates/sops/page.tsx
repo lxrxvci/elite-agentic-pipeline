@@ -1,7 +1,10 @@
+import { InstitutionSopCoverage } from '@/components/templates/institution-coverage'
 import { SopAdmin } from '@/components/templates/sop-admin'
 import { TemplateAdminNav } from '@/components/templates/template-admin-nav'
+import { getInstitutionSopCoverage } from '@/server/admin-reads'
 import { canEditSops, requireStaff } from '@/server/auth/guards'
-import { listSopTemplates } from '@/server/templates'
+import { listInstitutions } from '@/server/institutions'
+import { countAccountsByInstitutionKey, listSopTemplates } from '@/server/templates'
 
 import { listActiveClientRefs } from '../_lib'
 
@@ -10,7 +13,14 @@ export const dynamic = 'force-dynamic'
 
 export default async function SopTemplatesPage() {
   const user = await requireStaff()
-  const [sops, clientRefs] = await Promise.all([listSopTemplates(true), listActiveClientRefs()])
+  const [sops, clientRefs, institutions, accountCounts, coverage] = await Promise.all([
+    listSopTemplates(true),
+    listActiveClientRefs(),
+    listInstitutions(),
+    countAccountsByInstitutionKey(),
+    getInstitutionSopCoverage(),
+  ])
+  const canEdit = canEditSops(user)
 
   return (
     <div className="space-y-5 pb-10">
@@ -33,8 +43,11 @@ export default async function SopTemplatesPage() {
           updatedAt: s.updatedAt.toISOString(),
         }))}
         clients={clientRefs}
-        canEdit={canEditSops(user)}
+        institutions={institutions}
+        accountCounts={Object.fromEntries(accountCounts)}
+        canEdit={canEdit}
       />
+      <InstitutionSopCoverage rows={coverage} canEdit={canEdit} />
     </div>
   )
 }

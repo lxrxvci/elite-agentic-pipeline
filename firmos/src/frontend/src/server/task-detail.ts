@@ -1,22 +1,29 @@
-import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { formatLocalDate, type LocalDate } from "@firmos/domain";
 
 import { db } from "@/db";
 import {
+  accountReconciliations,
+  accounts,
   clientManualEntries,
   clients,
+  institutions,
   recurringTaskSopLinks,
   sopTemplates,
   taskNotes,
   tasks,
   taskSubtasks,
   users,
+  weeklyBankFeeds,
 } from "@/db/schema";
-import { requireStaff } from "@/server/auth/guards";
+import { requireStaff, canEditSops, type SessionUser } from "@/server/auth/guards";
+import { normalizeInstitutionKey } from "@/shared/lib/institution-key";
 
 import { logEvent } from "./audit";
 import { getStaffOpenWorkCounts } from "./capacity";
 import { localToday } from "./dates";
+import { institutionNameByKey } from "./institutions";
+import { listInstitutionKeyedSops, matchInstitutionSops, type SopTemplateRow } from "./templates";
 
 /**
  * Task detail read + small task mutations for the workstation drawer.
@@ -29,7 +36,20 @@ import { localToday } from "./dates";
  *
  * The drawer is staff-only (requireStaff at the read boundary, same posture
  * as the queue read).
+ *
+ * I5 (the bank SOP learning center): bank-feed and reconciliation cards are
+ * not tasks, so they get a lighter read - getWorkCardSopDetail resolves the
+ * institution SOPs for the card's account(s) on read, fold-matched against
+ * the institutions table exactly like the conversion-time auto-link. The
+ * concrete SOP↔work linkage for TASK cards stays the recurring_task_sop_links
+ * bridge; feed/recon cards never need per-card rows because the match is a
+ * pure function of the account's bank.
  */
+
+/** Manager+ may flag a SOP stale from the drawer (role or the SOP edit flag). */
+export function canFlagSopStale(user: SessionUser): boolean {
+  return user.normalizedRole === "manager" || canEditSops(user);
+}
 
 export class TaskDetailError extends Error {
   constructor(
@@ -63,6 +83,9 @@ export interface TaskDetailSop {
   updatedAt: string;
   changeNote: string | null;
   institutionKey: string | null;
+  /** Pretty bank name from the institutions table ("Columbia Bank"); null
+      when the key matches no known bank (legacy free-text keys). */
+  institutionName: string | null;
   /** http(s) links extracted from the content (Loom walkthroughs). */
   links: string[];
 }
@@ -104,6 +127,8 @@ export interface TaskDetail {
   /** E13: every active staff member with their open-work count, for the
    *  assign select. One batched read (capacity.getStaffOpenWorkCounts). */
   assignableStaff: TaskDetailAssignableStaff[];
+  /** I5: manager+ sees the flag-stale action on each SOP card. */
+  canFlagStale: boolean;
   /** Firm-local today, ISO-local - aging math never uses the client clock. */
   today: string;
 }
@@ -116,13 +141,31 @@ export function extractLinks(content: string | null): string[] {
   return [...new Set(content.match(URL_PATTERN) ?? [])];
 }
 
+/** Shape SOP template rows for the drawer, resolving pretty bank names. */
+async function toTaskDetailSops(rows: SopTemplateRow[]): Promise<TaskDetailSop[]> {
+  const namesByKey = await institutionNameByKey();
+  return rows.map((s) => {
+    const key = normalizeInstitutionKey(s.institutionKey);
+    return {
+      id: s.id,
+      title: s.title,
+      content: s.content,
+      updatedAt: s.updatedAt.toISOString(),
+      changeNote: s.changeNote,
+      institutionKey: s.institutionKey,
+      institutionName: key != null ? (namesByKey.get(key) ?? null) : null,
+      links: extractLinks(s.content),
+    };
+  });
+}
+
 function fullName(row: { firstName: string; lastName: string } | undefined): string | null {
   if (!row) return null;
   return `${row.firstName} ${row.lastName}`.trim();
 }
 
 export async function getTaskDetail(taskId: number, today: LocalDate = localToday()): Promise<TaskDetail> {
-  await requireStaff();
+  const user = await requireStaff();
 
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
   if (!task || task.deletedAt != null) throw new TaskDetailError(404, `Task ${taskId} not found`);
@@ -220,15 +263,7 @@ export async function getTaskDetail(taskId: number, today: LocalDate = localToda
       authorName: n.firstName != null ? `${n.firstName} ${n.lastName ?? ""}`.trim() : "Former staff",
       createdAt: n.createdAt.toISOString(),
     })),
-    sops: sopRows.map((s) => ({
-      id: s.id,
-      title: s.title,
-      content: s.content,
-      updatedAt: s.updatedAt.toISOString(),
-      changeNote: s.changeNote,
-      institutionKey: s.institutionKey,
-      links: extractLinks(s.content),
-    })),
+    sops: await toTaskDetailSops(sopRows),
     // Standalone entries only - SOP mirrors already render as SOP cards.
     manualEntries: manualRows
       .filter((m) => m.sopTemplateId == null || !sopIds.includes(m.sopTemplateId))
@@ -243,6 +278,147 @@ export async function getTaskDetail(taskId: number, today: LocalDate = localToda
       name: w.name,
       openCount: w.openCount,
     })),
+    canFlagStale: canFlagSopStale(user),
+    today: formatLocalDate(today),
+  };
+}
+
+// ── I5: bank-feed / reconciliation card SOPs (the learning center) ────────
+
+export type WorkCardSopKind = "bank_feed" | "reconciliation";
+
+export interface WorkCardSopDetail {
+  kind: WorkCardSopKind;
+  id: number;
+  title: string;
+  clientId: number;
+  clientName: string | null;
+  dueDate: string | null;
+  attributedYear: number | null;
+  attributedMonth: number | null;
+  /** Pretty names of the card's banks (e.g. ["Columbia Bank"]) - names the
+      section heading and every empty state, matched or not. */
+  institutionNames: string[];
+  /** The card's account(s) carry a known bank - drives the empty-state copy. */
+  hasInstitution: boolean;
+  /** Institution SOPs for the card's bank, drawer order. */
+  sops: TaskDetailSop[];
+  /** Manager+ sees the flag-stale action on each SOP card. */
+  canFlagStale: boolean;
+  today: string;
+}
+
+/**
+ * The lighter drawer read for non-task cards. Reconciliation cards resolve
+ * their one account's bank; bank-feed cards are client-wide, so every active
+ * account of the client contributes its bank. Matching is the same fold-match
+ * as the conversion auto-link - an account at a bank with no SOPs yet yields
+ * an empty list (the quiet "no SOPs yet" state), never an error.
+ */
+export async function getWorkCardSopDetail(
+  kind: WorkCardSopKind,
+  id: number,
+  today: LocalDate = localToday(),
+): Promise<WorkCardSopDetail> {
+  const user = await requireStaff();
+
+  let clientId: number;
+  let title: string;
+  let dueDate: string | null;
+  let attributedYear: number | null;
+  let attributedMonth: number | null;
+  let accountIds: number[];
+  if (kind === "reconciliation") {
+    const [row] = await db.select().from(accountReconciliations).where(eq(accountReconciliations.id, id)).limit(1);
+    if (!row) throw new TaskDetailError(404, `Reconciliation ${id} not found`);
+    const [account] = await db
+      .select({ name: accounts.name })
+      .from(accounts)
+      .where(eq(accounts.id, row.accountId))
+      .limit(1);
+    clientId = row.clientId;
+    title = `Reconcile ${account?.name ?? "account"}`;
+    dueDate = row.dueDate;
+    attributedYear = row.attributedYear;
+    attributedMonth = row.attributedMonth;
+    accountIds = [row.accountId];
+  } else {
+    const [row] = await db.select().from(weeklyBankFeeds).where(eq(weeklyBankFeeds.id, id)).limit(1);
+    if (!row) throw new TaskDetailError(404, `Bank feed ${id} not found`);
+    clientId = row.clientId;
+    title = `Bank feed week of ${row.weekStartDate}`;
+    dueDate = row.dueDate;
+    attributedYear = row.attributedYear;
+    attributedMonth = row.attributedMonth;
+    const clientAccounts = await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(
+        and(
+          eq(accounts.clientId, clientId),
+          eq(accounts.isActive, true),
+          or(isNotNull(accounts.institutionId), isNotNull(accounts.institution)),
+        ),
+      );
+    accountIds = clientAccounts.map((a) => a.id);
+  }
+
+  const [clientRow, accountRows] = await Promise.all([
+    db
+      .select({ legalName: clients.legalName, dbaName: clients.dbaName })
+      .from(clients)
+      .where(eq(clients.id, clientId))
+      .limit(1)
+      .then((r) => r[0]),
+    accountIds.length > 0
+      ? db
+          .select({ id: accounts.id, institution: accounts.institution, institutionId: accounts.institutionId })
+          .from(accounts)
+          .where(inArray(accounts.id, accountIds))
+      : Promise.resolve([]),
+  ]);
+
+  // FK-first key resolution, falling back to the text snapshot (legacy rows).
+  const institutionIds = [
+    ...new Set(accountRows.map((a) => a.institutionId).filter((v): v is number => v != null)),
+  ];
+  const namesById = new Map<number, string>();
+  if (institutionIds.length > 0) {
+    const rows = await db
+      .select({ id: institutions.id, name: institutions.name })
+      .from(institutions)
+      .where(inArray(institutions.id, institutionIds));
+    for (const r of rows) namesById.set(r.id, r.name);
+  }
+  const displayByKey = new Map<string, string>();
+  for (const a of accountRows) {
+    const name = a.institutionId != null ? (namesById.get(a.institutionId) ?? a.institution) : a.institution;
+    const key = normalizeInstitutionKey(name);
+    if (key != null && !displayByKey.has(key)) displayByKey.set(key, name ?? key);
+  }
+
+  const matched = matchInstitutionSops(await listInstitutionKeyedSops(), displayByKey.keys());
+  const tableNames = await institutionNameByKey();
+  // The card's banks, pretty-printed - names every empty state and heading.
+  const institutionNames = [
+    ...new Set(
+      [...displayByKey.keys()].map((k) => tableNames.get(k) ?? displayByKey.get(k) ?? k),
+    ),
+  ];
+
+  return {
+    kind,
+    id,
+    title,
+    clientId,
+    clientName: clientRow ? (clientRow.dbaName ?? clientRow.legalName) : null,
+    dueDate,
+    attributedYear,
+    attributedMonth,
+    institutionNames,
+    hasInstitution: displayByKey.size > 0,
+    sops: await toTaskDetailSops(matched),
+    canFlagStale: canFlagSopStale(user),
     today: formatLocalDate(today),
   };
 }

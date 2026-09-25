@@ -734,3 +734,41 @@ describe('WorkstationQueue - correspondence badge', () => {
     expect(within(group).queryByTestId('my-day-correspondence-badge')).not.toBeInTheDocument()
   })
 })
+
+describe('I5 institution SOP count badge (learning center)', () => {
+  function renderRow(cardOverrides: Parameters<typeof card>[0]) {
+    return render(
+      <TooltipProvider>
+        <WorkCardRow
+          card={card(cardOverrides)}
+          today="2026-08-23"
+          selected
+          onSelect={() => {}}
+          onComplete={() => {}}
+        />
+      </TooltipProvider>,
+    )
+  }
+
+  it('bank-feed and reconciliation cards with matched SOPs show the icon + count', () => {
+    renderRow({ kind: 'bank_feed', id: 21, status: 'due_today', sopCount: 2 })
+    const badge = screen.getByTestId('card-sop-count')
+    expect(badge).toHaveTextContent('2')
+    expect(badge).toHaveAttribute('aria-label', '2 bank SOPs')
+  })
+
+  it('singular label for exactly one SOP', () => {
+    renderRow({ kind: 'reconciliation', id: 22, status: 'due_today', sopCount: 1 })
+    expect(screen.getByTestId('card-sop-count')).toHaveAttribute('aria-label', '1 bank SOP')
+  })
+
+  it('stays quiet at zero - the bank has no SOPs yet (no badge)', () => {
+    renderRow({ kind: 'reconciliation', id: 23, status: 'due_today', sopCount: 0 })
+    expect(screen.queryByTestId('card-sop-count')).not.toBeInTheDocument()
+  })
+
+  it('task cards never carry the badge (their SOPs live in the task drawer)', () => {
+    renderRow({ kind: 'task', id: 24, status: 'due_today', sopCount: 3 })
+    expect(screen.queryByTestId('card-sop-count')).not.toBeInTheDocument()
+  })
+})

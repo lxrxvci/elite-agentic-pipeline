@@ -5,6 +5,7 @@ import { db } from "@/db";
 import {
   accounts,
   clientIntakes,
+  clientManualEntries,
   clientReports,
   clients,
   contactClientLinks,
@@ -12,6 +13,7 @@ import {
   institutions,
   properties,
   recurringTasks,
+  recurringTaskSopLinks,
   recurringTaskSubtasks,
   tasks,
   users,
@@ -28,6 +30,7 @@ import {
 import { calculateIntakeQuote } from "@/server/quote";
 import { getUnifiedQueue } from "@/server/queue";
 import { seedDatabase } from "@/server/seed";
+import { createSopTemplate } from "@/server/templates";
 
 import { dbReachable, TEST_TODAY } from "./helpers";
 
@@ -331,6 +334,70 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
 
     // The online-access flag opens exactly one expected vault slot (3B).
     expect(result.credentialsExpectedCreated).toBe(1);
+  });
+
+  it("bank_selection_assigns_institution_sops", async () => {
+    // I5 (the learning center): the SOP Becky wrote for Columbia Bank on an
+    // older client is already keyed to the bank; a new intake just picks the
+    // bank from the dropdown and the SOP set flows across at conversion.
+    const theoId = await userIdByEmail("theo@blueledgerbooks.com");
+    const [columbia] = await db.select().from(institutions).where(eq(institutions.name, "Columbia"));
+    const sop = await createSopTemplate(theoId, {
+      title: "Columbia Bank statement pull",
+      content: "1. Log in to the Columbia portal\n2. Download the statement PDF",
+      institutionKey: "Columbia",
+    });
+
+    const intakeId = await reviewableIntake({
+      legalName: "Columbia River Outfitters",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        // The wizard's bank dropdown writes the institution id; the text
+        // snapshot resolves from the institutions table at conversion.
+        accounts: [
+          {
+            name: "Operating",
+            accountType: "checking",
+            institutionId: columbia.id,
+            proofCategory: "statement",
+          },
+        ],
+      },
+    });
+
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+
+    // The bank selection resolved the account's institution from the FK.
+    const [account] = await db
+      .select()
+      .from(accounts)
+      .where(and(eq(accounts.clientId, result.clientId), eq(accounts.name, "Operating")));
+    expect(account.institutionId).toBe(columbia.id);
+    expect(account.institution).toBe("Columbia");
+
+    // ...and the bank's SOPs were assigned: a mirrored client manual entry
+    // plus a link on the client's reconciliation rule.
+    const [mirror] = await db
+      .select()
+      .from(clientManualEntries)
+      .where(and(eq(clientManualEntries.clientId, result.clientId), eq(clientManualEntries.sopTemplateId, sop.id)));
+    expect(mirror.title).toBe("Columbia Bank statement pull");
+    expect(mirror.content).toBe("1. Log in to the Columbia portal\n2. Download the statement PDF");
+
+    const [reconRule] = await db
+      .select()
+      .from(recurringTasks)
+      .where(and(eq(recurringTasks.clientId, result.clientId), eq(recurringTasks.title, "Reconcile Accounts")))
+      .limit(1);
+    expect(reconRule).toBeDefined();
+    const links = await db
+      .select()
+      .from(recurringTaskSopLinks)
+      .where(eq(recurringTaskSopLinks.sopTemplateId, sop.id));
+    expect(links.some((l) => l.clientManualEntryId === mirror.id)).toBe(true);
+    expect(links.some((l) => l.recurringTaskId === reconRule.id)).toBe(true);
   });
 
   it("stamps the QBO subscription facts from form_data onto the client (§15 pass-through)", async () => {

@@ -23,6 +23,8 @@ vi.mock('@/server/actions/templates', () => ({
   createSopTemplateAction: vi.fn(),
   deleteSopTemplateAction: vi.fn(),
   updateSopTemplateAction: vi.fn(),
+  flagSopStaleAction: vi.fn(),
+  normalizeSopInstitutionKeysAction: vi.fn(),
   createOnboardingTemplateAction: vi.fn(),
   createOffboardingTemplateAction: vi.fn(),
   createRecurringTemplateAction: vi.fn(),
@@ -35,12 +37,25 @@ vi.mock('@/server/actions/templates', () => ({
   startOffboardingAction: vi.fn().mockResolvedValue({ ok: true, data: { tasksCreated: 5 } }),
 }))
 
+vi.mock('@/server/actions/institutions', () => ({
+  addInstitutionAction: vi.fn(),
+}))
+
 import { applySopToClientAction, startOffboardingAction } from '@/server/actions/templates'
 
 const CLIENTS = [
   { id: 1, name: 'Harborline Marine Supply' },
   { id: 2, name: 'Dusk IT Services' },
 ]
+
+const INSTITUTIONS = [
+  { id: 1, name: 'Chevron WEX' },
+  { id: 2, name: 'Columbia Bank' },
+]
+
+const ACCOUNT_COUNTS: Record<string, number> = { 'chevron wex': 2 }
+
+const SOP_ADMIN_DEFAULTS = { institutions: INSTITUTIONS, accountCounts: ACCOUNT_COUNTS }
 
 const SOPS: SopTemplateItem[] = [
   {
@@ -80,7 +95,7 @@ const RECURRING: TaskTemplateItem[] = [
 
 describe('template permission gating', () => {
   it('SOP admin without can_edit_sops is read-only: edits hidden, note shown, apply kept', () => {
-    render(<SopAdmin sops={SOPS} clients={CLIENTS} canEdit={false} />)
+    render(<SopAdmin sops={SOPS} clients={CLIENTS} {...SOP_ADMIN_DEFAULTS} canEdit={false} />)
     expect(screen.getByTestId('template-readonly-note')).toHaveTextContent('can_edit_sops')
     expect(screen.queryByRole('button', { name: /New SOP/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Edit Bank feed triage' })).not.toBeInTheDocument()
@@ -93,7 +108,7 @@ describe('template permission gating', () => {
   })
 
   it('SOP admin with the flag shows create and edit controls', () => {
-    render(<SopAdmin sops={SOPS} clients={CLIENTS} canEdit={true} />)
+    render(<SopAdmin sops={SOPS} clients={CLIENTS} {...SOP_ADMIN_DEFAULTS} canEdit={true} />)
     expect(screen.queryByTestId('template-readonly-note')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /New SOP/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Edit Bank feed triage' })).toBeInTheDocument()
@@ -119,7 +134,7 @@ describe('SopAdmin apply flow', () => {
 
   it('applies an SOP to the chosen client', async () => {
     const user = userEvent.setup()
-    render(<SopAdmin sops={SOPS} clients={CLIENTS} canEdit={false} />)
+    render(<SopAdmin sops={SOPS} clients={CLIENTS} {...SOP_ADMIN_DEFAULTS} canEdit={false} />)
     const applyButtons = screen.getAllByRole('button', { name: /Apply to client/ })
     await user.click(applyButtons[0])
     // Client picker options render in the portal; pick by text.

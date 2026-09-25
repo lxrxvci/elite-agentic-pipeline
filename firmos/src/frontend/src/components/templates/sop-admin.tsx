@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Pencil, Plus, Send, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { InstitutionSelect } from '@/components/intake/account-screens'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -18,13 +19,16 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { addInstitutionAction } from '@/server/actions/institutions'
 import {
   applySopToClientAction,
   createSopTemplateAction,
   deleteSopTemplateAction,
   updateSopTemplateAction,
 } from '@/server/actions/templates'
+import type { InstitutionRow } from '@/server/institutions'
 import { stampLabel } from '@/shared/lib/date-display'
+import { normalizeInstitutionKey } from '@/shared/lib/institution-key'
 
 import { ActiveState, ClientSelect, ReadOnlyNote, type ClientRef } from './shared'
 
@@ -34,10 +38,13 @@ import { ActiveState, ClientSelect, ReadOnlyNote, type ClientRef } from './share
  * before saving. Applying to a client creates the mirrored manual entry and
  * is staff-level, so it stays visible without the edit flag.
  *
- * Institution key (owner call notes): an SOP keyed to an institution (e.g.
- * "Chevron WEX") auto-links to any client whose accounts carry that
- * institution at conversion. Every row shows the staleness failsafe:
- * "Updated {date}" plus the change note when present.
+ * Institution key (I5, the learning center): an SOP keyed to a bank
+ * auto-links to every client account at that bank - "if Becky has worked
+ * Columbia Bank before, the SOP just flows to you". The key is picked from
+ * the shared institutions list (dropdown + inline add-new, the same control
+ * the intake uses) instead of free text, and the dialog previews how many
+ * client accounts the key currently matches. Every row shows the staleness
+ * failsafe: "Updated {date}" plus the change note when present.
  */
 
 export interface SopTemplateItem {
@@ -54,11 +61,16 @@ export interface SopTemplateItem {
 interface SopAdminProps {
   sops: SopTemplateItem[]
   clients: ClientRef[]
+  /** The firm's bank list (institutions table) - the key dropdown source. */
+  institutions: InstitutionRow[]
+  /** I5: normalized institution key → active client account count, for the
+      editor's "matches N client accounts" preview. */
+  accountCounts: Record<string, number>
   /** can_edit_sops or owner/admin (decided server-side). */
   canEdit: boolean
 }
 
-export function SopAdmin({ sops, clients, canEdit }: SopAdminProps) {
+export function SopAdmin({ sops, clients, institutions, accountCounts, canEdit }: SopAdminProps) {
   const router = useRouter()
   const [editTarget, setEditTarget] = useState<SopTemplateItem | null>(null)
   const [formOpen, setFormOpen] = useState(false)
@@ -73,6 +85,13 @@ export function SopAdmin({ sops, clients, canEdit }: SopAdminProps) {
   const [isActive, setIsActive] = useState(true)
   const [institutionKey, setInstitutionKey] = useState('')
   const [changeNote, setChangeNote] = useState('')
+
+  /** Pretty bank name for a stored key - the institutions row when known. */
+  const institutionLabel = (key: string | null): string | null => {
+    const folded = normalizeInstitutionKey(key)
+    if (folded == null) return null
+    return institutions.find((i) => normalizeInstitutionKey(i.name) === folded)?.name ?? key
+  }
 
   function openForm(target: SopTemplateItem | null) {
     setEditTarget(target)
@@ -174,7 +193,7 @@ export function SopAdmin({ sops, clients, canEdit }: SopAdminProps) {
                       data-testid="sop-institution-chip"
                       className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
                     >
-                      {sop.institutionKey}
+                      {institutionLabel(sop.institutionKey)}
                     </span>
                   )}
                 </div>
@@ -258,16 +277,59 @@ export function SopAdmin({ sops, clients, canEdit }: SopAdminProps) {
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <Label htmlFor="sop-institution-key">Institution key</Label>
-                <Input
-                  id="sop-institution-key"
-                  value={institutionKey}
-                  onChange={(e) => setInstitutionKey(e.target.value)}
-                  placeholder="e.g. Chevron WEX"
+                {/* Plain span, not a <label>: the dropdown is a button with
+                    its own aria-label, so a `for`-less label would dangle. */}
+                <span className="mb-1 block text-sm font-medium leading-none text-foreground">
+                  Institution
+                </span>
+                {/* I5: the key comes from the shared institutions list (the
+                    same dropdown + inline add-new the intake uses), never
+                    free text - so a keyed SOP always names a real bank. */}
+                <InstitutionSelect
+                  institutions={institutions}
+                  selectedId={
+                    institutions.find(
+                      (i) => normalizeInstitutionKey(i.name) === normalizeInstitutionKey(institutionKey),
+                    )?.id ?? null
+                  }
+                  selectedName={institutionLabel(institutionKey)}
+                  index={0}
+                  ariaLabel="Institution"
+                  onSelect={(i) => setInstitutionKey(i.name)}
+                  onAdd={async (name) => {
+                    const res = await addInstitutionAction(name)
+                    if (!res.ok) {
+                      toast.error(res.error)
+                      return null
+                    }
+                    return res.data
+                  }}
                 />
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Auto-links this SOP to clients with an account at this institution.
-                </p>
+                {(() => {
+                  const key = normalizeInstitutionKey(institutionKey)
+                  if (key == null) {
+                    return (
+                      <p
+                        data-testid="institution-match-preview"
+                        className="mt-1 text-[11px] text-muted-foreground"
+                      >
+                        Pick the bank this SOP is for - it auto-links to every client account at
+                        that bank.
+                      </p>
+                    )
+                  }
+                  const n = accountCounts[key] ?? 0
+                  return (
+                    <p
+                      data-testid="institution-match-preview"
+                      className="tnum mt-1 text-[11px] text-muted-foreground"
+                    >
+                      {n > 0
+                        ? `Matches ${n} client account${n === 1 ? '' : 's'} at this bank.`
+                        : 'No client accounts at this bank yet.'}
+                    </p>
+                  )
+                })()}
               </div>
               <div>
                 <Label htmlFor="sop-change-note">Change note</Label>

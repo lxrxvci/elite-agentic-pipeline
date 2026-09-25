@@ -32,6 +32,7 @@ import {
   deleteRecurringTemplate,
   deleteSopTemplate,
   finalizeOffboardingWhenComplete,
+  flagSopStale,
   getProjectTemplateWithTasks,
   linkSopToAdHocTemplate,
   listAdHocTemplates,
@@ -42,6 +43,7 @@ import {
   listRecurringTemplates,
   listSopTemplates,
   mintAdHocTask,
+  normalizeSopInstitutionKeys,
   setProjectTaskCompleted,
   startOffboarding,
   updateAdHocTemplate,
@@ -53,7 +55,9 @@ import {
   type AdHocTemplateInput,
   type ProjectTemplateTaskInput,
   type RecurringTemplateInput,
+  type SopTemplateRow,
 } from "@/server/templates";
+import { canFlagSopStale } from "@/server/task-detail";
 
 /**
  * Template server actions (HANDOFF §19, §22). Admin CRUD on the six
@@ -144,6 +148,41 @@ export async function applySopToClientAction(sopId: number, clientId: number) {
     const entry = await applySopToClient(user.id, sopId, clientId);
     revalidatePath(`/clients/${clientId}`);
     return { ok: true, data: entry };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/**
+ * I5 drawer staleness flag: manager+ (or anyone with can_edit_sops). Writes
+ * the changeNote marker only - the SOP's updatedAt is untouched so the flag
+ * never makes the procedure look freshly reviewed.
+ */
+export async function flagSopStaleAction(
+  sopId: number,
+  reason?: string | null,
+): Promise<ActionResult<SopTemplateRow>> {
+  try {
+    const user = await requireStaff();
+    if (!canFlagSopStale(user)) {
+      throw new AuthError(403, "Requires the manager role or the can_edit_sops permission");
+    }
+    const updated = await flagSopStale(user.id, sopId, reason);
+    revalidatePath("/workstation");
+    revalidatePath("/admin/templates/sops");
+    return { ok: true, data: updated };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** I5 backfill: fold legacy institution_key values so matching reaches them. */
+export async function normalizeSopInstitutionKeysAction(): Promise<ActionResult<{ updated: number }>> {
+  try {
+    const user = await requireSopEditor();
+    const result = await normalizeSopInstitutionKeys(user.id);
+    revalidatePath("/admin/templates/sops");
+    return { ok: true, data: result };
   } catch (error) {
     return fail(error);
   }

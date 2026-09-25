@@ -2,9 +2,9 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { addTaskNoteAction, assignTaskAction, getTaskDetailAction, setSubtaskCompletedAction } from '@/server/actions/tasks'
+import { addTaskNoteAction, assignTaskAction, getTaskDetailAction, getWorkCardSopDetailAction, setSubtaskCompletedAction } from '@/server/actions/tasks'
 import { getCloseStepsAction } from '@/server/actions/close-steps'
-import type { TaskDetail } from '@/server/task-detail'
+import type { TaskDetail, WorkCardSopDetail } from '@/server/task-detail'
 import type { CloseSteps } from '@/server/year-grid'
 
 import { TaskDrawer } from '../task-drawer'
@@ -21,9 +21,15 @@ beforeEach(() => {
 
 vi.mock('@/server/actions/tasks', () => ({
   getTaskDetailAction: vi.fn(),
+  getWorkCardSopDetailAction: vi.fn(),
   setSubtaskCompletedAction: vi.fn(),
   addTaskNoteAction: vi.fn(),
   assignTaskAction: vi.fn(),
+}))
+
+// The SOP staleness flag dynamic-imports the templates action module.
+vi.mock('@/server/actions/templates', () => ({
+  flagSopStaleAction: vi.fn(),
 }))
 
 // The month-close context strip dynamic-imports this action.
@@ -38,10 +44,16 @@ vi.mock('@/server/actions/time', () => ({
   stopTaskTimerAction: vi.fn(),
 }))
 
+import { flagSopStaleAction } from '@/server/actions/templates'
+
 const mockDetail = vi.mocked(getTaskDetailAction)
+const mockCardDetail = vi.mocked(getWorkCardSopDetailAction)
 const mockToggle = vi.mocked(setSubtaskCompletedAction)
 const mockAddNote = vi.mocked(addTaskNoteAction)
 const mockAssign = vi.mocked(assignTaskAction)
+const mockFlagStale = vi.mocked(flagSopStaleAction)
+
+const TASK_CARD = { kind: 'task' as const, id: 42 }
 
 function detail(partial?: Partial<TaskDetail>): TaskDetail {
   return {
@@ -80,6 +92,7 @@ function detail(partial?: Partial<TaskDetail>): TaskDetail {
         updatedAt: '2026-08-01T12:00:00.000Z',
         changeNote: 'Added the walkthrough video.',
         institutionKey: 'chevron wex',
+        institutionName: 'Chevron WEX',
         links: ['https://www.loom.com/share/abc123'],
       },
     ],
@@ -90,6 +103,38 @@ function detail(partial?: Partial<TaskDetail>): TaskDetail {
       { id: 3, name: 'Jorge Medina', openCount: 12 },
       { id: 6, name: 'Sofia Lindqvist', openCount: 4 },
     ],
+    canFlagStale: true,
+    today: '2026-08-15',
+    ...partial,
+  }
+}
+
+/** I5: the lighter learning-center payload for feed / reconciliation cards. */
+function cardDetail(partial?: Partial<WorkCardSopDetail>): WorkCardSopDetail {
+  return {
+    kind: 'bank_feed',
+    id: 7,
+    title: 'Bank feed week of 2026-08-10',
+    clientId: 1,
+    clientName: 'Harborline Marine Supply',
+    dueDate: '2026-08-14',
+    attributedYear: 2026,
+    attributedMonth: 8,
+    institutionNames: ['Columbia Bank'],
+    hasInstitution: true,
+    sops: [
+      {
+        id: 32,
+        title: 'Columbia Bank statement pull',
+        content: '1. Log in to the Columbia portal\n2. Download the statement PDF',
+        updatedAt: '2026-08-05T12:00:00.000Z',
+        changeNote: 'Portal moved the download button.',
+        institutionKey: 'columbia bank',
+        institutionName: 'Columbia Bank',
+        links: [],
+      },
+    ],
+    canFlagStale: true,
     today: '2026-08-15',
     ...partial,
   }
@@ -97,7 +142,7 @@ function detail(partial?: Partial<TaskDetail>): TaskDetail {
 
 function renderDrawer(onToggleComplete = vi.fn()) {
   render(
-    <TaskDrawer taskId={42} open={true} onOpenChange={() => {}} onToggleComplete={onToggleComplete} />,
+    <TaskDrawer card={TASK_CARD} open={true} onOpenChange={() => {}} onToggleComplete={onToggleComplete} />,
   )
   return onToggleComplete
 }
@@ -105,9 +150,11 @@ function renderDrawer(onToggleComplete = vi.fn()) {
 beforeEach(() => {
   vi.clearAllMocks()
   mockDetail.mockResolvedValue({ ok: true, data: detail() })
+  mockCardDetail.mockResolvedValue({ ok: true, data: cardDetail() })
   mockToggle.mockResolvedValue({ ok: true, data: { subtaskId: 12, isCompleted: true } })
   mockAddNote.mockResolvedValue({ ok: true, data: { noteId: 99 } })
   mockAssign.mockResolvedValue({ ok: true, data: { assigneeId: 6 } })
+  mockFlagStale.mockResolvedValue({ ok: true, data: {} as never })
 })
 
 describe('TaskDrawer', () => {
@@ -134,7 +181,8 @@ describe('TaskDrawer', () => {
     const card = (await screen.findByTestId('sop-card'))
     expect(card).toHaveTextContent('Chevron WEX fuel card close')
     expect(screen.getByTestId('sop-updated')).toHaveTextContent('Updated Aug 1, 2026 - Added the walkthrough video.')
-    expect(card).toHaveTextContent('chevron wex')
+    // The institution chip is marked as a bank SOP with the pretty name.
+    expect(screen.getByTestId('sop-institution-chip')).toHaveTextContent('Chevron WEX SOP')
     // Steps render as a numbered list, URL stripped from the step text.
     expect(card).toHaveTextContent('Download the WEX statement')
     expect(card).not.toHaveTextContent('https://www.loom.com/share/abc123')
@@ -144,6 +192,23 @@ describe('TaskDrawer', () => {
     expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
     // Standalone client manual entries render under their own heading.
     expect(screen.getByTestId('manual-entry')).toHaveTextContent('Harborline-only quirk')
+  })
+
+  it('flags a SOP stale from the drawer when the caller is manager+', async () => {
+    const user = userEvent.setup()
+    renderDrawer()
+    const flag = await screen.findByTestId('sop-flag-stale')
+    await user.click(flag)
+    expect(mockFlagStale).toHaveBeenCalledWith(31)
+    // The drawer refreshes from the server answer so the marker shows.
+    await waitFor(() => expect(mockDetail).toHaveBeenCalledTimes(2))
+  })
+
+  it('hides the flag-stale action from bookkeepers', async () => {
+    mockDetail.mockResolvedValue({ ok: true, data: detail({ canFlagStale: false }) })
+    renderDrawer()
+    await screen.findByTestId('sop-card')
+    expect(screen.queryByTestId('sop-flag-stale')).not.toBeInTheDocument()
   })
 
   it('toggles a subtask optimistically and calls the action', async () => {
@@ -206,6 +271,117 @@ describe('TaskDrawer', () => {
   })
 })
 
+describe('TaskDrawer bank-feed / reconciliation cards (I5 learning center)', () => {
+  const FEED_CARD = { kind: 'bank_feed' as const, id: 7 }
+
+  function renderCardDrawer(
+    card: { kind: 'bank_feed' | 'reconciliation'; id: number } = FEED_CARD,
+    onToggleComplete = vi.fn(),
+  ) {
+    render(
+      <TaskDrawer card={card} open={true} onOpenChange={() => {}} onToggleComplete={onToggleComplete} />,
+    )
+    return onToggleComplete
+  }
+
+  it('resolves the card institution SOPs - no checklist, notes, or timer', async () => {
+    renderCardDrawer()
+    expect(await screen.findByTestId('task-drawer-title')).toHaveTextContent(
+      'Bank feed week of 2026-08-10',
+    )
+    expect(mockCardDetail).toHaveBeenCalledWith('bank_feed', 7)
+    expect(mockDetail).not.toHaveBeenCalled()
+    // Section is named for the bank; the SOP card is marked "Columbia Bank SOP".
+    expect(screen.getByText('Columbia Bank SOPs')).toBeInTheDocument()
+    expect(screen.getByTestId('sop-institution-chip')).toHaveTextContent('Columbia Bank SOP')
+    expect(screen.getByTestId('sop-updated')).toHaveTextContent(
+      'Updated Aug 5, 2026 - Portal moved the download button.',
+    )
+    expect(screen.getByText('Log in to the Columbia portal')).toBeInTheDocument()
+    // The lighter mode: no task-only sections.
+    expect(screen.queryByText('Checklist')).not.toBeInTheDocument()
+    expect(screen.queryByText('Notes')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-timer-toggle')).not.toBeInTheDocument()
+  })
+
+  it('supports the reconciliation card kind too', async () => {
+    mockCardDetail.mockResolvedValue({
+      ok: true,
+      data: cardDetail({ kind: 'reconciliation', id: 9, title: 'Reconcile Operating Checking' }),
+    })
+    renderCardDrawer({ kind: 'reconciliation', id: 9 })
+    expect(await screen.findByTestId('task-drawer-title')).toHaveTextContent('Reconcile Operating Checking')
+    expect(mockCardDetail).toHaveBeenCalledWith('reconciliation', 9)
+    expect(screen.getByText('Aug 2026')).toBeInTheDocument()
+  })
+
+  it('flags an institution SOP stale and refreshes the card read', async () => {
+    const user = userEvent.setup()
+    renderCardDrawer()
+    await user.click(await screen.findByTestId('sop-flag-stale'))
+    expect(mockFlagStale).toHaveBeenCalledWith(32)
+    await waitFor(() => expect(mockCardDetail).toHaveBeenCalledTimes(2))
+  })
+
+  it('quiet empty state: a bank with no SOPs yet names the gap', async () => {
+    mockCardDetail.mockResolvedValue({
+      ok: true,
+      data: cardDetail({
+        sops: [],
+        institutionNames: ['First Interstate Bank'],
+        hasInstitution: true,
+      }),
+    })
+    renderCardDrawer()
+    expect(await screen.findByTestId('sop-empty')).toHaveTextContent(
+      'No SOPs yet for First Interstate Bank',
+    )
+    expect(screen.queryByTestId('sop-card')).not.toBeInTheDocument()
+  })
+
+  it('quiet empty state: no bank on the account yet', async () => {
+    mockCardDetail.mockResolvedValue({
+      ok: true,
+      data: cardDetail({ sops: [], institutionNames: [], hasInstitution: false }),
+    })
+    renderCardDrawer()
+    expect(await screen.findByTestId('sop-empty')).toHaveTextContent('No bank on this account yet')
+  })
+
+  it('names only the covered banks in the heading when the client spans several', async () => {
+    // A feed card can span banks with and without SOPs: the heading leads
+    // with the covered bank, not the full union.
+    mockCardDetail.mockResolvedValue({
+      ok: true,
+      data: cardDetail({
+        institutionNames: ['Columbia Bank', 'KeyBank'],
+        sops: [
+          {
+            id: 33,
+            title: 'Columbia Bank statement pull',
+            content: null,
+            updatedAt: '2026-08-05T12:00:00.000Z',
+            changeNote: null,
+            institutionKey: 'columbia bank',
+            institutionName: 'Columbia Bank',
+            links: [],
+          },
+        ],
+      }),
+    })
+    renderCardDrawer()
+    expect(await screen.findByText('Columbia Bank SOPs')).toBeInTheDocument()
+    expect(screen.queryByText(/KeyBank/)).not.toBeInTheDocument()
+  })
+
+  it('completes the card through the queue mutation', async () => {
+    const user = userEvent.setup()
+    const onToggleComplete = renderCardDrawer()
+    await user.click(await screen.findByTestId('drawer-complete-toggle'))
+    expect(onToggleComplete).toHaveBeenCalledWith(true)
+  })
+})
+
 describe('TaskDrawer month-close context', () => {
   const mockCloseSteps = vi.mocked(getCloseStepsAction)
 
@@ -243,7 +419,7 @@ describe('TaskDrawer month-close context', () => {
     mockCloseSteps.mockResolvedValue({ ok: true, data: closeStepsFixture() })
     render(
       <TaskDrawer
-        taskId={42}
+        card={TASK_CARD}
         open={true}
         closeContext={{ clientId: 1, year: 2026, month: 8, title: 'Client Questions' }}
         onOpenChange={() => {}}
@@ -263,7 +439,7 @@ describe('TaskDrawer month-close context', () => {
   it('stays hidden for tasks that are not close steps', async () => {
     render(
       <TaskDrawer
-        taskId={42}
+        card={TASK_CARD}
         open={true}
         closeContext={{ clientId: 1, year: 2026, month: 8, title: 'Weekly deposit review' }}
         onOpenChange={() => {}}

@@ -3,7 +3,16 @@
 import { revalidatePath } from "next/cache";
 
 import { requireStaff } from "@/server/auth/guards";
-import { addTaskNote, assignTask, getTaskDetail, setSubtaskCompleted, type TaskDetail } from "@/server/task-detail";
+import {
+  addTaskNote,
+  assignTask,
+  getTaskDetail,
+  getWorkCardSopDetail,
+  setSubtaskCompleted,
+  type TaskDetail,
+  type WorkCardSopDetail,
+  type WorkCardSopKind,
+} from "@/server/task-detail";
 
 /**
  * Task drawer server actions (workstation detail surface). All staff-level:
@@ -22,6 +31,18 @@ function fail(error: unknown): { ok: false; error: string } {
 export async function getTaskDetailAction(taskId: number): Promise<ActionResult<TaskDetail>> {
   try {
     return { ok: true, data: await getTaskDetail(taskId) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** I5: the lighter drawer read for bank-feed / reconciliation cards. */
+export async function getWorkCardSopDetailAction(
+  kind: WorkCardSopKind,
+  id: number,
+): Promise<ActionResult<WorkCardSopDetail>> {
+  try {
+    return { ok: true, data: await getWorkCardSopDetail(kind, id) };
   } catch (error) {
     return fail(error);
   }

@@ -24,9 +24,10 @@ export const sopTemplates = pgTable("sop_templates", {
   title: text("title").notNull(),
   content: text("content"),
   /**
-   * Institution auto-link key (owner call notes): when a client's account
-   * carries this institution (case-insensitive), the SOP auto-links to the
-   * client's manual and its relevant recurring rules at conversion.
+   * Institution auto-link key (owner call notes, I5): folds to the
+   * institutions table name (case/space-insensitive), so an SOP keyed to a
+   * bank auto-links to every client account whose institution_id (or legacy
+   * institution text) resolves to that bank - at conversion and on demand.
    */
   institutionKey: text("institution_key"),
   /** Staleness failsafe: what changed on the last edit, shown next to "Updated". */

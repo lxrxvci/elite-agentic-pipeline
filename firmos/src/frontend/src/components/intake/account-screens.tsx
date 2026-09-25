@@ -38,6 +38,7 @@ export function InstitutionSelect({
   index,
   onSelect,
   onAdd,
+  ariaLabel = 'Bank or card issuer',
 }: {
   institutions: InstitutionRow[]
   selectedId?: number | null
@@ -47,6 +48,9 @@ export function InstitutionSelect({
   onSelect: (institution: InstitutionRow) => void
   /** Returns the created (or deduped) row; null when the add failed. */
   onAdd: (name: string) => Promise<InstitutionRow | null>
+  /** Surface-specific trigger label (intake: "Bank or card issuer"; the
+      SOP editor: "Institution"). The listbox label stays "Banks". */
+  ariaLabel?: string
 }) {
   const [open, setOpen] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -82,7 +86,7 @@ export function InstitutionSelect({
         data-testid={`bank-select-${index}`}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label="Bank or card issuer"
+        aria-label={ariaLabel}
         onClick={() => setOpen((o) => !o)}
         className={cn(
           inputCls,
@@ -94,72 +98,74 @@ export function InstitutionSelect({
         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
       </button>
       {open && (
-        <div
-          role="listbox"
-          aria-label="Banks"
-          className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-popover p-1 shadow-pop"
-        >
-          {institutions.map((i) => {
-            const selected = i.id === selectedId
-            return (
-              <button
-                key={i.id}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                data-testid={`bank-option-${i.id}`}
-                onClick={() => {
-                  onSelect(i)
-                  setOpen(false)
+        // The popover holds the listbox AND the inline add-new; the listbox
+        // itself owns options only (axe aria-required-children).
+        <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-popover p-1 shadow-pop">
+          <div role="listbox" aria-label="Banks" className="max-h-64 overflow-auto">
+            {institutions.map((i) => {
+              const selected = i.id === selectedId
+              return (
+                <button
+                  key={i.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  data-testid={`bank-option-${i.id}`}
+                  onClick={() => {
+                    onSelect(i)
+                    setOpen(false)
+                  }}
+                  className={cn(
+                    'flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+                    selected ? 'font-medium text-accent-foreground' : 'text-foreground',
+                  )}
+                >
+                  {i.name}
+                  {selected && <Check className="h-3.5 w-3.5" aria-hidden />}
+                </button>
+              )
+            })}
+          </div>
+          <div className="border-t border-border">
+            {adding ? (
+              <form
+                className="flex items-center gap-2 p-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void submitNew()
                 }}
-                className={cn(
-                  'flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-                  selected ? 'font-medium text-accent-foreground' : 'text-foreground',
-                )}
               >
-                {i.name}
-                {selected && <Check className="h-3.5 w-3.5" aria-hidden />}
+                <input
+                  aria-label="New bank name"
+                  data-testid="bank-add-input"
+                  className={cn(inputCls, 'h-9')}
+                  placeholder="First Interstate Bank"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  // eslint-disable-next-line jsx-a11y/no-autofocus -- inline reveal: focus follows the user's click
+                  autoFocus
+                />
+                <Button type="submit" size="sm" disabled={busy || newName.trim() === ''} data-testid="bank-add-submit">
+                  {busy ? 'Adding…' : 'Add bank'}
+                </Button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                data-testid={`bank-add-toggle-${index}`}
+                onClick={() => setAdding(true)}
+                className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-firm-brand-strong transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              >
+                <Plus className="h-3.5 w-3.5" aria-hidden />
+                Add a new bank…
               </button>
-            )
-          })}
-          {adding ? (
-            <form
-              className="flex items-center gap-2 border-t border-border p-2"
-              onSubmit={(e) => {
-                e.preventDefault()
-                void submitNew()
-              }}
-            >
-              <input
-                aria-label="New bank name"
-                data-testid="bank-add-input"
-                className={cn(inputCls, 'h-9')}
-                placeholder="First Interstate Bank"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                // eslint-disable-next-line jsx-a11y/no-autofocus -- inline reveal: focus follows the user's click
-                autoFocus
-              />
-              <Button type="submit" size="sm" disabled={busy || newName.trim() === ''} data-testid="bank-add-submit">
-                {busy ? 'Adding…' : 'Add bank'}
-              </Button>
-            </form>
-          ) : (
-            <button
-              type="button"
-              data-testid={`bank-add-toggle-${index}`}
-              onClick={() => setAdding(true)}
-              className="mt-1 flex w-full items-center gap-2 rounded-md border-t border-border px-3 py-2 text-left text-sm font-medium text-firm-brand-strong transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            >
-              <Plus className="h-3.5 w-3.5" aria-hidden />
-              Add a new bank…
-            </button>
-          )}
-          {error && (
-            <p className="px-3 py-1.5 text-xs font-medium text-status-overdue" role="alert">
-              {error}
-            </p>
-          )}
+            )}
+            {error && (
+              <p className="px-3 py-1.5 text-xs font-medium text-status-overdue" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>

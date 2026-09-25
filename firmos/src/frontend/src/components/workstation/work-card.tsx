@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Check, FileText, Landmark, Lock, RefreshCw, SquareCheck, Square, Timer } from 'lucide-react'
+import { BookOpen, Check, FileText, Landmark, Lock, RefreshCw, SquareCheck, Square, Timer } from 'lucide-react'
 
 import { moneyLabel } from '@/components/clients/format'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -401,6 +401,29 @@ export const WorkCardRow = React.memo(function WorkCardRow({
       >
         ≈{WORK_ESTIMATE_MINUTES[card.kind]}m
       </span>
+
+      {/* I5 learning-center badge: bank-feed / reconciliation cards whose
+          bank has SOPs carry a small book icon + count; 0 means the bank has
+          no SOPs yet, which stays quiet (no badge) until someone writes one. */}
+      {(card.kind === 'bank_feed' || card.kind === 'reconciliation') &&
+        (card.sopCount ?? 0) > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                data-testid="card-sop-count"
+                aria-label={`${card.sopCount} bank SOP${card.sopCount === 1 ? '' : 's'}`}
+                title="Bank SOPs"
+                className="tnum inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground"
+              >
+                <BookOpen className="h-3 w-3" aria-hidden />
+                {card.sopCount}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {card.sopCount} bank SOP{card.sopCount === 1 ? '' : 's'} - open the card to read them
+            </TooltipContent>
+          </Tooltip>
+        )}
 
       <span
         className={cn(

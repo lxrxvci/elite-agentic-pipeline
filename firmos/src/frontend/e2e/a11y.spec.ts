@@ -52,6 +52,31 @@ test('workstation has no serious/critical axe violations', async ({ page }) => {
   await page.getByTestId('work-day-chip-all').click()
   await expect(page.getByTestId('work-card').first()).toBeVisible()
   await expectAccessible(page, 'workstation (All work)')
+  // I5: a bank-feed / reconciliation card opens the lighter institution-SOP
+  // drawer - scan the header, badge-less card state, and the empty section.
+  const drawerCard = page.locator('[data-testid="work-card"][data-kind="bank_feed"]').first()
+  await drawerCard.click()
+  await expect(page.getByTestId('task-drawer')).toBeVisible()
+  await expect(page.getByTestId('sop-empty')).toBeVisible()
+  await expectAccessible(page, 'workstation (card drawer)')
+  await page.keyboard.press('Escape')
+})
+
+test('SOP templates admin has no serious/critical axe violations', async ({ page }) => {
+  await page.goto('/admin/templates/sops')
+  await expect(page.getByRole('heading', { name: 'SOP templates' })).toBeVisible()
+  // The institution coverage section (flags + backfill) scans with the list.
+  await expect(page.getByTestId('institution-coverage')).toBeVisible()
+  await expectAccessible(page, 'SOP templates admin')
+  // The editor dialog with the institution dropdown + match preview.
+  await page.getByRole('button', { name: /New SOP/ }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await expect(page.getByTestId('institution-match-preview')).toBeVisible()
+  await page.getByLabel('Institution', { exact: true }).click()
+  await page.waitForTimeout(200) // let the listbox paint before measuring
+  await expectAccessible(page, 'SOP editor dialog (institution dropdown open)')
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
 })
 
 test('clients list has no serious/critical axe violations', async ({ page }) => {

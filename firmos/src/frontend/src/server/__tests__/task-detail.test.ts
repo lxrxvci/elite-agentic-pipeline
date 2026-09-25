@@ -25,10 +25,15 @@ import {
 import { dbReachable, TEST_TODAY } from "./helpers";
 
 // requireStaff reads the HTTP session, which does not exist under vitest;
-// the guard is exercised in the actions layer and the auth tests.
+// the guard is exercised in the actions layer and the auth tests. The
+// resolved user feeds the drawer's canFlagStale decision, so the mock
+// resolves an owner-shaped staff user (not undefined).
 vi.mock("@/server/auth/guards", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/auth/guards")>();
-  return { ...actual, requireStaff: vi.fn(async () => undefined) };
+  return {
+    ...actual,
+    requireStaff: vi.fn(async () => ({ normalizedRole: "owner", canEditSops: true })),
+  };
 });
 
 const reachable = await dbReachable();
@@ -104,9 +109,14 @@ describe.skipIf(!reachable)("task detail engine + SOP institution auto-linking",
 
     const resolved = detail.sops.find((s) => s.id === ruleSop.id)!;
     expect(resolved.institutionKey).toBe("columbia bank");
+    // The key names no institutions-table row (the list says "Columbia"),
+    // so the pretty name stays null and the drawer falls back to the key.
+    expect(resolved.institutionName).toBeNull();
     expect(resolved.changeNote).toBe("Added the walkthrough video.");
     expect(resolved.links).toEqual(["https://www.loom.com/share/abc123"]);
     expect(resolved.updatedAt).toBeTruthy();
+    // Owner-shaped session: the drawer exposes the staleness flag.
+    expect(detail.canFlagStale).toBe(true);
   });
 
   it("gathers subtasks and the notes thread, and mutations persist", async () => {

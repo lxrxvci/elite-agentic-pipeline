@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, or } from "drizzle-orm";
 import { addDays, formatLocalDate, workPeriodForDue, type LocalDate } from "@firmos/domain";
 
 import { db } from "@/db";
@@ -7,6 +7,7 @@ import {
   adHocTaskTemplates,
   clientManualEntries,
   clients,
+  institutions,
   offboardingTemplateTasks,
   onboardingTemplateTasks,
   projects,
@@ -20,6 +21,7 @@ import {
   tasks,
   users,
 } from "@/db/schema";
+import { normalizeInstitutionKey } from "@/shared/lib/institution-key";
 
 import { logEvent } from "./audit";
 import { localToday } from "./dates";
@@ -101,11 +103,16 @@ export async function listSopTemplates(includeInactive = false): Promise<SopTemp
   return includeInactive ? rows : rows.filter((r) => r.isActive);
 }
 
-/** Normalize an institution name/key for matching: case-insensitive, trimmed. */
-export function normalizeInstitutionKey(value: string | null | undefined): string | null {
-  const key = value?.trim().toLowerCase();
-  return key ? key : null;
-}
+/**
+ * Institution auto-linking (owner call notes): SOP templates carry a
+ * normalized institution_key; the canonical bank lives in the institutions
+ * table and accounts link to it via institution_id (with a denormalized
+ * text snapshot for legacy rows). Matching folds case and whitespace on
+ * both sides ("Columbia Bank" == " columbia  bank "), so the account's bank
+ * selection alone decides which SOPs apply - the learning center flows
+ * across clients without per-client setup.
+ */
+export { normalizeInstitutionKey } from "@/shared/lib/institution-key";
 
 export async function createSopTemplate(
   userId: number,
@@ -248,10 +255,12 @@ export async function listClientManualEntries(clientId: number) {
 //
 // "Anytime it sees a Chevron WEX card, it automatically pulls that SOP."
 // At conversion (wired from convert.ts) and on demand, each client account
-// with an institution matches active SOP templates by institution_key
-// (case-insensitive). A match creates the mirrored client manual entry
-// (same semantics as applySopToClient) plus a recurring_task_sop_links row
-// on the client's RELEVANT recurring rules:
+// with an institution matches active SOP templates by institution_key -
+// I5: matched against the institutions table row the account points at
+// (accounts.institution_id), falling back to the text snapshot for legacy
+// rows, both sides case/space-folded. A match creates the mirrored client
+// manual entry (same semantics as applySopToClient) plus a
+// recurring_task_sop_links row on the client's RELEVANT recurring rules:
 //   - merchant accounts  → rules whose title mentions "merchant"
 //   - every other type   → reconciliation rules (title mentions "reconcil")
 // Idempotent: existing mirrors and links are skipped, never duplicated.
@@ -275,9 +284,16 @@ export async function autoLinkInstitutionSops(
         id: accounts.id,
         accountType: accounts.accountType,
         institution: accounts.institution,
+        institutionId: accounts.institutionId,
       })
       .from(accounts)
-      .where(and(eq(accounts.clientId, clientId), eq(accounts.isActive, true), isNotNull(accounts.institution))),
+      .where(
+        and(
+          eq(accounts.clientId, clientId),
+          eq(accounts.isActive, true),
+          or(isNotNull(accounts.institutionId), isNotNull(accounts.institution)),
+        ),
+      ),
     db
       .select()
       .from(sopTemplates)
@@ -291,6 +307,20 @@ export async function autoLinkInstitutionSops(
       .from(clientManualEntries)
       .where(eq(clientManualEntries.clientId, clientId)),
   ]);
+
+  // I5: the canonical key comes from the institutions table row the account
+  // points at; the text snapshot only covers legacy rows without an FK.
+  const institutionIds = [...new Set(accountRows.map((a) => a.institutionId).filter((v): v is number => v != null))];
+  const institutionNames = new Map<number, string>();
+  if (institutionIds.length > 0) {
+    const rows = await db
+      .select({ id: institutions.id, name: institutions.name })
+      .from(institutions)
+      .where(inArray(institutions.id, institutionIds));
+    for (const r of rows) institutionNames.set(r.id, r.name);
+  }
+  const institutionOf = (a: (typeof accountRows)[number]): string | null =>
+    a.institutionId != null ? (institutionNames.get(a.institutionId) ?? null) : a.institution;
 
   const result: InstitutionAutoLinkResult = { matchedSops: 0, manualEntriesCreated: 0, ruleLinksCreated: 0 };
   if (accountRows.length === 0 || sopRows.length === 0) return result;
@@ -324,7 +354,7 @@ export async function autoLinkInstitutionSops(
 
   return db.transaction(async (tx) => {
     for (const account of accountRows) {
-      const institution = normalizeInstitutionKey(account.institution);
+      const institution = normalizeInstitutionKey(institutionOf(account));
       if (!institution) continue;
       const isMerchant = account.accountType.trim().toLowerCase().includes("merchant");
       // The client's relevant rules for this institution class.
@@ -387,6 +417,126 @@ export async function autoLinkInstitutionSops(
     }
     return result;
   });
+}
+
+// ── I5: institution SOP resolution (the learning center) ──────────────────
+//
+// SOPs attach to recurring rules and client manuals through
+// recurring_task_sop_links (the concrete store, created at conversion by
+// autoLinkInstitutionSops). Bank-feed and reconciliation cards are not
+// tasks, so their SOPs resolve on read from the account's institution -
+// the same fold-match, no per-card rows needed.
+
+/** Active SOP templates carrying an institution key, in drawer order. */
+export async function listInstitutionKeyedSops(): Promise<SopTemplateRow[]> {
+  return db
+    .select()
+    .from(sopTemplates)
+    .where(and(eq(sopTemplates.isActive, true), isNotNull(sopTemplates.institutionKey)))
+    .orderBy(asc(sopTemplates.position), asc(sopTemplates.id));
+}
+
+/** Fold-match keyed SOPs against institution names (or normalized keys). */
+export function matchInstitutionSops(sops: SopTemplateRow[], names: Iterable<string>): SopTemplateRow[] {
+  const wanted = new Set(
+    [...names].map((n) => normalizeInstitutionKey(n)).filter((k): k is string => k != null),
+  );
+  return sops.filter((s) => {
+    const key = normalizeInstitutionKey(s.institutionKey);
+    return key != null && wanted.has(key);
+  });
+}
+
+/**
+ * Active client accounts per normalized institution key - the count behind
+ * the editor's "matches N client accounts" preview and the coverage flags.
+ * FK rows resolve through the institutions table; legacy text-snapshot rows
+ * fold their free text.
+ */
+export async function countAccountsByInstitutionKey(): Promise<Map<string, number>> {
+  const accountRows = await db
+    .select({ institution: accounts.institution, institutionId: accounts.institutionId })
+    .from(accounts)
+    .where(eq(accounts.isActive, true));
+  const institutionIds = [
+    ...new Set(accountRows.map((a) => a.institutionId).filter((v): v is number => v != null)),
+  ];
+  const namesById = new Map<number, string>();
+  if (institutionIds.length > 0) {
+    const rows = await db
+      .select({ id: institutions.id, name: institutions.name })
+      .from(institutions)
+      .where(inArray(institutions.id, institutionIds));
+    for (const r of rows) namesById.set(r.id, r.name);
+  }
+  const counts = new Map<string, number>();
+  for (const a of accountRows) {
+    const key = normalizeInstitutionKey(
+      a.institutionId != null ? (namesById.get(a.institutionId) ?? null) : a.institution,
+    );
+    if (key == null) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * I5 backfill convenience: re-normalize legacy institution_key values so the
+ * fold-match reaches rows written before whitespace folding existed. Pure
+ * normalization (trim / single-space / lowercase) - keys are never remapped
+ * to a different bank. Idempotent; audit-logged with the touched ids.
+ */
+export async function normalizeSopInstitutionKeys(userId: number): Promise<{ updated: number }> {
+  const rows = await db
+    .select({ id: sopTemplates.id, institutionKey: sopTemplates.institutionKey })
+    .from(sopTemplates)
+    .where(isNotNull(sopTemplates.institutionKey));
+  const touched: number[] = [];
+  for (const row of rows) {
+    const folded = normalizeInstitutionKey(row.institutionKey);
+    if (folded != null && folded !== row.institutionKey) {
+      await db.update(sopTemplates).set({ institutionKey: folded }).where(eq(sopTemplates.id, row.id));
+      touched.push(row.id);
+    }
+  }
+  if (touched.length > 0) {
+    await logEvent({
+      userId,
+      action: "sop_institution_keys_normalized",
+      entityType: "sop_template",
+      metadata: { updated: touched.length, sopTemplateIds: touched },
+    });
+  }
+  return { updated: touched.length };
+}
+
+/**
+ * Drawer staleness flag (manager+). Follows the changeNote convention - the
+ * flag IS the staleness failsafe - but deliberately does NOT bump updatedAt:
+ * a stale flag must never make the SOP look freshly reviewed. The next real
+ * edit clears the marker by writing a real change note.
+ */
+export async function flagSopStale(
+  userId: number,
+  sopId: number,
+  reason?: string | null,
+): Promise<SopTemplateRow> {
+  const [existing] = await db.select().from(sopTemplates).where(eq(sopTemplates.id, sopId)).limit(1);
+  if (!existing) throw new TemplateError(404, `SOP template ${sopId} not found`);
+  const note = reason?.trim() ? `Flagged stale - ${reason.trim()}` : "Flagged stale - needs a refresh";
+  const [updated] = await db
+    .update(sopTemplates)
+    .set({ changeNote: note })
+    .where(eq(sopTemplates.id, sopId))
+    .returning();
+  await logEvent({
+    userId,
+    action: "sop_flagged_stale",
+    entityType: "sop_template",
+    entityId: sopId,
+    metadata: { changeNote: note },
+  });
+  return updated;
 }
 
 // ── 2. Ad-hoc task templates (§19) ────────────────────────────────────────

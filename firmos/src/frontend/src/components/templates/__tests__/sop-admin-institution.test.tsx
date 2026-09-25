@@ -11,6 +11,9 @@ beforeEach(() => {
     Element.prototype.setPointerCapture = () => {}
     Element.prototype.releasePointerCapture = () => {}
   }
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {}
+  }
 })
 
 vi.mock('@/server/actions/templates', () => ({
@@ -18,11 +21,30 @@ vi.mock('@/server/actions/templates', () => ({
   createSopTemplateAction: vi.fn().mockResolvedValue({ ok: true, data: {} }),
   deleteSopTemplateAction: vi.fn(),
   updateSopTemplateAction: vi.fn().mockResolvedValue({ ok: true, data: {} }),
+  flagSopStaleAction: vi.fn(),
+  normalizeSopInstitutionKeysAction: vi.fn(),
 }))
 
+vi.mock('@/server/actions/institutions', () => ({
+  addInstitutionAction: vi.fn(),
+}))
+
+import { addInstitutionAction } from '@/server/actions/institutions'
 import { createSopTemplateAction, updateSopTemplateAction } from '@/server/actions/templates'
 
 const CLIENTS = [{ id: 1, name: 'Harborline Marine Supply' }]
+
+const INSTITUTIONS = [
+  { id: 1, name: 'Chevron WEX' },
+  { id: 2, name: 'Columbia Bank' },
+]
+
+const ACCOUNT_COUNTS: Record<string, number> = {
+  'chevron wex': 2,
+  'columbia bank': 0,
+}
+
+const PROPS = { clients: CLIENTS, institutions: INSTITUTIONS, accountCounts: ACCOUNT_COUNTS }
 
 const KEYED: SopTemplateItem = {
   id: 1,
@@ -50,10 +72,11 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('shows the institution chip and "Updated" line only when the data exists', () => {
-    render(<SopAdmin sops={[KEYED, UNKEYED]} clients={CLIENTS} canEdit={true} />)
+    render(<SopAdmin sops={[KEYED, UNKEYED]} canEdit={true} {...PROPS} />)
     const chips = screen.getAllByTestId('sop-institution-chip')
     expect(chips).toHaveLength(1)
-    expect(chips[0]).toHaveTextContent('chevron wex')
+    // The chip renders the pretty institutions-table name, not the raw key.
+    expect(chips[0]).toHaveTextContent('Chevron WEX')
 
     const updated = screen.getAllByTestId('sop-updated')
     expect(updated[0]).toHaveTextContent('Updated Aug 10, 2026 - Added the walkthrough video.')
@@ -61,12 +84,20 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
     expect(updated[1]).not.toHaveTextContent(' - ')
   })
 
-  it('creates an SOP with the institution key and change note', async () => {
+  it('creates an SOP with a picked institution, previewing the account match', async () => {
     const user = userEvent.setup()
-    render(<SopAdmin sops={[]} clients={CLIENTS} canEdit={true} />)
+    render(<SopAdmin sops={[]} canEdit={true} {...PROPS} />)
     await user.click(screen.getByRole('button', { name: /New SOP/ }))
     await user.type(screen.getByLabelText('Title'), 'WEX close')
-    await user.type(screen.getByLabelText('Institution key'), 'Chevron WEX')
+
+    // The institution field is the shared dropdown, not free text.
+    await user.click(screen.getByLabelText('Institution'))
+    await user.click(screen.getByRole('option', { name: 'Chevron WEX' }))
+    // Live match preview from the server-provided account counts.
+    expect(screen.getByTestId('institution-match-preview')).toHaveTextContent(
+      'Matches 2 client accounts at this bank.',
+    )
+
     await user.type(screen.getByLabelText('Change note'), 'First version')
     await user.click(screen.getByRole('button', { name: 'Create SOP' }))
     expect(createSopTemplateAction).toHaveBeenCalledWith({
@@ -78,18 +109,60 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
     })
   })
 
-  it('pre-fills the institution key on edit and sends it back', async () => {
+  it('previews "no client accounts yet" for a bank with none', async () => {
     const user = userEvent.setup()
-    render(<SopAdmin sops={[KEYED]} clients={CLIENTS} canEdit={true} />)
+    render(<SopAdmin sops={[]} canEdit={true} {...PROPS} />)
+    await user.click(screen.getByRole('button', { name: /New SOP/ }))
+    await user.click(screen.getByLabelText('Institution'))
+    await user.click(screen.getByRole('option', { name: 'Columbia Bank' }))
+    expect(screen.getByTestId('institution-match-preview')).toHaveTextContent(
+      'No client accounts at this bank yet.',
+    )
+  })
+
+  it('adds a brand-new bank inline and keys the SOP to it', async () => {
+    const user = userEvent.setup()
+    vi.mocked(addInstitutionAction).mockResolvedValue({
+      ok: true,
+      data: { id: 3, name: 'First Interstate Bank' },
+    })
+    render(<SopAdmin sops={[]} canEdit={true} {...PROPS} />)
+    await user.click(screen.getByRole('button', { name: /New SOP/ }))
+    await user.type(screen.getByLabelText('Title'), 'New bank procedure')
+
+    await user.click(screen.getByLabelText('Institution'))
+    await user.click(screen.getByTestId('bank-add-toggle-0'))
+    await user.type(screen.getByLabelText('New bank name'), 'First Interstate Bank')
+    await user.click(screen.getByTestId('bank-add-submit'))
+
+    expect(addInstitutionAction).toHaveBeenCalledWith('First Interstate Bank')
+    // The dropdown selects the freshly created row...
+    expect(screen.getByTestId('bank-select-0')).toHaveTextContent('First Interstate Bank')
+    // ...and a zero-account preview follows a brand-new bank.
+    expect(screen.getByTestId('institution-match-preview')).toHaveTextContent(
+      'No client accounts at this bank yet.',
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Create SOP' }))
+    expect(createSopTemplateAction).toHaveBeenCalledWith(
+      expect.objectContaining({ institutionKey: 'First Interstate Bank' }),
+    )
+  })
+
+  it('pre-fills a legacy key on edit (no matching institution row) and sends it back', async () => {
+    const user = userEvent.setup()
+    const legacy: SopTemplateItem = { ...KEYED, institutionKey: 'legacy bank' }
+    render(<SopAdmin sops={[legacy]} canEdit={true} {...PROPS} />)
     await user.click(screen.getByRole('button', { name: 'Edit Chevron WEX fuel card close' }))
-    const keyInput = screen.getByLabelText('Institution key')
-    expect(keyInput).toHaveValue('chevron wex')
-    await user.clear(keyInput)
-    await user.type(keyInput, 'WEX')
+    // Free-text fallback: the dropdown shows the raw key as the current value.
+    expect(screen.getByTestId('bank-select-0')).toHaveTextContent('legacy bank')
+    // Re-picking a real bank replaces the legacy key.
+    await user.click(screen.getByLabelText('Institution'))
+    await user.click(screen.getByRole('option', { name: 'Columbia Bank' }))
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
     expect(updateSopTemplateAction).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ institutionKey: 'WEX', changeNote: 'Added the walkthrough video.' }),
+      expect.objectContaining({ institutionKey: 'Columbia Bank' }),
     )
   })
 })
