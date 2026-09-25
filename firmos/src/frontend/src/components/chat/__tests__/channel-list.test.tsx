@@ -63,6 +63,7 @@ function renderList(overrides: Partial<Parameters<typeof ChannelList>[0]> = {}) 
       presenceUserIds={new Set([5])}
       onSelect={vi.fn()}
       onNewMessage={vi.fn()}
+      timeZone="America/New_York"
       {...overrides}
     />,
   )

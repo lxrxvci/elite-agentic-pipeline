@@ -42,11 +42,11 @@ export interface TimeEditRow {
   requestedEndedAt: string | null
 }
 
-function spanLabel(startIso: string, endIso: string | null): string {
-  return `${dateTimeLabel(startIso)} - ${endIso ? dateTimeLabel(endIso) : 'open'}`
+function spanLabel(startIso: string, endIso: string | null, timeZone: string): string {
+  return `${dateTimeLabel(startIso, timeZone)} - ${endIso ? dateTimeLabel(endIso, timeZone) : 'open'}`
 }
 
-function PendingRow({ row }: { row: TimeEditRow }) {
+function PendingRow({ row, timeZone }: { row: TimeEditRow; timeZone: string }) {
   const router = useRouter()
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -76,13 +76,13 @@ function PendingRow({ row }: { row: TimeEditRow }) {
           </p>
           <p className="tnum mt-1 text-xs text-muted-foreground">
             <span className="line-through decoration-status-overdue/60">
-              {spanLabel(row.originalStartedAt, row.originalEndedAt)}
+              {spanLabel(row.originalStartedAt, row.originalEndedAt, timeZone)}
             </span>
             <span className="mx-1.5" aria-hidden>
               →
             </span>
             <span className="text-foreground">
-              {spanLabel(row.requestedStartedAt, row.requestedEndedAt)}
+              {spanLabel(row.requestedStartedAt, row.requestedEndedAt, timeZone)}
             </span>
           </p>
           {row.reason && (
@@ -125,7 +125,7 @@ function PendingRow({ row }: { row: TimeEditRow }) {
   )
 }
 
-export function TimeEditReview({ rows }: { rows: TimeEditRow[] }) {
+export function TimeEditReview({ rows, timeZone }: { rows: TimeEditRow[]; timeZone: string }) {
   const pending = rows.filter((r) => r.status === 'pending')
   const history = rows.filter((r) => r.status !== 'pending')
 
@@ -142,7 +142,7 @@ export function TimeEditReview({ rows }: { rows: TimeEditRow[] }) {
               No pending requests. Corrections staff submit land here.
             </p>
           ) : (
-            pending.map((row) => <PendingRow key={row.requestId} row={row} />)
+            pending.map((row) => <PendingRow key={row.requestId} row={row} timeZone={timeZone} />)
           )}
         </div>
       </section>
@@ -179,11 +179,11 @@ export function TimeEditReview({ rows }: { rows: TimeEditRow[] }) {
                       {row.clientName ? ` · ${row.clientName}` : ''}
                     </TableCell>
                     <TableCell className="tnum text-xs">
-                      {spanLabel(row.requestedStartedAt, row.requestedEndedAt)}
+                      {spanLabel(row.requestedStartedAt, row.requestedEndedAt, timeZone)}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {row.reviewerName ?? '-'}
-                      {row.reviewedAt ? ` · ${dateTimeLabel(row.reviewedAt)}` : ''}
+                      {row.reviewedAt ? ` · ${dateTimeLabel(row.reviewedAt, timeZone)}` : ''}
                     </TableCell>
                     <TableCell className="pr-4 text-right">
                       <WorkStatusBadge

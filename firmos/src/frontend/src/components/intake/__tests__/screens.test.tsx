@@ -261,6 +261,22 @@ describe('corporate payroll card (I2, 00:48:07)', () => {
     expect(answersNow().hasPayroll ?? null).toBeNull()
   })
 
+  it('a pre-answered select still offers Continue (no dead end)', () => {
+    // Live-verified 2026-09: with Yes pre-selected and No locked, the screen
+    // rendered no affordance at all and the wizard stalled here.
+    const onAdvance = vi.fn()
+    render(
+      <Harness q={findQuestion('income', 'payroll')!} initial={{ taxStructure: 'S-corp' }} onAdvance={onAdvance} />,
+    )
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).toHaveBeenCalled()
+  })
+
+  it('an unanswered select keeps the auto-advance-only flow (no Continue)', () => {
+    render(<Harness q={findQuestion('income', 'personal-card')!} initial={{}} />)
+    expect(screen.queryByTestId('continue')).toBeNull()
+  })
+
   it('a sole prop gets the owner-never-on-payroll nuance and a live No card', () => {
     render(<Harness q={findQuestion('income', 'payroll')!} initial={{ taxStructure: 'Sole proprietorship' }} />)
     const no = screen.getByTestId('option-no')

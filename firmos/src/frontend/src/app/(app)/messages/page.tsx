@@ -14,6 +14,7 @@ import {
   type ChannelMessagesPage,
   type ChatPerson,
 } from '@/server/chat'
+import { firmTimezone } from '@/server/notifications'
 import { getCurrentUserId } from '@/server/session'
 
 export const metadata: Metadata = { title: 'FirmOS - Messages' }
@@ -85,6 +86,7 @@ export default async function MessagesPage({
         initialChannelId={initialChannelId}
         initialThread={initialThread}
         initialMembers={initialMembers}
+        timeZone={firmTimezone()}
       />
     </div>
   )

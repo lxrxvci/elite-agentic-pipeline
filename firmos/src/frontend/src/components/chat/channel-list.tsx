@@ -22,6 +22,8 @@ interface ChannelListProps {
   presenceUserIds: ReadonlySet<number>
   onSelect: (channelId: number) => void
   onNewMessage: () => void
+  /** Firm timezone for the last-message stamps (hydration-safe; see format.ts). */
+  timeZone: string
 }
 
 function UnreadChip({ count }: { count: number }) {
@@ -83,6 +85,7 @@ export function ChannelList({
   presenceUserIds,
   onSelect,
   onNewMessage,
+  timeZone,
 }: ChannelListProps) {
   const [search, setSearch] = useState('')
 
@@ -170,7 +173,7 @@ export function ChannelList({
                     </span>
                     {channel.lastMessage && (
                       <span className="tnum ml-auto shrink-0 text-[11px] text-muted-foreground">
-                        {formatChannelTimestamp(channel.lastMessage.createdAt)}
+                        {formatChannelTimestamp(channel.lastMessage.createdAt, undefined, timeZone)}
                       </span>
                     )}
                   </span>

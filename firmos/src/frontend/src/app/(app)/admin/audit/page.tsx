@@ -3,6 +3,7 @@ import type { Metadata } from 'next'
 import { AuditLogTable } from '@/components/admin/audit-log-table'
 import { listAuditEvents } from '@/server/admin-reads'
 import { requireRole } from '@/server/auth/guards'
+import { firmTimezone } from '@/server/notifications'
 
 export const metadata: Metadata = { title: 'FirmOS - Admin - Audit log' }
 
@@ -20,7 +21,7 @@ export default async function AdminAuditPage() {
       <p className="text-xs text-muted-foreground">
         Last <span className="tnum">{rows.length}</span> events · append-only by design.
       </p>
-      <AuditLogTable rows={rows} actions={actions} entityTypes={entityTypes} />
+      <AuditLogTable rows={rows} actions={actions} entityTypes={entityTypes} timeZone={firmTimezone()} />
     </div>
   )
 }

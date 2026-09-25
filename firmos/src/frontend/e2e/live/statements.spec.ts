@@ -46,13 +46,25 @@ test('statements: expand a row to the by-month grid', async ({ page }) => {
 })
 
 test('statements: defer popover persists server-side, badge after reload', async ({ page }) => {
-  const firstRow = page.getByTestId('statement-queue-row').first()
-  // Deferral suppresses the overdue flag, which re-orders the queue - track
-  // the row by account name, not position.
-  const accountName = await firstRow.locator('td').nth(2).locator('span').first().innerText()
+  // Track the SEEDED 'Operating Checking' row by its defer trigger's exact
+  // aria-label: converted LIVE-TEST intakes add lookalike rows ("LIVE-TEST
+  // Operating Checking") that prefix-match but never exact-match, and the
+  // deferral re-orders the queue (suite residue, observed 2026-09).
   const rowByName = () =>
-    page.getByTestId('statement-queue-row').filter({ hasText: accountName })
-  await expect(rowByName().getByText('Deferred until')).toHaveCount(0)
+    page
+      .getByTestId('statement-queue-row')
+      .filter({
+        has: page.getByRole('button', { name: 'Defer statements for Operating Checking', exact: true }),
+      })
+  const firstRow = rowByName()
+  await expect(firstRow).toHaveCount(1)
+  // Self-heal: a crashed prior run can leave the deferral in place; clear it
+  // so the test starts from the queue as found.
+  if ((await rowByName().getByText(/Deferred until/).count()) > 0) {
+    await firstRow.getByTestId('defer-trigger').click()
+    await page.getByTestId('defer-popover').getByRole('button', { name: 'Clear' }).click()
+    await expect(rowByName().getByText(/Deferred until/)).toHaveCount(0, { timeout: 15_000 })
+  }
 
   await firstRow.getByTestId('defer-trigger').click()
   const popover = page.getByTestId('defer-popover')
@@ -88,12 +100,16 @@ test('statements: defer popover persists server-side, badge after reload', async
 // Regression cover: the defer path reloads the queue in place via onChanged
 // (the badge used to stay stale until a full page reload).
 test('statements: defer popover sets the badge without a reload', async ({ page }) => {
-  const firstRow = page.getByTestId('statement-queue-row').first()
-  // The deferral clears the overdue flag, which re-orders the queue - track
-  // the row by account name, not position.
-  const accountName = await firstRow.locator('td').nth(2).locator('span').first().innerText()
+  // Same seeded row, tracked by its exact defer-trigger aria-label (the
+  // deferral clears the overdue flag, which re-orders the queue).
   const rowByName = () =>
-    page.getByTestId('statement-queue-row').filter({ hasText: accountName })
+    page
+      .getByTestId('statement-queue-row')
+      .filter({
+        has: page.getByRole('button', { name: 'Defer statements for Operating Checking', exact: true }),
+      })
+  const firstRow = rowByName()
+  await expect(firstRow).toHaveCount(1)
   await firstRow.getByTestId('defer-trigger').click()
   const popover = page.getByTestId('defer-popover')
   const input = popover.locator('input[type="date"]')

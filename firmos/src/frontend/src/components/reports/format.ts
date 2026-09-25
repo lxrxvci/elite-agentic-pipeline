@@ -81,14 +81,40 @@ export function moneyLabel(amount: number): string {
   return amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
-/** "14:05" wall-clock label for an ISO instant (process-local = firm-local). */
-export function timeLabel(iso: string): string {
+/**
+ * "14:05" wall-clock label for an ISO instant.
+ *
+ * Hydration rule (live-verified 2026-09): the server renders in ITS timezone
+ * (UTC on Vercel) while the browser hydrates in the viewer's - without an
+ * explicit `timeZone` the two texts differ, React throws hydration error
+ * #418, and the boundary re-renders client-side (buttons sit dead through
+ * the recovery window on slow connections). Server pages must pass the firm
+ * timezone (FIRMOS_TIMEZONE via firmTimezone()) so both sides agree.
+ */
+export function timeLabel(iso: string, timeZone?: string): string {
+  if (timeZone != null) {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(iso))
+  }
   const d = new Date(iso)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 /** "Aug 30, 14:05" - day plus wall-clock for entry lists. */
-export function dateTimeLabel(iso: string): string {
+export function dateTimeLabel(iso: string, timeZone?: string): string {
+  if (timeZone != null) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      month: 'short',
+      day: 'numeric',
+    }).formatToParts(new Date(iso))
+    const part = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
+    return `${part('month')} ${part('day')}, ${timeLabel(iso, timeZone)}`
+  }
   const d = new Date(iso)
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
   return `${months[d.getMonth()]} ${d.getDate()}, ${timeLabel(iso)}`

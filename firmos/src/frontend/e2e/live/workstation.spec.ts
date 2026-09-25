@@ -15,9 +15,15 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('workstation: buckets, day chips, and within-bucket ordering', async ({ page }) => {
-  // Bucket tabs render with counts.
+  // Anti-overwhelm D1: the workstation lands on My Day; the bucket tabs live
+  // one tab over in All work.
+  await page.getByTestId('view-tab-queue').click()
+
+  // Bucket tabs render with counts (scoped: the view switcher's "All work"
+  // tab also matches /^All/ at the page level).
+  const bucketTabs = page.locator('[aria-label="Filter by bucket"]')
   for (const name of ['All', 'Overdue', 'Due Today', 'Upcoming', 'Waiting', 'Deferred', 'Gated']) {
-    await expect(page.getByRole('tab', { name: new RegExp(`^${name}`) })).toBeVisible()
+    await expect(bucketTabs.getByRole('tab', { name: new RegExp(`^${name}`) })).toBeVisible()
   }
 
   // Day-of-week chips render; All opens the full queue.
@@ -27,9 +33,10 @@ test('workstation: buckets, day chips, and within-bucket ordering', async ({ pag
 
   // Ordering spot-check: within every rendered bucket section, kind order is
   // non-decreasing in the daily-workflow rank (periodic work first,
-  // reconciliations after, reports last).
+  // reconciliations after, reports last). Direct children only - the outer
+  // "Work queue" wrapper section would otherwise double-count every card.
   const rank: Record<string, number> = { task: 0, bank_feed: 0, reconciliation: 2, report: 3 }
-  const sections = page.locator('section[aria-label]')
+  const sections = page.locator('section[aria-label="Work queue"] > section[aria-label]')
   const sectionCount = await sections.count()
   expect(sectionCount).toBeGreaterThan(0)
   for (let i = 0; i < sectionCount; i += 1) {

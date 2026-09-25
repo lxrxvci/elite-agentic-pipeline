@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 
 import { TimeEditReview } from '@/components/reports/time-edit-review'
 import { requireStaff } from '@/server/auth/guards'
+import { firmTimezone } from '@/server/notifications'
 
 import { listTimeEditQueue } from '../_lib/data'
 
@@ -28,7 +29,7 @@ export default async function TimeEditsPage() {
           reject to leave it untouched.
         </p>
       </div>
-      <TimeEditReview rows={rows} />
+      <TimeEditReview rows={rows} timeZone={firmTimezone()} />
     </div>
   )
 }

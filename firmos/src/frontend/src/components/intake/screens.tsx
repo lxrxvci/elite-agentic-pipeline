@@ -734,7 +734,11 @@ export function QuestionScreen({
             />
           </div>
         )}
-        {otherOpen && (
+        {/* A select with an answer but no pending pick needs a way forward:
+            the pre-answered corporate payroll card (I2) and any screen
+            revisited via Back would otherwise dead-end (live-verified
+            2026-09: the wizard stalled here with no affordance). */}
+        {(otherOpen || current != null) && (
           <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
             Continue
             <ArrowRight className="h-4 w-4" aria-hidden />

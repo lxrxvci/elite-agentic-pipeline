@@ -70,6 +70,7 @@ function renderPanel(onRead = vi.fn()) {
       initialThread={thread}
       initialMembers={members}
       onRead={onRead}
+      timeZone="America/New_York"
     />,
   )
   return onRead
@@ -161,6 +162,7 @@ describe('MessagePanel', () => {
         initialThread={{ hasMore: false, messages: [] }}
         initialMembers={members}
         onRead={vi.fn()}
+        timeZone="America/New_York"
       />,
     )
     expect(screen.getByText('No messages yet')).toBeInTheDocument()
@@ -190,6 +192,7 @@ describe('MessagePanel', () => {
         initialThread={paged}
         initialMembers={members}
         onRead={vi.fn()}
+        timeZone="America/New_York"
       />,
     )
     await user.click(screen.getByRole('button', { name: /Load earlier messages/ }))

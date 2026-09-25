@@ -40,11 +40,13 @@ const approvedRow: TimeEditRow = {
   reviewedAt: '2026-08-21T15:00:00.000Z',
 }
 
+const TZ = 'America/New_York'
+
 beforeEach(() => vi.clearAllMocks())
 
 describe('TimeEditReview', () => {
   it('renders the pending queue with old -> new times and reason', () => {
-    render(<TimeEditReview rows={[pendingRow]} />)
+    render(<TimeEditReview rows={[pendingRow]} timeZone={TZ} />)
     const row = screen.getByTestId('time-edit-pending')
     expect(row).toHaveTextContent('Jorge Medina')
     expect(row).toHaveTextContent('Tasks · Harborline Marine Supply')
@@ -55,7 +57,7 @@ describe('TimeEditReview', () => {
 
   it('approve calls the review action and refreshes', async () => {
     vi.mocked(reviewTimeEditAction).mockResolvedValue({ ok: true, data: { status: 'approved' } })
-    render(<TimeEditReview rows={[pendingRow]} />)
+    render(<TimeEditReview rows={[pendingRow]} timeZone={TZ} />)
     await userEvent.click(screen.getByRole('button', { name: /approve jorge medina/i }))
     expect(reviewTimeEditAction).toHaveBeenCalledWith(5, true)
     expect(refresh).toHaveBeenCalled()
@@ -63,7 +65,7 @@ describe('TimeEditReview', () => {
 
   it('reject calls the review action with approve=false', async () => {
     vi.mocked(reviewTimeEditAction).mockResolvedValue({ ok: true, data: { status: 'rejected' } })
-    render(<TimeEditReview rows={[pendingRow]} />)
+    render(<TimeEditReview rows={[pendingRow]} timeZone={TZ} />)
     await userEvent.click(screen.getByRole('button', { name: /reject jorge medina/i }))
     expect(reviewTimeEditAction).toHaveBeenCalledWith(5, false)
   })
@@ -73,7 +75,7 @@ describe('TimeEditReview', () => {
       ok: false,
       error: 'You cannot review your own time edit request',
     })
-    render(<TimeEditReview rows={[pendingRow]} />)
+    render(<TimeEditReview rows={[pendingRow]} timeZone={TZ} />)
     await userEvent.click(screen.getByRole('button', { name: /approve jorge medina/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'You cannot review your own time edit request',
@@ -81,7 +83,7 @@ describe('TimeEditReview', () => {
   })
 
   it('renders history rows with outcome chips and reviewer', () => {
-    render(<TimeEditReview rows={[approvedRow]} />)
+    render(<TimeEditReview rows={[approvedRow]} timeZone={TZ} />)
     const row = screen.getByTestId('time-edit-history')
     expect(row).toHaveTextContent('Mara Ellison')
     const chip = screen.getByText('Approved')

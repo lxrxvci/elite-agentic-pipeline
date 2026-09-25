@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { activityLabel, formatClock, formatHours, hoursLabel, moneyLabel } from '../format'
+import { activityLabel, dateTimeLabel, formatClock, formatHours, hoursLabel, moneyLabel, timeLabel } from '../format'
 
 describe('reports format helpers', () => {
   it('formatHours renders union minutes as two-decimal hours', () => {
@@ -33,5 +33,22 @@ describe('reports format helpers', () => {
     expect(activityLabel('tax_checklist')).toBe('Tax checklist')
     expect(activityLabel('day')).toBe('Day session')
     expect(activityLabel('mystery')).toBe('mystery')
+  })
+
+  // Hydration guard (live incident 2026-09): a pinned firm timezone renders
+  // identically on the UTC server and in any viewer zone - without it the
+  // SSR text mismatched and React discarded the boundary (error #418).
+  it('timeLabel honors the pinned firm timezone', () => {
+    // 18:05 UTC = 14:05 in New York (August, EDT).
+    expect(timeLabel('2026-08-20T18:05:00.000Z', 'America/New_York')).toBe('14:05')
+    expect(timeLabel('2026-08-20T18:05:00.000Z', 'America/Los_Angeles')).toBe('11:05')
+  })
+
+  it('dateTimeLabel honors the pinned firm timezone, day included', () => {
+    // 01:30 UTC is still the previous evening on both US coasts.
+    expect(dateTimeLabel('2026-08-21T01:30:00.000Z', 'America/New_York')).toBe('Aug 20, 21:30')
+    expect(dateTimeLabel('2026-08-21T01:30:00.000Z', 'America/Los_Angeles')).toBe('Aug 20, 18:30')
+    // Unpinned keeps the legacy process-local behavior.
+    expect(dateTimeLabel('2026-08-20T18:05:00.000Z')).toContain('Aug ')
   })
 })

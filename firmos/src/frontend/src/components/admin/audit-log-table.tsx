@@ -33,6 +33,13 @@ interface AuditLogTableProps {
   rows: AuditEventRow[]
   actions: string[]
   entityTypes: string[]
+  /**
+   * Firm timezone (FIRMOS_TIMEZONE) pinned by the server page: without it
+   * the timestamp cells render UTC on Vercel and the viewer's zone in the
+   * browser, which is hydration error #418 (and dead buttons while React
+   * re-renders the boundary). Live-verified 2026-09.
+   */
+  timeZone: string
 }
 
 function csvEscape(value: string): string {
@@ -56,7 +63,7 @@ function toCsv(rows: AuditEventRow[]): string {
   return [header, ...lines].join('\n')
 }
 
-export function AuditLogTable({ rows, actions, entityTypes }: AuditLogTableProps) {
+export function AuditLogTable({ rows, actions, entityTypes, timeZone }: AuditLogTableProps) {
   const [actionFilter, setActionFilter] = React.useState('all')
   const [entityFilter, setEntityFilter] = React.useState('all')
 
@@ -149,6 +156,7 @@ export function AuditLogTable({ rows, actions, entityTypes }: AuditLogTableProps
                     <div className="flex flex-col">
                       <span className="tnum text-xs text-foreground">
                         {row.createdAt.toLocaleString('en-US', {
+                          timeZone,
                           month: 'short',
                           day: 'numeric',
                           hour: '2-digit',

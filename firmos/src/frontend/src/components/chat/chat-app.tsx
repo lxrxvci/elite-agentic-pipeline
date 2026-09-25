@@ -39,6 +39,9 @@ interface ChatAppProps {
   initialChannelId: number | null
   initialThread: ChannelMessagesPage | null
   initialMembers: ChatPerson[]
+  /** Firm timezone (FIRMOS_TIMEZONE) for every message stamp - pinned by the
+      server page so SSR and hydration render identical text (React #418). */
+  timeZone: string
 }
 
 export function ChatApp({
@@ -49,6 +52,7 @@ export function ChatApp({
   initialChannelId,
   initialThread,
   initialMembers,
+  timeZone,
 }: ChatAppProps) {
   const [channels, setChannels] = useState(initialChannels)
   const [presence, setPresence] = useState(initialPresence)
@@ -114,6 +118,7 @@ export function ChatApp({
           presenceUserIds={presenceUserIds}
           onSelect={selectChannel}
           onNewMessage={() => setDmOpen(true)}
+          timeZone={timeZone}
         />
       </div>
 
@@ -129,6 +134,7 @@ export function ChatApp({
               selected.id === initialChannelId ? initialMembers : undefined
             }
             onRead={markReadLocally}
+            timeZone={timeZone}
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">

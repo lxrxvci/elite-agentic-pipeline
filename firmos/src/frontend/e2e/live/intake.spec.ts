@@ -155,7 +155,10 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
     page.getByText('You can assign the team after conversion from the client record.'),
   ).toBeVisible()
   await page.getByTestId('convert-confirm').click()
-  await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname), { timeout: 20_000 })
+  // Conversion writes the whole client world (accounts, recurring rules,
+  // work rows, vault slots) in one action; on a cold Neon path this has
+  // taken >20s live (the commit lands - the window was the only failure).
+  await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname), { timeout: 60_000 })
   const clientUrl = page.url()
   await expect(page.getByRole('heading', { name: business })).toBeVisible({ timeout: 15_000 })
 

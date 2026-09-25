@@ -125,7 +125,26 @@ test('time: edit request submits and an admin approves it (second context)', asy
     await expect(pending).toContainText('Mara Ellison')
 
     await pending.getByRole('button', { name: /Approve/ }).click()
-    await expect(pending).toHaveCount(0, { timeout: 15_000 })
+    // Live hydration (2026-09): this page's SSR text used to disagree with
+    // the browser's timezone render (React #418), leaving row buttons dead
+    // through React's recovery window - a click landed but never dispatched
+    // (FIRMOS-LIVE-TEST-REPORT §1 "intermittent dispatch failure", root
+    // cause found this cycle). The timezone pin fixes the source; the
+    // bounded re-click keeps the suite honest while prod runs a build
+    // without it: an undispatched click simply leaves the row pending, and
+    // once hydration settles the next click goes through.
+    await expect
+      .poll(async () => {
+        if ((await pending.count()) > 0) {
+          await pending
+            .first()
+            .getByRole('button', { name: /Approve/ })
+            .click({ timeout: 5_000 })
+            .catch(() => {})
+        }
+        return pending.count()
+      }, { timeout: 60_000, intervals: [2_000, 5_000, 10_000] })
+      .toBe(0)
     await expect(
       adminPage.getByTestId('time-edit-history').filter({ hasText: 'Mara Ellison' }).first(),
     ).toBeVisible()

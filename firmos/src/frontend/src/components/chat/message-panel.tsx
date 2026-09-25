@@ -46,6 +46,8 @@ interface MessagePanelProps {
   initialMembers?: ChatPerson[]
   /** Tells the roster to zero this channel's unread chip. */
   onRead: (channelId: number) => void
+  /** Firm timezone for message stamps (hydration-safe; see format.ts). */
+  timeZone: string
 }
 
 /** §16 mention chips: @(id) / @[id] render as highlighted name chips. */
@@ -76,10 +78,12 @@ function MessageRow({
   message,
   showHeader,
   membersById,
+  timeZone,
 }: {
   message: ChatMessageView
   showHeader: boolean
   membersById: ReadonlyMap<number, ChatPerson>
+  timeZone: string
 }) {
   return (
     <div className={cn('flex gap-2.5 px-4', showHeader ? 'mt-4' : 'mt-0.5')}>
@@ -98,7 +102,7 @@ function MessageRow({
           <div className="flex items-baseline gap-2">
             <span className="text-[13px] font-semibold text-foreground">{message.authorName}</span>
             <span className="tnum text-[11px] text-muted-foreground">
-              {formatTimeOfDay(message.createdAt)}
+              {formatTimeOfDay(message.createdAt, timeZone)}
             </span>
           </div>
         )}
@@ -133,6 +137,7 @@ export function MessagePanel({
   initialThread,
   initialMembers,
   onRead,
+  timeZone,
 }: MessagePanelProps) {
   const [messages, setMessages] = useState<ChatMessageView[]>(initialThread?.messages ?? [])
   const [hasMore, setHasMore] = useState(initialThread?.hasMore ?? false)
@@ -304,14 +309,14 @@ export function MessagePanel({
           <div className="flex min-h-full flex-col justify-end pb-1">
             {messages.map((message, i) => {
               const prev = messages[i - 1]
-              const newDay = !prev || !isSameDay(prev.createdAt, message.createdAt)
+              const newDay = !prev || !isSameDay(prev.createdAt, message.createdAt, timeZone)
               return (
                 <Fragment key={message.id}>
                   {newDay && (
                     <div className="mt-4 flex items-center gap-3 px-4 first:mt-0" role="separator">
                       <span className="h-px flex-1 bg-border" />
                       <span className="text-[11px] font-medium text-muted-foreground">
-                        {formatDayLabel(message.createdAt)}
+                        {formatDayLabel(message.createdAt, undefined, timeZone)}
                       </span>
                       <span className="h-px flex-1 bg-border" />
                     </div>
@@ -320,6 +325,7 @@ export function MessagePanel({
                     message={message}
                     showHeader={newDay || showsSenderHeader(prev, message)}
                     membersById={membersById}
+                    timeZone={timeZone}
                   />
                 </Fragment>
               )
