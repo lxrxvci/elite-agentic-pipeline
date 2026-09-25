@@ -99,9 +99,12 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await advance(page, 'qbo-tier')
   await pick(page, 'option-recommended', 'services')
 
-  // ── Services ──
-  await page.getByTestId('chip-bank_feed_management').click()
-  await page.getByTestId('chip-account_reconciliations').click()
+  // ── Services (I4): the three standards are pre-selected; add-ons toggle ──
+  await expect(page.getByTestId('services-standards')).toContainText('Included in every engagement')
+  await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
+  await expect(page.getByTestId('standard-account_reconciliations')).toHaveAttribute('data-checked', 'true')
+  await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
+  await page.getByTestId('addon-invoicing').click()
   await advance(page, 'existing-client')
 
   // ── Starting point: new client, text-entry books-start date ──
@@ -165,10 +168,19 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await pick(page, 'option-monthly', 'close-tier')
   await pick(page, 'option-10', 'acct-method')
 
-  // The live quote is priced by the server and is non-zero by now.
+  // I4: the running estimate stays hidden until the review screen (the client
+  // may be watching on the Meet call) - no dollar figures anywhere mid-wizard.
+  await expect(page.getByTestId('quote-hidden')).toBeVisible()
+  await expect(page.getByTestId('live-quote')).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText(/\$\d/)
+  // Staff can peek: the rail toggle reveals the server-priced estimate…
+  await page.getByTestId('quote-peek-toggle').click()
   await expect
     .poll(async () => page.getByTestId('quote-amount').textContent(), { timeout: 15_000 })
     .not.toMatch(/^(--|\$0)/)
+  // …and hide it again before continuing the conversation.
+  await page.getByTestId('quote-hide-toggle').click()
+  await expect(page.getByTestId('quote-hidden')).toBeVisible()
 
   await pick(page, 'option-cash', 'bill-pay')
   await pick(page, 'option-no', 'ten99-services')
@@ -181,8 +193,12 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await advance(page, 'notes') // skip custom rules
   await page.getByTestId('continue').click() // skip notes
 
-  // ── Review: summary renders in the dictated order, quote is server-priced ──
+  // ── Review: summary renders in the dictated order, quote revealed HERE ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
+  // I4: the review screen is the reveal - the rail panel animates in even
+  // though pricing stayed hidden (and was re-hidden) during the questions.
+  await expect(page.getByTestId('live-quote')).toBeVisible()
+  await expect(page.getByTestId('live-quote')).toHaveAttribute('data-revealed', 'true')
   await expect(page.getByTestId('review-quote')).toBeVisible()
   // I3: accounts render grouped by type with institution + proof badges.
   const reviewAccounts = page.getByTestId('review-accounts')
@@ -281,7 +297,10 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
   await page.getByLabel('QuickBooks users').fill('1')
   await advance(page, 'qbo-tier')
   await pick(page, 'option-recommended', 'services')
-  await page.getByTestId('chip-bank_feed_management').click()
+  // I4: the standards are pre-selected on every engagement type; pricing
+  // stays hidden until the review (the collapsed rail offers a staff peek).
+  await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
+  await expect(page.getByTestId('quote-hidden')).toBeVisible()
   await advance(page, 'existing-client')
   await pick(page, 'option-no', 're-yes') // consulting: no books-start screen
   await pick(page, 'option-no', 'retroactive')
@@ -348,7 +367,8 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await page.getByLabel('QuickBooks users').fill('2')
   await advance(page, 'qbo-tier')
   await pick(page, 'option-recommended', 'services')
-  await page.getByTestId('chip-bank_feed_management').click()
+  // I4: standards pre-selected, no add-ons for this engagement.
+  await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
   await advance(page, 'existing-client')
 
   // ── Starting point + scope chapters ──

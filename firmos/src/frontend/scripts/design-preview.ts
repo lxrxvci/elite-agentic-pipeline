@@ -326,14 +326,18 @@ async function main(): Promise<void> {
     await wizardAdvance(page, "qbo-tier");
     await wizardPick(page, "option-recommended", "services");
 
-    // 5d. Services chips + C1 discount capture on the live quote panel.
-    await page.getByTestId("chip-bank_feed_management").click();
-    await page.getByTestId("chip-account_reconciliations").click();
+    // 5d. I4 services model: the three standards pre-selected, an add-on
+    //     toggled, then the C1 discount capture - pricing stays hidden until
+    //     the review, so staff peek it open on the rail first.
+    await expect(page.getByTestId("services-standards")).toContainText("Included in every engagement");
+    await page.getByTestId("addon-invoicing").click();
+    await page.getByTestId("quote-peek-toggle").click();
     const discountInput = page.getByTestId("discount-bank_feed_management");
     await discountInput.waitFor({ timeout: 15_000 });
     await discountInput.fill("25");
     await page.waitForTimeout(900); // quote debounce + server round-trip
     await shot(page, "intake-quote-discount");
+    await page.getByTestId("quote-hide-toggle").click(); // hidden again for the rest of the questions
 
     // 5e. Starting point: the books-start date is typed text now (00:33:00),
     //     and the old catch-up screen is gone (00:33:42).

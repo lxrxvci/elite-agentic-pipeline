@@ -555,13 +555,20 @@ describe('C10 specialty report capture', () => {
     })
   })
 
-  it('summarizes the chip with cadence, price, and missed-filings count', () => {
+  it('summarizes the chip with cadence and a dollar-free pricing note (I4: no money before review)', () => {
     const sub = reportsQ.repeatable!.sub!
-    expect(sub({ name: 'X', frequency: 'monthly', estimatedHours: 3 })).toBe('Monthly · 3h × $150')
+    expect(sub({ name: 'X', frequency: 'monthly', estimatedHours: 3 })).toBe('Monthly · 3h estimated')
     expect(sub({ name: 'X', frequency: 'annual', flatPrice: 200, missedFilings: 18 })).toBe(
-      'Annual · $200/report · 18 missed',
+      'Annual · flat price set · 18 missed',
     )
     expect(sub({ name: 'X', frequency: 'quarterly' })).toBe('Quarterly')
+    // The pricing inputs still capture the numbers - they just never render
+    // as text outside the review (the server quote prices the report).
+    expect(reportsQ.repeatable!.itemFields.map((f) => f.key)).toEqual(
+      expect.arrayContaining(['estimatedHours', 'flatPrice', 'missedFilings']),
+    )
+    // No dollar figure anywhere in the question's rendered copy.
+    expect(JSON.stringify(reportsQ)).not.toMatch(/\$\d/)
   })
 })
 
@@ -998,5 +1005,121 @@ describe('online_access_checklist_pulls_statement_accounts (I3, plan §1 screen 
     const two = statementAccountRefs(withAccounts).slice(0, 2).map((r) => r.key)
     const on: WizardAnswers = { ...withAccounts, ...q.apply(withAccounts, two) }
     expect(q.summarize(on)).toBe('2 of 3 with online access')
+  })
+})
+
+// ── I4 services model + quote visibility (plan §1 screen 5, §3C/§3D) ───────
+
+describe('standard_three_preselected (I4, plan §1 screen 5, §3C)', () => {
+  const services = findQuestion('services', 'services')!
+
+  it('the screen carries exactly three standards plus modular add-ons', () => {
+    expect(services.services?.standards.map((s) => s.label)).toEqual([
+      'Bank feed management',
+      'Account reconciliation',
+      'Reporting',
+    ])
+    // Only the add-ons are toggle options; the standards are not toggleable.
+    expect(services.options?.map((o) => o.value)).toEqual([
+      'invoicing',
+      'payment_processing',
+      'class_tracking',
+      'location_tracking',
+      'additional_therapist_tracking',
+    ])
+    expect(services.options?.some((o) => o.value === 'bank_feed_management')).toBe(false)
+    expect(services.options?.some((o) => o.value === 'account_reconciliations')).toBe(false)
+    // Loans/liabilities sit under reconciliations (00:19:27) - no toggle.
+    expect(services.options?.some((o) => o.value === 'loans_and_liabilities')).toBe(false)
+    // "Client questions" is an internal standard task, never a quoted service.
+    expect(JSON.stringify(services)).not.toContain('client_questions')
+  })
+
+  it('standards are the stored service keys - pre-selected, never unselectable', () => {
+    // Fresh intake: nothing stored, so the resume point still lands here.
+    expect(services.get(base)).toEqual([])
+    // Any toggle write carries the standards.
+    const picked = services.apply(base, ['invoicing'])
+    expect(picked.serviceKeys).toEqual(
+      expect.arrayContaining(['bank_feed_management', 'account_reconciliations', 'invoicing']),
+    )
+    // Continue with no add-ons still writes the standards.
+    const bare = services.apply(base, [])
+    expect(bare.serviceKeys).toEqual(['bank_feed_management', 'account_reconciliations'])
+    // The reporting standard derives from the reporting chapter, so this
+    // screen stores no reporting key itself.
+    expect(bare.serviceKeys?.some((k) => k.startsWith('monthly_reporting'))).toBe(false)
+    expect(services.get({ ...base, ...bare })).toEqual(bare.serviceKeys)
+  })
+
+  it('the review row names the standards and add-ons without any money', () => {
+    expect(services.summarize({ ...base, serviceKeys: ['bank_feed_management', 'account_reconciliations'] })).toBe(
+      'The 3 standards',
+    )
+    expect(
+      services.summarize({
+        ...base,
+        serviceKeys: ['bank_feed_management', 'account_reconciliations', 'invoicing', 'class_tracking'],
+      }),
+    ).toBe('The 3 standards + Invoicing, Class tracking')
+    expect(services.summarize(base)).toBeNull()
+  })
+
+  it('legacy service selections reconcile by service key and still quote', () => {
+    // A pre-I4 intake picked loans (then its own chip) and reporting.
+    const legacy: WizardAnswers = {
+      ...base,
+      serviceKeys: ['loans_and_liabilities', 'monthly_reporting_10', 'bank_feed_management'],
+    }
+    // The screen reads as answered (non-empty) so resume skips it.
+    expect(services.get(legacy)).toEqual(legacy.serviceKeys)
+    // Toggling an add-on preserves the legacy keys the screen no longer
+    // renders - conversion/quote/billing keep seeing them.
+    const next = services.apply(legacy, ['invoicing'])
+    expect(next.serviceKeys).toEqual(
+      expect.arrayContaining([
+        'bank_feed_management',
+        'account_reconciliations',
+        'loans_and_liabilities',
+        'monthly_reporting_10',
+        'invoicing',
+      ]),
+    )
+    // The effective set still carries loans: the quote prices it as before.
+    const effective = effectiveServiceKeys({ ...legacy, ...next, monthlyCloseTier: '10' })
+    expect(effective).toContain('loans_and_liabilities')
+    expect(effective).toContain('invoicing')
+    expect(effective).toContain('monthly_reporting_10')
+    // And the autosave patch round-trips the reconciled set.
+    const patch = buildPatch({ ...legacy, ...next, monthlyCloseTier: '10' })
+    expect(patch.formData?.serviceKeys).toEqual(
+      expect.arrayContaining(['loans_and_liabilities', 'monthly_reporting_10', 'invoicing']),
+    )
+  })
+
+  it('branch-derived keys from later cards survive a services rewrite', () => {
+    const withPayroll: WizardAnswers = {
+      ...base,
+      serviceKeys: [
+        'bank_feed_management',
+        'account_reconciliations',
+        'process_payroll',
+        'payroll_quarterly_filings',
+        '1099_collection',
+        'merchant_account_reconciliation',
+        'record_bills',
+      ],
+    }
+    const next = services.apply(withPayroll, ['invoicing'])
+    expect(next.serviceKeys).toEqual(
+      expect.arrayContaining([
+        'process_payroll',
+        'payroll_quarterly_filings',
+        '1099_collection',
+        'merchant_account_reconciliation',
+        'record_bills',
+        'invoicing',
+      ]),
+    )
   })
 })

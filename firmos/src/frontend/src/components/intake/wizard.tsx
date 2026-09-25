@@ -13,7 +13,7 @@ import { cn } from '@/shared/lib/utils'
 
 import type { StaffOption } from './convert-dialog'
 import { NotesRail } from './notes-rail'
-import { QuotePanel } from './quote-panel'
+import { QuoteHiddenCard, QuotePanel } from './quote-panel'
 import {
   allAccounts,
   buildPatch,
@@ -45,6 +45,18 @@ export const AUTO_ADVANCE_MS = 180
 export const NOTE_DWELL_MS = 2400
 export const SAVE_DEBOUNCE_MS = 800
 export const QUOTE_DEBOUNCE_MS = 400
+
+/** I4 (plan §3D): the staff peek flag lives in sessionStorage - remembered
+ *  per browser session, never across sessions, default hidden. */
+export const QUOTE_PEEK_STORAGE_KEY = 'firmos:intake-quote-peek'
+
+function readPeekPreference(): boolean {
+  try {
+    return sessionStorage.getItem(QUOTE_PEEK_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 
 export type IntakeStatusKey = 'new' | 'in_progress' | 'pending_review' | 'completed' | 'archived'
 
@@ -82,6 +94,18 @@ export function IntakeWizard({
   const [note, setNote] = useState<string | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
+  // I4: pricing stays hidden until the review screen (the client may be
+  // watching on the Meet call); staff can peek via the rail toggle, which is
+  // remembered per session and defaults to hidden.
+  const [peekPricing, setPeekPricing] = useState(readPeekPreference)
+  const togglePeekPricing = useCallback((on: boolean) => {
+    setPeekPricing(on)
+    try {
+      sessionStorage.setItem(QUOTE_PEEK_STORAGE_KEY, on ? '1' : '0')
+    } catch {
+      // sessionStorage unavailable - the peek just won't persist.
+    }
+  }, [])
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   // I3: the shared bank list behind the account mini-form dropdowns; an
   // inline add-new lands here in the same session.
@@ -107,6 +131,10 @@ export function IntakeWizard({
   const screens = useMemo(() => flattenScreens(answers), [answers])
   const idx = Math.min(screenIndex, screens.length - 1)
   const screen = screens[idx]
+  // I4: the review screen always reveals the quote; elsewhere it shows only
+  // while the staff peek toggle is on.
+  const isReview = screen?.kind === 'review'
+  const quoteVisible = isReview || peekPricing
 
   const answersRef = useRef(answers)
   answersRef.current = answers
@@ -467,22 +495,30 @@ export function IntakeWizard({
           )}
         </div>
 
-        {/* Right rail: the persistent live quote, then the running-notes
-            rail (visible on every step; notes autosave with the answers).
+        {/* Right rail: the live quote (I4: hidden until the review screen,
+            staff-peekable via the rail toggle) above the running-notes rail.
             The quote panel also captures per-line discounts (C1) - edits
             apply into answers, so autosave + repricing follow like any
-            other answer. */}
+            other answer. The review screen is the reveal. */}
         <div className="space-y-4">
-          <QuotePanel
-            quote={quote}
-            loading={quoteLoading}
-            discounts={answers.serviceDiscounts ?? {}}
-            onDiscountChange={(serviceKey, dollars) =>
-              apply({
-                serviceDiscounts: { ...(answersRef.current.serviceDiscounts ?? {}), [serviceKey]: dollars },
-              })
-            }
-          />
+          {quoteVisible ? (
+            <QuotePanel
+              quote={quote}
+              loading={quoteLoading}
+              discounts={answers.serviceDiscounts ?? {}}
+              onDiscountChange={(serviceKey, dollars) =>
+                apply({
+                  serviceDiscounts: { ...(answersRef.current.serviceDiscounts ?? {}), [serviceKey]: dollars },
+                })
+              }
+              onHidePricing={
+                isReview ? undefined : () => togglePeekPricing(false)
+              }
+              reveal={isReview}
+            />
+          ) : (
+            <QuoteHiddenCard onShow={() => togglePeekPricing(true)} />
+          )}
           <NotesRail notes={answers.runningNotes ?? []} onAdd={addRunningNote} />
         </div>
       </div>

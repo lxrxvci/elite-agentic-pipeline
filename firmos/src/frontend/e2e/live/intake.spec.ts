@@ -70,9 +70,10 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await page.getByLabel('QuickBooks users').fill('2')
   await advance(page, 'qbo-tier')
   await pick(page, 'option-recommended', 'services')
-  // Two service chips: bank feeds plus class tracking (the matrix input).
-  await page.getByTestId('chip-bank_feed_management').click()
-  await page.getByTestId('chip-class_tracking').click()
+  // I4: bank feeds is a pre-selected standard; class tracking is the add-on
+  // toggle (the matrix input).
+  await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
+  await page.getByTestId('addon-class_tracking').click()
   await advance(page, 'existing-client')
 
   // ── Starting point: new client; books start January 1, 2025 typed in ──
@@ -111,7 +112,10 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await pick(page, 'option-10', 'acct-method')
 
   // The live quote is server-priced: non-zero, and 2 QBO users plus class
-  // tracking make the matrix recommend Plus.
+  // tracking make the matrix recommend Plus. I4: pricing hides until the
+  // review - staff peek the rail open to see it mid-wizard (the peek then
+  // persists for the session).
+  await page.getByTestId('quote-peek-toggle').click()
   await expect
     .poll(async () => page.getByTestId('quote-amount').textContent(), { timeout: 15_000 })
     .not.toMatch(/^(--|\$0)/)

@@ -270,6 +270,74 @@ describe('corporate payroll card (I2, 00:48:07)', () => {
   })
 })
 
+describe('I4 services screen (plan §1 screen 5, §3C)', () => {
+  const servicesQ = findQuestion('services', 'services')!
+
+  it('renders the three standards as a pre-selected, un-unselectable group', () => {
+    render(<Harness q={servicesQ} initial={{}} />)
+    const group = screen.getByTestId('services-standards')
+    expect(group).toHaveTextContent('Included in every engagement')
+    // The three standards, all checked: bank feed, reconciliation, reporting.
+    expect(screen.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
+    expect(screen.getByTestId('standard-account_reconciliations')).toHaveAttribute('data-checked', 'true')
+    expect(screen.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
+    // Standards are not buttons - there is nothing to unselect.
+    expect(screen.queryByTestId('addon-bank_feed_management')).toBeNull()
+    expect(screen.queryByRole('button', { name: /bank feed management/i })).toBeNull()
+  })
+
+  it('toggling add-ons writes the standards plus the picks on the stable key', () => {
+    const onAdvance = vi.fn()
+    render(<Harness q={servicesQ} initial={{}} onAdvance={onAdvance} />)
+    fireEvent.click(screen.getByTestId('addon-invoicing'))
+    fireEvent.click(screen.getByTestId('addon-class_tracking'))
+    expect(answersNow().serviceKeys).toEqual(
+      expect.arrayContaining(['bank_feed_management', 'account_reconciliations', 'invoicing', 'class_tracking']),
+    )
+    fireEvent.click(screen.getByTestId('addon-class_tracking')) // off again
+    expect(answersNow().serviceKeys).toEqual(
+      expect.arrayContaining(['bank_feed_management', 'account_reconciliations', 'invoicing']),
+    )
+    expect(answersNow().serviceKeys).not.toContain('class_tracking')
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).toHaveBeenCalled()
+  })
+
+  it('Continue with no add-ons still commits the standards', () => {
+    const onAdvance = vi.fn()
+    render(<Harness q={servicesQ} initial={{}} onAdvance={onAdvance} />)
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).toHaveBeenCalled()
+    expect(answersNow().serviceKeys).toEqual(['bank_feed_management', 'account_reconciliations'])
+  })
+
+  it('legacy stored selections reconcile into the add-on toggles', () => {
+    render(
+      <Harness
+        q={servicesQ}
+        initial={{ serviceKeys: ['loans_and_liabilities', 'bank_feed_management', 'invoicing'] }}
+      />,
+    )
+    // The legacy loans key has no row, but survives the next write.
+    fireEvent.click(screen.getByTestId('addon-payment_processing'))
+    expect(answersNow().serviceKeys).toEqual(
+      expect.arrayContaining(['loans_and_liabilities', 'invoicing', 'payment_processing']),
+    )
+    // The stored add-on reads as toggled on.
+    expect(screen.getByTestId('addon-invoicing')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('addon-payment_processing')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('lists the rule-1 add-ons that their own questions quote', () => {
+    render(<Harness q={servicesQ} initial={{}} />)
+    const later = screen.getByTestId('services-later-addons')
+    for (const value of ['payroll', 'record_bills', '1099_collection', 'specialty_reports', 'merchant_account_reconciliation']) {
+      expect(screen.getByTestId(`later-${value}`)).toBeInTheDocument()
+    }
+    expect(later).toHaveTextContent('Quoted in their own questions')
+  })
+})
+
 // ── I3 account count cards (plan §1 screen 7) ─────────────────────────────
 
 const BANKS = [

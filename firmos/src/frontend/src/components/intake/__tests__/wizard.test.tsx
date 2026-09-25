@@ -429,8 +429,7 @@ describe('review screen', () => {
 })
 
 
-describe('I2 corporate payroll auto-flag (00:48:07-00:49:44)', () => {
-  // S-corp answers with payroll never touched: the flag is derived, not stored.
+describe('I2 corporate payroll auto-flag (00:48:07-00:49:44)', () => {  // S-corp answers with payroll never touched: the flag is derived, not stored.
   const scorpAnswers: WizardAnswers = {
     ...completeAnswers,
     taxStructure: 'S-corp',
@@ -470,5 +469,81 @@ describe('I2 corporate payroll auto-flag (00:48:07-00:49:44)', () => {
     expect(screen.getByTestId('review-screen')).toBeInTheDocument()
     expect(screen.getByText('Yes · officers must be on payroll')).toBeInTheDocument()
     expect(screen.getByText('S-corp')).toBeInTheDocument()
+  })
+})
+
+describe('quote_hidden_until_review (I4, plan §3D, 00:22:46-00:24:22)', () => {
+  const screenIndex = (a: WizardAnswers, questionId: string) =>
+    flattenScreens(a).findIndex((s) => s.kind === 'question' && s.questionId === questionId)
+
+  beforeEach(() => {
+    // The peek flag is per-session; each test starts with a clean slate.
+    sessionStorage.clear()
+  })
+
+  it('mid-wizard the rail collapses to a stub with no dollar amounts anywhere', async () => {
+    renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
+    // The quote still prices server-side (the review will need it)…
+    await waitFor(() => expect(getQuote).toHaveBeenCalled(), { timeout: 3000 })
+    // …but nothing money-shaped renders: no panel, no $ text.
+    expect(screen.queryByTestId('live-quote')).toBeNull()
+    expect(screen.queryByTestId('quote-amount')).toBeNull()
+    expect(screen.getByTestId('quote-hidden')).toBeInTheDocument()
+    expect(screen.getByText('Show pricing')).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/\$\d/)
+  })
+
+  it('the staff peek toggle reveals pricing and remembers it per session', async () => {
+    renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
+    fireEvent.click(screen.getByTestId('quote-peek-toggle'))
+    await waitFor(() => expect(screen.getByTestId('quote-amount')).toHaveTextContent('$425'), { timeout: 3000 })
+    expect(sessionStorage.getItem('firmos:intake-quote-peek')).toBe('1')
+
+    // Hide again -> back to the stub, preference cleared.
+    fireEvent.click(screen.getByTestId('quote-hide-toggle'))
+    expect(screen.getByTestId('quote-hidden')).toBeInTheDocument()
+    expect(sessionStorage.getItem('firmos:intake-quote-peek')).toBe('0')
+
+    // A remount in the same session remembers the peek.
+    sessionStorage.setItem('firmos:intake-quote-peek', '1')
+    const remount = renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
+    await waitFor(() => expect(remount.getByTestId('quote-amount')).toHaveTextContent('$425'), { timeout: 3000 })
+    expect(sessionStorage.getItem('firmos:intake-quote-peek')).toBe('1')
+  })
+
+  it('the review screen is the reveal: the panel shows with or without the peek', async () => {
+    const reviewIndex = flattenScreens(completeAnswers).length - 1
+    renderWizard(completeAnswers, reviewIndex)
+    const panel = await screen.findByTestId('live-quote', undefined, { timeout: 3000 })
+    // The reveal moment is marked (and reduced-motion safe via CSS).
+    expect(panel).toHaveAttribute('data-revealed', 'true')
+    expect(panel.className).toContain('fi-quote-reveal')
+    await waitFor(() => expect(screen.getByTestId('quote-amount')).toHaveTextContent('$425'), { timeout: 3000 })
+    // No hide toggle on the review screen - the reveal is the point.
+    expect(screen.queryByTestId('quote-hide-toggle')).toBeNull()
+    // The review quote section (the quote-send source) renders fully.
+    expect(screen.getByTestId('review-quote')).toBeInTheDocument()
+  })
+
+  it('no price text renders on any non-review screen with the peek off', async () => {
+    // The reports screen commits priced specialty-report definitions - the
+    // chips must still not leak amounts once the rail is hidden.
+    const withReports: WizardAnswers = {
+      ...completeAnswers,
+      reportDefinitions: [
+        { name: 'Oregon Special Report', frequency: 'annual', dataSource: null, estimatedHours: null, flatPrice: 200, missedFilings: 18 },
+        { name: 'City lodging tax', frequency: 'monthly', dataSource: null, estimatedHours: 3, flatPrice: null, missedFilings: null },
+      ],
+    }
+    const index = screenIndex(withReports, 'reports')
+    const { container } = renderWizard(withReports, index)
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'reports')
+    await waitFor(() => expect(getQuote).toHaveBeenCalled(), { timeout: 3000 })
+    // Dollar-free chips…
+    expect(screen.getByText(/flat price set/)).toBeInTheDocument()
+    expect(screen.getByText(/3h estimated/)).toBeInTheDocument()
+    // …and a whole-screen scan: no $ figure anywhere with the rail hidden.
+    expect(container.textContent).not.toMatch(/\$\d/)
+    expect(screen.queryByTestId('live-quote')).toBeNull()
   })
 })

@@ -1,5 +1,3 @@
-import { SPECIALTY_REPORT_DEFAULT_RATE } from '@firmos/domain'
-
 import type { IntakeAccountInput, IntakeContactInput, IntakePatch, IntakeProofCategory } from '@/server/intake'
 import type { IntakeFormData, IntakeRow } from '@/server/intake'
 import { DEFAULT_RECURRING_RULES, DEFAULT_RULE_KEYS } from '@/shared/lib/default-rules'
@@ -161,6 +159,9 @@ export interface QuestionDef {
   repeatable?: RepeatableDef
   /** I3: per-type account count card config (type 'account-count'). */
   accountCount?: AccountCountDef
+  /** I4: services-screen grouping (type 'multi') - the standards list plus
+   *  modular add-ons; presentation only, the answer key is unchanged. */
+  services?: ServicesGrouping
   /** Branch predicate; question renders only when this returns true. */
   when?: (a: WizardAnswers) => boolean
   /** When false and the answer is empty, Continue acts as Skip. */
@@ -348,12 +349,14 @@ const numOrNull = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null
 }
 
-/** C10: the per-report price readout on a specialty-report chip. */
+/** C10: the per-report pricing note on a specialty-report chip. Deliberately
+ *  dollar-free (I4, plan §3D): the client may watch the screen during intake,
+ *  so no amount renders outside the review - the quote prices the report. */
 const specialtyPriceLabel = (i: Record<string, unknown>): string | null => {
   const flat = numOrNull(i.flatPrice)
-  if (flat != null && flat > 0) return `$${flat}/report`
+  if (flat != null && flat > 0) return 'flat price set'
   const hours = numOrNull(i.estimatedHours)
-  if (hours != null && hours > 0) return `${hours}h × $${SPECIALTY_REPORT_DEFAULT_RATE}`
+  if (hours != null && hours > 0) return `${hours}h estimated`
   return null
 }
 
@@ -391,6 +394,85 @@ export const SERVICE_LABELS: Record<string, string> = {
 }
 
 export const serviceLabel = (k: string): string => SERVICE_LABELS[k] ?? k.replaceAll('_', ' ')
+
+// ── I4 services model (plan §1 screen 5, §3C: 00:18:13-00:19:27) ───────────
+//
+// The screen is a guided "here is what every engagement includes" list plus
+// modular add-ons, not a mixed card grid. The three standards are the core
+// engagement - pre-selected, never unselectable. Answer keys and service_key
+// wiring are unchanged: the standards ride the same serviceKeys array, the
+// add-ons keep their existing pricing keys, and selections the screen no
+// longer renders (legacy loans_and_liabilities, branch-derived payroll /
+// 1099 / bill pay / merchant recon) pass through untouched so old intakes
+// keep quoting and converting.
+
+/**
+ * The three standards, rendered as the "Included in every engagement" group.
+ * `bank_feed_management` and `account_reconciliations` are real service keys
+ * (always written into serviceKeys by the services question). Reporting has
+ * no single key - effectiveServiceKeys derives monthly_reporting_* (or the
+ * quarterly/semi/annual equivalents) from the reporting chapter - so its row
+ * is display-only, flagged with `derived`.
+ */
+export interface ServicesStandardRow extends SelectOption {
+  /** True when the row is presentation-only (reporting - the key derives
+   *  from the reporting chapter answers, so nothing is stored here). */
+  derived?: boolean
+}
+
+export const SERVICES_STANDARD_ROWS: ServicesStandardRow[] = [
+  {
+    value: 'bank_feed_management',
+    label: 'Bank feed management',
+    sub: 'Transaction categorization, every week',
+  },
+  {
+    value: 'account_reconciliations',
+    label: 'Account reconciliation',
+    sub: 'Every account, each month - loans and liabilities reconcile here too',
+  },
+  {
+    value: 'reporting',
+    label: 'Reporting',
+    sub: 'The monthly close package - cadence is set in the reporting chapter',
+    derived: true,
+  },
+]
+
+/** The standards with real service keys - always present in serviceKeys. */
+export const SERVICES_STANDARD_KEYS: readonly string[] = SERVICES_STANDARD_ROWS.filter(
+  (r) => !r.derived,
+).map((r) => r.value)
+
+/** The add-ons this screen toggles, keyed to their existing pricing keys. */
+export const SERVICES_ADDON_OPTIONS: SelectOption[] = [
+  { value: 'invoicing', label: 'Invoicing', sub: 'Create and send their invoices' },
+  { value: 'payment_processing', label: 'Payment processing' },
+  { value: 'class_tracking', label: 'Class tracking', sub: 'Priced per class' },
+  { value: 'location_tracking', label: 'Location tracking', sub: 'Priced per location' },
+  { value: 'additional_therapist_tracking', label: 'Therapist tracking' },
+]
+
+/** Add-ons quoted by rule 1 (00:18:13) but captured by their own cards later
+ *  in the wizard (payroll, bill entry, 1099 prep, specialty reports, merchant
+ *  reconciliation) - listed so the catalog on this screen is complete. */
+export const SERVICES_LATER_ADDON_ROWS: SelectOption[] = [
+  { value: 'payroll', label: 'Payroll', sub: 'Asked with the payroll questions' },
+  { value: 'record_bills', label: 'Bill entry', sub: 'Asked in the reporting chapter' },
+  { value: '1099_collection', label: '1099 prep', sub: 'Asked in the reporting chapter' },
+  { value: 'specialty_reports', label: 'Specialty reports', sub: 'Asked in the reporting chapter' },
+  { value: 'merchant_account_reconciliation', label: 'Merchant reconciliation', sub: 'Asked with the income questions' },
+]
+
+const SERVICES_ADDON_VALUES = new Set(SERVICES_ADDON_OPTIONS.map((o) => o.value))
+const SERVICES_STANDARD_VALUES = new Set(SERVICES_STANDARD_ROWS.map((r) => r.value))
+
+/** The I4 grouping flag on the services question: standards render as a
+ *  pre-selected, un-unselectable list group; add-ons as toggle rows. */
+export interface ServicesGrouping {
+  standards: ServicesStandardRow[]
+  laterAddons: SelectOption[]
+}
 
 // Label maps are exported for the call-notes extraction vocabulary
 // (src/server/intake-extract.ts) - the canonical enum value sets live here.
@@ -1203,32 +1285,48 @@ export const CHAPTERS: ChapterDef[] = [
     ],
   },
   {
-    // I1: services sit right after software (plan §1 row 5); the services
-    // re-model itself is phase I4.
+    // I1: services sit right after software (plan §1 row 5). I4 (§3C,
+    // 00:18:13-00:19:27): the screen is the three standards - pre-selected,
+    // never unselectable - plus modular add-on toggles. The answer key and
+    // every service_key are unchanged; selections the screen no longer
+    // renders (legacy loans_and_liabilities, branch-derived keys) pass
+    // through apply() untouched so old intakes keep quoting and converting.
     id: 'services',
     label: 'Services',
     questions: [
       {
         id: 'services',
-        title: 'Which services are we quoting?',
-        help: 'Pick everything in scope. Reporting, payroll, and add-ons are asked about later.',
+        title: 'What are we taking on?',
+        help: 'Three things come with every engagement. Add anything else in scope - payroll, bills, 1099s, and specialty reports are asked in their own questions.',
         type: 'multi',
         required: true,
-        options: [
-          { value: 'bank_feed_management', label: 'Bank feed management' },
-          { value: 'account_reconciliations', label: 'Account reconciliations', sub: 'Priced per account' },
-          { value: 'invoicing', label: 'Invoicing' },
-          { value: 'payment_processing', label: 'Payment processing' },
-          { value: 'loans_and_liabilities', label: 'Loans and liabilities' },
-          { value: 'class_tracking', label: 'Class tracking', sub: 'Priced per class' },
-          { value: 'location_tracking', label: 'Location tracking', sub: 'Priced per location' },
-          { value: 'additional_therapist_tracking', label: 'Therapist tracking' },
-        ],
+        options: SERVICES_ADDON_OPTIONS,
+        services: {
+          standards: SERVICES_STANDARD_ROWS,
+          laterAddons: SERVICES_LATER_ADDON_ROWS,
+        },
+        // The full stored key set: the standards (written on the first pass)
+        // or any legacy/branch-derived selection make the question read as
+        // answered, so resume never re-parks here; the screen renders only
+        // its own add-on rows as toggles.
         get: (a) => a.serviceKeys ?? [],
-        apply: (_a, v) => ({ serviceKeys: v as string[] }),
+        apply: (a, v) => {
+          const picked = (v as string[]).filter((k) => SERVICES_ADDON_VALUES.has(k))
+          // Reconcile by service key: anything the screen doesn't render
+          // (legacy loans_and_liabilities, payroll/1099/reporting keys the
+          // later cards own) survives the rewrite.
+          const preserved = (a.serviceKeys ?? []).filter(
+            (k) => !SERVICES_ADDON_VALUES.has(k) && !SERVICES_STANDARD_VALUES.has(k),
+          )
+          return { serviceKeys: [...SERVICES_STANDARD_KEYS, ...preserved, ...picked] }
+        },
         summarize: (a) => {
-          const n = (a.serviceKeys ?? []).length
-          return n > 0 ? `${n} service${n === 1 ? '' : 's'} selected` : null
+          const stored = a.serviceKeys ?? []
+          if (stored.length === 0) return null
+          const addons = stored.filter((k) => SERVICES_ADDON_VALUES.has(k))
+          return addons.length > 0
+            ? `The 3 standards + ${addons.map(serviceLabel).join(', ')}`
+            : 'The 3 standards'
         },
       },
     ],
@@ -1713,7 +1811,7 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'reports',
         title: 'Any special reports to track?',
-        help: `Beyond the standard monthly package. Each runs on its own cadence with its own checklist; estimated hours price at $${SPECIALTY_REPORT_DEFAULT_RATE}/hr on the quote, a flat price wins, and missed past filings price one-time at the same per-report price.`,
+        help: 'Beyond the standard monthly package. Each runs on its own cadence with its own checklist; estimated hours price at the standard hourly rate on the quote, a flat price wins, and missed past filings price one-time at the same per-report price.',
         type: 'repeatable',
         required: false,
         repeatable: {

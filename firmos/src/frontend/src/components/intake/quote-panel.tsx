@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import { QBO_TIER_LABEL, type Quote } from '@firmos/domain'
 
 import { cn } from '@/shared/lib/utils'
@@ -22,7 +23,47 @@ import { formatMoney } from './format'
  * shows its net amount; the panel list grows to every line in that mode so no
  * line is undiscountable. Discounts ride form_data through autosave and the
  * quote recomputes from the server on every change.
+ *
+ * I4 (plan §3D, 00:22:46-00:24:22): the panel is the ONLY surface that shows
+ * money mid-wizard, so the wizard hides it entirely until the review screen
+ * (the client may be watching the screen on the Meet call). While hidden the
+ * rail collapses to QuoteHiddenCard - a discreet "Show pricing" eye toggle
+ * lets staff peek (remembered per session). The review screen is the reveal:
+ * `reveal` plays a one-time entrance, reduced-motion safe.
  */
+
+/** Shared shell so the hidden card occupies the same rail/bottom-bar footprint. */
+export const QUOTE_PANEL_SHELL =
+  'rounded-xl border border-border bg-card max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40 max-lg:rounded-none max-lg:border-x-0 max-lg:border-b-0 max-lg:shadow-[0_-8px_24px_oklch(0_0_0/0.08)] lg:sticky lg:top-6'
+
+/**
+ * The collapsed quote rail (I4): no amounts, just the staff peek toggle.
+ * Rendered on every non-review screen unless the staff has peeked pricing on.
+ */
+export function QuoteHiddenCard({ onShow }: { onShow: () => void }) {
+  return (
+    <aside data-testid="quote-hidden" className={cn(QUOTE_PANEL_SHELL)}>
+      <div className="flex items-center justify-between gap-3 px-4 py-3 lg:px-5">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Pricing
+        </p>
+        <button
+          type="button"
+          onClick={onShow}
+          data-testid="quote-peek-toggle"
+          aria-pressed="false"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-firm-brand/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          <Eye className="h-3.5 w-3.5" aria-hidden />
+          Show pricing
+        </button>
+      </div>
+      <p className="hidden px-4 pb-3 text-[11px] text-muted-foreground lg:block lg:px-5">
+        The estimate stays hidden until the review screen.
+      </p>
+    </aside>
+  )
+}
 
 const TOP_LINES = 4
 
@@ -82,12 +123,19 @@ export function QuotePanel({
   loading,
   discounts,
   onDiscountChange,
+  onHidePricing,
+  reveal = false,
 }: {
   quote: Quote | null
   loading: boolean
   /** Editable per-line discounts (flat $ off per billing cycle), keyed by service key. */
   discounts?: Record<string, number>
   onDiscountChange?: (serviceKey: string, dollars: number) => void
+  /** I4: staff peek control, rendered only while pricing is peeked on a
+   *  non-review screen (the review reveal never offers to re-hide). */
+  onHidePricing?: () => void
+  /** I4: the review-screen reveal - plays a one-time entrance on mount. */
+  reveal?: boolean
 }) {
   const amount = quote?.totals.effectiveMonthly ?? null
   const editable = discounts != null && onDiscountChange != null
@@ -126,12 +174,9 @@ export function QuotePanel({
   return (
     <aside
       data-testid="live-quote"
+      data-revealed={reveal || undefined}
       aria-live="polite"
-      className={cn(
-        'rounded-xl border border-border bg-card',
-        'max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40 max-lg:rounded-none max-lg:border-x-0 max-lg:border-b-0 max-lg:shadow-[0_-8px_24px_oklch(0_0_0/0.08)]',
-        'lg:sticky lg:top-6',
-      )}
+      className={cn(QUOTE_PANEL_SHELL, reveal && 'fi-quote-reveal')}
     >
       <style>{`
         .fi-price-pop { animation: fi-price-pop 480ms ease-out; }
@@ -144,28 +189,50 @@ export function QuotePanel({
           0% { background: var(--firm-brand-soft); }
           100% { background: transparent; }
         }
+        /* I4 review reveal: a quiet rise-and-fade, off entirely under
+           reduced motion. */
+        .fi-quote-reveal { animation: fi-quote-reveal 280ms ease-out both; }
+        @keyframes fi-quote-reveal {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: none; }
+        }
         @media (prefers-reduced-motion: reduce) {
-          .fi-price-pop, .fi-line-flash { animation: none; }
+          .fi-price-pop, .fi-line-flash, .fi-quote-reveal { animation: none; }
         }
       `}</style>
 
       <div className="px-4 py-3.5 lg:px-5 lg:py-4">
         <div className="flex items-center justify-between gap-4 lg:block">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Live estimate
-            </p>
-            <p
-              key={amount ?? 'none'}
-              data-testid="quote-amount"
-              className={cn(
-                'tnum fi-price-pop font-display text-3xl font-bold tracking-tight',
-                amount && amount > 0 ? 'text-money-positive' : 'text-muted-foreground',
-              )}
-            >
-              {amount != null ? formatMoney(amount) : '--'}
-              <span className="ml-1 text-xs font-medium text-muted-foreground">/mo</span>
-            </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Live estimate
+              </p>
+              <p
+                key={amount ?? 'none'}
+                data-testid="quote-amount"
+                className={cn(
+                  'tnum fi-price-pop font-display text-3xl font-bold tracking-tight',
+                  amount && amount > 0 ? 'text-money-positive' : 'text-muted-foreground',
+                )}
+              >
+                {amount != null ? formatMoney(amount) : '--'}
+                <span className="ml-1 text-xs font-medium text-muted-foreground">/mo</span>
+              </p>
+            </div>
+            {onHidePricing && (
+              <button
+                type="button"
+                onClick={onHidePricing}
+                data-testid="quote-hide-toggle"
+                aria-pressed="true"
+                title="Hide pricing until the review screen"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-firm-brand/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              >
+                <EyeOff className="h-3.5 w-3.5" aria-hidden />
+                <span className="hidden sm:inline">Hide pricing</span>
+              </button>
+            )}
           </div>
           <p className="text-xs text-muted-foreground lg:mt-1">
             <span className="tnum">{lines.length}</span> line{lines.length === 1 ? '' : 's'}

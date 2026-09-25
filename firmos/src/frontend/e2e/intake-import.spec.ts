@@ -120,8 +120,9 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   await expect(page.getByLabel('QuickBooks users')).toHaveValue('3')
   await advance(page, 'qbo-tier')
   await pick(page, 'option-recommended', 'services')
-  // Services is the one scope answer the call never gave.
-  await page.getByTestId('chip-bank_feed_management').click()
+  // Services is the one scope answer the call never gave. I4: the three
+  // standards are pre-selected; Continue commits them with no add-on picks.
+  await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
   await advance(page, 'existing-client')
   await pick(page, 'option-no', 're-yes')
   // Project engagement: balance sheet, income, and reporting chapters are

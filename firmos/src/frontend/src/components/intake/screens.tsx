@@ -134,6 +134,129 @@ export function MultiChips({
   )
 }
 
+// ── I4 services screen: three standards + modular add-ons ─────────────────
+
+/**
+ * I4 (plan §1 screen 5, §3C, 00:18:13-00:19:27): the services screen is a
+ * guided list, not a mixed card grid. The three standards render as an
+ * "Included in every engagement" group - pre-selected, never unselectable;
+ * the add-ons render as toggle rows on the same service keys as before.
+ * Add-ons quoted but captured by their own cards later (payroll, bill entry,
+ * 1099 prep, specialty reports, merchant reconciliation) are listed for
+ * completeness. Continue always commits the standards, even untouched.
+ */
+export function ServicesScreen({
+  q,
+  values,
+  onCommit,
+  onAdvance,
+}: {
+  q: QuestionDef
+  values: string[]
+  onCommit: (values: string[]) => void
+  onAdvance: () => void
+}) {
+  const grouping = q.services!
+  const options = q.options ?? []
+  const addonValues = values.filter((v) => options.some((o) => o.value === v))
+  const toggle = (v: string) =>
+    onCommit(addonValues.includes(v) ? addonValues.filter((x) => x !== v) : [...addonValues, v])
+
+  return (
+    <div className="space-y-5">
+      <section data-testid="services-standards" aria-label="Included in every engagement">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Included in every engagement
+        </h2>
+        <ul className="mt-2 space-y-2">
+          {grouping.standards.map((s) => (
+            <li
+              key={s.value}
+              data-testid={`standard-${s.value}`}
+              data-checked="true"
+              className="flex items-start gap-3 rounded-xl border border-firm-brand/50 bg-accent px-4 py-3"
+            >
+              <span
+                aria-hidden
+                className="mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border border-firm-brand bg-firm-brand text-primary-foreground"
+              >
+                <Check className="h-3 w-3" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-accent-foreground">{s.label}</span>
+                {s.sub && <span className="mt-0.5 block text-xs text-muted-foreground">{s.sub}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section data-testid="services-addons" aria-label="Add-ons">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Add-ons
+        </h2>
+        <ul className="mt-2 space-y-2">
+          {options.map((o) => {
+            const on = addonValues.includes(o.value)
+            return (
+              <li key={o.value}>
+                <button
+                  type="button"
+                  aria-pressed={on}
+                  data-testid={`addon-${o.value}`}
+                  data-selected={on || undefined}
+                  onClick={() => toggle(o.value)}
+                  className={cn(
+                    'flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+                    on
+                      ? 'border-firm-brand bg-accent'
+                      : 'border-border bg-card hover:border-firm-brand/60 hover:bg-accent/50',
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border transition-colors',
+                      on ? 'border-firm-brand bg-firm-brand text-primary-foreground' : 'border-input',
+                    )}
+                  >
+                    {on && <Check className="h-3 w-3" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-foreground">{o.label}</span>
+                    {o.sub && <span className="mt-0.5 block text-xs text-muted-foreground">{o.sub}</span>}
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      </section>
+
+      {grouping.laterAddons.length > 0 && (
+        <section data-testid="services-later-addons" aria-label="Quoted in their own questions">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Quoted in their own questions
+          </h2>
+          <ul className="mt-2 divide-y divide-border rounded-xl border border-dashed border-border bg-muted/40 px-4">
+            {grouping.laterAddons.map((o) => (
+              <li key={o.value} className="flex items-baseline justify-between gap-3 py-2" data-testid={`later-${o.value}`}>
+                <span className="text-sm text-muted-foreground">{o.label}</span>
+                {o.sub && <span className="shrink-0 text-[11px] text-muted-foreground">{o.sub}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <Button type="button" variant="action" onClick={() => { onCommit(addonValues); onAdvance() }} data-testid="continue">
+        Continue
+        <ArrowRight className="h-4 w-4" aria-hidden />
+      </Button>
+    </div>
+  )
+}
+
 // ── Pre-selected checklist (B21) ──────────────────────────────────────────
 
 /**
@@ -618,6 +741,20 @@ export function QuestionScreen({
           </Button>
         )}
       </div>
+    )
+  }
+
+  // I4: the services screen (standards group + add-on toggles) replaces the
+  // generic chip grid; the answer key and service_key wiring are unchanged.
+  if (q.type === 'multi' && q.services) {
+    const values = (q.get(answers) as string[]) ?? []
+    return (
+      <ServicesScreen
+        q={q}
+        values={values}
+        onCommit={(next) => onApply(q.apply(answers, next))}
+        onAdvance={onAdvance}
+      />
     )
   }
 
