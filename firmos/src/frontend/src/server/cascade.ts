@@ -240,6 +240,7 @@ export async function cascadeIntakeToClient(
             firstName: parts[0],
             lastName: parts.length > 1 ? parts.slice(1).join(" ") : null,
             email: owner.email ?? null,
+            phone: owner.phone ?? null,
           })
           .returning();
         await db.insert(contactClientLinks).values({
@@ -385,8 +386,13 @@ export async function cascadeIntakeToClient(
   }
 
   // 8. One-way flip to project engagement (§6.8): never flips back. Turns
-  //    off weekly bank feeds and disables every recurring rule.
-  if (patch.engagementType === "project" && !client.isProjectEngagement) {
+  //    off weekly bank feeds and disables every recurring rule. I1:
+  //    consulting - and any custom non-bookkeeping answer - flips too.
+  if (
+    patch.engagementType != null &&
+    patch.engagementType !== "bookkeeping" &&
+    !client.isProjectEngagement
+  ) {
     await db
       .update(clients)
       .set({

@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildPatch,
   CHAPTERS,
+  customAllowed,
+  customText,
   effectiveServiceKeys,
+  findQuestion,
   firstUnansweredScreen,
   flattenScreens,
+  isBookkeeping,
   visibleChapters,
   visibleQuestions,
   type WizardAnswers,
@@ -23,11 +28,62 @@ const base: WizardAnswers = {
 
 const chapterIds = (a: WizardAnswers) => visibleChapters(a).map((c) => c.id)
 
+describe('intake_order_matches_template (I1, plan §1)', () => {
+  it('runs the dictated chapter sequence: contact -> entity -> engagement -> software -> services -> starting, then scope', () => {
+    expect(chapterIds(base)).toEqual([
+      'contact',
+      'entity',
+      'engagement',
+      'software',
+      'services',
+      'starting',
+      'balance',
+      'real-estate',
+      'income',
+      'reporting',
+      'recurring',
+    ])
+  })
+
+  it('contact basics opens with legal name, main contact, and address', () => {
+    const contact = CHAPTERS.find((c) => c.id === 'contact')!
+    expect(visibleQuestions(contact, base).map((q) => q.id)).toEqual([
+      'legal-name',
+      'main-contact',
+      'address',
+    ])
+  })
+
+  it('entity & ownership carries EIN, tax structure, DBA/industry, owners, contacts, the CPA card, and referral', () => {
+    const entity = CHAPTERS.find((c) => c.id === 'entity')!
+    expect(visibleQuestions(entity, base).map((q) => q.id)).toEqual([
+      'tax-id',
+      'tax-structure',
+      'dba-industry',
+      'owners',
+      'contacts',
+      'has-cpa',
+      'referral',
+    ])
+  })
+
+  it('engagement type and accounting software are their own chapters, in that order', () => {
+    const screens = flattenScreens(base)
+    const ids = screens.flatMap((s) => (s.kind === 'question' ? [s.questionId] : []))
+    expect(ids.indexOf('engagement')).toBeLessThan(ids.indexOf('qbo-status'))
+    expect(ids.indexOf('qbo-status')).toBeLessThan(ids.indexOf('services'))
+    expect(ids.indexOf('services')).toBeLessThan(ids.indexOf('existing-client'))
+    expect(ids.indexOf('existing-client')).toBeLessThan(ids.indexOf('bk-start'))
+  })
+})
+
 describe('branch map', () => {
   it('project engagement skips balance sheet, income, and reporting chapters', () => {
     const ids = chapterIds({ ...base, engagementType: 'project' })
-    expect(ids).toContain('business')
-    expect(ids).toContain('starting')
+    expect(ids).toContain('contact')
+    expect(ids).toContain('entity')
+    expect(ids).toContain('engagement')
+    expect(ids).toContain('software')
     // Real estate renders for every engagement (owner walkthrough).
     expect(ids).toContain('real-estate')
     expect(ids).toContain('recurring')
@@ -36,37 +92,54 @@ describe('branch map', () => {
     expect(ids).not.toContain('reporting')
   })
 
-  it('bookkeeping engagement includes the middle chapters', () => {
-    const ids = chapterIds(base)
-    expect(ids).toEqual(['business', 'starting', 'balance', 'real-estate', 'income', 'reporting', 'recurring'])
+  it('consulting engagement takes the project track in the wizard too', () => {
+    const ids = chapterIds({ ...base, engagementType: 'consulting' })
+    expect(ids).not.toContain('balance')
+    expect(ids).not.toContain('income')
+    expect(ids).not.toContain('reporting')
+    expect(isBookkeeping({ ...base, engagementType: 'consulting' })).toBe(false)
+    expect(isBookkeeping({ ...base, engagementType: 'project' })).toBe(false)
+    expect(isBookkeeping(base)).toBe(true)
   })
 
-  it('project engagement skips the bookkeeping start and catch-up questions', () => {
-    const starting = CHAPTERS.find((c) => c.id === 'starting')!
-    const ids = visibleQuestions(starting, { ...base, engagementType: 'project' }).map((q) => q.id)
-    expect(ids).not.toContain('bk-start')
-    expect(ids).not.toContain('catchup')
-    expect(ids).toContain('engagement')
+  it('the engagement question offers consulting alongside bookkeeping and project', () => {
+    const q = findQuestion('engagement', 'engagement')!
+    expect(q.options?.map((o) => o.value)).toEqual(['bookkeeping', 'project', 'consulting'])
+    expect(q.apply(base, 'consulting')).toEqual({ engagementType: 'consulting' })
+    expect(q.summarize({ ...base, engagementType: 'consulting' })).toBe('Consulting')
   })
 
-  it('qbo-setup question only appears when they are not already on QuickBooks', () => {
+  it('project and consulting engagements skip the bookkeeping start question', () => {
     const starting = CHAPTERS.find((c) => c.id === 'starting')!
-    const onQbo = visibleQuestions(starting, base).map((q) => q.id)
+    for (const engagementType of ['project', 'consulting'] as const) {
+      const ids = visibleQuestions(starting, { ...base, engagementType }).map((q) => q.id)
+      expect(ids).not.toContain('bk-start')
+      expect(ids).toContain('existing-client')
+    }
+  })
+
+  it('qbo-setup question only appears for desktop or none, never for a custom Other answer', () => {
+    const software = CHAPTERS.find((c) => c.id === 'software')!
+    const onQbo = visibleQuestions(software, base).map((q) => q.id)
     expect(onQbo).not.toContain('qbo-setup')
-    const noQbo = visibleQuestions(starting, { ...base, quickbooksStatus: 'none' }).map((q) => q.id)
+    const noQbo = visibleQuestions(software, { ...base, quickbooksStatus: 'none' }).map((q) => q.id)
     expect(noQbo).toContain('qbo-setup')
+    const custom = visibleQuestions(software, { ...base, quickbooksStatus: 'Other' }).map((q) => q.id)
+    expect(custom).not.toContain('qbo-setup')
+    expect(custom).not.toContain('qbo-users')
+    expect(custom).not.toContain('qbo-tier')
   })
 
   it('qbo user-count and plan questions only appear for QuickBooks clients', () => {
-    const starting = CHAPTERS.find((c) => c.id === 'starting')!
-    const noStatus = visibleQuestions(starting, { ...base, quickbooksStatus: null }).map((q) => q.id)
+    const software = CHAPTERS.find((c) => c.id === 'software')!
+    const noStatus = visibleQuestions(software, { ...base, quickbooksStatus: null }).map((q) => q.id)
     expect(noStatus).not.toContain('qbo-users')
     expect(noStatus).not.toContain('qbo-tier')
     for (const status of ['existing', 'desktop', 'none']) {
-      const ids = visibleQuestions(starting, { ...base, quickbooksStatus: status }).map((q) => q.id)
+      const ids = visibleQuestions(software, { ...base, quickbooksStatus: status }).map((q) => q.id)
       expect(ids).toContain('qbo-users')
       expect(ids).toContain('qbo-tier')
-      // The plan question comes after the seat count, before the start date.
+      // The plan question comes after the seat count.
       expect(ids.indexOf('qbo-users')).toBeLessThan(ids.indexOf('qbo-tier'))
     }
   })
@@ -126,6 +199,222 @@ describe('branch map', () => {
   })
 })
 
+describe('CPA question card (I1)', () => {
+  const entity = CHAPTERS.find((c) => c.id === 'entity')!
+  const hasCpa = entity.questions.find((q) => q.id === 'has-cpa')!
+  const cpaDetails = entity.questions.find((q) => q.id === 'cpa-details')!
+
+  it('is its own yes/no card with the detail fields gated behind yes', () => {
+    expect(hasCpa.type).toBe('select')
+    expect(hasCpa.apply(base, 'yes')).toEqual({ hasCpa: true })
+    expect(visibleQuestions(entity, { ...base, hasCpa: false }).map((q) => q.id)).not.toContain('cpa-details')
+    expect(visibleQuestions(entity, { ...base, hasCpa: true }).map((q) => q.id)).toContain('cpa-details')
+    // The detail card asks for the CPA name and email.
+    expect(cpaDetails.fields?.map((f) => f.key)).toEqual(['cpaName', 'cpaEmail'])
+  })
+
+  it('summarizes the CPA name on the review row and hides the detail row', () => {
+    expect(hasCpa.summarize({ ...base, hasCpa: true, cpaName: 'Cascade Tax Group' })).toBe(
+      'Yes · Cascade Tax Group',
+    )
+    expect(hasCpa.summarize({ ...base, hasCpa: false })).toBe('No')
+    expect(cpaDetails.summarize({ ...base, hasCpa: true, cpaName: 'Cascade' })).toBeNull()
+  })
+})
+
+describe('referral-who branching (I1)', () => {
+  const entity = CHAPTERS.find((c) => c.id === 'entity')!
+
+  it('asks who to thank only for client and CPA referrals', () => {
+    const ids = (ref: string | null) =>
+      visibleQuestions(entity, { ...base, referralSource: ref }).map((q) => q.id)
+    expect(ids('CPA referral')).toContain('referral-who')
+    expect(ids('Existing client')).toContain('referral-who')
+    expect(ids('Web search')).not.toContain('referral-who')
+    expect(ids(null)).not.toContain('referral-who')
+  })
+
+  it('folds the who into the referral review row', () => {
+    const referral = entity.questions.find((q) => q.id === 'referral')!
+    expect(referral.summarize({ ...base, referralSource: 'CPA referral', referralWho: 'Cascade Tax Group' })).toBe(
+      'CPA referral · Cascade Tax Group',
+    )
+  })
+})
+
+describe('custom "Other" answers (I1, 00:15:53)', () => {
+  it('every carded select with more than two options allows a custom answer', () => {
+    const selects = CHAPTERS.flatMap((c) => c.questions).filter((q) => q.type === 'select')
+    for (const q of selects) {
+      const expected = (q.options?.length ?? 0) > 2 && q.allowCustom !== false
+      expect(customAllowed(q), q.id).toBe(expected)
+    }
+    // Yes/no cards never grow an Other option.
+    const yesNo = selects.filter((q) => (q.options?.length ?? 0) <= 2)
+    expect(yesNo.length).toBeGreaterThan(0)
+    for (const q of yesNo) expect(customAllowed(q), q.id).toBe(false)
+  })
+
+  it('stores the canonical Other value plus the verbatim custom text', () => {
+    const taxStructure = findQuestion('entity', 'tax-structure')!
+    const picked = taxStructure.apply(base, 'Other')
+    expect(picked).toEqual({ taxStructure: 'Other' })
+    const a: WizardAnswers = { ...base, ...picked, customAnswers: { 'tax-structure': 'Series LLC taxed as a trust' } }
+    expect(customText(a, 'tax-structure')).toBe('Series LLC taxed as a trust')
+    // The review row shows the typed words verbatim, not the bare "Other".
+    expect(taxStructure.summarize(a)).toBe('Series LLC taxed as a trust')
+    // Without typed text the row falls back to the canonical value.
+    expect(taxStructure.summarize({ ...base, taxStructure: 'Other' })).toBe('Other')
+  })
+
+  it('keeps custom enum answers out of the enum columns but rides form_data through', () => {
+    const patch = buildPatch({
+      ...base,
+      bookkeepingFrequency: 'Other',
+      monthlyCloseTier: 'Other',
+      customAnswers: { 'bk-frequency': 'Every full moon', 'close-tier': 'When we feel like it' },
+    })
+    expect(patch.bookkeepingFrequency).toBeNull()
+    expect(patch.monthlyCloseTier).toBeNull()
+    expect(patch.formData?.bookkeepingFrequency).toBe('Other')
+    expect(patch.formData?.customAnswers).toEqual({
+      'bk-frequency': 'Every full moon',
+      'close-tier': 'When we feel like it',
+    })
+  })
+
+  it('a custom close tier still derives a real reporting service key', () => {
+    const keys = effectiveServiceKeys({
+      ...base,
+      serviceKeys: [],
+      bookkeepingFrequency: 'monthly',
+      monthlyCloseTier: 'Other',
+    })
+    expect(keys).toContain('monthly_reporting_15')
+    expect(keys.every((k) => !k.includes('Other'))).toBe(true)
+  })
+})
+
+describe('main-contact card (I1)', () => {
+  const mainContact = findQuestion('contact', 'main-contact')!
+
+  it('reads and writes the primary entry of the canonical contacts array', () => {
+    const applied = mainContact.apply(base, {
+      contactName: 'Wren Okafor',
+      contactPhone: '5035550182',
+      contactEmail: 'wren@fernfeather.shop',
+    })
+    expect(applied.contacts).toEqual([
+      {
+        firstName: 'Wren',
+        lastName: 'Okafor',
+        entityName: null,
+        email: 'wren@fernfeather.shop',
+        phone: '5035550182',
+        isPrimary: true,
+        relationshipType: 'primary_contact',
+      },
+    ])
+    // Round-trip: the form value rebuilds from the contacts array.
+    expect(mainContact.fieldsValue?.({ ...base, ...applied })).toEqual({
+      contactName: 'Wren Okafor',
+      contactPhone: '5035550182',
+      contactEmail: 'wren@fernfeather.shop',
+    })
+    expect(mainContact.get({ ...base, ...applied })).toBe('Wren Okafor')
+  })
+
+  it('updates the existing primary in place and keeps other contacts', () => {
+    const withContacts: WizardAnswers = {
+      ...base,
+      contacts: [
+        { firstName: 'Wren', lastName: 'Okafor', isPrimary: true, relationshipType: 'primary_contact' },
+        { firstName: 'Sal', lastName: 'Vega', relationshipType: 'related' },
+      ],
+    }
+    const applied = mainContact.apply(withContacts, {
+      contactName: 'Wren Okafor',
+      contactPhone: '5035550182',
+      contactEmail: 'wren@fernfeather.shop',
+    })
+    expect(applied.contacts).toHaveLength(2)
+    expect(applied.contacts?.[0]).toMatchObject({ firstName: 'Wren', phone: '5035550182' })
+    expect(applied.contacts?.[1]).toMatchObject({ firstName: 'Sal' })
+  })
+})
+
+describe('contacts owner prefill (I1, 00:29:05)', () => {
+  const contacts = findQuestion('entity', 'contacts')!
+
+  it('offers a Same-as-owner prefill per named owner', () => {
+    const prefills = contacts.repeatable!.prefills!({
+      ...base,
+      owners: [
+        { name: 'Wren Okafor', email: 'wren@fernfeather.shop', phone: '5035550182', receivesReports: true },
+        { name: 'Sal Vega' },
+      ],
+    })
+    expect(prefills.map((p) => p.label)).toEqual(['Same as Wren Okafor', 'Same as Sal Vega'])
+    expect(prefills[0]!.patch).toEqual({
+      firstName: 'Wren',
+      lastName: 'Okafor',
+      email: 'wren@fernfeather.shop',
+      phone: '5035550182',
+    })
+    expect(prefills[1]!.patch).toEqual({ firstName: 'Sal', lastName: 'Vega', email: '', phone: '' })
+  })
+})
+
+describe('catchup_field_derived_from_start_date (I1, 00:33:42)', () => {
+  it('no catch-up question exists anywhere in the registry', () => {
+    const all = CHAPTERS.flatMap((c) => c.questions.map((q) => q.id))
+    expect(all).not.toContain('catchup')
+  })
+
+  it('buildPatch defaults the catch-up anchor to the books-start date', () => {
+    const patch = buildPatch({ ...base, bookkeepingStartDate: '2026-01-01' })
+    expect(patch.bankFeedCatchupDate).toBe('2026-01-01')
+  })
+
+  it('an explicitly stored catch-up value (legacy/extraction) still wins', () => {
+    const patch = buildPatch({
+      ...base,
+      bookkeepingStartDate: '2026-01-01',
+      bankFeedCatchupDate: '2025-10-01',
+    })
+    expect(patch.bankFeedCatchupDate).toBe('2025-10-01')
+  })
+
+  it('the books-start answer stays a YYYY-MM-DD value on the same key', () => {
+    const bkStart = findQuestion('starting', 'bk-start')!
+    expect(bkStart.apply(base, { bookkeepingStartDate: '2026-01-15' })).toEqual({
+      bookkeepingStartDate: '2026-01-15',
+    })
+    expect(bkStart.summarize({ ...base, bookkeepingStartDate: '2026-01-15' })).toBe('Jan 15, 2026')
+  })
+})
+
+describe('owner report-recipient flag (I1, 00:27:59)', () => {
+  const owners = findQuestion('entity', 'owners')!
+
+  it('collects phone and the receives-reports checkbox per owner', () => {
+    const keys = owners.repeatable!.itemFields.map((f) => f.key)
+    expect(keys).toEqual(['name', 'email', 'phone', 'ownershipPercent', 'receivesReports'])
+    expect(owners.repeatable!.sub!({ name: 'Wren', ownershipPercent: 60, receivesReports: true })).toBe(
+      '60% owner · gets reports',
+    )
+  })
+
+  it('rides the autosave patch through to the intake record', () => {
+    const patch = buildPatch({
+      ...base,
+      owners: [{ name: 'Wren Okafor', email: 'wren@x.co', phone: '5035550182', receivesReports: true }],
+    })
+    expect(patch.owners?.[0]).toMatchObject({ phone: '5035550182', receivesReports: true })
+    expect(patch.formData?.owners?.[0]).toMatchObject({ receivesReports: true })
+  })
+})
+
 describe('effectiveServiceKeys', () => {
   it('derives the reporting service from frequency and close tier', () => {
     expect(effectiveServiceKeys({ ...base, serviceKeys: [], bookkeepingFrequency: 'monthly', monthlyCloseTier: '10' }))
@@ -136,6 +425,17 @@ describe('effectiveServiceKeys', () => {
     const keys = effectiveServiceKeys({ ...base, serviceKeys: ['monthly_reporting_5'], bookkeepingFrequency: 'monthly', monthlyCloseTier: '15' })
     expect(keys).toContain('monthly_reporting_15')
     expect(keys).not.toContain('monthly_reporting_5')
+  })
+
+  it('derives no reporting service for consulting engagements', () => {
+    const keys = effectiveServiceKeys({
+      ...base,
+      engagementType: 'consulting',
+      serviceKeys: [],
+      bookkeepingFrequency: 'monthly',
+      monthlyCloseTier: '10',
+    })
+    expect(keys).toEqual([])
   })
 
   it('adds and removes derived services with their yes/no answers', () => {
@@ -160,20 +460,22 @@ describe('firstUnansweredScreen (resume)', () => {
     const screens = flattenScreens({})
     expect(screens[firstUnansweredScreen({})]).toMatchObject({ questionId: 'legal-name' })
     const withName = { legalName: 'Test Co' }
-    expect(screens[firstUnansweredScreen(withName)]).toMatchObject({ questionId: 'tax-structure' })
+    expect(screens[firstUnansweredScreen(withName)]).toMatchObject({ questionId: 'main-contact' })
   })
 
   it('lands on review when everything is answered', () => {
     const full: WizardAnswers = {
       ...base,
+      contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true, relationshipType: 'primary_contact' }],
       taxStructure: 'LLC',
+      hasCpa: false,
       isExistingClient: false,
       qboUserCount: 2,
       bookkeepingStartDate: '2026-01-01',
       serviceKeys: ['bank_feed_management'],
       isRealEstateClient: false,
-      hasPayroll: false,
       personalCardForBusiness: false,
+      hasPayroll: false,
       bookkeepingFrequency: 'monthly',
       monthlyCloseTier: '10',
       accountingMethod: 'cash',
@@ -187,11 +489,14 @@ describe('firstUnansweredScreen (resume)', () => {
   it('resumes on the real-estate chapter when only that answer is missing', () => {
     const nearlyFull: WizardAnswers = {
       ...base,
+      contacts: [{ firstName: 'Wren', isPrimary: true }],
       taxStructure: 'LLC',
+      hasCpa: false,
       isExistingClient: false,
       qboUserCount: 2,
       bookkeepingStartDate: '2026-01-01',
       serviceKeys: ['bank_feed_management'],
+      personalCardForBusiness: false,
       hasPayroll: false,
       bookkeepingFrequency: 'monthly',
       monthlyCloseTier: '10',
@@ -256,6 +561,7 @@ describe('B21 default-rules checklist', () => {
 
   it('is pre-selected with all four defaults and hidden for project engagements', () => {
     expect(q.when?.({ ...base, engagementType: 'project' })).toBe(false)
+    expect(q.when?.({ ...base, engagementType: 'consulting' })).toBe(false)
     // Untouched answers read as fully selected.
     expect(q.get(base)).toEqual(['reconcile_accounts', 'categorize_transactions', 'client_questions', 'send_reports'])
     expect(q.summarize(base)).toBe('All 4 standard routines')

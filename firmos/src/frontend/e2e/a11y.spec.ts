@@ -70,6 +70,9 @@ test('client detail has no serious/critical axe violations', async ({ page }) =>
 
   // Correspondence hub: the tab history and the open composer both scan clean.
   await page.getByTestId('correspondence-tab').click()
+  // The tab buttons animate colors on activation; let the transition finish
+  // so axe measures final colors (same settle pattern as the meeting dialog).
+  await page.waitForTimeout(400)
   await expectAccessible(page, 'client detail - correspondence tab')
   const composeButton = page.getByTestId('compose-email-open')
   if (await composeButton.isEnabled().catch(() => false)) {

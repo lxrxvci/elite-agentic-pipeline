@@ -1,17 +1,22 @@
 import { SPECIALTY_REPORT_DEFAULT_RATE } from '@firmos/domain'
 
-import type { IntakePatch } from '@/server/intake'
+import type { IntakeContactInput, IntakePatch } from '@/server/intake'
 import type { IntakeFormData, IntakeRow } from '@/server/intake'
 import { DEFAULT_RECURRING_RULES, DEFAULT_RULE_KEYS } from '@/shared/lib/default-rules'
-import { monthLabel } from '@/shared/lib/date-display'
+
+import { dateTextLabel } from './date-text'
+import { formatPhone, phoneDigits } from './format'
 
 /**
- * The conversational intake wizard's declarative question registry
- * (HANDOFF §10, seven steps). Every chapter and every question is data;
- * branching lives in `when` predicates so the branch map is unit-testable
- * without rendering anything. The wizard walks `flattenScreens`, one
- * question per screen, and the review screen is appended last and never
- * counted in "Question X of Y".
+ * The conversational intake wizard's declarative question registry.
+ * Chapter/question order is Jason's dictated live-conversation flow
+ * (intake-restructure I1, plan §1): contact basics -> entity & ownership ->
+ * engagement type -> accounting software -> services -> starting point, then
+ * the scope chapters. Every chapter and every question is data; branching
+ * lives in `when` predicates so the branch map is unit-testable without
+ * rendering anything. The wizard walks `flattenScreens`, one question per
+ * screen, and the review screen is appended last and never counted in
+ * "Question X of Y".
  */
 
 // ── Answers ───────────────────────────────────────────────────────────────
@@ -32,12 +37,16 @@ export interface WizardAnswers extends IntakeFormData {
   includeRetroactive?: boolean
 }
 
-export const isBookkeeping = (a: WizardAnswers): boolean => (a.engagementType ?? 'bookkeeping') !== 'project'
+/** Monthly bookkeeping is the only recurring-books track; project and
+ *  consulting (I1) both run as one-time engagements. */
+export const isBookkeeping = (a: WizardAnswers): boolean => (a.engagementType ?? 'bookkeeping') === 'bookkeeping'
 const hasPayroll = (a: WizardAnswers): boolean => isBookkeeping(a) && a.hasPayroll === true
 const takesCards = (a: WizardAnswers): boolean =>
   (a.paymentMethods ?? []).some((m) => m === 'card' || m === 'online')
-/** Every QuickBooks status ends on QBO (existing, migrating, or new setup). */
-const hasQbo = (a: WizardAnswers): boolean => !!a.quickbooksStatus
+/** Only the three canonical QuickBooks statuses open the QBO follow-ups; a
+ *  custom "Other" answer (I1) is explicitly not QuickBooks. */
+const hasQbo = (a: WizardAnswers): boolean =>
+  a.quickbooksStatus === 'existing' || a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none'
 const isRealEstate = (a: WizardAnswers): boolean => a.isRealEstateClient === true
 
 // ── Question definition types ─────────────────────────────────────────────
@@ -53,7 +62,11 @@ export interface SelectOption {
 export interface FieldDef {
   key: string
   label: string
-  kind: 'text' | 'email' | 'tel' | 'number' | 'select' | 'textarea' | 'checkbox'
+  /**
+   * `date-text` (I1): masked MM/DD/YYYY text entry storing ISO YYYY-MM-DD.
+   * `tel` fields auto-format as (###) ###-#### and store digits only.
+   */
+  kind: 'text' | 'email' | 'tel' | 'number' | 'select' | 'textarea' | 'checkbox' | 'date-text'
   placeholder?: string
   options?: SelectOption[]
   required?: boolean
@@ -64,6 +77,13 @@ export interface FieldDef {
   half?: boolean
 }
 
+/** A one-tap draft prefill on a repeatable question (I1: "Same as [owner]"
+ *  on the contacts card copies the owner's name/email/phone). */
+export interface RepeatablePrefill {
+  label: string
+  patch: Record<string, unknown>
+}
+
 export interface RepeatableDef {
   itemFields: FieldDef[]
   /** Minimum validity for adding the draft item to the list. */
@@ -71,9 +91,11 @@ export interface RepeatableDef {
   summarize: (item: Record<string, unknown>) => string
   sub?: (item: Record<string, unknown>) => string | null
   addLabel: string
+  /** Draft prefill buttons, derived from the current answers. */
+  prefills?: (a: WizardAnswers) => RepeatablePrefill[]
 }
 
-export type QuestionType = 'select' | 'multi' | 'fields' | 'monthyear' | 'repeatable' | 'checklist'
+export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist'
 
 export interface QuestionDef {
   id: string
@@ -87,6 +109,18 @@ export interface QuestionDef {
   when?: (a: WizardAnswers) => boolean
   /** When false and the answer is empty, Continue acts as Skip. */
   required?: boolean
+  /**
+   * `fields` questions only: overrides how the form value object is built
+   * from answers (default: top-level answer keys matching field keys). I1's
+   * main-contact card uses it to read/write the primary contacts entry.
+   */
+  fieldsValue?: (a: WizardAnswers) => Record<string, unknown>
+  /**
+   * Carded selects with more than two options get an "Other - type it" card
+   * (I1, 00:15:53); set false to opt out. The typed text is stored verbatim
+   * in form_data.customAnswers[questionId]; the answer key keeps 'Other'.
+   */
+  allowCustom?: boolean
   get: (a: WizardAnswers) => unknown
   apply: (a: WizardAnswers, value: unknown) => Partial<WizardAnswers>
   /** One-line answer summary for the review screen; null hides the row. */
@@ -127,13 +161,35 @@ const join = (...parts: Array<string | null | undefined>): string | null => {
   return kept.length > 0 ? kept.join(' · ') : null
 }
 
-const monthYearLabel = (iso: unknown): string | null => {
-  const s = str(iso)
-  if (!s) return null
-  const [y, m] = s.split('-').map(Number)
-  if (!y || !m) return null
-  return monthLabel(y, m)
+/** "Wren Okafor" -> { firstName: 'Wren', lastName: 'Okafor' } (null when absent). */
+const splitFullName = (name: string): { firstName: string; lastName: string | null } => {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  return { firstName: parts[0] ?? name.trim(), lastName: parts.length > 1 ? parts.slice(1).join(' ') : null }
 }
+
+// ── Custom "Other" answers (I1, 00:15:53: "what if it's something
+//    completely far-fetched?") ────────────────────────────────────────────
+
+/** The canonical answer value whenever a custom answer is typed. */
+export const CUSTOM_OTHER_VALUE = 'Other'
+
+/** Carded selects with more than two options offer "Other - type it". */
+export const customAllowed = (q: QuestionDef): boolean =>
+  q.type === 'select' && (q.options?.length ?? 0) > 2 && q.allowCustom !== false
+
+/** The verbatim custom text for a question, when one was typed. */
+export const customText = (a: WizardAnswers, questionId: string): string | null =>
+  str(a.customAnswers?.[questionId])
+
+/** True when this pick opens the inline custom-text input instead of advancing. */
+export const isCustomOtherPick = (q: QuestionDef, value: string): boolean =>
+  customAllowed(q) && value === CUSTOM_OTHER_VALUE
+
+/** Review rows show the typed text verbatim instead of the bare "Other". */
+const withCustom =
+  (questionId: string, base: (a: WizardAnswers) => string | null) =>
+  (a: WizardAnswers): string | null =>
+    customText(a, questionId) ?? base(a)
 
 /** Number input coercion for repeatable drafts: ''/NaN -> null. */
 const numOrNull = (v: unknown): number | null => {
@@ -261,7 +317,10 @@ export function effectiveServiceKeys(a: WizardAnswers): string[] {
 
   if (isBookkeeping(a)) {
     if ((a.bookkeepingFrequency ?? 'monthly') === 'monthly') {
-      set.add(`monthly_reporting_${a.monthlyCloseTier ?? 15}`)
+      // A custom "Other" close-tier answer falls back to the 15th so the
+      // derived service key is always a real one (quote.ts throws otherwise).
+      const tier = a.monthlyCloseTier === '5' || a.monthlyCloseTier === '10' ? a.monthlyCloseTier : '15'
+      set.add(`monthly_reporting_${tier}`)
     } else {
       const k = REPORTING_BY_FREQUENCY[String(a.bookkeepingFrequency)]
       if (k) set.add(k)
@@ -284,52 +343,87 @@ export function effectiveServiceKeys(a: WizardAnswers): string[] {
 // ── Chapters ──────────────────────────────────────────────────────────────
 
 export const CHAPTERS: ChapterDef[] = [
+  // I1 (plan §1, 00:24:22-00:31:55): Jason's dictated conversation order -
+  // contact basics, entity & ownership, engagement type, accounting
+  // software, services, starting point - then the scope chapters in their
+  // existing relative order. Answer keys are unchanged from the old layout;
+  // only screen order and grouping moved.
   {
-    id: 'business',
-    label: 'Business basics',
+    id: 'contact',
+    label: 'Contact basics',
     questions: [
       {
         id: 'legal-name',
         title: 'What is the business called?',
-        help: 'The legal name goes on the engagement letter; the DBA is what we call them day to day.',
+        help: 'The legal name goes on the engagement letter.',
         type: 'fields',
         required: true,
         fields: [
           { key: 'legalName', label: 'Legal name', kind: 'text', required: true, placeholder: 'Fern & Feather Floral Studio LLC' },
-          { key: 'dbaName', label: 'DBA (optional)', kind: 'text', placeholder: 'Fern & Feather' },
-          { key: 'industry', label: 'Industry (optional)', kind: 'text', placeholder: 'Retail florist' },
         ],
         get: (a) => a.legalName,
         apply: (_a, v) => v as Partial<WizardAnswers>,
-        summarize: (a) => join(str(a.legalName), a.dbaName ? `DBA ${a.dbaName}` : null, str(a.industry)),
+        summarize: (a) => str(a.legalName),
       },
       {
-        id: 'tax-structure',
-        title: 'How is the business taxed?',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'LLC', label: 'LLC' },
-          { value: 'S-corp', label: 'S-corp' },
-          { value: 'C-corp', label: 'C-corp' },
-          { value: 'Sole proprietorship', label: 'Sole proprietorship' },
-          { value: 'Partnership', label: 'Partnership' },
-          { value: 'Nonprofit', label: 'Nonprofit' },
-          { value: 'Other', label: 'Other / not sure' },
-        ],
-        ...key('taxStructure'),
-        summarize: (a) => str(a.taxStructure),
-      },
-      {
-        id: 'tax-id',
-        title: 'What is the federal tax ID (EIN)?',
-        help: 'Used for 1099s and duplicate checks. You can add it later.',
+        // I1 (00:25:08): screen 1 collects the main contact directly. The
+        // answer lives in the canonical contacts array as the isPrimary
+        // entry, so conversion, cascade, and the review screen keep one
+        // source of truth.
+        id: 'main-contact',
+        title: 'Who is the main contact?',
+        help: 'The person we call, email, and send reports to. If they also own the business, the contacts card can prefill them.',
         type: 'fields',
-        required: false,
-        fields: [{ key: 'taxId', label: 'EIN (optional)', kind: 'text', placeholder: '12-3456789' }],
-        get: (a) => a.taxId,
-        apply: (_a, v) => v as Partial<WizardAnswers>,
-        summarize: (a) => (str(a.taxId) ? 'EIN on file' : null),
+        required: true,
+        fields: [
+          { key: 'contactName', label: 'Full name', kind: 'text', required: true, placeholder: 'Wren Okafor' },
+          { key: 'contactPhone', label: 'Phone', kind: 'tel', half: true, placeholder: '(503) 555-0182' },
+          { key: 'contactEmail', label: 'Email', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
+        ],
+        fieldsValue: (a) => {
+          const p = (a.contacts ?? []).find((c) => c.isPrimary)
+          return {
+            contactName: p ? (str(p.entityName) ?? [p.firstName, p.lastName].filter(Boolean).join(' ')) : '',
+            contactPhone: p?.phone ?? '',
+            contactEmail: p?.email ?? '',
+          }
+        },
+        get: (a) => {
+          const p = (a.contacts ?? []).find((c) => c.isPrimary)
+          return p ? (str(p.entityName) ?? [p.firstName, p.lastName].filter(Boolean).join(' ')) : undefined
+        },
+        apply: (a, v) => {
+          const val = v as Record<string, unknown>
+          const name = str(val.contactName)
+          const email = str(val.contactEmail)
+          const phone = phoneDigits(val.contactPhone) || null
+          const contacts = [...(a.contacts ?? [])]
+          const idx = contacts.findIndex((c) => c.isPrimary)
+          if (!name && !email && !phone) {
+            if (idx >= 0) contacts.splice(idx, 1)
+            return { contacts }
+          }
+          const { firstName, lastName } = splitFullName(name ?? '')
+          const entry: IntakeContactInput = {
+            ...contacts[idx],
+            firstName: name ? firstName : null,
+            lastName: name ? lastName : null,
+            entityName: null,
+            email,
+            phone,
+            isPrimary: true,
+            relationshipType: 'primary_contact',
+          }
+          if (idx >= 0) contacts[idx] = entry
+          else contacts.unshift(entry)
+          return { contacts }
+        },
+        summarize: (a) => {
+          const p = (a.contacts ?? []).find((c) => c.isPrimary)
+          if (!p) return null
+          const name = str(p.entityName) ?? [p.firstName, p.lastName].filter(Boolean).join(' ')
+          return join(str(name), p.phone ? formatPhone(p.phone) : null, str(p.email))
+        },
       },
       {
         id: 'address',
@@ -349,45 +443,76 @@ export const CHAPTERS: ChapterDef[] = [
           return join(str(a.businessAddress), cityState || null)
         },
       },
+    ],
+  },
+  {
+    id: 'entity',
+    label: 'Entity & ownership',
+    questions: [
       {
-        id: 'services',
-        title: 'Which services are we quoting?',
-        help: 'Pick everything in scope. Reporting, payroll, and add-ons are asked about later.',
-        type: 'multi',
+        id: 'tax-id',
+        title: 'What is the federal tax ID (EIN)?',
+        help: 'Used for 1099s and duplicate checks. You can add it later.',
+        type: 'fields',
+        required: false,
+        fields: [{ key: 'taxId', label: 'EIN (optional)', kind: 'text', placeholder: '12-3456789' }],
+        get: (a) => a.taxId,
+        apply: (_a, v) => v as Partial<WizardAnswers>,
+        summarize: (a) => (str(a.taxId) ? 'EIN on file' : null),
+      },
+      {
+        id: 'tax-structure',
+        title: 'How is the business taxed?',
+        type: 'select',
         required: true,
         options: [
-          { value: 'bank_feed_management', label: 'Bank feed management' },
-          { value: 'account_reconciliations', label: 'Account reconciliations', sub: 'Priced per account' },
-          { value: 'invoicing', label: 'Invoicing' },
-          { value: 'payment_processing', label: 'Payment processing' },
-          { value: 'loans_and_liabilities', label: 'Loans and liabilities' },
-          { value: 'class_tracking', label: 'Class tracking', sub: 'Priced per class' },
-          { value: 'location_tracking', label: 'Location tracking', sub: 'Priced per location' },
-          { value: 'additional_therapist_tracking', label: 'Therapist tracking' },
+          { value: 'LLC', label: 'LLC' },
+          { value: 'S-corp', label: 'S-corp' },
+          { value: 'C-corp', label: 'C-corp' },
+          { value: 'Sole proprietorship', label: 'Sole proprietorship' },
+          { value: 'Partnership', label: 'Partnership' },
+          { value: 'Nonprofit', label: 'Nonprofit' },
+          { value: 'Other', label: 'Other / not sure' },
         ],
-        get: (a) => a.serviceKeys ?? [],
-        apply: (_a, v) => ({ serviceKeys: v as string[] }),
-        summarize: (a) => {
-          const n = (a.serviceKeys ?? []).length
-          return n > 0 ? `${n} service${n === 1 ? '' : 's'} selected` : null
-        },
+        ...key('taxStructure'),
+        summarize: withCustom('tax-structure', (a) => str(a.taxStructure)),
+      },
+      {
+        id: 'dba-industry',
+        title: 'Any DBA and industry?',
+        type: 'fields',
+        required: false,
+        fields: [
+          { key: 'dbaName', label: 'DBA (optional)', kind: 'text', placeholder: 'Fern & Feather' },
+          { key: 'industry', label: 'Industry (optional)', kind: 'text', placeholder: 'Retail florist' },
+        ],
+        get: (a) => a.dbaName ?? a.industry,
+        apply: (_a, v) => v as Partial<WizardAnswers>,
+        summarize: (a) => join(a.dbaName ? `DBA ${a.dbaName}` : null, str(a.industry)),
       },
       {
         id: 'owners',
         title: 'Who owns the business?',
-        help: 'Add each owner with their ownership percentage.',
+        help: 'Each owner with their phone and email. Check who receives the monthly reports.',
         type: 'repeatable',
         required: false,
         repeatable: {
           addLabel: 'Add owner',
           itemFields: [
             { key: 'name', label: 'Full name', kind: 'text', required: true, placeholder: 'Wren Okafor' },
-            { key: 'email', label: 'Email (optional)', kind: 'email', placeholder: 'wren@fernfeather.shop' },
+            { key: 'email', label: 'Email (optional)', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
+            // I1 (00:27:59): owners carry a phone and a receives-reports flag.
+            { key: 'phone', label: 'Phone (optional)', kind: 'tel', half: true, placeholder: '(503) 555-0182' },
             { key: 'ownershipPercent', label: 'Ownership % (optional)', kind: 'number', min: 0, max: 100, half: true, placeholder: '60' },
+            { key: 'receivesReports', label: 'Receives the monthly reports', kind: 'checkbox' },
           ],
           itemValid: (i) => !!str(i.name),
           summarize: (i) => String(i.name),
-          sub: (i) => (i.ownershipPercent != null && i.ownershipPercent !== '' ? `${i.ownershipPercent}% owner` : null),
+          sub: (i) =>
+            join(
+              i.ownershipPercent != null && i.ownershipPercent !== '' ? `${i.ownershipPercent}% owner` : null,
+              i.receivesReports === true ? 'gets reports' : null,
+            ),
         },
         get: (a) => a.owners ?? [],
         apply: (_a, v) => ({ owners: v as WizardAnswers['owners'] }),
@@ -398,8 +523,8 @@ export const CHAPTERS: ChapterDef[] = [
       },
       {
         id: 'contacts',
-        title: 'Who do we talk to?',
-        help: 'The primary contact gets the monthly reports; the CPA gets tax questions.',
+        title: 'Who else do we talk to?',
+        help: 'The main contact is already listed. Add anyone else - an office manager, their bookkeeper. The CPA gets their own card next.',
         type: 'repeatable',
         required: false,
         repeatable: {
@@ -407,18 +532,18 @@ export const CHAPTERS: ChapterDef[] = [
           itemFields: [
             { key: 'firstName', label: 'First name', kind: 'text', half: true, placeholder: 'Wren' },
             { key: 'lastName', label: 'Last name', kind: 'text', half: true, placeholder: 'Okafor' },
-            { key: 'entityName', label: 'Or firm name (for a CPA firm)', kind: 'text', placeholder: 'Cascade Tax Group' },
             { key: 'email', label: 'Email', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
             { key: 'phone', label: 'Phone', kind: 'tel', half: true, placeholder: '(503) 555-0182' },
             {
+              // I1: the CPA role moved to its own card (00:30:14); legacy
+              // entries with relationshipType 'cpa' still render and convert.
               key: 'relationshipType', label: 'Role', kind: 'select', half: true,
               options: [
                 { value: 'primary_contact', label: 'Primary contact' },
-                { value: 'cpa', label: 'CPA' },
                 { value: 'related', label: 'Other' },
               ],
             },
-            { key: 'isPrimary', label: 'Receives the monthly reports', kind: 'checkbox' },
+            { key: 'isPrimary', label: 'Also receives the monthly reports', kind: 'checkbox' },
           ],
           itemValid: (i) => !!str(i.firstName) || !!str(i.entityName),
           summarize: (i) => (str(i.entityName) ?? [i.firstName, i.lastName].filter(Boolean).join(' ')),
@@ -426,6 +551,23 @@ export const CHAPTERS: ChapterDef[] = [
             const role = i.isPrimary ? 'Primary contact' : i.relationshipType === 'cpa' ? 'CPA' : null
             return role
           },
+          // I1 (00:29:05): when the contact is also an owner, one tap copies
+          // the owner's name/email/phone into the draft.
+          prefills: (a) =>
+            (a.owners ?? [])
+              .filter((o) => !!str(o.name))
+              .map((o) => {
+                const { firstName, lastName } = splitFullName(String(o.name))
+                return {
+                  label: `Same as ${String(o.name)}`,
+                  patch: {
+                    firstName,
+                    lastName: lastName ?? '',
+                    email: o.email ?? '',
+                    phone: o.phone ?? '',
+                  },
+                }
+              }),
         },
         get: (a) => a.contacts ?? [],
         apply: (_a, v) => ({ contacts: v as WizardAnswers['contacts'] }),
@@ -433,6 +575,31 @@ export const CHAPTERS: ChapterDef[] = [
           const cs = a.contacts ?? []
           return cs.length > 0 ? `${cs.length} contact${cs.length === 1 ? '' : 's'}` : null
         },
+      },
+      {
+        // I1 (00:30:14): the CPA is its own question card, not a contact role.
+        id: 'has-cpa',
+        title: 'Do they have a CPA who files their taxes?',
+        help: 'We coordinate with their CPA at tax time and on tax questions.',
+        type: 'select',
+        required: true,
+        ...yesNo('hasCpa'),
+        summarize: (a) =>
+          a.hasCpa === true ? join('Yes', str(a.cpaName)) : a.hasCpa === false ? 'No' : null,
+      },
+      {
+        id: 'cpa-details',
+        title: 'Who is their CPA?',
+        type: 'fields',
+        required: true,
+        when: (a) => a.hasCpa === true,
+        fields: [
+          { key: 'cpaName', label: 'CPA name or firm', kind: 'text', required: true, placeholder: 'Cascade Tax Group' },
+          { key: 'cpaEmail', label: 'CPA email', kind: 'email', half: true, placeholder: 'team@cascadetax.example' },
+        ],
+        get: (a) => a.cpaName,
+        apply: (_a, v) => v as Partial<WizardAnswers>,
+        summarize: () => null, // folded into the has-cpa row
       },
       {
         id: 'referral',
@@ -447,22 +614,26 @@ export const CHAPTERS: ChapterDef[] = [
           { value: 'Other', label: 'Something else' },
         ],
         ...key('referralSource'),
-        summarize: (a) => str(a.referralSource),
+        summarize: withCustom('referral', (a) => join(str(a.referralSource), str(a.referralWho))),
+      },
+      {
+        // I1 (00:30:14): a client/CPA referral captures who to thank.
+        id: 'referral-who',
+        title: 'Who should we thank?',
+        type: 'fields',
+        required: false,
+        when: (a) => a.referralSource === 'CPA referral' || a.referralSource === 'Existing client',
+        fields: [{ key: 'referralWho', label: 'Name (optional)', kind: 'text', placeholder: 'Cascade Tax Group' }],
+        get: (a) => a.referralWho,
+        apply: (_a, v) => v as Partial<WizardAnswers>,
+        summarize: () => null, // folded into the referral row
       },
     ],
   },
   {
-    id: 'starting',
-    label: 'Starting point',
+    id: 'engagement',
+    label: 'Engagement type',
     questions: [
-      {
-        id: 'existing-client',
-        title: 'Is this an existing client of the firm?',
-        type: 'select',
-        required: true,
-        ...yesNo('isExistingClient', { yes: 'Yes, we already work with them', no: 'No, brand new' }),
-        summarize: (a) => boolWord(a.isExistingClient),
-      },
       {
         id: 'engagement',
         title: 'What kind of engagement is this?',
@@ -474,10 +645,29 @@ export const CHAPTERS: ChapterDef[] = [
             value: 'project', label: 'One-time project', sub: 'Catch-up or cleanup, then done',
             note: 'Projects skip the balance sheet, income, and reporting chapters.',
           },
+          {
+            // I1 (00:31:05): consulting runs on the project-engagement track
+            // (no recurring rules seeded at conversion).
+            value: 'consulting', label: 'Consulting', sub: 'Advice and one-off help, no monthly books',
+            note: 'Consulting skips the balance sheet, income, and reporting chapters.',
+          },
         ],
         ...key('engagementType'),
-        summarize: (a) => (a.engagementType === 'project' ? 'One-time project' : str(a.engagementType) ? 'Monthly bookkeeping' : null),
+        summarize: withCustom('engagement', (a) =>
+          a.engagementType === 'project'
+            ? 'One-time project'
+            : a.engagementType === 'consulting'
+              ? 'Consulting'
+              : str(a.engagementType)
+                ? 'Monthly bookkeeping'
+                : null),
       },
+    ],
+  },
+  {
+    id: 'software',
+    label: 'Accounting software',
+    questions: [
       {
         id: 'qbo-status',
         title: 'Where do they stand with QuickBooks?',
@@ -489,17 +679,20 @@ export const CHAPTERS: ChapterDef[] = [
           { value: 'none', label: 'No QuickBooks yet' },
         ],
         ...key('quickbooksStatus'),
-        summarize: (a) =>
-          a.quickbooksStatus === 'existing' ? 'On QBO' : a.quickbooksStatus === 'desktop' ? 'QBO migration' : a.quickbooksStatus === 'none' ? 'No QuickBooks yet' : null,
+        summarize: withCustom('qbo-status', (a) =>
+          a.quickbooksStatus === 'existing' ? 'On QBO' : a.quickbooksStatus === 'desktop' ? 'QBO migration' : a.quickbooksStatus === 'none' ? 'No QuickBooks yet' : null),
       },
       {
         id: 'qbo-setup',
         title: 'Should we handle the QuickBooks setup?',
         type: 'select',
         required: true,
-        when: (a) => !!a.quickbooksStatus && a.quickbooksStatus !== 'existing',
+        when: (a) => a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none',
         ...yesNo('needsQuickbooksSetup'),
-        summarize: (a) => (a.quickbooksStatus && a.quickbooksStatus !== 'existing' ? boolWord(a.needsQuickbooksSetup) : null),
+        summarize: (a) =>
+          a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none'
+            ? boolWord(a.needsQuickbooksSetup)
+            : null,
       },
       {
         id: 'qbo-users',
@@ -541,7 +734,7 @@ export const CHAPTERS: ChapterDef[] = [
           qboSubscriptionTier:
             v === 'recommended' ? null : (v as WizardAnswers['qboSubscriptionTier']),
         }),
-        summarize: (a) => {
+        summarize: withCustom('qbo-tier', (a) => {
           if (!hasQbo(a)) return null
           const labels: Record<string, string> = {
             simple_start: 'Simple Start',
@@ -552,27 +745,69 @@ export const CHAPTERS: ChapterDef[] = [
           return a.qboSubscriptionTier
             ? (labels[a.qboSubscriptionTier] ?? a.qboSubscriptionTier)
             : 'Recommended at quote'
+        }),
+      },
+    ],
+  },
+  {
+    // I1: services sit right after software (plan §1 row 5); the services
+    // re-model itself is phase I4.
+    id: 'services',
+    label: 'Services',
+    questions: [
+      {
+        id: 'services',
+        title: 'Which services are we quoting?',
+        help: 'Pick everything in scope. Reporting, payroll, and add-ons are asked about later.',
+        type: 'multi',
+        required: true,
+        options: [
+          { value: 'bank_feed_management', label: 'Bank feed management' },
+          { value: 'account_reconciliations', label: 'Account reconciliations', sub: 'Priced per account' },
+          { value: 'invoicing', label: 'Invoicing' },
+          { value: 'payment_processing', label: 'Payment processing' },
+          { value: 'loans_and_liabilities', label: 'Loans and liabilities' },
+          { value: 'class_tracking', label: 'Class tracking', sub: 'Priced per class' },
+          { value: 'location_tracking', label: 'Location tracking', sub: 'Priced per location' },
+          { value: 'additional_therapist_tracking', label: 'Therapist tracking' },
+        ],
+        get: (a) => a.serviceKeys ?? [],
+        apply: (_a, v) => ({ serviceKeys: v as string[] }),
+        summarize: (a) => {
+          const n = (a.serviceKeys ?? []).length
+          return n > 0 ? `${n} service${n === 1 ? '' : 's'} selected` : null
         },
       },
+    ],
+  },
+  {
+    id: 'starting',
+    label: 'Starting point',
+    questions: [
       {
-        id: 'bk-start',
-        title: 'When should the books start?',
-        help: 'The first month we are responsible for.',
-        type: 'monthyear',
+        id: 'existing-client',
+        title: 'Is this an existing client of the firm?',
+        type: 'select',
         required: true,
-        when: isBookkeeping,
-        ...key('bookkeepingStartDate'),
-        summarize: (a) => (isBookkeeping(a) ? monthYearLabel(a.bookkeepingStartDate) : null),
+        ...yesNo('isExistingClient', { yes: 'Yes, we already work with them', no: 'No, brand new' }),
+        summarize: (a) => boolWord(a.isExistingClient),
       },
       {
-        id: 'catchup',
-        title: 'Any bank-feed catch-up date?',
-        help: 'How far back to pull bank feeds. Leave empty for none.',
-        type: 'monthyear',
-        required: false,
+        // I1 (00:33:00): dates are typed text (MM/DD/YYYY), no calendar
+        // popups. The separate catch-up date screen is gone (00:33:42) -
+        // buildPatch derives bankFeedCatchupDate from this date.
+        id: 'bk-start',
+        title: 'When should the books start?',
+        help: 'The first month we are responsible for. A good anchor: when did they last file their taxes? Catch-up work starts from this date automatically.',
+        type: 'fields',
+        required: true,
         when: isBookkeeping,
-        ...key('bankFeedCatchupDate'),
-        summarize: (a) => (isBookkeeping(a) ? monthYearLabel(a.bankFeedCatchupDate) : null),
+        fields: [
+          { key: 'bookkeepingStartDate', label: 'Books start date', kind: 'date-text', required: true, placeholder: '01/01/2026' },
+        ],
+        get: (a) => a.bookkeepingStartDate,
+        apply: (_a, v) => v as Partial<WizardAnswers>,
+        summarize: (a) => (isBookkeeping(a) ? dateTextLabel(a.bookkeepingStartDate) : null),
       },
     ],
   },
@@ -769,7 +1004,7 @@ export const CHAPTERS: ChapterDef[] = [
           { value: 'Other', label: 'Other' },
         ],
         ...key('payrollProvider'),
-        summarize: (a) => (hasPayroll(a) ? str(a.payrollProvider) : null),
+        summarize: withCustom('payroll-provider', (a) => (hasPayroll(a) ? str(a.payrollProvider) : null)),
       },
       {
         id: 'payroll-frequency',
@@ -784,7 +1019,8 @@ export const CHAPTERS: ChapterDef[] = [
           { value: 'monthly', label: 'Monthly' },
         ],
         ...key('payrollFrequency'),
-        summarize: (a) => (hasPayroll(a) ? FREQUENCY_LABELS[String(a.payrollFrequency)] ?? null : null),
+        summarize: withCustom('payroll-frequency', (a) =>
+          hasPayroll(a) ? (FREQUENCY_LABELS[String(a.payrollFrequency)] ?? null) : null),
       },
       {
         id: 'payroll-services',
@@ -829,7 +1065,7 @@ export const CHAPTERS: ChapterDef[] = [
           { value: 'annual', label: 'Annual' },
         ],
         ...key('bookkeepingFrequency'),
-        summarize: (a) => FREQUENCY_LABELS[String(a.bookkeepingFrequency)] ?? null,
+        summarize: withCustom('bk-frequency', (a) => FREQUENCY_LABELS[String(a.bookkeepingFrequency)] ?? null),
       },
       {
         id: 'close-tier',
@@ -843,10 +1079,10 @@ export const CHAPTERS: ChapterDef[] = [
           { value: '15', label: 'By the 15th', sub: 'Most relaxed' },
         ],
         ...key('monthlyCloseTier'),
-        summarize: (a) =>
+        summarize: withCustom('close-tier', (a) =>
           (a.bookkeepingFrequency ?? 'monthly') === 'monthly' && a.monthlyCloseTier
             ? `Close by the ${a.monthlyCloseTier}th`
-            : null,
+            : null),
       },
       {
         id: 'acct-method',
@@ -1126,6 +1362,11 @@ export function firstUnansweredScreen(a: WizardAnswers): number {
 
 // ── Persistence mapping ───────────────────────────────────────────────────
 
+/** The column enums custom "Other" answers must never reach (I1): the raw
+ *  text stays in form_data.customAnswers, the column falls back to null. */
+const BOOKKEEPING_FREQUENCIES = new Set(['monthly', 'quarterly', 'semi_annual', 'annual'])
+const CLOSE_TIERS = new Set(['5', '10', '15'])
+
 /** Wizard answers -> the autosave patch (structured columns + form_data). */
 export function buildPatch(a: WizardAnswers): IntakePatch {
   const formData: IntakeFormData = {
@@ -1158,9 +1399,16 @@ export function buildPatch(a: WizardAnswers): IntakePatch {
     quickbooksStatus: a.quickbooksStatus ?? null,
     needsQuickbooksSetup: a.needsQuickbooksSetup,
     bookkeepingStartDate: a.bookkeepingStartDate ?? null,
-    bankFeedCatchupDate: a.bankFeedCatchupDate ?? null,
-    bookkeepingFrequency: (a.bookkeepingFrequency ?? null) as IntakePatch['bookkeepingFrequency'],
-    monthlyCloseTier: (a.monthlyCloseTier == null ? null : String(a.monthlyCloseTier)) as IntakePatch['monthlyCloseTier'],
+    // I1 (00:33:42): the catch-up screen is removed; the books-start date
+    // dictates the catch-up anchor. An explicitly stored value (legacy
+    // intakes, call-notes extraction) still wins.
+    bankFeedCatchupDate: a.bankFeedCatchupDate ?? a.bookkeepingStartDate ?? null,
+    bookkeepingFrequency: (BOOKKEEPING_FREQUENCIES.has(String(a.bookkeepingFrequency))
+      ? a.bookkeepingFrequency
+      : null) as IntakePatch['bookkeepingFrequency'],
+    monthlyCloseTier: (CLOSE_TIERS.has(String(a.monthlyCloseTier))
+      ? String(a.monthlyCloseTier)
+      : null) as IntakePatch['monthlyCloseTier'],
     accountingMethod: a.accountingMethod ?? null,
     payrollProvider: a.payrollProvider ?? null,
     reportDefinitions: a.reportDefinitions ?? [],

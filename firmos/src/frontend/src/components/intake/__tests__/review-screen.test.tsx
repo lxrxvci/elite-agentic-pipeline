@@ -129,3 +129,42 @@ describe('ReviewScreen quote discounts (C1)', () => {
     expect(screen.queryByTestId('email-proposal')).not.toBeInTheDocument()
   })
 })
+
+describe('ReviewScreen I1 answer rendering', () => {
+  it('shows custom Other text verbatim, the CPA card, the referral who, and no catch-up row', () => {
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={{
+          legalName: 'Custom Co',
+          engagementType: 'bookkeeping',
+          contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true }],
+          taxStructure: 'Other',
+          customAnswers: { 'tax-structure': 'Series LLC taxed as a trust' },
+          hasCpa: true,
+          cpaName: 'Cascade Tax Group',
+          referralSource: 'CPA referral',
+          referralWho: 'Carlos at Cascade',
+          bookkeepingStartDate: '2026-01-05',
+        }}
+        quote={null}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+      />,
+    )
+    // The typed custom text renders verbatim, never the bare "Other".
+    expect(screen.getByText('Series LLC taxed as a trust')).toBeInTheDocument()
+    // The CPA card folds name into the yes/no row.
+    expect(screen.getByText('Yes · Cascade Tax Group')).toBeInTheDocument()
+    // Referral folds in who to thank.
+    expect(screen.getByText('CPA referral · Carlos at Cascade')).toBeInTheDocument()
+    // The text-entry date renders as a real date label…
+    expect(screen.getByText('Jan 5, 2026')).toBeInTheDocument()
+    // …and the removed catch-up screen has no row anywhere.
+    expect(screen.queryByText(/catch-up date/i)).toBeNull()
+  })
+})

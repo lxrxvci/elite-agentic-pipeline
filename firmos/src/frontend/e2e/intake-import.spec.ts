@@ -79,28 +79,38 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   await page.waitForURL((url) => /^\/intake\/\d+$/.test(url.pathname), { timeout: 20_000 })
 
   // ── The wizard resumes at the first question the call did not answer. ──
-  // (A blank intake opens on tax-structure; here tax structure is extracted,
-  //  and only the services pick is still missing.)
-  await expectQuestion(page, 'services')
+  // (I1 order: contact basics first - the call never named a main contact,
+  //  so the wizard opens there; tax structure and friends stay prefilled.)
+  await expectQuestion(page, 'main-contact')
+  await page.getByLabel('Full name').fill('Rio Mercado')
+  await advance(page, 'address')
+  await advance(page, 'tax-id') // skip the (unanswered) address
+  await advance(page, 'tax-structure') // skip EIN
 
   // ── Walk the rest: everything else the call answered stays prefilled.
   // Select screens advance by clicking the (already-selected) option card;
   // multi/fields/repeatable screens use Continue. ──
-  await page.getByTestId('chip-bank_feed_management').click()
+  await pick(page, 'option-LLC', 'dba-industry')
   await advance(page, 'owners')
   await advance(page, 'contacts')
-  await advance(page, 'referral')
-  // Referral came from the call: the CPA option is preselected.
+  await advance(page, 'has-cpa')
+  await pick(page, 'option-no', 'referral')
+  // Referral came from the call: the CPA option is preselected, and picking
+  // it opens the I1 who-to-thank follow-up.
   await expect(page.getByTestId('option-CPA referral')).toHaveAttribute('aria-selected', 'true')
-  await pick(page, 'option-CPA referral', 'existing-client')
-  await pick(page, 'option-no', 'engagement')
+  await pick(page, 'option-CPA referral', 'referral-who')
+  await advance(page, 'engagement')
   await pick(page, 'option-project', 'qbo-status')
   await pick(page, 'option-none', 'qbo-setup')
   await pick(page, 'option-yes', 'qbo-users')
   // The edited value survived: 3 QuickBooks users.
   await expect(page.getByLabel('QuickBooks users')).toHaveValue('3')
   await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 're-yes')
+  await pick(page, 'option-recommended', 'services')
+  // Services is the one scope answer the call never gave.
+  await page.getByTestId('chip-bank_feed_management').click()
+  await advance(page, 'existing-client')
+  await pick(page, 'option-no', 're-yes')
   // Project engagement: balance sheet, income, and reporting chapters are
   // hidden; the wizard lands on the recurring chapter next.
   await pick(page, 'option-no', 'retroactive')

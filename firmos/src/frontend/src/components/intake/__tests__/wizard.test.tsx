@@ -63,7 +63,7 @@ vi.mock('@/server/actions/correspondence', () => ({
   sendIntakeQuoteEmailAction: vi.fn(async () => ({ ok: true, data: { correspondenceId: 1, to: 'a@b.c' } })),
 }))
 
-import { IntakeWizard, AUTO_ADVANCE_MS, SAVE_DEBOUNCE_MS, QUOTE_DEBOUNCE_MS } from '../wizard'
+import { IntakeWizard, AUTO_ADVANCE_MS, NOTE_DWELL_MS, SAVE_DEBOUNCE_MS, QUOTE_DEBOUNCE_MS } from '../wizard'
 
 const noop = () => {}
 
@@ -84,7 +84,9 @@ function renderWizard(answers: WizardAnswers, initialScreenIndex?: number) {
 
 const completeAnswers: WizardAnswers = {
   legalName: 'Test Co',
+  contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true, relationshipType: 'primary_contact' }],
   taxStructure: 'LLC',
+  hasCpa: false,
   isExistingClient: false,
   engagementType: 'bookkeeping',
   quickbooksStatus: 'existing',
@@ -93,6 +95,7 @@ const completeAnswers: WizardAnswers = {
   serviceKeys: ['bank_feed_management'],
   isRealEstateClient: false,
   hasPayroll: false,
+  personalCardForBusiness: false,
   bookkeepingFrequency: 'monthly',
   monthlyCloseTier: '10',
   accountingMethod: 'cash',
@@ -135,8 +138,8 @@ describe('autosave', () => {
 describe('option auto-advance', () => {
   it('advances shortly after an option pick, not instantly', async () => {
     vi.useFakeTimers()
-    renderWizard({ legalName: 'Test Co' })
-    // Resumes at tax-structure (legal name is already answered).
+    renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
+    // Resumes at tax-structure (legal name and main contact are answered).
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
 
     fireEvent.click(screen.getByTestId('option-LLC'))
@@ -145,7 +148,69 @@ describe('option auto-advance', () => {
     await act(async () => {
       vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
     })
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-id')
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'dba-industry')
+  })
+})
+
+describe('custom "Other" option cards (I1)', () => {
+  it('picking Other opens the inline input instead of auto-advancing; Continue moves on', async () => {
+    vi.useFakeTimers()
+    renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
+
+    fireEvent.click(screen.getByTestId('option-Other'))
+    // The typed answer replaces the auto-advance: still on tax-structure.
+    await act(async () => {
+      vi.advanceTimersByTime(AUTO_ADVANCE_MS + NOTE_DWELL_MS + 500)
+    })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
+    const input = screen.getByTestId('custom-input-tax-structure')
+    fireEvent.change(input, { target: { value: 'Series LLC taxed as a trust' } })
+
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'dba-industry')
+
+    // Autosave carried the canonical Other value plus the verbatim text.
+    await act(async () => {
+      vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
+    })
+    const last = saveIntake.mock.calls.at(-1)?.[0] as {
+      patch: { taxStructure?: string | null; formData?: { customAnswers?: Record<string, string> } }
+    }
+    expect(last.patch.taxStructure).toBe('Other')
+    expect(last.patch.formData?.customAnswers?.['tax-structure']).toBe('Series LLC taxed as a trust')
+  })
+
+  it('re-picking a listed option clears the typed custom text', async () => {
+    vi.useFakeTimers()
+    const answers: WizardAnswers = {
+      legalName: 'Test Co',
+      contacts: [{ firstName: 'Wren', isPrimary: true }],
+      taxStructure: 'Other',
+      customAnswers: { 'tax-structure': 'Something exotic' },
+    }
+    // taxStructure is already answered, so resume would skip ahead - pin the
+    // screen directly.
+    const idx = flattenScreens(answers).findIndex(
+      (s) => s.kind === 'question' && s.questionId === 'tax-structure',
+    )
+    renderWizard(answers, idx)
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
+    expect(screen.getByTestId('custom-input-tax-structure')).toHaveValue('Something exotic')
+
+    fireEvent.click(screen.getByTestId('option-LLC'))
+    await act(async () => {
+      vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
+    })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'dba-industry')
+    await act(async () => {
+      vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
+    })
+    const last = saveIntake.mock.calls.at(-1)?.[0] as {
+      patch: { taxStructure?: string | null; formData?: { customAnswers?: Record<string, string> } }
+    }
+    expect(last.patch.taxStructure).toBe('LLC')
+    expect(last.patch.formData?.customAnswers?.['tax-structure']).toBeUndefined()
   })
 })
 
@@ -308,7 +373,7 @@ describe('review screen', () => {
   it('edit links jump back to the chapter question', async () => {
     renderWizard(completeAnswers, reviewIndex)
     expect(screen.getByTestId('review-screen')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('edit-business'))
+    fireEvent.click(screen.getByTestId('edit-contact'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'legal-name')
   })
 

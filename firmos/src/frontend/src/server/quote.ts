@@ -122,7 +122,10 @@ function toQuoteInput(answers: IntakeQuoteAnswers, today: LocalDate): QuoteInput
   // QBO pass-through (owner walkthrough): every QuickBooks status ends on
   // QBO, so any answered status prices the tier line - recommended from the
   // seat count + tracking complexity unless a plan was picked explicitly.
-  const qbo = answers.quickbooksStatus
+  // I1: the one exception is the wizard's canonical custom-answer sentinel
+  // 'Other' (typed text rides form_data.customAnswers) - not QuickBooks, no
+  // QBO line. Legacy aliases like "has_qbo" still price, as before.
+  const qbo = answers.quickbooksStatus && answers.quickbooksStatus !== "Other"
     ? {
         userCount: answers.qboUserCount ?? null,
         classTracking: serviceKeys.includes("class_tracking"),
@@ -143,7 +146,13 @@ function toQuoteInput(answers: IntakeQuoteAnswers, today: LocalDate): QuoteInput
 
   return {
     reportFrequency: answers.bookkeepingFrequency ?? null,
-    payrollFrequency: answers.payrollFrequency ?? "monthly",
+    // I1: a custom "Other" payroll-frequency answer must never reach the
+    // domain's exhaustive switch (payrollPeriodsPerMonth would NaN the quote).
+    payrollFrequency: ["weekly", "biweekly", "semi_monthly", "monthly"].includes(
+      String(answers.payrollFrequency),
+    )
+      ? (answers.payrollFrequency as QuoteInput["payrollFrequency"] & string)
+      : "monthly",
     services,
     customItems,
     qbo,

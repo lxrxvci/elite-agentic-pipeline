@@ -126,27 +126,37 @@ const DERIVED_SERVICE_KEYS: ReadonlySet<string> = new Set([
 
 const EXTRACTABLE_SERVICE_KEYS = Object.keys(SERVICE_LABELS).filter((k) => !DERIVED_SERVICE_KEYS.has(k))
 
+// I1: chapters follow the reordered registry (contact/entity/engagement/
+// software/services/starting/balance/real-estate/income/reporting/recurring).
 export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
-  // business
-  { key: 'dbaName', label: 'DBA', chapter: 'business', kind: 'string' },
-  { key: 'industry', label: 'Industry', chapter: 'business', kind: 'string' },
-  { key: 'taxStructure', label: 'Tax structure', chapter: 'business', kind: 'enum', options: TAX_STRUCTURES },
-  { key: 'taxId', label: 'Federal tax ID (EIN)', chapter: 'business', kind: 'string' },
-  { key: 'businessAddress', label: 'Street address', chapter: 'business', kind: 'string' },
-  { key: 'businessCity', label: 'City', chapter: 'business', kind: 'string' },
-  { key: 'businessState', label: 'State', chapter: 'business', kind: 'string' },
-  { key: 'businessZip', label: 'ZIP', chapter: 'business', kind: 'string' },
-  { key: 'serviceKeys', label: 'Services in scope', chapter: 'business', kind: 'enumList', options: EXTRACTABLE_SERVICE_KEYS },
-  { key: 'owners', label: 'Owners', chapter: 'business', kind: 'owners' },
-  { key: 'contacts', label: 'Contacts', chapter: 'business', kind: 'contacts' },
-  { key: 'referralSource', label: 'Referral source', chapter: 'business', kind: 'enum', options: REFERRAL_SOURCES },
+  // contact
+  { key: 'businessAddress', label: 'Street address', chapter: 'contact', kind: 'string' },
+  { key: 'businessCity', label: 'City', chapter: 'contact', kind: 'string' },
+  { key: 'businessState', label: 'State', chapter: 'contact', kind: 'string' },
+  { key: 'businessZip', label: 'ZIP', chapter: 'contact', kind: 'string' },
+  // entity
+  { key: 'dbaName', label: 'DBA', chapter: 'entity', kind: 'string' },
+  { key: 'industry', label: 'Industry', chapter: 'entity', kind: 'string' },
+  { key: 'taxStructure', label: 'Tax structure', chapter: 'entity', kind: 'enum', options: TAX_STRUCTURES },
+  { key: 'taxId', label: 'Federal tax ID (EIN)', chapter: 'entity', kind: 'string' },
+  { key: 'owners', label: 'Owners', chapter: 'entity', kind: 'owners' },
+  { key: 'contacts', label: 'Contacts', chapter: 'entity', kind: 'contacts' },
+  { key: 'hasCpa', label: 'Has a CPA who files taxes', chapter: 'entity', kind: 'boolean' },
+  { key: 'cpaName', label: 'CPA name or firm', chapter: 'entity', kind: 'string' },
+  { key: 'cpaEmail', label: 'CPA email', chapter: 'entity', kind: 'string' },
+  { key: 'referralSource', label: 'Referral source', chapter: 'entity', kind: 'enum', options: REFERRAL_SOURCES },
+  { key: 'referralWho', label: 'Referral - who to thank', chapter: 'entity', kind: 'string' },
+  // engagement
+  { key: 'engagementType', label: 'Engagement type', chapter: 'engagement', kind: 'enum', options: ['bookkeeping', 'project', 'consulting'] },
+  // software
+  { key: 'quickbooksStatus', label: 'QuickBooks status', chapter: 'software', kind: 'enum', options: ['existing', 'desktop', 'none'] },
+  { key: 'needsQuickbooksSetup', label: 'Needs QuickBooks setup', chapter: 'software', kind: 'boolean' },
+  { key: 'qboUserCount', label: 'QuickBooks users', chapter: 'software', kind: 'number', min: 1, max: 25 },
+  { key: 'qboSubscriptionTier', label: 'QuickBooks plan', chapter: 'software', kind: 'enum', options: QBO_TIERS },
+  // services
+  { key: 'serviceKeys', label: 'Services in scope', chapter: 'services', kind: 'enumList', options: EXTRACTABLE_SERVICE_KEYS },
   // starting
   { key: 'isExistingClient', label: 'Existing client', chapter: 'starting', kind: 'boolean' },
-  { key: 'engagementType', label: 'Engagement type', chapter: 'starting', kind: 'enum', options: ['bookkeeping', 'project'] },
-  { key: 'quickbooksStatus', label: 'QuickBooks status', chapter: 'starting', kind: 'enum', options: ['existing', 'desktop', 'none'] },
-  { key: 'needsQuickbooksSetup', label: 'Needs QuickBooks setup', chapter: 'starting', kind: 'boolean' },
-  { key: 'qboUserCount', label: 'QuickBooks users', chapter: 'starting', kind: 'number', min: 1, max: 25 },
-  { key: 'qboSubscriptionTier', label: 'QuickBooks plan', chapter: 'starting', kind: 'enum', options: QBO_TIERS },
   { key: 'bookkeepingStartDate', label: 'Books start date', chapter: 'starting', kind: 'string' },
   { key: 'bankFeedCatchupDate', label: 'Bank-feed catch-up date', chapter: 'starting', kind: 'string' },
   // balance
@@ -524,7 +534,7 @@ interface MissingCheck {
   when: (a: Partial<WizardAnswers>) => boolean
 }
 
-const isBk = (a: Partial<WizardAnswers>) => (a.engagementType ?? 'bookkeeping') !== 'project'
+const isBk = (a: Partial<WizardAnswers>) => (a.engagementType ?? 'bookkeeping') === 'bookkeeping'
 
 const MISSING_CHECKS: readonly MissingCheck[] = [
   { key: 'legalName', when: () => true },
@@ -532,9 +542,10 @@ const MISSING_CHECKS: readonly MissingCheck[] = [
   { key: 'serviceKeys', when: () => true },
   { key: 'isExistingClient', when: () => true },
   { key: 'engagementType', when: () => true },
+  { key: 'hasCpa', when: () => true },
   { key: 'quickbooksStatus', when: () => true },
-  { key: 'needsQuickbooksSetup', when: (a) => !!a.quickbooksStatus && a.quickbooksStatus !== 'existing' },
-  { key: 'qboUserCount', when: (a) => !!a.quickbooksStatus },
+  { key: 'needsQuickbooksSetup', when: (a) => a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none' },
+  { key: 'qboUserCount', when: (a) => a.quickbooksStatus === 'existing' || a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none' },
   { key: 'bookkeepingStartDate', when: isBk },
   { key: 'isRealEstateClient', when: () => true },
   { key: 'hasPayroll', when: isBk },
@@ -606,7 +617,7 @@ const KEY_VALUE_LABELS: Record<string, Record<string, string>> = {
   depreciationTracking: DEPRECIATION_BUCKET_LABELS,
   payrollFrequency: FREQUENCY_LABELS,
   bookkeepingFrequency: FREQUENCY_LABELS,
-  engagementType: { bookkeeping: 'Monthly bookkeeping', project: 'One-time project' },
+  engagementType: { bookkeeping: 'Monthly bookkeeping', project: 'One-time project', consulting: 'Consulting' },
   quickbooksStatus: { existing: 'Already on QuickBooks Online', desktop: 'QuickBooks Desktop', none: 'No QuickBooks yet' },
   qboSubscriptionTier: { simple_start: 'Simple Start', essentials: 'Essentials', plus: 'Plus', advanced: 'Advanced' },
   monthlyCloseTier: { '5': 'By the 5th', '10': 'By the 10th', '15': 'By the 15th' },

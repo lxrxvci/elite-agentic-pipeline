@@ -34,6 +34,31 @@ export const INTAKE_STATUS: Record<IntakeStatusKey, { status: WorkStatus; label:
   archived: { status: 'on_hold', label: 'Archived' },
 }
 
+/**
+ * Phone auto-format (intake-restructure I1, 00:30:14): phone fields store
+ * digits only and render as (###) ###-#### while typing.
+ */
+
+/** What we store: the digits, nothing else. */
+export function phoneDigits(raw: unknown): string {
+  return String(raw ?? '').replace(/\D/g, '')
+}
+
+/** Progressive display mask for a digit string (or any raw input). */
+export function formatPhone(raw: unknown): string {
+  const d = phoneDigits(raw)
+  if (d.length === 0) return ''
+  // +1 international lead-in formats around the 10-digit NANP body.
+  if (d.length === 11 && d.startsWith('1')) {
+    return `+1 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}`
+  }
+  if (d.length <= 3) return `(${d}`
+  if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`
+  const base = `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6, 10)}`
+  // Anything past 10 digits (extension, odd international) trails the mask.
+  return d.length > 10 ? `${base} ${d.slice(10)}` : base
+}
+
 /** "just now", "12m ago", "3h ago", "2d ago" - relative to a timestamp. */
 export function updatedAgo(iso: string, nowMs: number): string {
   const then = Date.parse(iso)

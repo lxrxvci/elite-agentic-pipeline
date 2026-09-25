@@ -1,12 +1,21 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { ArrowRight, Check, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { cn } from '@/shared/lib/utils'
 
-import type { FieldDef, QuestionDef, WizardAnswers } from './registry'
+import { dateTextDigits, dateTextToIso, isoToDateText, maskDateText } from './date-text'
+import { formatPhone, phoneDigits } from './format'
+import {
+  CUSTOM_OTHER_VALUE,
+  customAllowed,
+  type FieldDef,
+  type QuestionDef,
+  type RepeatablePrefill,
+  type WizardAnswers,
+} from './registry'
 
 /**
  * Question renderers for the conversational intake wizard. One question per
@@ -23,14 +32,21 @@ export function OptionCards({
   options,
   current,
   onPick,
+  allowCustom = false,
 }: {
   options: NonNullable<QuestionDef['options']>
   current: string | undefined
   onPick: (value: string) => void
+  /** I1: append the "Other - type it" card when the question allows a custom answer. */
+  allowCustom?: boolean
 }) {
+  const all =
+    allowCustom && !options.some((o) => o.value === CUSTOM_OTHER_VALUE)
+      ? [...options, { value: CUSTOM_OTHER_VALUE, label: 'Other — type it' }]
+      : options
   return (
     <div className="grid gap-2.5 sm:grid-cols-2" role="listbox" aria-label="Options">
-      {options.map((o) => {
+      {all.map((o) => {
         const selected = current === o.value
         return (
           <button
@@ -170,6 +186,57 @@ export function ChecklistCards({
 
 // ── Field rows (shared by `fields` questions and repeatable drafts) ───────
 
+/**
+ * I1 text-entry date (00:33:00): masked MM/DD/YYYY, keyboard-first, no
+ * popup. Only complete real dates commit (as ISO); partial or impossible
+ * dates commit null and show an inline hint once 8 digits are in.
+ */
+export function DateTextInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string
+  value: unknown
+  onChange: (iso: string | null) => void
+  placeholder?: string
+}) {
+  const [text, setText] = useState(() => isoToDateText(typeof value === 'string' ? value : null))
+  const [invalid, setInvalid] = useState(false)
+  return (
+    <div>
+      <input
+        aria-label={label}
+        aria-invalid={invalid}
+        className={cn(inputCls, 'tnum')}
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        placeholder={placeholder ?? 'MM/DD/YYYY'}
+        value={text}
+        onChange={(e) => {
+          const masked = maskDateText(e.target.value)
+          setText(masked)
+          if (dateTextDigits(masked).length < 8) {
+            setInvalid(false)
+            onChange(null)
+            return
+          }
+          const iso = dateTextToIso(masked)
+          setInvalid(iso == null)
+          onChange(iso)
+        }}
+      />
+      {invalid && (
+        <p className="mt-1 text-xs font-medium text-status-overdue" role="alert">
+          That date isn&apos;t real - use MM/DD/YYYY.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function FieldInput({
   def,
   value,
@@ -179,6 +246,23 @@ function FieldInput({
   value: unknown
   onChange: (v: unknown) => void
 }) {
+  if (def.kind === 'date-text') {
+    return <DateTextInput label={def.label} value={value} onChange={onChange} placeholder={def.placeholder} />
+  }
+  if (def.kind === 'tel') {
+    // I1 (00:30:14): auto-format (###) ###-#### while typing; store digits.
+    return (
+      <input
+        aria-label={def.label}
+        className={cn(inputCls, 'tnum')}
+        type="tel"
+        inputMode="tel"
+        placeholder={def.placeholder}
+        value={formatPhone(value)}
+        onChange={(e) => onChange(phoneDigits(e.target.value) || null)}
+      />
+    )
+  }
   if (def.kind === 'select') {
     return (
       <select
@@ -264,6 +348,11 @@ function validateFields(fields: FieldDef[], value: Record<string, unknown>): str
     const v = value[f.key]
     const empty = v == null || String(v).trim() === ''
     if (f.required && empty) return `${f.label.replace(' (optional)', '')} is required.`
+    // date-text commits ISO or null, so a stray non-ISO value means the
+    // typed date never resolved to a real one.
+    if (!empty && f.kind === 'date-text' && !/^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+      return `${f.label.replace(' (optional)', '')} needs a real date as MM/DD/YYYY.`
+    }
     if (!empty && f.kind === 'number') {
       const n = Number(v)
       if (!Number.isFinite(n)) return `${f.label.replace(' (optional)', '')} should be a number.`
@@ -274,82 +363,19 @@ function validateFields(fields: FieldDef[], value: Record<string, unknown>): str
   return null
 }
 
-// ── Month-year picker ─────────────────────────────────────────────────────
-
-const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-export function MonthYearPicker({
-  value,
-  onChange,
-  currentYear,
-}: {
-  value: string | null | undefined
-  onChange: (iso: string) => void
-  currentYear: number
-}) {
-  const parsed = value ? value.split('-').map(Number) : []
-  const [year, setYear] = useState(parsed[0] || currentYear)
-  const selectedMonth = parsed[0] === year ? parsed[1] : undefined
-
-  return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <button
-          type="button"
-          aria-label="Previous year"
-          onClick={() => setYear((y) => y - 1)}
-          className="rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          {'‹'}
-        </button>
-        <span className="tnum text-sm font-semibold text-foreground" data-testid="monthyear-year">
-          {year}
-        </span>
-        <button
-          type="button"
-          aria-label="Next year"
-          onClick={() => setYear((y) => y + 1)}
-          className="rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          {'›'}
-        </button>
-      </div>
-      <div className="grid grid-cols-4 gap-1.5">
-        {SHORT_MONTHS.map((m, i) => {
-          const selected = selectedMonth === i + 1
-          return (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={selected}
-              data-testid={`month-${i + 1}`}
-              onClick={() => onChange(`${year}-${String(i + 1).padStart(2, '0')}-01`)}
-              className={cn(
-                'rounded-md px-2 py-2 text-sm font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-                selected
-                  ? 'bg-firm-brand text-primary-foreground'
-                  : 'text-foreground hover:bg-accent',
-              )}
-            >
-              {m}
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // ── Repeatable mini-entity loop ───────────────────────────────────────────
 
 export function RepeatableScreen({
   q,
   items,
+  prefills = [],
   onCommit,
   onAdvance,
 }: {
   q: QuestionDef
   items: Array<Record<string, unknown>>
+  /** I1 (00:29:05): one-tap draft prefills, e.g. "Same as [owner name]". */
+  prefills?: RepeatablePrefill[]
   onCommit: (items: Array<Record<string, unknown>>) => void
   onAdvance: () => void
 }) {
@@ -421,6 +447,22 @@ export function RepeatableScreen({
       )}
 
       <div className="rounded-xl border border-border bg-card p-4">
+        {prefills.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">Prefill:</span>
+            {prefills.map((p, i) => (
+              <button
+                key={p.label}
+                type="button"
+                data-testid={`prefill-${i}`}
+                onClick={() => setDraft((d) => ({ ...d, ...p.patch }))}
+                className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground transition-colors hover:border-firm-brand/60 hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
         <FieldGrid fields={rep.itemFields} value={draft} onChange={(k, v) => setDraft((d) => ({ ...d, [k]: v }))} />
         <div className="mt-3">
           <Button
@@ -471,15 +513,50 @@ export function QuestionScreen({
   onPickOption: (value: string) => void
 }) {
   const [error, setError] = useState<string | null>(null)
-  const currentYear = useMemo(() => new Date().getFullYear(), [])
 
   if (q.type === 'select') {
+    const current = q.get(answers) as string | undefined
+    const customOn = customAllowed(q)
+    // I1: picking "Other - type it" opens the inline text field and waits for
+    // Continue instead of auto-advancing (the wizard suppresses the timer).
+    const otherOpen = customOn && current === CUSTOM_OTHER_VALUE
     return (
-      <OptionCards
-        options={q.options ?? []}
-        current={q.get(answers) as string | undefined}
-        onPick={onPickOption}
-      />
+      <div className="space-y-4">
+        <OptionCards
+          options={q.options ?? []}
+          current={current}
+          onPick={onPickOption}
+          allowCustom={customOn}
+        />
+        {otherOpen && (
+          <div>
+            <label
+              htmlFor={`custom-${q.id}`}
+              className="mb-1 block text-xs font-medium text-muted-foreground"
+            >
+              Type the answer in their words
+            </label>
+            <input
+              id={`custom-${q.id}`}
+              data-testid={`custom-input-${q.id}`}
+              className={inputCls}
+              placeholder="Something completely different…"
+              value={(answers.customAnswers?.[q.id] as string | undefined) ?? ''}
+              onChange={(e) =>
+                onApply({
+                  customAnswers: { ...(answers.customAnswers ?? {}), [q.id]: e.target.value },
+                })
+              }
+            />
+          </div>
+        )}
+        {otherOpen && (
+          <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
+            Continue
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </Button>
+        )}
+      </div>
     )
   }
 
@@ -518,8 +595,9 @@ export function QuestionScreen({
 
   if (q.type === 'fields') {
     const fields = q.fields ?? []
-    const value: Record<string, unknown> = {}
-    for (const f of fields) value[f.key] = answers[f.key]
+    const value: Record<string, unknown> = q.fieldsValue
+      ? q.fieldsValue(answers)
+      : Object.fromEntries(fields.map((f) => [f.key, answers[f.key]]))
     const hasAny = fields.some((f) => {
       const v = value[f.key]
       return v != null && String(v).trim() !== ''
@@ -563,25 +641,13 @@ export function QuestionScreen({
     )
   }
 
-  if (q.type === 'monthyear') {
-    const value = q.get(answers) as string | null | undefined
-    return (
-      <div className="space-y-4">
-        <MonthYearPicker value={value} onChange={(iso) => onApply(q.apply(answers, iso))} currentYear={currentYear} />
-        <Button type="button" variant="action" onClick={onAdvance} disabled={!value && !!q.required} data-testid="continue">
-          {value || q.required ? 'Continue' : 'Skip for now'}
-          <ArrowRight className="h-4 w-4" aria-hidden />
-        </Button>
-      </div>
-    )
-  }
-
   // repeatable
   const items = (q.get(answers) as Array<Record<string, unknown>>) ?? []
   return (
     <RepeatableScreen
       q={q}
       items={items}
+      prefills={q.repeatable?.prefills?.(answers) ?? []}
       onCommit={(next) => onApply(q.apply(answers, next))}
       onAdvance={onAdvance}
     />

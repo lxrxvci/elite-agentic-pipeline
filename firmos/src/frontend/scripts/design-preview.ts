@@ -257,8 +257,9 @@ async function main(): Promise<void> {
     await page.waitForTimeout(300);
     await shot(page, "client-billing-timeline");
 
-    // 5. Intake wizard mid-step with the running-notes rail: start a fresh
-    //    intake, answer one question, capture two tangents.
+    // 5. Intake wizard in the I1 order (contact -> entity -> engagement ->
+    //    software -> services -> starting -> scope chapters): start a fresh
+    //    intake, collect the main contact, capture two tangents on the rail.
     await page.goto(`${BASE}/intake`, { waitUntil: "networkidle" });
     await page.getByTestId("start-new-intake").click();
     await page
@@ -266,8 +267,13 @@ async function main(): Promise<void> {
       .fill(`Design Preview & Co ${Date.now() % 100000}`);
     await page.getByTestId("new-intake-create").click();
     await page.waitForURL(/\/intake\/\d+$/, { timeout: 15_000 });
-    await page.getByTestId("option-LLC").click();
-    await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", "tax-id");
+
+    // 5a. Screen 1 is the main-contact card now (00:25:08); the phone masks
+    //     as it is typed. The running-notes rail rides every screen.
+    await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", "main-contact");
+    await page.getByLabel("Full name").fill("Wren Okafor");
+    await page.getByLabel("Phone").pressSequentially("5035550182");
+    await page.getByLabel("Email").fill("wren@fernfeather.shop");
     await page
       .getByTestId("running-note-input")
       .fill("Owner also runs a second LLC - separate books, same CPA.");
@@ -277,35 +283,65 @@ async function main(): Promise<void> {
       .fill("Asked about class tracking per location - revisit at onboarding.");
     await page.getByTestId("running-note-add").click();
     await page.waitForTimeout(400);
-    await shot(page, "intake-wizard");
+    await shot(page, "intake-screen-1-contact");
 
-    // 5b. C1: discount capture on the live quote panel. Answer the services
-    //     question so the panel has priced lines, then set a $25 discount.
-    await wizardAdvance(page, "address"); // skip EIN
-    await wizardAdvance(page, "services"); // skip address
+    // 5b. Entity & ownership: the "Other - type it" custom input (00:15:53),
+    //     then the owners card with the receives-reports checkbox (00:27:59).
+    await wizardAdvance(page, "address");
+    await wizardAdvance(page, "tax-id"); // skip address
+    await wizardAdvance(page, "tax-structure"); // skip EIN
+    await page.getByTestId("option-Other").click(); // opens the input, no auto-advance
+    await page.getByTestId("custom-input-tax-structure").fill("LLC taxed as an S-corp later");
+    await page.waitForTimeout(300);
+    await shot(page, "intake-other-input");
+    await page.getByTestId("option-LLC").click(); // re-pick clears the custom text
+    await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", "dba-industry");
+    await wizardAdvance(page, "owners"); // skip DBA/industry
+    await page.getByLabel("Full name").fill("Wren Okafor");
+    await page.getByLabel("Email (optional)").fill("wren@fernfeather.shop");
+    await page.getByLabel("Phone (optional)").pressSequentially("5035550182");
+    await page.getByLabel("Receives the monthly reports").check();
+    await page.getByTestId("add-another").click();
+    await page.waitForTimeout(400);
+    await shot(page, "intake-entity-screen");
+
+    // 5c. Contacts (owner prefill), the CPA card (00:30:14), referral, then
+    //     engagement and the software chapter.
+    await wizardAdvance(page, "contacts");
+    await wizardAdvance(page, "has-cpa"); // prefill visible; nothing to add
+    await wizardPick(page, "option-yes", "cpa-details");
+    await page.getByLabel("CPA name or firm").fill("Cascade Tax Group");
+    await page.getByLabel("CPA email").fill("team@cascadetax.example");
+    await wizardAdvance(page, "referral");
+    await wizardPick(page, "option-Web search", "engagement");
+    await wizardPick(page, "option-bookkeeping", "qbo-status");
+    await page.waitForTimeout(200);
+    await shot(page, "intake-software-screen");
+    await wizardPick(page, "option-existing", "qbo-users");
+    await page.getByLabel("QuickBooks users").fill("2");
+    await wizardAdvance(page, "qbo-tier");
+    await wizardPick(page, "option-recommended", "services");
+
+    // 5d. Services chips + C1 discount capture on the live quote panel.
     await page.getByTestId("chip-bank_feed_management").click();
     await page.getByTestId("chip-account_reconciliations").click();
-    await page.getByTestId("continue").click();
-    // The debounced server quote repaints the panel with priced lines.
     const discountInput = page.getByTestId("discount-bank_feed_management");
     await discountInput.waitFor({ timeout: 15_000 });
     await discountInput.fill("25");
     await page.waitForTimeout(900); // quote debounce + server round-trip
     await shot(page, "intake-quote-discount");
 
-    // 5c. Drive the remaining questions to the specialty-reports step (C10).
-    await wizardAdvance(page, "contacts"); // currently on owners
-    await wizardAdvance(page, "referral");
-    await wizardPick(page, "option-Web search", "existing-client");
-    await wizardPick(page, "option-no", "engagement");
-    await wizardPick(page, "option-bookkeeping", "qbo-status");
-    await wizardPick(page, "option-existing", "qbo-users");
-    await page.getByLabel("QuickBooks users").fill("2");
-    await wizardAdvance(page, "qbo-tier");
-    await wizardPick(page, "option-recommended", "bk-start");
-    await page.getByTestId("month-1").click();
-    await wizardAdvance(page, "catchup");
-    await wizardAdvance(page, "accounts"); // skip catch-up
+    // 5e. Starting point: the books-start date is typed text now (00:33:00),
+    //     and the old catch-up screen is gone (00:33:42).
+    await page.getByTestId("continue").click();
+    await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", "existing-client");
+    await wizardPick(page, "option-no", "bk-start");
+    await page.getByLabel("Books start date").pressSequentially("01012026");
+    await page.waitForTimeout(300);
+    await shot(page, "intake-date-text");
+
+    // 5f. Drive the remaining scope questions to the specialty-reports step.
+    await wizardAdvance(page, "accounts"); // commit the date
     await wizardAdvance(page, "re-yes"); // skip accounts
     await wizardPick(page, "option-no", "payment-methods");
     await wizardAdvance(page, "personal-card"); // checks only
@@ -328,7 +364,7 @@ async function main(): Promise<void> {
     await page.waitForTimeout(900); // let the quote reprice with the new lines
     await shot(page, "intake-specialty-reports");
 
-    // 5d. B21: the default recurring routines checklist (pre-selected,
+    // 5g. B21: the default recurring routines checklist (pre-selected,
     //     per-item unselect).
     await wizardAdvance(page, "retroactive"); // commit the reports screen
     await wizardPick(page, "option-no", "default-rules");
@@ -336,12 +372,13 @@ async function main(): Promise<void> {
     await page.waitForTimeout(400);
     await shot(page, "intake-default-rules");
 
-    // 6. Intake review screen: the seeded pending_review intake renders the
-    //    read-only review (quote + running-notes section when present).
-    await page.goto(`${BASE}/intake`, { waitUntil: "networkidle" });
-    await page.locator('[data-status="pending_review"]').first().click();
-    await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(400);
+    // 6. The review screen in the new chapter order: the walked answers, the
+    //    CPA row, the typed date, and the server-priced quote all render.
+    await wizardAdvance(page, "rules"); // keep the remaining routines selected
+    await wizardAdvance(page, "notes"); // skip custom rules
+    await page.getByTestId("continue").click(); // skip notes -> review
+    await page.getByTestId("review-screen").waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(1200); // quote debounce + server round-trip
     await shot(page, "intake-review");
 
     // 7. Invoices, light: the seed parks a paid + an overdue invoice together

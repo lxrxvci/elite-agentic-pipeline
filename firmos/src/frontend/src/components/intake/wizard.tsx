@@ -14,11 +14,14 @@ import { NotesRail } from './notes-rail'
 import { QuotePanel } from './quote-panel'
 import {
   buildPatch,
+  CUSTOM_OTHER_VALUE,
+  customAllowed,
   effectiveServiceKeys,
   findChapter,
   findQuestion,
   firstUnansweredScreen,
   flattenScreens,
+  isCustomOtherPick,
   questionPosition,
   visibleChapters,
   type WizardAnswers,
@@ -27,11 +30,12 @@ import { ReviewScreen } from './review-screen'
 import { QuestionScreen } from './screens'
 
 /**
- * The conversational client intake wizard (HANDOFF §10): one question per
- * screen on a single page, option picks auto-advance, direction-aware
- * transitions, a persistent Back link that never loses answers, debounced
- * autosave through saveIntake, and a persistent live quote priced by the
- * server only. The branch map lives in registry.ts, declarative and tested.
+ * The conversational client intake wizard: one question per screen on a
+ * single page in Jason's dictated order (intake-restructure I1, plan §1),
+ * option picks auto-advance, direction-aware transitions, a persistent Back
+ * link that never loses answers, debounced autosave through saveIntake, and
+ * a persistent live quote priced by the server only. The branch map lives in
+ * registry.ts, declarative and tested.
  */
 
 export const AUTO_ADVANCE_MS = 180
@@ -188,7 +192,26 @@ export function IntakeWizard({
     (questionId: string, value: string) => {
       const q = screen?.kind === 'question' ? findQuestion(screen.chapterId, screen.questionId) : undefined
       if (!q || q.id !== questionId) return
-      apply(q.apply(answersRef.current, value))
+      let patch = q.apply(answersRef.current, value)
+      // I1 custom "Other": re-picking a listed option drops the typed text.
+      if (customAllowed(q) && value !== CUSTOM_OTHER_VALUE) {
+        const custom = answersRef.current.customAnswers
+        if (custom && custom[q.id] != null) {
+          const rest = { ...custom }
+          delete rest[q.id]
+          patch = { ...patch, customAnswers: rest }
+        }
+      }
+      apply(patch)
+      // Picking "Other - type it" opens the inline input; Continue advances.
+      if (isCustomOtherPick(q, value)) {
+        setNote(null)
+        if (advanceTimer.current) {
+          clearTimeout(advanceTimer.current)
+          advanceTimer.current = null
+        }
+        return
+      }
       const optionNote = q.options?.find((o) => o.value === value)?.note ?? null
       setNote(optionNote)
       if (advanceTimer.current) clearTimeout(advanceTimer.current)

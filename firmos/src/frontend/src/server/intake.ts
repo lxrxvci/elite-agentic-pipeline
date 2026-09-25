@@ -21,6 +21,14 @@ export interface IntakeOwnerInput {
   name: string;
   email?: string | null;
   ownershipPercent?: number | null;
+  /**
+   * I1 (00:27:59): owners carry a phone and a receives-reports flag. Both
+   * live on form_data only - intake_owners has no columns for them yet and
+   * contact_client_links has no receives_reports column (schema gap flagged
+   * for a later phase; conversion reads the form_data copy by owner name).
+   */
+  phone?: string | null;
+  receivesReports?: boolean;
 }
 
 export interface IntakeContactInput {
@@ -129,9 +137,22 @@ export interface IntakeFormData {
   owners?: IntakeOwnerInput[];
   contacts?: IntakeContactInput[];
   referralSource?: string | null;
+  /** I1: who to thank, when the referral source is a client or CPA. */
+  referralWho?: string | null;
+  /** I1: the dedicated CPA card (00:30:14) - "Do they have a CPA who files
+   *  their taxes?" plus the CPA's name/email when yes. */
+  hasCpa?: boolean;
+  cpaName?: string | null;
+  cpaEmail?: string | null;
+  /** I1 (00:15:53): verbatim custom text behind a select's "Other - type
+   *  it" card, keyed by registry question id. The answer key itself keeps
+   *  the canonical 'Other' value; conversion treats this as pass-through
+   *  record data and never maps it onto enum columns. */
+  customAnswers?: Record<string, string>;
   // Step 2 - starting point
   isExistingClient?: boolean;
-  engagementType?: "bookkeeping" | "project";
+  /** I1 (00:31:05): 'consulting' runs on the project-engagement track. */
+  engagementType?: "bookkeeping" | "project" | "consulting";
   quickbooksStatus?: string | null;
   needsQuickbooksSetup?: boolean;
   /** Seats needed in QuickBooks; drives the tier recommendation (§15 QBO pass-through). */
@@ -333,6 +354,8 @@ async function replaceIntakeOwners(intakeId: number, owners: IntakeOwnerInput[])
   );
   await db.delete(intakeOwners).where(eq(intakeOwners.intakeId, intakeId));
   if (owners.length === 0) return;
+  // I1: phone/receivesReports stay on form_data.owners - intake_owners has no
+  // columns for them yet (schema gap flagged; conversion merges by name).
   await db.insert(intakeOwners).values(
     owners.map((o) => ({
       intakeId,

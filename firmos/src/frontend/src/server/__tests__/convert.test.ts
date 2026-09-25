@@ -584,4 +584,180 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     client = (await db.select().from(clients).where(eq(clients.id, result.clientId)))[0];
     expect(client.isProjectEngagement).toBe(true);
   });
+
+  it("I1: consulting engagement converts on the project-engagement track", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Consulting Co",
+      engagementType: "consulting",
+      bookkeepingStartDate: "2026-01-01",
+      reportDefinitions: [{ name: "Monthly Financial Package", frequency: "monthly" }],
+      formData: { serviceKeys: ["bank_feed_management"] },
+    });
+
+    const result = await convertIntakeToClient(
+      intakeId,
+      { managerId: managerPriya, bookkeeperId: bookkeeperSofia },
+      managerPriya,
+      TEST_TODAY,
+    );
+    expect(result.isProjectEngagement).toBe(true);
+    expect(result.recurringRulesCreated).toBe(0);
+    expect(result.reportRowsCreated).toBe(0);
+
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(client.isProjectEngagement).toBe(true);
+    expect(client.requiresWeeklyBankFeeds).toBe(false);
+    const rules = await db
+      .select()
+      .from(recurringTasks)
+      .where(eq(recurringTasks.clientId, client.id));
+    expect(rules).toHaveLength(0);
+  });
+
+  it("I1: cascade flips consulting to the project track one way, same as project", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Consulting Flip Co",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+    });
+    const result = await convertIntakeToClient(
+      intakeId,
+      { managerId: managerDana, bookkeeperId: bookkeeperSofia },
+      managerDana,
+      TEST_TODAY,
+    );
+    const flip = await cascadeIntakeToClient(intakeId, { engagementType: "consulting" }, TEST_TODAY);
+    expect(flip.flippedToProject).toBe(true);
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(client.isProjectEngagement).toBe(true);
+  });
+
+  it("I1: the dedicated CPA card creates the CPA contact and cpa_contact_id", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "CPA Card Co",
+      engagementType: "project",
+      formData: {
+        hasCpa: true,
+        cpaName: "Cascade Tax Group",
+        cpaEmail: "team@cascadetax.example",
+        contacts: [
+          { firstName: "Wren", lastName: "Okafor", email: "wren@x.co", isPrimary: true },
+        ],
+      },
+    });
+
+    const result = await convertIntakeToClient(
+      intakeId,
+      { managerId: managerPriya, bookkeeperId: bookkeeperSofia },
+      managerPriya,
+      TEST_TODAY,
+    );
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(client.cpaContactId).not.toBeNull();
+    expect(client.primaryContactId).not.toBeNull();
+
+    const [cpa] = await db.select().from(contacts).where(eq(contacts.id, client.cpaContactId!));
+    expect(cpa.firstName).toBe("Cascade");
+    expect(cpa.lastName).toBe("Tax Group");
+    expect(cpa.email).toBe("team@cascadetax.example");
+    const cpaLinks = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, client.id), eq(contactClientLinks.relationshipType, "cpa")));
+    expect(cpaLinks).toHaveLength(1);
+    expect(cpaLinks[0].contactId).toBe(client.cpaContactId);
+  });
+
+  it("I1: the CPA card does not double-create when a contact already has the cpa role", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "CPA No-Dupe Co",
+      engagementType: "project",
+      formData: {
+        hasCpa: true,
+        cpaName: "Cascade Tax Group",
+        contacts: [{ entityName: "Cascade Tax Group", relationshipType: "cpa" }],
+      },
+    });
+    const result = await convertIntakeToClient(
+      intakeId,
+      { managerId: managerPriya, bookkeeperId: null },
+      managerPriya,
+      TEST_TODAY,
+    );
+    const cpaLinks = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, result.clientId), eq(contactClientLinks.relationshipType, "cpa")));
+    expect(cpaLinks).toHaveLength(1);
+  });
+
+  it("I1: custom Other answers pass through on the intake record and never mis-map", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Far-Fetched Co",
+      engagementType: "project",
+      taxStructure: "Other",
+      quickbooksStatus: "Other", // not QuickBooks: no QBO facts may stick
+      formData: {
+        customAnswers: {
+          "tax-structure": "Series LLC taxed as a trust",
+          "qbo-status": "Wave",
+        },
+        // A far-fetched payroll frequency must not poison the quote engine.
+        payrollFrequency: "Other" as never,
+        hasPayroll: true,
+        serviceKeys: ["process_payroll"],
+      },
+    });
+
+    const result = await convertIntakeToClient(
+      intakeId,
+      { managerId: managerPriya, bookkeeperId: bookkeeperSofia },
+      managerPriya,
+      TEST_TODAY,
+    );
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    // The custom tax structure text lands verbatim on the client record.
+    expect(client.taxStructure).toBe("Other");
+    // No QBO pass-through facts for a non-QuickBooks custom answer.
+    expect(client.qboUserCount).toBeNull();
+    expect(client.qboSubscriptionTier).toBeNull();
+    // The custom text rides the intake record untouched.
+    const row = await getIntake(intakeId);
+    const form = row.formData as { customAnswers?: Record<string, string> };
+    expect(form.customAnswers?.["tax-structure"]).toBe("Series LLC taxed as a trust");
+    expect(form.customAnswers?.["qbo-status"]).toBe("Wave");
+  });
+
+  it("I1: owner phone reaches the owner contact; receivesReports stays on the intake", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Owner Detail Co",
+      engagementType: "project",
+      owners: [
+        { name: "Wren Okafor", email: "wren@x.co", phone: "5035550182", receivesReports: true },
+      ],
+      formData: {
+        owners: [
+          { name: "Wren Okafor", email: "wren@x.co", phone: "5035550182", receivesReports: true },
+        ],
+      },
+    });
+
+    const result = await convertIntakeToClient(
+      intakeId,
+      { managerId: managerPriya, bookkeeperId: null },
+      managerPriya,
+      TEST_TODAY,
+    );
+    const ownerLinks = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, result.clientId), eq(contactClientLinks.relationshipType, "owner")));
+    expect(ownerLinks).toHaveLength(1);
+    const [ownerContact] = await db.select().from(contacts).where(eq(contacts.id, ownerLinks[0].contactId));
+    expect(ownerContact.phone).toBe("5035550182");
+    // No link column exists yet - the flag stays on the intake's form_data.
+    const row = await getIntake(intakeId);
+    const owners = (row.formData as { owners?: { receivesReports?: boolean }[] }).owners;
+    expect(owners?.[0]?.receivesReports).toBe(true);
+  });
 });

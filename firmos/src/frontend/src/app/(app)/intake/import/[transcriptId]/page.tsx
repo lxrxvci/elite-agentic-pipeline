@@ -44,7 +44,7 @@ export default async function ExtractionReviewPage({
     return {
       key: f.key,
       label: spec?.label ?? f.key,
-      chapter: f.group ?? spec?.chapter ?? 'business',
+      chapter: f.group ?? spec?.chapter ?? 'entity',
       chapterLabel: CHAPTER_LABELS.get(f.group ?? spec?.chapter ?? '') ?? 'Other',
       kind: spec?.kind ?? 'string',
       // Edit options only apply to single-value enums (list kinds are not

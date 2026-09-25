@@ -44,36 +44,37 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await page.getByTestId('new-intake-create').click()
   await page.waitForURL((url) => /^\/intake\/\d+$/.test(url.pathname))
 
-  // ── Business basics (resumes at tax structure; the name came from the dialog) ──
-  await expectQuestion(page, 'tax-structure')
-  await pick(page, 'option-LLC', 'tax-id')
-  await advance(page, 'address') // skip EIN
-  await advance(page, 'services') // skip address
-  // Two service chips: bank feeds plus class tracking (the matrix input).
-  await page.getByTestId('chip-bank_feed_management').click()
-  await page.getByTestId('chip-class_tracking').click()
-  await advance(page, 'owners')
-  await advance(page, 'contacts') // skip owners
-  await advance(page, 'referral') // skip contacts
-  await pick(page, 'option-Web search', 'existing-client')
+  // ── Contact basics (resumes at the main contact; the name came from the dialog) ──
+  await expectQuestion(page, 'main-contact')
+  await page.getByLabel('Full name').fill('Live Test Contact')
+  await advance(page, 'address')
+  await advance(page, 'tax-id') // skip address
 
-  // ── Starting point: QBO existing, 2 users, recommend the plan ──
-  await pick(page, 'option-no', 'engagement')
+  // ── Entity & ownership ──
+  await advance(page, 'tax-structure') // skip EIN
+  await pick(page, 'option-LLC', 'dba-industry')
+  await advance(page, 'owners') // skip DBA/industry
+  await advance(page, 'contacts') // skip owners
+  await advance(page, 'has-cpa') // skip contacts
+  await pick(page, 'option-no', 'referral') // no CPA card detail
+  await pick(page, 'option-Web search', 'engagement')
+
+  // ── Engagement, then accounting software: QBO existing, 2 users, recommend ──
   await pick(page, 'option-bookkeeping', 'qbo-status')
   await pick(page, 'option-existing', 'qbo-users')
   await page.getByLabel('QuickBooks users').fill('2')
   await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'bk-start')
+  await pick(page, 'option-recommended', 'services')
+  // Two service chips: bank feeds plus class tracking (the matrix input).
+  await page.getByTestId('chip-bank_feed_management').click()
+  await page.getByTestId('chip-class_tracking').click()
+  await advance(page, 'existing-client')
 
-  // ── Books start January 2025 (past year via the picker) ──
-  for (let i = 0; i < 5; i += 1) {
-    if ((await page.getByTestId('monthyear-year').textContent())?.trim() === '2025') break
-    await page.getByRole('button', { name: 'Previous year' }).click()
-  }
-  await expect(page.getByTestId('monthyear-year')).toHaveText('2025')
-  await page.getByTestId('month-1').click()
-  await advance(page, 'catchup')
-  await advance(page, 'accounts') // skip catch-up
+  // ── Starting point: new client; books start January 1, 2025 typed in ──
+  await pick(page, 'option-no', 'bk-start')
+  await page.getByLabel('Books start date').fill('01/01/2025')
+  await expect(page.getByLabel('Books start date')).toHaveValue('01/01/2025')
+  await advance(page, 'accounts')
 
   // ── Balance sheet: one checking account ──
   await page.getByLabel('Account name').fill('LIVE-TEST Operating Checking')

@@ -282,7 +282,13 @@ export async function convertIntakeToClient(
     const bookkeeperId = staff.bookkeeperId ?? intake.bookkeeperId;
 
     const form = formOf(intake);
-    const isProject = (intake.engagementType ?? form.engagementType) === "project";
+    // I1 (00:31:05): consulting runs on the project-engagement track - no
+    // recurring rule seeding, no report rows, no weekly bank feeds. A custom
+    // "Other" engagement (I1) takes the project track too: the wizard already
+    // skipped the recurring-books chapters for it, so seeding them here would
+    // mis-map the answer.
+    const engagementType = intake.engagementType ?? form.engagementType;
+    const isProject = (engagementType ?? "bookkeeping") !== "bookkeeping";
 
     // Billing template from the quote (§6.5 price flow, server-side only),
     // priced against the admin-configured table. The report-definitions
@@ -377,6 +383,10 @@ export async function convertIntakeToClient(
 
     // 3. Contacts and links.
     let contactsCreated = 0;
+    // I1: the screen-1 main contact is unshifted first in the contacts array;
+    // the FIRST primary_contact wins the client slot, not the last.
+    let primaryLinked = false;
+    let cpaLinked = false;
     for (const c of form.contacts ?? []) {
       const [contact] = await tx
         .insert(contacts)
@@ -398,34 +408,76 @@ export async function convertIntakeToClient(
         clientId,
         relationshipType,
       });
-      if (relationshipType === "primary_contact") {
+      if (relationshipType === "primary_contact" && !primaryLinked) {
         await tx.update(clients).set({ primaryContactId: contact.id }).where(sql`${clients.id} = ${clientId}`);
+        primaryLinked = true;
       }
       if (relationshipType === "cpa") {
+        await tx.update(clients).set({ cpaContactId: contact.id }).where(sql`${clients.id} = ${clientId}`);
+        cpaLinked = true;
+      }
+    }
+
+    // 3b. I1 (00:30:14): the dedicated CPA card - "Do they have a CPA who
+    //     files their taxes?" - creates the CPA contact + link when the
+    //     contacts list didn't already carry one.
+    if (form.hasCpa === true && !cpaLinked) {
+      const cpaName = typeof form.cpaName === "string" ? form.cpaName.trim() : "";
+      if (cpaName !== "") {
+        const { firstName, lastName } = splitName(cpaName);
+        const [contact] = await tx
+          .insert(contacts)
+          .values({
+            type: "individual",
+            firstName,
+            lastName,
+            email: typeof form.cpaEmail === "string" && form.cpaEmail.trim() !== "" ? form.cpaEmail.trim() : null,
+          })
+          .returning();
+        contactsCreated += 1;
+        await tx.insert(contactClientLinks).values({
+          contactId: contact.id,
+          clientId,
+          relationshipType: "cpa",
+        });
         await tx.update(clients).set({ cpaContactId: contact.id }).where(sql`${clients.id} = ${clientId}`);
       }
     }
 
     // 4. Owners (intake_owners rows win; form_data owners are the fallback).
+    //    I1: the table has no phone/receives-reports columns, so those fields
+    //    merge in from the form_data copy by owner name. receivesReports has
+    //    no contact_client_links column yet - it stays on the intake record
+    //    (schema gap flagged for a later phase).
     let ownerLinksCreated = 0;
     const ownerRows = await tx
       .select()
       .from(intakeOwners)
       .where(sql`${intakeOwners.intakeId} = ${intakeId}`);
+    const formOwnersByName = new Map(
+      (form.owners ?? []).map((o) => [o.name.trim().toLowerCase(), o]),
+    );
     const owners =
       ownerRows.length > 0
-        ? ownerRows.map((o) => ({ id: o.id, name: o.name, email: o.email, ownershipPercent: o.ownershipPercent }))
+        ? ownerRows.map((o) => ({
+            id: o.id,
+            name: o.name,
+            email: o.email,
+            ownershipPercent: o.ownershipPercent,
+            phone: formOwnersByName.get(o.name.trim().toLowerCase())?.phone ?? null,
+          }))
         : (form.owners ?? []).map((o) => ({
             id: null as number | null,
             name: o.name,
             email: o.email ?? null,
             ownershipPercent: o.ownershipPercent == null ? null : String(o.ownershipPercent),
+            phone: o.phone ?? null,
           }));
     for (const owner of owners) {
       const { firstName, lastName } = splitName(owner.name);
       const [contact] = await tx
         .insert(contacts)
-        .values({ type: "individual", firstName, lastName, email: owner.email })
+        .values({ type: "individual", firstName, lastName, email: owner.email, phone: owner.phone })
         .returning();
       contactsCreated += 1;
       await tx.insert(contactClientLinks).values({

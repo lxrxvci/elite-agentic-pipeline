@@ -1,13 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 
 /**
- * G3 - the intake pipeline, end to end:
- * login as mara (owner) -> /intake -> start a new intake -> answer a minimal
- * bookkeeping path through the conversational wizard -> the live quote moves
- * (server-priced) -> review -> submit -> convert WITHOUT staff (assignment is
- * a post-conversion admin action) -> land on the new client -> assign the
- * manager and bookkeeper from the client record -> the client's work shows
- * up on the workstation.
+ * G3 - the intake pipeline, end to end, in the I1 dictated order (plan §1):
+ * login as mara (owner) -> /intake -> start a new intake -> contact basics ->
+ * entity & ownership (with the CPA card + referral-who) -> engagement ->
+ * accounting software -> services -> starting point (text-entry date, no
+ * catch-up screen) -> scope chapters -> review -> submit -> convert WITHOUT
+ * staff -> land on the new client -> assign the team -> the client's work
+ * shows up on the workstation.
  */
 
 const BUSINESS = 'E2E Bloom & Co'
@@ -28,44 +28,85 @@ async function advance(page: Page, nextQuestion: string) {
   await expectQuestion(page, nextQuestion)
 }
 
-test('intake: wizard -> live quote -> submit -> convert -> workstation work', async ({ page }) => {
-  // ── Login as the firm owner ──
+async function loginAsOwner(page: Page) {
   await page.goto('/login')
   await page.getByLabel('Email').fill('mara@blueledgerbooks.com')
   await page.getByLabel('Password').fill('Firm0s-dev!')
   await page.getByRole('button', { name: 'Sign in' }).click()
   await page.waitForURL((url) => url.pathname === '/')
+}
 
-  // ── Start a new intake from the list ──
+async function startIntake(page: Page, name: string) {
   await page.goto('/intake')
   await expect(page.getByRole('heading', { name: 'Client Intake' })).toBeVisible()
   await page.getByTestId('start-new-intake').click()
-  await page.getByTestId('new-intake-name').fill(BUSINESS)
+  await page.getByTestId('new-intake-name').fill(name)
   await page.getByTestId('new-intake-create').click()
   await page.waitForURL((url) => /^\/intake\/\d+$/.test(url.pathname))
+}
 
-  // ── Business basics (resumes at tax structure; the name came from the dialog) ──
-  await expectQuestion(page, 'tax-structure')
-  await pick(page, 'option-LLC', 'tax-id')
-  await advance(page, 'address') // skip EIN
-  await advance(page, 'services') // skip address
-  await page.getByTestId('chip-bank_feed_management').click()
-  await page.getByTestId('chip-account_reconciliations').click()
-  await advance(page, 'owners')
-  await advance(page, 'contacts') // skip owners
-  await advance(page, 'referral') // skip contacts
-  await pick(page, 'option-Web search', 'existing-client')
+test('intake: wizard -> live quote -> submit -> convert -> workstation work', async ({ page }) => {
+  // ── Login as the firm owner ──
+  await loginAsOwner(page)
 
-  // ── Starting point ──
-  await pick(page, 'option-no', 'engagement')
+  // ── Start a new intake from the list ──
+  await startIntake(page, BUSINESS)
+
+  // ── Contact basics (resumes at the main contact; the name came from the dialog) ──
+  await expectQuestion(page, 'main-contact')
+  await page.getByLabel('Full name').fill('Wren Okafor')
+  // Phone auto-formats while typing and stores digits.
+  await page.getByLabel('Phone').pressSequentially('5035550182')
+  await expect(page.getByLabel('Phone')).toHaveValue('(503) 555-0182')
+  await page.getByLabel('Email').fill('wren@e2ebloom.example')
+  await advance(page, 'address')
+  await advance(page, 'tax-id') // skip address
+
+  // ── Entity & ownership ──
+  await advance(page, 'tax-structure') // skip EIN
+  await pick(page, 'option-LLC', 'dba-industry')
+  await advance(page, 'owners') // skip DBA/industry
+  // Owners: one owner with phone + the receives-reports flag.
+  await page.getByLabel('Full name').fill('Wren Okafor')
+  await page.getByLabel('Email (optional)').fill('wren@e2ebloom.example')
+  await page.getByLabel('Phone (optional)').pressSequentially('5035550182')
+  await page.getByLabel('Receives the monthly reports').check()
+  await page.getByTestId('add-another').click()
+  await advance(page, 'contacts')
+  // Contacts: the owner prefill copies name/email/phone into the draft.
+  await page.getByTestId('prefill-0').click()
+  await expect(page.getByLabel('First name')).toHaveValue('Wren')
+  await expect(page.getByLabel('Phone')).toHaveValue('(503) 555-0182')
+  await page.getByTestId('add-another').click()
+  await advance(page, 'has-cpa')
+
+  // ── The CPA is its own card: yes -> name + email ──
+  await pick(page, 'option-yes', 'cpa-details')
+  await page.getByLabel('CPA name or firm').fill('Cascade Tax Group')
+  await page.getByLabel('CPA email').fill('team@cascadetax.example')
+  await advance(page, 'referral')
+  // A CPA referral asks who to thank.
+  await pick(page, 'option-CPA referral', 'referral-who')
+  await page.getByLabel('Name (optional)').fill('Cascade Tax Group')
+  await advance(page, 'engagement')
+
+  // ── Engagement type, then accounting software ──
   await pick(page, 'option-bookkeeping', 'qbo-status')
   await pick(page, 'option-existing', 'qbo-users')
   await page.getByLabel('QuickBooks users').fill('2')
   await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'bk-start')
-  await page.getByTestId('month-1').click() // January of the current year
-  await advance(page, 'catchup')
-  await advance(page, 'accounts') // skip catch-up
+  await pick(page, 'option-recommended', 'services')
+
+  // ── Services ──
+  await page.getByTestId('chip-bank_feed_management').click()
+  await page.getByTestId('chip-account_reconciliations').click()
+  await advance(page, 'existing-client')
+
+  // ── Starting point: new client, text-entry books-start date ──
+  await pick(page, 'option-no', 'bk-start')
+  await page.getByLabel('Books start date').pressSequentially('01012026')
+  await expect(page.getByLabel('Books start date')).toHaveValue('01/01/2026')
+  await advance(page, 'accounts')
 
   // ── Balance sheet: one checking account ──
   await page.getByLabel('Account name').fill('Operating Checking')
@@ -102,10 +143,19 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await advance(page, 'notes') // skip custom rules
   await page.getByTestId('continue').click() // skip notes
 
-  // ── Review: summary renders, quote is server-priced, submit ──
+  // ── Review: summary renders in the dictated order, quote is server-priced ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByTestId('review-quote')).toBeVisible()
   await expect(page.getByText('Operating Checking')).toBeVisible()
+  // The CPA card answer shows on the review screen.
+  await expect(page.getByText('Yes · Cascade Tax Group')).toBeVisible()
+  // The referral row carries who to thank.
+  await expect(page.getByText('CPA referral · Cascade Tax Group')).toBeVisible()
+  // The typed date renders as a real date; no catch-up row exists.
+  await expect(page.getByText('Jan 1, 2026')).toBeVisible()
+  await expect(page.getByText(/catch-up date/i)).toHaveCount(0)
+  // The main contact row shows the formatted phone.
+  await expect(page.getByText('Wren Okafor · (503) 555-0182 · wren@e2ebloom.example')).toBeVisible()
   // Two QBO users, no tracking: the matrix recommends Essentials.
   await expect(
     page.getByTestId('review-quote').getByText('QuickBooks Essentials (recommended)'),
@@ -147,4 +197,60 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // no assigned work day yet, so open the full week first.
   await page.getByTestId('work-day-chip-all').click()
   await expect(page.getByText(BUSINESS).first()).toBeVisible({ timeout: 20_000 })
+})
+
+test('intake: consulting engagement + custom "Other" answers reach review and convert', async ({
+  page,
+}) => {
+  // I1: the consulting option runs the project-engagement track, and a
+  // far-fetched custom answer rides through to the record verbatim.
+  await loginAsOwner(page)
+  await startIntake(page, 'E2E Far-Fetched Consulting')
+
+  await expectQuestion(page, 'main-contact')
+  await page.getByLabel('Full name').fill('Rio Sol')
+  await advance(page, 'address')
+  await advance(page, 'tax-id')
+
+  // Tax structure: something completely far-fetched via "Other - type it".
+  await advance(page, 'tax-structure') // skip EIN
+  await pick(page, 'option-Other', 'tax-structure') // stays put: no auto-advance on Other
+  await expect(page.getByTestId('custom-input-tax-structure')).toBeVisible()
+  await page.getByTestId('custom-input-tax-structure').fill('Series LLC taxed as a trust')
+  await advance(page, 'dba-industry')
+  await advance(page, 'owners') // skip DBA/industry
+  await advance(page, 'contacts') // skip owners
+  await advance(page, 'has-cpa') // skip contacts
+  await pick(page, 'option-no', 'referral') // no CPA
+  await pick(page, 'option-Web search', 'engagement') // no referral-who for web
+
+  // Consulting: balance sheet, income, and reporting chapters disappear.
+  await pick(page, 'option-consulting', 'qbo-status')
+  await pick(page, 'option-none', 'qbo-setup')
+  await pick(page, 'option-no', 'qbo-users')
+  await page.getByLabel('QuickBooks users').fill('1')
+  await advance(page, 'qbo-tier')
+  await pick(page, 'option-recommended', 'services')
+  await page.getByTestId('chip-bank_feed_management').click()
+  await advance(page, 'existing-client')
+  await pick(page, 'option-no', 're-yes') // consulting: no books-start screen
+  await pick(page, 'option-no', 'retroactive')
+  await pick(page, 'option-no', 'rules') // no cleanup; default rules hidden on the consulting track
+  await advance(page, 'notes')
+  await page.getByTestId('continue').click()
+
+  // ── Review: consulting label + the verbatim custom text ──
+  await expect(page.getByTestId('review-screen')).toBeVisible()
+  await expect(page.getByText('Consulting', { exact: true })).toBeVisible()
+  await expect(page.getByText('Series LLC taxed as a trust')).toBeVisible()
+  await page.getByTestId('submit-intake').click()
+  await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
+
+  // ── Converts on the project track ──
+  await page.getByTestId('convert-button').click()
+  await page.getByTestId('convert-confirm').click()
+  await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname), { timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'E2E Far-Fetched Consulting' })).toBeVisible({
+    timeout: 15_000,
+  })
 })
