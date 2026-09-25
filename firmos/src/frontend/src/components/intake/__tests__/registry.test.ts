@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
+import type { IntakeRow } from '@/server/intake'
+
 import {
+  ACCOUNT_COUNT_DEFS,
+  allAccounts,
+  answersFromIntake,
   buildPatch,
   CHAPTERS,
   customAllowed,
@@ -11,6 +16,7 @@ import {
   flattenScreens,
   isBookkeeping,
   requiresOfficerPayroll,
+  statementAccountRefs,
   visibleChapters,
   visibleQuestions,
   type WizardAnswers,
@@ -796,5 +802,201 @@ describe('I2 entity helper copy', () => {
     const help = owners.help as (a: WizardAnswers) => string | null
     expect(help({ ...base, taxStructure: 'Partnership' })).toContain('A partnership needs at least 2 owners.')
     expect(help(base)).toBe('Each owner with their phone and email. Check who receives the monthly reports.')
+  })
+})
+
+// ── I3 accounts rebuild (plan §1 screen 7 + screen 10, §3) ────────────────
+
+describe('I3 sequential account count cards (plan §1 screen 7)', () => {
+  it('the balance chapter runs one count card per type in his dictated order', () => {
+    const balance = CHAPTERS.find((c) => c.id === 'balance')!
+    const questions = visibleQuestions(balance, base)
+    expect(questions.map((q) => q.id)).toEqual([
+      'checking-accounts',
+      'savings-accounts',
+      'credit-cards',
+      'loans',
+      'vehicles',
+      'other-assets',
+    ])
+    expect(questions.every((q) => q.type === 'account-count')).toBe(true)
+  })
+
+  it('statement day is never captured in intake - it is a conversion-time concern', () => {
+    const balance = CHAPTERS.find((c) => c.id === 'balance')!
+    expect(JSON.stringify(balance)).not.toContain('statementDay')
+    expect(JSON.stringify(balance)).not.toContain('Statement day')
+  })
+
+  it('money accounts pick a bank and offer login access; vehicles and other assets never ask for an institution', () => {
+    const [checking, savings, cards, loans, vehicles, other] = ACCOUNT_COUNT_DEFS
+    for (const def of [checking, savings, cards]) {
+      expect(def.askInstitution).toBe(true)
+      expect(def.askLoginAccess).toBe(true)
+    }
+    expect(loans.askInstitution ?? false).toBe(false)
+    expect(loans.askLender).toBe(true)
+    expect(loans.askBalance).toBe(true)
+    expect(vehicles.askInstitution ?? false).toBe(false)
+    expect(vehicles.askYearValue).toBe(true)
+    expect(other.askInstitution ?? false).toBe(false)
+    expect(other.askAssetType).toBe(true)
+  })
+
+  it('the helper copy frames assets in his clients words (vehicles, equipment, goodwill, investments)', () => {
+    const other = findQuestion('balance', 'other-assets')!
+    expect(other.help).toContain('Equipment')
+    expect(other.help).toContain('furniture')
+    expect(other.help).toContain('owes')
+    expect(other.help).toContain('goodwill')
+    expect(other.help).toContain('investments')
+  })
+})
+
+describe('money_accounts_default_statement_proof (I3, plan §3)', () => {
+  it('checking, savings, and credit cards carry locked statement proof', () => {
+    const [checking, savings, cards] = ACCOUNT_COUNT_DEFS
+    for (const def of [checking, savings, cards]) {
+      expect(def.defaultProof).toBe('statement')
+      // Locked: no per-item proof selector on money mini-forms.
+      expect(def.proofOptions).toBeUndefined()
+    }
+  })
+
+  it('loans default statement but can switch; vehicles default bill of sale', () => {
+    const [, , , loans, vehicles, other] = ACCOUNT_COUNT_DEFS
+    expect(loans.defaultProof).toBe('statement')
+    expect(loans.proofOptions?.map((o) => o.value)).toEqual(['statement', 'owner_declared'])
+    expect(vehicles.defaultProof).toBe('bill_of_sale')
+    expect(vehicles.proofOptions?.map((o) => o.value)).toEqual(['bill_of_sale', 'owner_declared'])
+    expect(other.defaultProof).toBe('owner_declared')
+    expect(other.proofOptions?.map((o) => o.value)).toEqual(['statement', 'bill_of_sale', 'owner_declared'])
+  })
+
+  it('the flattened accounts list stamps type + proof in screen order, mapping asset buckets to account types', () => {
+    const flat = allAccounts({
+      ...base,
+      checkingAccounts: [{ name: 'Operating', accountType: 'checking', proofCategory: 'statement' }],
+      creditCardAccounts: [{ name: 'Amex Gold', accountType: 'credit_card', proofCategory: 'statement' }],
+      vehicleAssets: [{ name: 'Transit van', accountType: 'vehicle', proofCategory: 'bill_of_sale', year: 2022 }],
+      otherAssets: [
+        { name: 'Espresso machine', accountType: 'other_asset', assetType: 'equipment', proofCategory: 'owner_declared' },
+        { name: 'Bought the route', accountType: 'other_asset', assetType: 'goodwill', proofCategory: 'owner_declared' },
+      ],
+    })
+    expect(flat.map((a) => [a.name, a.accountType, a.proofCategory])).toEqual([
+      ['Operating', 'checking', 'statement'],
+      ['Amex Gold', 'credit_card', 'statement'],
+      ['Transit van', 'vehicle', 'bill_of_sale'],
+      ['Espresso machine', 'fixed_assets', 'owner_declared'],
+      ['Bought the route', 'other_asset', 'owner_declared'],
+    ])
+  })
+
+  it('buildPatch flattens the per-type arrays into the canonical form_data.accounts', () => {
+    const patch = buildPatch({
+      ...base,
+      checkingAccounts: [{ name: 'Operating', accountType: 'checking', proofCategory: 'statement' }],
+      savingsAccounts: [{ name: 'Reserve', accountType: 'savings', proofCategory: 'statement' }],
+    })
+    expect((patch.formData?.accounts ?? []).map((a) => a.name)).toEqual(['Operating', 'Reserve'])
+    expect(patch.formData?.checkingAccounts).toHaveLength(1)
+    expect(patch.formData?.savingsAccounts).toHaveLength(1)
+  })
+
+  it('an extraction-style payload with only flat accounts passes buildPatch untouched', () => {
+    const patch = buildPatch({
+      ...base,
+      accounts: [{ name: 'Chase checking', accountType: 'checking' }],
+    })
+    expect(patch.formData?.accounts?.[0]?.name).toBe('Chase checking')
+    expect(patch.formData?.checkingAccounts).toBeUndefined()
+  })
+
+  it('pre-I3 intakes split their flat accounts into the per-type cards on resume, then round-trip losslessly', () => {
+    const answers = answersFromIntake({
+      formData: {
+        accounts: [
+          { name: 'Operating', accountType: 'checking', institution: 'Chase' },
+          { name: 'Van loan', accountType: 'vehicle_loan' },
+          { name: 'Brokerage', accountType: 'investment' },
+        ],
+      },
+    } as unknown as IntakeRow)
+    expect(answers.checkingAccounts?.map((a) => a.name)).toEqual(['Operating'])
+    expect(answers.loanAccounts?.map((a) => a.name)).toEqual(['Van loan'])
+    expect(answers.otherAssets?.[0]).toMatchObject({ name: 'Brokerage', assetType: 'investments' })
+    // The next autosave flattens them back without losing a row.
+    const repatch = buildPatch(answers)
+    expect((repatch.formData?.accounts ?? []).map((a) => a.name)).toEqual([
+      'Operating',
+      'Van loan',
+      'Brokerage',
+    ])
+  })
+})
+
+describe('online_access_checklist_pulls_statement_accounts (I3, plan §1 screen 10)', () => {
+  const withAccounts: WizardAnswers = {
+    ...base,
+    checkingAccounts: [
+      { name: 'Operating', accountType: 'checking', proofCategory: 'statement', institution: 'Chase' },
+    ],
+    savingsAccounts: [{ name: 'Reserve', accountType: 'savings', proofCategory: 'statement' }],
+    loanAccounts: [
+      { name: 'Van loan', accountType: 'loan', proofCategory: 'statement', lender: 'Columbia' },
+      { name: 'Owner loan', accountType: 'loan', proofCategory: 'owner_declared' },
+    ],
+    vehicleAssets: [{ name: 'Transit', accountType: 'vehicle', proofCategory: 'bill_of_sale' }],
+  }
+
+  it('lists exactly the statement-proof accounts, in screen order', () => {
+    expect(statementAccountRefs(withAccounts).map((r) => r.item.name)).toEqual([
+      'Operating',
+      'Reserve',
+      'Van loan',
+    ])
+  })
+
+  it('the access chapter appears between income and reporting only when a statement account exists', () => {
+    expect(chapterIds(withAccounts)).toEqual([
+      'contact',
+      'entity',
+      'engagement',
+      'software',
+      'services',
+      'starting',
+      'balance',
+      'real-estate',
+      'income',
+      'access',
+      'reporting',
+      'recurring',
+    ])
+    expect(chapterIds(base)).not.toContain('access')
+  })
+
+  it('checking a card sets grantLoginAccess on its account entry; non-statement accounts are never touched', () => {
+    const q = findQuestion('access', 'online-access')!
+    const [first] = statementAccountRefs(withAccounts)
+    const next: WizardAnswers = { ...withAccounts, ...q.apply(withAccounts, [first.key]) }
+    expect(next.checkingAccounts?.[0]?.grantLoginAccess).toBe(true)
+    expect(next.savingsAccounts?.[0]?.grantLoginAccess).toBe(false)
+    // Owner-declared loan and bill-of-sale vehicle keep their entries untouched.
+    expect(next.loanAccounts?.[1]?.grantLoginAccess).toBeUndefined()
+    expect(next.vehicleAssets?.[0]?.grantLoginAccess).toBeUndefined()
+    // The checklist reads the flags back.
+    expect(q.get(next)).toEqual([first.key])
+    // Unchecking flips the flag back to false (not undefined - it persists).
+    const off: WizardAnswers = { ...next, ...q.apply(next, []) }
+    expect(off.checkingAccounts?.[0]?.grantLoginAccess).toBe(false)
+  })
+
+  it('the review row counts the checked accounts', () => {
+    const q = findQuestion('access', 'online-access')!
+    expect(q.summarize(withAccounts)).toBe('None of the 3 accounts - all manual')
+    const two = statementAccountRefs(withAccounts).slice(0, 2).map((r) => r.key)
+    const on: WizardAnswers = { ...withAccounts, ...q.apply(withAccounts, two) }
+    expect(q.summarize(on)).toBe('2 of 3 with online access')
   })
 })

@@ -42,20 +42,47 @@ export interface IntakeContactInput {
   relationshipType?: "owner" | "primary_contact" | "cpa" | "related";
 }
 
+/**
+ * I3 (intake restructure, plan §3): how the account's balances are
+ * evidenced. Checking/savings/credit-card accounts are locked to
+ * "statement" at intake; loans, vehicles, and other assets pick a category.
+ * Conversion stamps it onto accounts.proof_category and derives the
+ * statement day from it (statement -> month-end default; the other two ->
+ * no statement day, out of the recon/statement queues).
+ */
+export type IntakeProofCategory = "statement" | "owner_declared" | "bill_of_sale";
+
 export interface IntakeAccountInput {
   name: string;
   accountType: string;
   institution?: string | null;
-  /** Explicit override; null/undefined falls back to the type default (§15). */
+  /** I3: canonical link into the institutions table (dropdown pick or
+   *  inline add-new); the institution text above stays as the snapshot. */
+  institutionId?: number | null;
+  /** I3: proof category; absent on legacy/extraction rows, where conversion
+   *  derives it from the account type (statement-mode -> statement). */
+  proofCategory?: IntakeProofCategory;
+  /** Explicit override; null/undefined falls back to the type default (§15).
+   *  I3: no longer captured in intake - conversion-time concern. */
   statementDay?: number | null;
   openDate?: string | null;
   requiresManualTransactions?: boolean;
   /**
    * 3B (01:18:40): the intake's "grant us login access" per-account flag.
    * Conversion opens an expected-credential vault slot for each flagged
-   * account; the client fills it in the portal.
+   * account; the client fills it in the portal. I3: set from the money
+   * mini-forms or the online-access checklist screen.
    */
   grantLoginAccess?: boolean;
+  /** I3 loans: the lender (free text) and an optional current balance. */
+  lender?: string | null;
+  balance?: number | null;
+  /** I3 vehicles: model year and an optional value estimate. */
+  year?: number | null;
+  value?: number | null;
+  /** I3 other assets: the typed bucket (equipment / furniture / goodwill /
+   *  investments / other) - also drives the account_type mapping. */
+  assetType?: string | null;
 }
 
 /** §29 fix: merchant accounts keep every field and never collapse to one. */
@@ -166,7 +193,22 @@ export interface IntakeFormData {
   bookkeepingStartDate?: string | null;
   bankFeedCatchupDate?: string | null;
   // Step 3 - balance sheet
+  /**
+   * I3: the canonical flattened account list, written by buildPatch from
+   * the six per-type arrays below (and still the shape call-notes
+   * extraction writes). Conversion, the quote, and cascade read this.
+   */
   accounts?: IntakeAccountInput[];
+  /** I3 (plan §1 screen 7): the sequential per-type count cards. Each
+   *  array holds that type's mini-form entries; buildPatch flattens them
+   *  into `accounts` in screen order. Legacy intakes carry only `accounts`
+   *  - answersFromIntake splits those back into the per-type arrays. */
+  checkingAccounts?: IntakeAccountInput[];
+  savingsAccounts?: IntakeAccountInput[];
+  creditCardAccounts?: IntakeAccountInput[];
+  loanAccounts?: IntakeAccountInput[];
+  vehicleAssets?: IntakeAccountInput[];
+  otherAssets?: IntakeAccountInput[];
   accountOverrides?: IntakeAccountOverrides;
   // Step 3b - real estate (owner walkthrough: yes/no, count, types,
   // depreciation buckets; conversion creates one property row per count)

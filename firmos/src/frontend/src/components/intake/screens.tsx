@@ -4,8 +4,11 @@ import { useState } from 'react'
 import { ArrowRight, Check, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import type { IntakeAccountInput } from '@/server/intake'
+import type { InstitutionRow } from '@/server/institutions'
 import { cn } from '@/shared/lib/utils'
 
+import { AccountCountScreen, inputCls } from './account-screens'
 import { dateTextDigits, dateTextToIso, isoToDateText, maskDateText } from './date-text'
 import { formatPhone, phoneDigits } from './format'
 import {
@@ -22,9 +25,6 @@ import {
  * screen; each type knows how to collect its value and calls back into the
  * wizard (which owns auto-advance timing, autosave, and the branch walk).
  */
-
-const inputCls =
-  'h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring'
 
 // ── Option cards (single select) ──────────────────────────────────────────
 
@@ -540,6 +540,8 @@ export function QuestionScreen({
   onApply,
   onAdvance,
   onPickOption,
+  institutions = [],
+  onAddInstitution,
 }: {
   q: QuestionDef
   answers: WizardAnswers
@@ -548,8 +550,26 @@ export function QuestionScreen({
   onAdvance: () => void
   /** Option-card pick: the wizard applies, notes, and auto-advances. */
   onPickOption: (value: string) => void
+  /** I3: the seeded institution list for the account mini-form bank
+   *  dropdowns; the add-new handler persists and returns the new row. */
+  institutions?: InstitutionRow[]
+  onAddInstitution?: (name: string) => Promise<InstitutionRow | null>
 }) {
   const [error, setError] = useState<string | null>(null)
+
+  // I3: the per-type account count card (plan §1 screen 7).
+  if (q.type === 'account-count') {
+    return (
+      <AccountCountScreen
+        q={q}
+        items={(q.get(answers) as IntakeAccountInput[] | undefined) ?? []}
+        institutions={institutions}
+        onAddInstitution={onAddInstitution ?? (async () => null)}
+        onCommit={(items) => onApply(q.apply(answers, items))}
+        onAdvance={onAdvance}
+      />
+    )
+  }
 
   if (q.type === 'select') {
     const current = q.get(answers) as string | undefined
@@ -618,14 +638,16 @@ export function QuestionScreen({
   }
 
   // B21 checklist: pre-selected items the user can unselect; unselecting
-  // everything is a valid answer, so Continue never disables.
+  // everything is a valid answer, so Continue never disables. I3: options
+  // may derive from the current answers (the online-access checklist).
   if (q.type === 'checklist') {
     const values = (q.get(answers) as string[]) ?? []
+    const options = q.options ?? q.dynamicOptions?.(answers) ?? []
     const toggle = (v: string) =>
       onApply(q.apply(answers, values.includes(v) ? values.filter((x) => x !== v) : [...values, v]))
     return (
       <div className="space-y-4">
-        <ChecklistCards options={q.options ?? []} values={values} onToggle={toggle} />
+        <ChecklistCards options={options} values={values} onToggle={toggle} />
         <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
           Continue
           <ArrowRight className="h-4 w-4" aria-hidden />

@@ -94,6 +94,52 @@ export function defaultStatementDayFor(accountType: string): number | null {
   return INTAKE_STATEMENT_TYPES.has(key) ? 31 : null;
 }
 
+// ── I3 proof categories ───────────────────────────────────────────────────
+
+/**
+ * I3 (intake restructure, plan §3): the proof categories an intake account
+ * can carry. "statement" accounts enter the recon/statement queues;
+ * "owner_declared" and "bill_of_sale" are owner-evidenced and stay out.
+ */
+export type ProofCategory = "statement" | "owner_declared" | "bill_of_sale";
+
+export const PROOF_CATEGORIES: readonly ProofCategory[] = [
+  "statement",
+  "owner_declared",
+  "bill_of_sale",
+];
+
+/** The proof category for an intake account: the captured answer wins;
+ *  legacy/extraction rows without one derive it from the type's document
+ *  mode (statement-producing -> statement, owner-documented -> owner_declared). */
+export function proofCategoryFor(account: {
+  accountType: string;
+  proofCategory?: string | null;
+}): ProofCategory {
+  const captured = account.proofCategory?.trim().toLowerCase();
+  if (captured === "statement" || captured === "owner_declared" || captured === "bill_of_sale") {
+    return captured;
+  }
+  return defaultStatementDayFor(account.accountType) != null ? "statement" : "owner_declared";
+}
+
+/**
+ * I3: the statement day for an intake account under the proof-category
+ * model - explicit capture (legacy intakes, extraction) wins; statement
+ * proof gets the type default (31 for statement-producing types, and for
+ * plain "loan" which the seed table leaves untyped); owner-declared and
+ * bill-of-sale accounts get no statement day and stay out of the queues.
+ */
+export function statementDayForIntakeAccount(account: {
+  accountType: string;
+  statementDay?: number | null;
+  proofCategory?: string | null;
+}): number | null {
+  if (account.statementDay !== undefined) return account.statementDay;
+  if (proofCategoryFor(account) !== "statement") return null;
+  return defaultStatementDayFor(account.accountType) ?? 31;
+}
+
 /**
  * Account types seeded for every converted client (§6.8 "default seeds").
  * The two owner-documented equity accounts every chart of accounts needs;
@@ -127,6 +173,9 @@ export async function seedDefaultAccounts(
         name: definition.label,
         accountType: definition.key,
         statementDay: definition.defaultStatementDay,
+        // I3: owner-documented seeds are owner-declared proof (the column
+        // default is statement).
+        proofCategory: definition.requiredDocument === "statement" ? ("statement" as const) : ("owner_declared" as const),
         openDate: opts.openDate ?? null,
       };
     });

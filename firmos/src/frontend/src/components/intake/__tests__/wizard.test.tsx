@@ -63,6 +63,23 @@ vi.mock('@/server/actions/correspondence', () => ({
   sendIntakeQuoteEmailAction: vi.fn(async () => ({ ok: true, data: { correspondenceId: 1, to: 'a@b.c' } })),
 }))
 
+// I3: the institution list + add-new actions behind the account mini-form
+// bank dropdowns - mocked with a small seeded list.
+const addInstitutionAction = vi.fn(async (name: string) => ({
+  ok: true as const,
+  data: { id: 99, name },
+}))
+vi.mock('@/server/actions/institutions', () => ({
+  listInstitutionsAction: vi.fn(async () => ({
+    ok: true as const,
+    data: [
+      { id: 1, name: 'Chase' },
+      { id: 2, name: 'Columbia' },
+    ],
+  })),
+  addInstitutionAction: (name: unknown) => addInstitutionAction(name as string),
+}))
+
 import { IntakeWizard, AUTO_ADVANCE_MS, NOTE_DWELL_MS, SAVE_DEBOUNCE_MS, QUOTE_DEBOUNCE_MS } from '../wizard'
 
 const noop = () => {}

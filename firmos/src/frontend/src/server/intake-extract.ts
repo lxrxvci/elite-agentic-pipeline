@@ -1,10 +1,12 @@
 import {
   ACCOUNT_TYPE_LABELS,
+  ASSET_TYPE_LABELS,
   DEPRECIATION_BUCKET_LABELS,
   FREQUENCY_LABELS,
   LLC_SUBCLASS_LABELS,
   PAYMENT_METHOD_LABELS,
   PROPERTY_TYPE_LABELS,
+  PROOF_CATEGORY_LABELS,
   SERVICE_LABELS,
 } from '@/components/intake/registry'
 import { requiresOfficerPayroll } from '@/components/intake/registry'
@@ -108,6 +110,10 @@ const QBO_TIERS = ['simple_start', 'essentials', 'plus', 'advanced'] as const
 const RULE_SCHEDULES = ['daily', 'weekly', 'monthly', 'quarterly', 'semi_annual', 'annual'] as const
 const REPORT_FREQUENCIES = ['monthly', 'quarterly', 'semi_annual', 'annual'] as const
 const RELATIONSHIP_TYPES = ['primary_contact', 'cpa', 'related'] as const
+// I3: the proof-category vocabulary (statement/owner-declared/bill-of-sale)
+// and the other-assets type buckets ride extraction too.
+const PROOF_CATEGORIES = ['statement', 'owner_declared', 'bill_of_sale'] as const
+const ASSET_TYPES = Object.keys(ASSET_TYPE_LABELS)
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
@@ -327,6 +333,26 @@ function coerceAccounts(list: unknown[]): CoercedElement[] {
     const out: Record<string, unknown> = { name, accountType }
     const institution = asString(o.institution)
     if (institution) out.institution = institution
+    // I3: proof category, lender/balance, vehicle year/value, and the
+    // other-assets bucket all ride extraction; conversion maps them through.
+    const proof = asEnum(o.proofCategory, PROOF_CATEGORIES)
+    if (o.proofCategory != null && proof == null) {
+      return { reason: `account "${name}" has an unknown proofCategory` }
+    }
+    if (proof) out.proofCategory = proof
+    const assetType = asEnum(o.assetType, ASSET_TYPES)
+    if (o.assetType != null && assetType == null) {
+      return { reason: `account "${name}" has an unknown assetType` }
+    }
+    if (assetType) out.assetType = assetType
+    const lender = asString(o.lender)
+    if (lender) out.lender = lender
+    for (const k of ['balance', 'year', 'value'] as const) {
+      const n = asNumber(o[k])
+      if (n != null) out[k] = n
+    }
+    const grant = asBoolean(o.grantLoginAccess)
+    if (grant != null) out.grantLoginAccess = grant
     const day = asNumber(o.statementDay)
     if (day != null) {
       if (!Number.isInteger(day) || day < 1 || day > 31) {
@@ -627,6 +653,8 @@ const KEY_VALUE_LABELS: Record<string, Record<string, string>> = {
   payrollFrequency: FREQUENCY_LABELS,
   bookkeepingFrequency: FREQUENCY_LABELS,
   llcSubclass: LLC_SUBCLASS_LABELS,
+  proofCategory: PROOF_CATEGORY_LABELS,
+  assetType: ASSET_TYPE_LABELS,
   engagementType: { bookkeeping: 'Monthly bookkeeping', project: 'One-time project', consulting: 'Consulting' },
   quickbooksStatus: { existing: 'Already on QuickBooks Online', desktop: 'QuickBooks Desktop', none: 'No QuickBooks yet' },
   qboSubscriptionTier: { simple_start: 'Simple Start', essentials: 'Essentials', plus: 'Plus', advanced: 'Advanced' },
@@ -663,8 +691,15 @@ export function describeExtractedValue(key: string, value: unknown): string {
         .map((c) => c.entityName ?? [c.firstName, c.lastName].filter(Boolean).join(' '))
         .join(', ')
     case 'accounts':
-      return (value as Array<{ name: string; accountType: string; institution?: string }>)
-        .map((a) => `${a.name} (${labelFor('accountType', a.accountType)})`)
+      return (value as Array<{ name: string; accountType: string; institution?: string; proofCategory?: string }>)
+        .map(
+          (a) =>
+            `${a.name} (${labelFor('accountType', a.accountType)}${
+              a.proofCategory != null && a.proofCategory !== 'statement'
+                ? `, ${labelFor('proofCategory', a.proofCategory)}`
+                : ''
+            })`,
+        )
         .join(', ')
     case 'merchants':
       return (value as Array<{ name: string; processor?: string }>)

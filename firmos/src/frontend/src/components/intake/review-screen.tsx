@@ -16,7 +16,17 @@ import { ConvertDialog, type StaffOption } from './convert-dialog'
 import { formatMoney } from './format'
 import { noteLabel } from './notes-rail'
 import { quoteLineName, quoteLineNet } from './quote-panel'
-import { findChapter, visibleChapters, visibleQuestions, type WizardAnswers } from './registry'
+import {
+  ACCOUNT_TYPE_LABELS,
+  allAccounts,
+  ASSET_TYPE_LABELS,
+  findChapter,
+  PROOF_CATEGORY_LABELS,
+  visibleChapters,
+  visibleQuestions,
+  type WizardAnswers,
+} from './registry'
+import type { IntakeAccountInput } from '@/server/intake'
 
 /**
  * The review chapter: read-only summary grouped by chapter with edit-jump
@@ -24,6 +34,86 @@ import { findChapter, visibleChapters, visibleQuestions, type WizardAnswers } fr
  * manager and above) the convert-to-client action. Never counted in the
  * "Question X of Y" progress.
  */
+
+// ── I3 grouped accounts (plan §1 screen 7 + §3) ───────────────────────────
+
+/** Display order for the review's account groups - the count-card order,
+ *  then anything exotic (legacy/extraction types) last. */
+const REVIEW_ACCOUNT_TYPE_ORDER = [
+  'checking',
+  'savings',
+  'credit_card',
+  'loan',
+  'vehicle',
+  'fixed_assets',
+  'investment',
+  'other_asset',
+]
+
+function accountDetailLine(a: IntakeAccountInput): string | null {
+  const parts: string[] = []
+  if (a.assetType != null && ASSET_TYPE_LABELS[a.assetType]) parts.push(ASSET_TYPE_LABELS[a.assetType])
+  if (a.lender) parts.push(a.lender)
+  if (a.year != null) parts.push(String(a.year))
+  if (a.balance != null) parts.push(`balance ${formatMoney(a.balance)}`)
+  if (a.value != null) parts.push(`value ${formatMoney(a.value)}`)
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+/** I3: accounts grouped by type, each row carrying its institution and
+ *  proof-category badges plus the online-access flag. */
+function ReviewAccounts({ answers }: { answers: WizardAnswers }) {
+  const accounts = allAccounts(answers)
+  if (accounts.length === 0) return null
+  const groups = new Map<string, IntakeAccountInput[]>()
+  for (const a of accounts) {
+    const t = (a.accountType ?? 'other').trim().toLowerCase()
+    const list = groups.get(t) ?? []
+    list.push(a)
+    groups.set(t, list)
+  }
+  const ordered = [...groups.entries()].sort(([x], [y]) => {
+    const ix = REVIEW_ACCOUNT_TYPE_ORDER.indexOf(x)
+    const iy = REVIEW_ACCOUNT_TYPE_ORDER.indexOf(y)
+    return (ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy)
+  })
+  return (
+    <div className="divide-y divide-border px-4" data-testid="review-accounts">
+      {ordered.map(([type, list]) => (
+        <div key={type} className="py-2.5" data-testid="review-account-group" data-type={type}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {ACCOUNT_TYPE_LABELS[type] ?? type}
+            <span className="tnum ml-1.5">{list.length}</span>
+          </p>
+          <ul className="mt-1.5 space-y-1.5">
+            {list.map((a, i) => {
+              const detail = accountDetailLine(a)
+              return (
+                <li key={`${a.name}-${i}`} className="flex flex-wrap items-baseline gap-x-2 gap-y-1" data-testid="review-account-row">
+                  <span className="text-sm font-medium text-foreground">{a.name}</span>
+                  {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
+                  {a.institution && (
+                    <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
+                      {a.institution}
+                    </span>
+                  )}
+                  <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    {PROOF_CATEGORY_LABELS[a.proofCategory ?? ''] ?? 'Statement'}
+                  </span>
+                  {a.grantLoginAccess === true && (
+                    <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
+                      Online access
+                    </span>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 type Phase = 'review' | 'duplicates' | 'submitted'
 
@@ -159,7 +249,11 @@ export function ReviewScreen({
           const rows = questions
             .map((q) => ({ q, text: q.summarize(answers) }))
             .filter((r): r is { q: typeof r.q; text: string } => r.text != null)
-          if (rows.length === 0) return null
+          // I3: the balance chapter's rows all fold into the grouped
+          // accounts section; render it whenever accounts exist.
+          const isAccountsChapter = chapter.id === 'balance'
+          if (rows.length === 0 && !isAccountsChapter) return null
+          if (isAccountsChapter && allAccounts(answers).length === 0) return null
           const first = questions[0]
           return (
             <section key={chapter.id} className="rounded-xl border border-border bg-card" data-chapter={chapter.id}>
@@ -179,14 +273,18 @@ export function ReviewScreen({
                   </button>
                 )}
               </header>
-              <dl className="divide-y divide-border px-4">
-                {rows.map(({ q, text }) => (
-                  <div key={q.id} className="flex items-baseline justify-between gap-4 py-2.5">
-                    <dt className="shrink-0 text-xs text-muted-foreground">{q.title}</dt>
-                    <dd className="text-right text-sm text-foreground">{text}</dd>
-                  </div>
-                ))}
-              </dl>
+              {isAccountsChapter ? (
+                <ReviewAccounts answers={answers} />
+              ) : (
+                <dl className="divide-y divide-border px-4">
+                  {rows.map(({ q, text }) => (
+                    <div key={q.id} className="flex items-baseline justify-between gap-4 py-2.5">
+                      <dt className="shrink-0 text-xs text-muted-foreground">{q.title}</dt>
+                      <dd className="text-right text-sm text-foreground">{text}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
             </section>
           )
         })}

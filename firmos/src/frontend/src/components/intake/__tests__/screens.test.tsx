@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 
@@ -267,5 +267,199 @@ describe('corporate payroll card (I2, 00:48:07)', () => {
     expect(no).not.toHaveAttribute('aria-disabled')
     fireEvent.click(no)
     expect(answersNow().hasPayroll).toBe(false)
+  })
+})
+
+// ── I3 account count cards (plan §1 screen 7) ─────────────────────────────
+
+const BANKS = [
+  { id: 7, name: 'Chase' },
+  { id: 3, name: 'Columbia' },
+]
+
+function AccountsHarness({
+  q,
+  initial,
+  onAdvance,
+  onAddInstitution,
+}: {
+  q: QuestionDef
+  initial: WizardAnswers
+  onAdvance?: () => void
+  onAddInstitution?: (name: string) => Promise<{ id: number; name: string } | null>
+}) {
+  const [answers, setAnswers] = useState<WizardAnswers>(initial)
+  const [institutions, setInstitutions] = useState(BANKS)
+  return (
+    <div>
+      <QuestionScreen
+        q={q}
+        answers={answers}
+        onApply={(p) => setAnswers((a) => ({ ...a, ...p }))}
+        onAdvance={onAdvance ?? (() => {})}
+        onPickOption={() => {}}
+        institutions={institutions}
+        onAddInstitution={async (name) => {
+          const row = (await onAddInstitution?.(name)) ?? { id: 99, name }
+          setInstitutions((prev) => (prev.some((i) => i.id === row.id) ? prev : [...prev, row]))
+          return row
+        }}
+      />
+      <pre data-testid="answers">{JSON.stringify(answers)}</pre>
+    </div>
+  )
+}
+
+describe('I3 account count cards (plan §1 screen 7)', () => {
+  const checking = findQuestion('balance', 'checking-accounts')!
+
+  it('the count generates that many mini-forms, pre-stamped with locked statement proof', () => {
+    render(<AccountsHarness q={checking} initial={{}} />)
+    expect(screen.queryByTestId('account-form-0')).toBeNull()
+    fireEvent.change(screen.getByTestId('count-input'), { target: { value: '2' } })
+    expect(screen.getByTestId('account-form-0')).toBeInTheDocument()
+    expect(screen.getByTestId('account-form-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('account-form-2')).toBeNull()
+    const committed = answersNow().checkingAccounts ?? []
+    expect(committed).toHaveLength(2)
+    expect(committed[0]).toMatchObject({ accountType: 'checking', proofCategory: 'statement' })
+    // Lowering the count truncates from the end.
+    fireEvent.change(screen.getByTestId('count-input'), { target: { value: '1' } })
+    expect(screen.queryByTestId('account-form-1')).toBeNull()
+  })
+
+  it('name, bank pick, and the login-access checkbox commit per mini-form', () => {
+    render(<AccountsHarness q={checking} initial={{}} />)
+    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.change(screen.getByLabelText('Account name or nickname 1'), { target: { value: 'Operating' } })
+    fireEvent.click(screen.getByTestId('bank-select-0'))
+    fireEvent.click(screen.getByTestId('bank-option-7'))
+    fireEvent.click(screen.getByTestId('grant-access-0'))
+    const committed = answersNow().checkingAccounts ?? []
+    expect(committed[0]).toMatchObject({
+      name: 'Operating',
+      institutionId: 7,
+      institution: 'Chase',
+      grantLoginAccess: true,
+    })
+  })
+
+  it('add a new bank persists through the handler and appears in the same session dropdown', async () => {
+    const onAddInstitution = vi.fn(async (name: string) => ({ id: 42, name }))
+    render(<AccountsHarness q={checking} initial={{}} onAddInstitution={onAddInstitution} />)
+    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('bank-select-0'))
+    fireEvent.click(screen.getByTestId('bank-add-toggle-0'))
+    fireEvent.change(screen.getByTestId('bank-add-input'), { target: { value: 'Umpqua' } })
+    fireEvent.click(screen.getByTestId('bank-add-submit'))
+    // The add round-trips through the (async) server action first.
+    await waitFor(() => expect(onAddInstitution).toHaveBeenCalledWith('Umpqua'))
+    // The new bank is selected on the mini-form...
+    await waitFor(() =>
+      expect((answersNow().checkingAccounts ?? [])[0]).toMatchObject({
+        institutionId: 42,
+        institution: 'Umpqua',
+      }),
+    )
+    // ...and listed in the dropdown for the next account in this session.
+    fireEvent.click(screen.getByTestId('bank-select-0'))
+    expect(await screen.findByTestId('bank-option-42')).toHaveTextContent('Umpqua')
+  })
+
+  it('Continue blocks until every generated form has a name', () => {
+    const onAdvance = vi.fn()
+    render(<AccountsHarness q={checking} initial={{}} onAdvance={onAdvance} />)
+    fireEvent.change(screen.getByTestId('count-input'), { target: { value: '2' } })
+    fireEvent.change(screen.getByLabelText('Account name or nickname 1'), { target: { value: 'Operating' } })
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Name account #2 or lower the count.')
+    fireEvent.change(screen.getByLabelText('Account name or nickname 2'), { target: { value: 'Payroll' } })
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).toHaveBeenCalled()
+  })
+
+  it('money accounts show the locked proof note instead of a selector', () => {
+    render(<AccountsHarness q={checking} initial={{}} />)
+    fireEvent.click(screen.getByTestId('count-plus'))
+    expect(screen.getByTestId('proof-locked-0')).toHaveTextContent('Proof: bank statement')
+    expect(screen.queryByTestId('proof-select-0')).toBeNull()
+  })
+
+  it('vehicles ask year/value and bill-of-sale proof - never an institution', () => {
+    const vehicles = findQuestion('balance', 'vehicles')!
+    render(<AccountsHarness q={vehicles} initial={{}} />)
+    fireEvent.click(screen.getByTestId('count-plus'))
+    expect(screen.queryByTestId('bank-select-0')).toBeNull()
+    expect(screen.getByLabelText('Vehicle year 1')).toBeInTheDocument()
+    expect(screen.getByLabelText('Vehicle value 1')).toBeInTheDocument()
+    const proof = screen.getByTestId('proof-select-0') as HTMLSelectElement
+    expect(proof.value).toBe('bill_of_sale')
+    expect([...proof.options].map((o) => o.value)).toEqual(['bill_of_sale', 'owner_declared'])
+    fireEvent.change(screen.getByLabelText('Description 1'), { target: { value: '2022 Ford Transit' } })
+    const committed = answersNow().vehicleAssets ?? []
+    expect(committed[0]).toMatchObject({ name: '2022 Ford Transit', accountType: 'vehicle' })
+  })
+
+  it('loans carry lender + optional balance with a selectable proof', () => {
+    const loans = findQuestion('balance', 'loans')!
+    render(<AccountsHarness q={loans} initial={{}} />)
+    fireEvent.click(screen.getByTestId('count-plus'))
+    expect(screen.queryByTestId('bank-select-0')).toBeNull()
+    const proof = screen.getByTestId('proof-select-0') as HTMLSelectElement
+    expect(proof.value).toBe('statement')
+    fireEvent.change(proof, { target: { value: 'owner_declared' } })
+    fireEvent.change(screen.getByLabelText('Loan name 1'), { target: { value: 'Owner loan' } })
+    fireEvent.change(screen.getByLabelText('Lender 1'), { target: { value: 'Wren' } })
+    const committed = answersNow().loanAccounts ?? []
+    expect(committed[0]).toMatchObject({ name: 'Owner loan', lender: 'Wren', proofCategory: 'owner_declared' })
+  })
+
+  it('other assets carry the typed bucket and a proof pick', () => {
+    const other = findQuestion('balance', 'other-assets')!
+    render(<AccountsHarness q={other} initial={{}} />)
+    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.change(screen.getByTestId('asset-type-0'), { target: { value: 'goodwill' } })
+    const committed = answersNow().otherAssets ?? []
+    expect(committed[0]).toMatchObject({ assetType: 'goodwill', proofCategory: 'owner_declared' })
+  })
+})
+
+describe('I3 online-access checklist (plan §1 screen 10)', () => {
+  const q = findQuestion('access', 'online-access')!
+  const withAccounts: WizardAnswers = {
+    checkingAccounts: [
+      { name: 'Operating', accountType: 'checking', proofCategory: 'statement', institution: 'Chase' },
+      { name: 'Payroll', accountType: 'checking', proofCategory: 'statement', institution: 'Columbia' },
+    ],
+    vehicleAssets: [{ name: 'Transit', accountType: 'vehicle', proofCategory: 'bill_of_sale' }],
+  }
+
+  it('renders the statement-proof accounts as checklist cards and checks set the flag', () => {
+    render(<Harness q={q} initial={withAccounts} />)
+    const operating = screen.getByTestId('check-checkingAccounts:0')
+    expect(operating).toHaveTextContent('Operating')
+    expect(operating).toHaveTextContent('Checking · Chase')
+    expect(screen.getByTestId('check-checkingAccounts:1')).toHaveTextContent('Payroll')
+    // The bill-of-sale vehicle never appears.
+    expect(screen.queryByText('Transit')).toBeNull()
+    fireEvent.click(operating)
+    expect(operating).toHaveAttribute('aria-checked', 'true')
+    const committed = answersNow().checkingAccounts ?? []
+    expect(committed[0]?.grantLoginAccess).toBe(true)
+    expect(committed[1]?.grantLoginAccess).toBe(false)
+  })
+
+  it('a mini-form-checked account starts checked on the checklist', () => {
+    render(
+      <Harness
+        q={q}
+        initial={{
+          ...withAccounts,
+          checkingAccounts: [{ ...withAccounts.checkingAccounts![0], grantLoginAccess: true }],
+        }}
+      />,
+    )
+    expect(screen.getByTestId('check-checkingAccounts:0')).toHaveAttribute('aria-checked', 'true')
   })
 })

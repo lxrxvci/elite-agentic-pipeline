@@ -9,6 +9,7 @@ import {
   clients,
   contactClientLinks,
   contacts,
+  institutions,
   properties,
   recurringTasks,
   recurringTaskSubtasks,
@@ -144,6 +145,18 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     expect(clientAccounts.filter((a) => a.accountType === "merchant")).toHaveLength(2);
     expect(byName.get("Stripe")?.institution).toBe("Stripe");
 
+    // I3: proof categories stamp from the account data - statement-proof
+    // bank/cc/loan rows, owner-declared for the shareholder loan and the
+    // seeded equity accounts (and merchant rows stay statement-proof).
+    expect(byName.get("Operating Checking")?.proofCategory).toBe("statement");
+    expect(byName.get("Savings")?.proofCategory).toBe("statement");
+    expect(byName.get("Business Credit Card")?.proofCategory).toBe("statement");
+    expect(byName.get("Delivery Van Loan")?.proofCategory).toBe("statement");
+    expect(byName.get("Loan from Wren")?.proofCategory).toBe("owner_declared");
+    expect(byName.get("Owner Contributions")?.proofCategory).toBe("owner_declared");
+    expect(byName.get("Owner Distributions")?.proofCategory).toBe("owner_declared");
+    expect(byName.get("Stripe")?.proofCategory).toBe("statement");
+
     // Recurring rules: 4 defaults (monthly, tier day 10) + 1 custom weekly
     // + 2 specialty report rules (C10: each report definition recurs as its
     // own rule on the report's cadence).
@@ -258,6 +271,66 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     expect(result.propertiesCreated).toBe(0);
     const rows = await db.select().from(properties).where(eq(properties.clientId, result.clientId));
     expect(rows).toHaveLength(0);
+  });
+
+  it("I3: maps per-type accounts with proof categories, institution links, and login-access vault slots", async () => {
+    const [chase] = await db.select().from(institutions).where(eq(institutions.name, "Chase"));
+    const [umpqua] = await db.select().from(institutions).where(eq(institutions.name, "Umpqua"));
+    const intakeId = await reviewableIntake({
+      legalName: "Proof Categories Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "15",
+      accountingMethod: "cash",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        // The wizard's flattened payload (buildPatch writes this from the
+        // per-type count cards): proof categories, institution ids, and the
+        // online-access flags ride along. Statement day is never captured.
+        accounts: [
+          {
+            name: "Operating",
+            accountType: "checking",
+            institution: "Chase",
+            institutionId: chase.id,
+            proofCategory: "statement",
+            grantLoginAccess: true,
+          },
+          // Only the institution id arrives: the text snapshot resolves.
+          { name: "Reserve", accountType: "savings", institutionId: umpqua.id, proofCategory: "statement" },
+          { name: "Van loan", accountType: "loan", lender: "Columbia", balance: 14000, proofCategory: "statement" },
+          { name: "Owner loan", accountType: "loan", lender: "Wren", proofCategory: "owner_declared" },
+          { name: "Transit van", accountType: "vehicle", year: 2022, value: 28000, proofCategory: "bill_of_sale" },
+          { name: "Espresso machine", accountType: "fixed_assets", assetType: "equipment", proofCategory: "owner_declared" },
+        ],
+      },
+    });
+
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
+    const byName = new Map(rows.map((a) => [a.name, a]));
+
+    // Proof category drives the statement day: statement -> month-end,
+    // owner-declared / bill-of-sale -> no statement day (out of the queues).
+    expect(byName.get("Operating")).toMatchObject({
+      proofCategory: "statement",
+      statementDay: 31,
+      institutionId: chase.id,
+      institution: "Chase",
+    });
+    expect(byName.get("Reserve")).toMatchObject({
+      proofCategory: "statement",
+      statementDay: 31,
+      institutionId: umpqua.id,
+      institution: "Umpqua", // resolved from the FK
+    });
+    expect(byName.get("Van loan")).toMatchObject({ proofCategory: "statement", statementDay: 31 });
+    expect(byName.get("Owner loan")).toMatchObject({ proofCategory: "owner_declared", statementDay: null });
+    expect(byName.get("Transit van")).toMatchObject({ proofCategory: "bill_of_sale", statementDay: null });
+    expect(byName.get("Espresso machine")).toMatchObject({ proofCategory: "owner_declared", statementDay: null });
+
+    // The online-access flag opens exactly one expected vault slot (3B).
+    expect(result.credentialsExpectedCreated).toBe(1);
   });
 
   it("stamps the QBO subscription facts from form_data onto the client (§15 pass-through)", async () => {

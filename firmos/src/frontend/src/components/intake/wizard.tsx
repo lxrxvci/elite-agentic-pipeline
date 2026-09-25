@@ -6,13 +6,16 @@ import { ArrowLeft, Check, Info } from 'lucide-react'
 import type { Quote } from '@firmos/domain'
 
 import { getQuote, saveIntake } from '@/server/actions/intake'
+import { addInstitutionAction, listInstitutionsAction } from '@/server/actions/institutions'
 import type { IntakeRunningNote } from '@/server/intake'
+import type { InstitutionRow } from '@/server/institutions'
 import { cn } from '@/shared/lib/utils'
 
 import type { StaffOption } from './convert-dialog'
 import { NotesRail } from './notes-rail'
 import { QuotePanel } from './quote-panel'
 import {
+  allAccounts,
   buildPatch,
   CUSTOM_OTHER_VALUE,
   customAllowed,
@@ -80,6 +83,26 @@ export function IntakeWizard({
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  // I3: the shared bank list behind the account mini-form dropdowns; an
+  // inline add-new lands here in the same session.
+  const [institutions, setInstitutions] = useState<InstitutionRow[]>([])
+
+  useEffect(() => {
+    void listInstitutionsAction().then((res) => {
+      if (res.ok) setInstitutions(res.data)
+    })
+  }, [])
+
+  const addInstitution = useCallback(async (name: string): Promise<InstitutionRow | null> => {
+    const res = await addInstitutionAction(name)
+    if (!res.ok) return null
+    setInstitutions((prev) =>
+      prev.some((i) => i.id === res.data.id)
+        ? prev
+        : [...prev, res.data].sort((a, b) => a.name.localeCompare(b.name)),
+    )
+    return res.data
+  }, [])
 
   const screens = useMemo(() => flattenScreens(answers), [answers])
   const idx = Math.min(screenIndex, screens.length - 1)
@@ -124,7 +147,7 @@ export function IntakeWizard({
         s: effectiveServiceKeys(answers),
         f: answers.bookkeepingFrequency ?? null,
         p: answers.payrollFrequency ?? null,
-        a: answers.accounts ?? [],
+        a: allAccounts(answers),
         m: answers.merchantAccounts ?? [],
         q: answers.serviceQuantities ?? null,
         d: answers.serviceDiscounts ?? null,
@@ -146,7 +169,7 @@ export function IntakeWizard({
     quoteTimer.current = setTimeout(() => {
       setQuoteLoading(true)
       const a = answersRef.current
-      void getQuote({ ...a, serviceKeys: effectiveServiceKeys(a) }).then((res) => {
+      void getQuote({ ...a, accounts: allAccounts(a), serviceKeys: effectiveServiceKeys(a) }).then((res) => {
         setQuoteLoading(false)
         if (res.ok) setQuote(res.data)
       })
@@ -387,6 +410,8 @@ export function IntakeWizard({
                         onApply={apply}
                         onAdvance={() => go('fwd')}
                         onPickOption={(v) => pickOption(q.id, v)}
+                        institutions={institutions}
+                        onAddInstitution={addInstitution}
                       />
                     </div>
                     {note && (

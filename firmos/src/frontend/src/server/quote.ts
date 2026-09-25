@@ -11,7 +11,7 @@ import {
   type SpecialtyReportInput,
 } from "@firmos/domain";
 
-import { defaultStatementDayFor } from "./accounts-seed";
+import { statementDayForIntakeAccount } from "./accounts-seed";
 import { localToday } from "./dates";
 import type { IntakeCustomItemInput, IntakeFormData } from "./intake";
 import { getPricingOverrides } from "./pricing-config";
@@ -50,9 +50,11 @@ function defaultQuantityFor(key: string, answers: IntakeQuoteAnswers): number | 
         statement_day: 31,
       }));
       const all = [
+        // I3: the proof category drives the statement day (statement-proof
+        // accounts reconcile monthly; owner-declared/bill-of-sale don't).
         ...accounts.map((a) => ({
           account_type: a.accountType,
-          statement_day: a.statementDay ?? defaultStatementDayFor(a.accountType),
+          statement_day: statementDayForIntakeAccount(a),
         })),
         ...merchants,
       ];

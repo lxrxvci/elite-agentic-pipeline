@@ -19,8 +19,27 @@ import { clients } from "./clients";
 import { users } from "./users";
 
 /**
- * Accounts and properties (HANDOFF §7 - 6 models).
+ * Accounts and properties (HANDOFF §7 - 7 models).
  */
+
+/**
+ * I3 (intake restructure, plan §3): the firm-wide bank/institution list
+ * behind the intake's account dropdowns - pick from the list or "add a new
+ * bank" inline (which writes a row here). Accounts keep a denormalized
+ * institution text snapshot alongside the FK so legacy rows and
+ * extraction-landed free text keep working. Admin management (rename,
+ * merge, deactivate) is a deliberate later seam: this table is the
+ * canonical list the admin screen will wrap.
+ */
+export const institutions = pgTable(
+  "institutions",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("institutions_name_unique").on(t.name)],
+);
 
 /**
  * §7/§15 - bank/credit/loan/investment accounts. account_type is one of
@@ -32,6 +51,12 @@ import { users } from "./users";
  * balance-sheet types). Types requiring a statement default statement_day
  * to 31 and enter the reconciliation + statement queues; owner-documented
  * types get no statement day and are excluded from both.
+ *
+ * I3 proof_category: how the account's balances are evidenced -
+ * "statement" (a third-party statement exists; drives the queues),
+ * "owner_declared", or "bill_of_sale". Checking/savings/credit-card types
+ * are locked to statement at intake; loans, vehicles, and other assets
+ * choose at intake and can be revisited at conversion.
  */
 export const accounts = pgTable(
   "accounts",
@@ -43,6 +68,12 @@ export const accounts = pgTable(
     name: text("name").notNull(),
     accountType: text("account_type").notNull(),
     institution: text("institution"),
+    // I3: canonical institution link; the text snapshot above stays for
+    // legacy rows, extraction free text, and join-free display.
+    institutionId: integer("institution_id").references(() => institutions.id, {
+      onDelete: "set null",
+    }),
+    proofCategory: text("proof_category").notNull().default("statement"),
     // Day of month the statement closes; null/0/≥last-day ⇒ end-of-month (§6.1).
     statementDay: smallint("statement_day"),
     openDate: date("open_date", { mode: "string" }),

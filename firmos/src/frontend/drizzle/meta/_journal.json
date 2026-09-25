@@ -120,6 +120,13 @@
       "when": 1790249809155,
       "tag": "0016_slimy_blur",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790326710941,
+      "tag": "0017_petite_queen_noir",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, inArray } from "drizzle-orm";
 import {
   closeTierDueDate,
   compareLocalDate,
@@ -23,6 +23,7 @@ import {
   contactClientLinks,
   contacts,
   correspondence,
+  institutions,
   intakeOwners,
   onboardingTemplateTasks,
   projects,
@@ -35,12 +36,19 @@ import {
 import { DEPRECIATION_FIELDS, type DepreciationBreakdown } from "@/shared/lib/proforma";
 import { DEFAULT_RECURRING_RULES } from "@/shared/lib/default-rules";
 
-import { defaultStatementDayFor, seedDefaultAccounts, type DbOrTx } from "./accounts-seed";
+import {
+  defaultStatementDayFor,
+  proofCategoryFor,
+  seedDefaultAccounts,
+  statementDayForIntakeAccount,
+  type DbOrTx,
+} from "./accounts-seed";
 import { autoLinkInstitutionSops } from "./templates";
 import { sendWelcomeEmail } from "./correspondence";
 import { localToday } from "./dates";
 import {
   assertIntakeTransition,
+  type IntakeAccountInput,
   type IntakeCustomRuleInput,
   type IntakeFormData,
   type IntakeRow,
@@ -506,7 +514,29 @@ export async function convertIntakeToClient(
 
     // 5. Accounts: intake answers + merchant accounts + default seeds,
     //    with pre-conversion overrides applied by account name (§6.8).
+    //    I3: the statement day derives from the account's proof category
+    //    (statement -> type default/month-end; owner-declared and
+    //    bill-of-sale -> none, out of the queues), the institution FK links
+    //    the dropdown pick, and the text snapshot falls back to the FK's
+    //    name so vault slots and SOP linking keep working.
     const overrides = form.accountOverrides ?? {};
+    const institutionIds = [
+      ...new Set(
+        (form.accounts ?? [])
+          .map((a) => a.institutionId)
+          .filter((id): id is number => id != null),
+      ),
+    ];
+    const institutionNames = new Map<number, string>();
+    if (institutionIds.length > 0) {
+      const rows = await tx
+        .select({ id: institutions.id, name: institutions.name })
+        .from(institutions)
+        .where(inArray(institutions.id, institutionIds));
+      for (const r of rows) institutionNames.set(r.id, r.name);
+    }
+    const institutionNameOf = (a: IntakeAccountInput): string | null =>
+      a.institution ?? (a.institutionId != null ? (institutionNames.get(a.institutionId) ?? null) : null);
     let accountsCreated = 0;
     const insertedAccounts: (typeof accounts.$inferSelect)[] = [];
     for (const a of form.accounts ?? []) {
@@ -516,14 +546,16 @@ export async function convertIntakeToClient(
           ? a.statementDay
           : override.statementDay !== undefined
             ? override.statementDay
-            : defaultStatementDayFor(a.accountType);
+            : statementDayForIntakeAccount(a);
       const [insertedAccount] = await tx
         .insert(accounts)
         .values({
           clientId,
           name: a.name,
           accountType: a.accountType.trim().toLowerCase(),
-          institution: a.institution ?? null,
+          institution: institutionNameOf(a),
+          institutionId: a.institutionId ?? null,
+          proofCategory: proofCategoryFor(a),
           statementDay,
           openDate: a.openDate ?? intake.bookkeepingStartDate,
           requiresManualTransactions:
@@ -566,7 +598,7 @@ export async function convertIntakeToClient(
       .map((a) => ({
         accountId: insertedAccounts.find((ia) => ia.name === a.name)?.id ?? null,
         label: a.name,
-        institution: a.institution ?? null,
+        institution: institutionNameOf(a),
       }));
     const credentialsExpectedCreated = await seedExpectedCredentialSlots(
       tx as DbOrTx,

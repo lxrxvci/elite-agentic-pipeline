@@ -36,6 +36,7 @@ import {
 } from "@/db/schema";
 
 import { localToday } from "./dates";
+import { seedInstitutions } from "./institutions";
 import { materializeOperationalRows } from "./materialize";
 import { runRecurringOnce } from "./recurring";
 import { resyncAllBilling } from "./billing-sync";
@@ -121,6 +122,9 @@ async function wipe(): Promise<void> {
 
 export async function seedDatabase(today: LocalDate = localToday()): Promise<SeedSummary> {
   await wipe();
+  // I3: the full-wipe drops the institutions table too - restore the firm's
+  // known banks so dev/test databases start from the migration's baseline.
+  await seedInstitutions();
 
   const yearStart = `${today.year}-01-01`;
   const catchup = formatLocalDate({ ...addMonths({ year: today.year, month: today.month }, -2), day: 1 });
@@ -335,7 +339,9 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
       { clientId: cid("c"), name: "Operating", accountType: "checking", statementDay: 31, openDate: yearStart },
       { clientId: cid("d"), name: "Checking", accountType: "checking", statementDay: 31, openDate: yearStart },
       // Owner-documented: no statement day → excluded from reconciliations.
-      { clientId: cid("d"), name: "Owner Draws", accountType: "owner_distributions", statementDay: null, openDate: yearStart },
+      // I3: proof_category marks it owner-declared (the column default is
+      // statement; bank/cc rows above take the default deliberately).
+      { clientId: cid("d"), name: "Owner Draws", accountType: "owner_distributions", statementDay: null, proofCategory: "owner_declared", openDate: yearStart },
       { clientId: cid("e"), name: "Clinic Checking", accountType: "checking", statementDay: 31, openDate: yearStart },
       { clientId: cid("f"), name: "Project Checking", accountType: "checking", statementDay: 31, openDate: yearStart },
     ])

@@ -79,20 +79,32 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await pick(page, 'option-no', 'bk-start')
   await page.getByLabel('Books start date').fill('01/01/2025')
   await expect(page.getByLabel('Books start date')).toHaveValue('01/01/2025')
-  await advance(page, 'accounts')
-
-  // ── Balance sheet: one checking account ──
-  await page.getByLabel('Account name').fill('LIVE-TEST Operating Checking')
-  await page.getByLabel('Type').selectOption('checking')
-  await page.getByLabel('Bank or institution').fill('Live Test Bank')
-  await advance(page, 're-yes')
+  // ── Balance sheet: one checking account via the I3 count card ──
+  await advance(page, 'checking-accounts')
+  await page.getByTestId('count-input').fill('1')
+  await page.getByLabel('Account name or nickname 1').fill('LIVE-TEST Operating Checking')
+  await page.getByTestId('bank-select-0').click()
+  await page.getByRole('option', { name: 'Chase' }).click()
+  await advance(page, 'savings-accounts')
+  await advance(page, 'credit-cards') // no savings
+  await advance(page, 'loans') // no credit cards
+  await advance(page, 'vehicles') // no loans
+  await advance(page, 'other-assets') // no vehicles
+  await advance(page, 're-yes') // no other assets
 
   // ── Real estate: no; income: checks only, no payroll ──
   await pick(page, 'option-no', 'payment-methods')
   await page.getByTestId('chip-check').click()
   await advance(page, 'personal-card')
   await pick(page, 'option-no', 'payroll') // no personal-card business spend (B18)
-  await pick(page, 'option-no', 'bk-frequency')
+  await pick(page, 'option-no', 'online-access') // no payroll; I3 access checklist next
+
+  // ── Online access: grant login on the checking account (drives the vault slot) ──
+  await expect(page.getByTestId('check-checkingAccounts:0')).toContainText(
+    'LIVE-TEST Operating Checking',
+  )
+  await page.getByTestId('check-checkingAccounts:0').click()
+  await advance(page, 'bk-frequency')
 
   // ── Reporting: monthly, close by the 10th ──
   await pick(page, 'option-monthly', 'close-tier')
@@ -148,10 +160,11 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await expect(page.getByTestId('unassigned-bookkeeper')).toBeVisible()
   await page.getByTestId('manager-select').click()
   await page.getByRole('option', { name: 'Dana Whitfield' }).click()
-  await expect(page.getByTestId('manager-select')).toHaveText('Dana Whitfield')
+  // E13: the select renders the workload suffix ("Dana Whitfield (12 open)").
+  await expect(page.getByTestId('manager-select')).toContainText('Dana Whitfield')
   await page.getByTestId('bookkeeper-select').click()
   await page.getByRole('option', { name: 'Jorge Medina' }).click()
-  await expect(page.getByTestId('bookkeeper-select')).toHaveText('Jorge Medina')
+  await expect(page.getByTestId('bookkeeper-select')).toContainText('Jorge Medina')
   await expect(page.getByTestId('unassigned-manager')).toHaveCount(0)
   await expect(page.getByTestId('unassigned-bookkeeper')).toHaveCount(0)
 

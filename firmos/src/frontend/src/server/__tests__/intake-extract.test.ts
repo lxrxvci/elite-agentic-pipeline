@@ -161,6 +161,58 @@ describe("coerceExtraction", () => {
     expect(result.rejected?.some((r) => r.key === "merchantAccounts")).toBe(true);
   });
 
+  it("I3: account entries carry proof category, lender/balance, vehicle year/value, and asset type", () => {
+    const result = coerceExtraction({
+      fields: [
+        {
+          key: "accounts",
+          value: [
+            {
+              name: "Van loan",
+              accountType: "loan",
+              lender: "Columbia",
+              balance: 14000,
+              proofCategory: "statement",
+            },
+            {
+              name: "Transit van",
+              accountType: "vehicle",
+              year: 2022,
+              value: 28000,
+              proofCategory: "Bill of Sale", // folds to the canonical value
+              grantLoginAccess: false,
+            },
+            {
+              name: "Espresso machine",
+              accountType: "fixed_assets",
+              assetType: "equipment",
+              proofCategory: "owner_declared",
+            },
+            { name: "Bad proof", accountType: "checking", proofCategory: "vibes" },
+            { name: "Bad bucket", accountType: "other_asset", assetType: "spaceship" },
+          ],
+          confidence: 0.9,
+          evidence: "the van loan is with Columbia, the truck has a bill of sale",
+        },
+      ],
+    });
+    const accounts = result.fields.find((f) => f.key === "accounts");
+    expect(accounts?.value).toEqual([
+      { name: "Van loan", accountType: "loan", lender: "Columbia", balance: 14000, proofCategory: "statement" },
+      {
+        name: "Transit van",
+        accountType: "vehicle",
+        year: 2022,
+        value: 28000,
+        proofCategory: "bill_of_sale",
+        grantLoginAccess: false,
+      },
+      { name: "Espresso machine", accountType: "fixed_assets", assetType: "equipment", proofCategory: "owner_declared" },
+    ]);
+    expect(result.rejected?.some((r) => r.reason.includes("proofCategory"))).toBe(true);
+    expect(result.rejected?.some((r) => r.reason.includes("assetType"))).toBe(true);
+  });
+
   it("drops invalid entries from enum lists and rejects unknown keys", () => {
     const result = coerceExtraction({
       fields: [
@@ -334,6 +386,12 @@ describe("describeExtractedValue", () => {
     expect(
       describeExtractedValue("accounts", [{ name: "Chase checking", accountType: "checking" }]),
     ).toBe("Chase checking (Checking)");
+    // I3: non-statement proof renders alongside the type.
+    expect(
+      describeExtractedValue("accounts", [
+        { name: "Transit van", accountType: "vehicle", proofCategory: "bill_of_sale" },
+      ]),
+    ).toBe("Transit van (Vehicle, Bill of sale)");
   });
 });
 

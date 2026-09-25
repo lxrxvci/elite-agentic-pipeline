@@ -344,13 +344,57 @@ async function main(): Promise<void> {
     await page.waitForTimeout(300);
     await shot(page, "intake-date-text");
 
-    // 5f. Drive the remaining scope questions to the specialty-reports step.
-    await wizardAdvance(page, "accounts"); // commit the date
-    await wizardAdvance(page, "re-yes"); // skip accounts
+    // 5f. I3 accounts: the sequential per-type count cards (plan §1 screen 7).
+    await wizardAdvance(page, "checking-accounts"); // commit the date
+    // The count card itself: two checking accounts -> two mini-forms.
+    await page.getByTestId("count-input").fill("2");
+    await page.waitForTimeout(300);
+    await shot(page, "intake-accounts-count");
+    // Mini-forms: names, then the bank dropdown open on the first account.
+    await page.getByLabel("Account name or nickname 1").fill("Operating Checking");
+    await page.getByLabel("Account name or nickname 2").fill("Payroll Checking");
+    await page.getByTestId("bank-select-0").click();
+    await page.waitForTimeout(300);
+    await shot(page, "intake-accounts-cards");
+    await page.getByRole("option", { name: "Chase" }).click();
+    await page.getByTestId("bank-select-1").click();
+    await page.getByRole("option", { name: "Columbia" }).click();
+    await page.getByTestId("grant-access-1").check();
+    await wizardAdvance(page, "savings-accounts");
+    // Savings: one reserve account.
+    await page.getByTestId("count-plus").click();
+    await page.getByLabel("Account name or nickname 1").fill("Tax Reserve");
+    await page.getByTestId("bank-select-0").click();
+    await page.getByRole("option", { name: "Columbia" }).click();
+    await wizardAdvance(page, "credit-cards");
+    await wizardAdvance(page, "loans"); // no credit cards
+    // Loans: one owner-declared loan (proof selectable).
+    await page.getByTestId("count-plus").click();
+    await page.getByLabel("Loan name 1").fill("Loan from Wren");
+    await page.getByLabel("Lender 1").fill("Wren Okafor");
+    await page.getByTestId("proof-select-0").selectOption("owner_declared");
+    await wizardAdvance(page, "vehicles");
+    await wizardAdvance(page, "other-assets"); // no vehicles
+    // Other assets: the typed quick list (equipment, goodwill).
+    await page.getByTestId("count-input").fill("2");
+    await page.getByLabel("What is it? 1").fill("Espresso machine");
+    await page.getByTestId("asset-type-0").selectOption("equipment");
+    await page.getByLabel("What is it? 2").fill("Bought the route book");
+    await page.getByTestId("asset-type-1").selectOption("goodwill");
+    await page.waitForTimeout(300);
+    await shot(page, "intake-assets-list");
+    await wizardAdvance(page, "re-yes");
     await wizardPick(page, "option-no", "payment-methods");
     await wizardAdvance(page, "personal-card"); // checks only
     await wizardPick(page, "option-no", "payroll"); // B18: no personal card
-    await wizardPick(page, "option-no", "bk-frequency");
+    await wizardPick(page, "option-no", "online-access"); // no payroll; the checklist is next
+    // I3 screen 10 (00:49:44): the online-access checklist pulls the
+    // statement-proof accounts; the mini-form-checked one starts checked.
+    await expect(page.getByTestId("check-checkingAccounts:1")).toHaveAttribute("aria-checked", "true");
+    await page.getByTestId("check-checkingAccounts:0").click();
+    await page.waitForTimeout(300);
+    await shot(page, "intake-online-access");
+    await wizardAdvance(page, "bk-frequency");
     await wizardPick(page, "option-monthly", "close-tier");
     await wizardPick(page, "option-15", "acct-method");
     await wizardPick(page, "option-cash", "bill-pay");
@@ -404,8 +448,14 @@ async function main(): Promise<void> {
     await wizardPick(page, "option-recommended", "services");
     await wizardAdvance(page, "existing-client"); // chips already picked
     await wizardPick(page, "option-no", "bk-start");
-    await wizardAdvance(page, "accounts"); // the typed date stands
-    await wizardAdvance(page, "re-yes"); // skip accounts
+    await wizardAdvance(page, "checking-accounts"); // the typed date stands
+    // I3: the six count cards stand as answered; walk past them.
+    await wizardAdvance(page, "savings-accounts");
+    await wizardAdvance(page, "credit-cards");
+    await wizardAdvance(page, "loans");
+    await wizardAdvance(page, "vehicles");
+    await wizardAdvance(page, "other-assets");
+    await wizardAdvance(page, "re-yes");
     await wizardPick(page, "option-no", "payment-methods");
     await wizardAdvance(page, "personal-card"); // checks only
     await wizardPick(page, "option-no", "payroll"); // B18 answer stands

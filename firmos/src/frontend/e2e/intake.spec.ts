@@ -108,13 +108,41 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await pick(page, 'option-no', 'bk-start')
   await page.getByLabel('Books start date').pressSequentially('01012026')
   await expect(page.getByLabel('Books start date')).toHaveValue('01/01/2026')
-  await advance(page, 'accounts')
-
-  // ── Balance sheet: one checking account ──
-  await page.getByLabel('Account name').fill('Operating Checking')
-  await page.getByLabel('Type').selectOption('checking')
-  await page.getByLabel('Bank or institution').fill('Test Bank')
-  await advance(page, 're-yes')
+  // ── Balance sheet: sequential per-type count cards (I3) ──
+  await advance(page, 'checking-accounts')
+  // Checking: the count generates one mini-form; the bank is a dropdown pick.
+  await page.getByTestId('count-input').fill('1')
+  await page.getByLabel('Account name or nickname 1').fill('Operating Checking')
+  await page.getByTestId('bank-select-0').click()
+  await page.getByRole('option', { name: 'Chase' }).click()
+  await expect(page.getByTestId('bank-select-0')).toHaveText('Chase')
+  // Money accounts carry the locked statement-proof note (no selector).
+  await expect(page.getByTestId('proof-locked-0')).toHaveText('Proof: bank statement')
+  await advance(page, 'savings-accounts')
+  await advance(page, 'credit-cards') // no savings
+  // Credit cards: one card at a bank that is not on the list yet - add it inline.
+  await page.getByTestId('count-plus').click()
+  await page.getByLabel('Card name or nickname 1').fill('Corporate Card')
+  await page.getByTestId('bank-select-0').click()
+  await page.getByTestId('bank-add-toggle-0').click()
+  await page.getByTestId('bank-add-input').fill('E2E First Tech')
+  await page.getByTestId('bank-add-submit').click()
+  // The new bank is selected immediately and lists in the same session.
+  await expect(page.getByTestId('bank-select-0')).toHaveText('E2E First Tech', { timeout: 10_000 })
+  await page.getByTestId('bank-select-0').click()
+  await expect(page.getByRole('option', { name: 'E2E First Tech' })).toBeVisible()
+  await page.getByTestId('bank-select-0').click() // toggle closed
+  await expect(page.getByRole('option', { name: 'E2E First Tech' })).toHaveCount(0)
+  await advance(page, 'loans')
+  await advance(page, 'vehicles') // no loans
+  // Vehicles: quick list - description/year/value, bill-of-sale proof, no bank.
+  await page.getByTestId('count-plus').click()
+  await page.getByLabel('Description 1').fill('2022 Ford Transit')
+  await page.getByLabel('Vehicle year 1').fill('2022')
+  await expect(page.getByTestId('proof-select-0')).toHaveValue('bill_of_sale')
+  await expect(page.getByTestId('bank-select-0')).toHaveCount(0)
+  await advance(page, 'other-assets')
+  await advance(page, 're-yes') // no other assets
 
   // ── Real estate: not a real-estate client (detail questions stay hidden) ──
   await pick(page, 'option-no', 'payment-methods')
@@ -123,7 +151,15 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByTestId('chip-check').click()
   await advance(page, 'personal-card')
   await pick(page, 'option-no', 'payroll') // no business spend on a personal card (B18)
-  await pick(page, 'option-no', 'bk-frequency')
+  await pick(page, 'option-no', 'online-access') // no payroll (I3: access checklist next)
+
+  // ── Online access: the checklist pulls the statement-proof accounts (I3) ──
+  await expect(page.getByTestId('check-checkingAccounts:0')).toContainText('Operating Checking')
+  await expect(page.getByTestId('check-creditCardAccounts:0')).toContainText('Corporate Card')
+  // The bill-of-sale vehicle is not an online-access candidate.
+  await expect(page.getByText('2022 Ford Transit')).toHaveCount(0)
+  await page.getByTestId('check-checkingAccounts:0').click()
+  await advance(page, 'bk-frequency')
 
   // ── Reporting and payroll: monthly, close by the 10th, cash ──
   await pick(page, 'option-monthly', 'close-tier')
@@ -148,7 +184,17 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // ── Review: summary renders in the dictated order, quote is server-priced ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByTestId('review-quote')).toBeVisible()
-  await expect(page.getByText('Operating Checking')).toBeVisible()
+  // I3: accounts render grouped by type with institution + proof badges.
+  const reviewAccounts = page.getByTestId('review-accounts')
+  await expect(reviewAccounts).toBeVisible()
+  await expect(reviewAccounts).toContainText('Operating Checking')
+  await expect(reviewAccounts).toContainText('Chase')
+  await expect(reviewAccounts).toContainText('Corporate Card')
+  await expect(reviewAccounts).toContainText('E2E First Tech')
+  await expect(reviewAccounts).toContainText('2022 Ford Transit')
+  await expect(reviewAccounts).toContainText('Bill of sale')
+  // The online-access row counts the checked statement accounts.
+  await expect(page.getByText('1 of 2 with online access')).toBeVisible()
   // The CPA card answer shows on the review screen.
   await expect(page.getByText('Yes · Cascade Tax Group')).toBeVisible()
   // I2: the LLC subclass folds into the tax-structure row.
@@ -308,7 +354,14 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   // ── Starting point + scope chapters ──
   await pick(page, 'option-no', 'bk-start')
   await page.getByLabel('Books start date').pressSequentially('01012026')
-  await advance(page, 'accounts')
+  await advance(page, 'checking-accounts')
+  // I3: six count cards, all skipped (no accounts) - the online-access
+  // checklist stays hidden with no statement accounts.
+  await advance(page, 'savings-accounts')
+  await advance(page, 'credit-cards')
+  await advance(page, 'loans')
+  await advance(page, 'vehicles')
+  await advance(page, 'other-assets')
   await advance(page, 're-yes')
   await pick(page, 'option-no', 'payment-methods')
   await page.getByTestId('chip-check').click()

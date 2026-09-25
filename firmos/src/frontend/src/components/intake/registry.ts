@@ -1,6 +1,6 @@
 import { SPECIALTY_REPORT_DEFAULT_RATE } from '@firmos/domain'
 
-import type { IntakeContactInput, IntakePatch } from '@/server/intake'
+import type { IntakeAccountInput, IntakeContactInput, IntakePatch, IntakeProofCategory } from '@/server/intake'
 import type { IntakeFormData, IntakeRow } from '@/server/intake'
 import { DEFAULT_RECURRING_RULES, DEFAULT_RULE_KEYS } from '@/shared/lib/default-rules'
 
@@ -103,7 +103,48 @@ export interface RepeatableDef {
   capNote?: (a: WizardAnswers) => string | null
 }
 
-export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist'
+export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist' | 'account-count'
+
+/**
+ * I3 (plan §1 screen 7): a per-type "how many?" count card that generates
+ * that many compact account mini-forms. The committed items live in the
+ * form_data per-type array (answerKey); buildPatch flattens all six arrays
+ * into the canonical `accounts` list in screen order.
+ */
+export interface AccountCountDef {
+  /** form_data per-type array key (IntakeFormData). */
+  answerKey:
+    | 'checkingAccounts'
+    | 'savingsAccounts'
+    | 'creditCardAccounts'
+    | 'loanAccounts'
+    | 'vehicleAssets'
+    | 'otherAssets'
+  /** Canonical accounts.account_type stamped on each committed item
+   *  (other-assets items instead map their assetType pick per item). */
+  accountType: string
+  /** The count stepper's accessible label: "Number of checking accounts". */
+  countLabel: string
+  /** Name-field label on each mini-form ("Account name or nickname"). */
+  nameLabel: string
+  namePlaceholder?: string
+  /** Bank dropdown + inline add-new (money accounts). */
+  askInstitution?: boolean
+  /** "Grant us login access" checkbox (money accounts). */
+  askLoginAccess?: boolean
+  /** Loans: lender free text + optional current balance. */
+  askLender?: boolean
+  askBalance?: boolean
+  /** Vehicles: model year + value estimate. */
+  askYearValue?: boolean
+  /** Other assets: the typed bucket pick (drives the account_type mapping). */
+  askAssetType?: boolean
+  /** Proof categories offered as a per-item select; absent = locked to
+   *  defaultProof with a static note (money accounts). */
+  proofOptions?: SelectOption[]
+  /** The proof category pre-stamped on every new item. */
+  defaultProof: IntakeProofCategory
+}
 
 export interface QuestionDef {
   id: string
@@ -113,8 +154,13 @@ export interface QuestionDef {
   help?: string | ((a: WizardAnswers) => string | null)
   type: QuestionType
   options?: SelectOption[]
+  /** I3: checklist options derived from the current answers (the online
+   *  access checklist pulls the statement-proof accounts entered earlier). */
+  dynamicOptions?: (a: WizardAnswers) => SelectOption[]
   fields?: FieldDef[]
   repeatable?: RepeatableDef
+  /** I3: per-type account count card config (type 'account-count'). */
+  accountCount?: AccountCountDef
   /** Branch predicate; question renders only when this returns true. */
   when?: (a: WizardAnswers) => boolean
   /** When false and the answer is empty, Continue acts as Skip. */
@@ -348,15 +394,49 @@ export const serviceLabel = (k: string): string => SERVICE_LABELS[k] ?? k.replac
 
 // Label maps are exported for the call-notes extraction vocabulary
 // (src/server/intake-extract.ts) - the canonical enum value sets live here.
+// I3: the count cards write checking/savings/credit_card/loan/vehicle/
+// fixed_assets/other_asset/investment; the vehicle_loan/loans_from_shareholders/
+// other values stay for extraction and pre-I3 intakes.
 export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   checking: 'Checking',
   savings: 'Savings',
   credit_card: 'Credit card',
   loan: 'Loan',
+  vehicle: 'Vehicle',
+  fixed_assets: 'Equipment or furniture',
+  other_asset: 'Other asset',
+  investment: 'Investment',
   vehicle_loan: 'Vehicle loan',
   loans_from_shareholders: 'Loan from shareholders',
-  investment: 'Investment',
   other: 'Other',
+}
+
+/** I3 (plan §3): how an account's balances are evidenced. Money accounts
+ *  are locked to Statement; loans, vehicles, and other assets pick. */
+export const PROOF_CATEGORY_LABELS: Record<string, string> = {
+  statement: 'Statement',
+  owner_declared: 'Owner declared',
+  bill_of_sale: 'Bill of sale',
+}
+
+/** I3: the other-assets type buckets (00:41:41 - his clients don't know
+ *  "assets", so the pick is framed in plain nouns). */
+export const ASSET_TYPE_LABELS: Record<string, string> = {
+  equipment: 'Equipment',
+  furniture: 'Furniture & fixtures',
+  goodwill: 'Goodwill (bought the business)',
+  investments: 'Investments',
+  other: 'Other',
+}
+
+/** I3: other-asset bucket -> canonical accounts.account_type. The chosen
+ *  bucket itself rides the item's assetType (and survives in form_data). */
+export const ASSET_TYPE_TO_ACCOUNT_TYPE: Record<string, string> = {
+  equipment: 'fixed_assets',
+  furniture: 'fixed_assets',
+  goodwill: 'other_asset',
+  investments: 'investment',
+  other: 'other_asset',
 }
 
 export const FREQUENCY_LABELS: Record<string, string> = {
@@ -442,6 +522,223 @@ export function effectiveServiceKeys(a: WizardAnswers): string[] {
     else set.delete(k)
   }
   return [...set]
+}
+
+// ── I3 accounts: sequential per-type count cards (plan §1 screen 7,
+//    00:34:18-00:45:35) ────────────────────────────────────────────────────
+//
+// One card per account type, in his dictated order: checking, savings,
+// credit cards, loans, vehicles, other assets. Money accounts pick the bank
+// from the institutions table (dropdown + inline add-new) and carry a
+// locked Statement proof; loans, vehicles, and other assets pick a proof
+// category. Statement-day capture leaves intake entirely - a conversion-time
+// concern now.
+
+export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
+  {
+    answerKey: 'checkingAccounts',
+    accountType: 'checking',
+    countLabel: 'Number of checking accounts',
+    nameLabel: 'Account name or nickname',
+    namePlaceholder: 'Operating checking',
+    askInstitution: true,
+    askLoginAccess: true,
+    defaultProof: 'statement',
+  },
+  {
+    answerKey: 'savingsAccounts',
+    accountType: 'savings',
+    countLabel: 'Number of savings accounts',
+    nameLabel: 'Account name or nickname',
+    namePlaceholder: 'Tax reserve savings',
+    askInstitution: true,
+    askLoginAccess: true,
+    defaultProof: 'statement',
+  },
+  {
+    answerKey: 'creditCardAccounts',
+    accountType: 'credit_card',
+    countLabel: 'Number of business credit cards',
+    nameLabel: 'Card name or nickname',
+    namePlaceholder: 'Amex Gold',
+    askInstitution: true,
+    askLoginAccess: true,
+    defaultProof: 'statement',
+  },
+  {
+    answerKey: 'loanAccounts',
+    accountType: 'loan',
+    countLabel: 'Number of loans',
+    nameLabel: 'Loan name',
+    namePlaceholder: 'Delivery van loan',
+    askLender: true,
+    askBalance: true,
+    proofOptions: [
+      { value: 'statement', label: 'Statement', sub: 'The lender issues statements' },
+      { value: 'owner_declared', label: 'Owner declared', sub: 'No statement - the owner confirms the balance' },
+    ],
+    defaultProof: 'statement',
+  },
+  {
+    answerKey: 'vehicleAssets',
+    accountType: 'vehicle',
+    countLabel: 'Number of vehicles',
+    nameLabel: 'Description',
+    namePlaceholder: '2022 Ford Transit van',
+    askYearValue: true,
+    proofOptions: [
+      { value: 'bill_of_sale', label: 'Bill of sale', sub: 'The purchase document proves it' },
+      { value: 'owner_declared', label: 'Owner declared', sub: 'The owner confirms the details' },
+    ],
+    defaultProof: 'bill_of_sale',
+  },
+  {
+    answerKey: 'otherAssets',
+    accountType: 'other_asset', // per-item assetType pick maps the real type
+    countLabel: 'Number of other assets',
+    nameLabel: 'What is it?',
+    namePlaceholder: 'Espresso machine',
+    askAssetType: true,
+    proofOptions: [
+      { value: 'statement', label: 'Statement', sub: 'A statement exists (e.g. a brokerage)' },
+      { value: 'bill_of_sale', label: 'Bill of sale', sub: 'The purchase document proves it' },
+      { value: 'owner_declared', label: 'Owner declared', sub: 'The owner confirms the details' },
+    ],
+    defaultProof: 'owner_declared',
+  },
+]
+
+const PER_TYPE_ACCOUNT_KEYS = ACCOUNT_COUNT_DEFS.map((d) => d.answerKey)
+
+/** Normalize one committed mini-form item: the account type is stamped
+ *  (other-assets items map their assetType pick), the proof falls back to
+ *  the card's default, and blank optional strings drop to null. */
+function normalizeAccountItem(def: AccountCountDef, item: IntakeAccountInput): IntakeAccountInput {
+  const assetType = str(item.assetType)
+  const accountType =
+    def.answerKey === 'otherAssets'
+      ? (assetType ? ASSET_TYPE_TO_ACCOUNT_TYPE[assetType] : null) ?? def.accountType
+      : str(item.accountType) ?? def.accountType
+  return {
+    ...item,
+    accountType,
+    proofCategory: item.proofCategory ?? def.defaultProof,
+  }
+}
+
+/** The canonical flattened account list (screen order) - what buildPatch
+ *  writes to form_data.accounts and what conversion/quote/cascade read. */
+export function allAccounts(a: WizardAnswers): IntakeAccountInput[] {
+  return ACCOUNT_COUNT_DEFS.flatMap((def) =>
+    ((a[def.answerKey] as IntakeAccountInput[] | undefined) ?? []).map((item) =>
+      normalizeAccountItem(def, item),
+    ),
+  )
+}
+
+/** Reverse direction for pre-I3 intakes: the flat form_data.accounts list
+ *  splits back into the per-type arrays so the count cards render them and
+ *  the next autosave round-trips without losing a row. Unmapped types land
+ *  in other assets rather than disappearing. */
+export function splitAccountsByType(accounts: IntakeAccountInput[]): Pick<
+  WizardAnswers,
+  | 'checkingAccounts'
+  | 'savingsAccounts'
+  | 'creditCardAccounts'
+  | 'loanAccounts'
+  | 'vehicleAssets'
+  | 'otherAssets'
+> {
+  const out: Record<AccountCountDef['answerKey'], IntakeAccountInput[]> = {
+    checkingAccounts: [],
+    savingsAccounts: [],
+    creditCardAccounts: [],
+    loanAccounts: [],
+    vehicleAssets: [],
+    otherAssets: [],
+  }
+  for (const account of accounts) {
+    const t = account.accountType.trim().toLowerCase()
+    const key: AccountCountDef['answerKey'] =
+      t === 'checking'
+        ? 'checkingAccounts'
+        : t === 'savings'
+          ? 'savingsAccounts'
+          : t === 'credit_card'
+            ? 'creditCardAccounts'
+            : t === 'vehicle'
+              ? 'vehicleAssets'
+              : t === 'loan' ||
+                  t === 'vehicle_loan' ||
+                  t === 'line_of_credit' ||
+                  t === 'mortgage' ||
+                  t === 'other_liability' ||
+                  t === 'loans_from_shareholders' ||
+                  t === 'loans_from_others'
+                ? 'loanAccounts'
+                : 'otherAssets'
+    out[key].push({
+      ...account,
+      assetType:
+        key === 'otherAssets'
+          ? (account.assetType ?? (t === 'investment' ? 'investments' : null))
+          : account.assetType,
+    })
+  }
+  return out
+}
+
+/** One entry in the online-access checklist: a statement-proof account from
+ *  any of the six per-type arrays, keyed stably by array + index. */
+export interface StatementAccountRef {
+  key: string
+  answerKey: AccountCountDef['answerKey']
+  index: number
+  item: IntakeAccountInput
+}
+
+/** I3 (plan §1 screen 10, 00:49:44): the checklist pulls every account whose
+ *  proof category is "statement" - money accounts always qualify (locked),
+ *  loans/assets only when their proof pick is statement. */
+export function statementAccountRefs(a: WizardAnswers): StatementAccountRef[] {
+  const out: StatementAccountRef[] = []
+  for (const def of ACCOUNT_COUNT_DEFS) {
+    const items = (a[def.answerKey] as IntakeAccountInput[] | undefined) ?? []
+    items.forEach((item, index) => {
+      const proof = item.proofCategory ?? def.defaultProof
+      if (proof !== 'statement') return
+      if (!str(item.name)) return
+      out.push({ key: `${def.answerKey}:${index}`, answerKey: def.answerKey, index, item })
+    })
+  }
+  return out
+}
+
+/** The online-access checklist write: checked keys get grantLoginAccess
+ *  true, unchecked statement accounts get it false, and non-statement
+ *  accounts are never touched. */
+export function applyOnlineAccess(a: WizardAnswers, checkedKeys: string[]): Partial<WizardAnswers> {
+  const checked = new Set(checkedKeys)
+  const patch: Record<string, unknown> = {}
+  for (const def of ACCOUNT_COUNT_DEFS) {
+    const items = (a[def.answerKey] as IntakeAccountInput[] | undefined) ?? []
+    if (items.length === 0) continue
+    patch[def.answerKey] = items.map((item, index) => {
+      const proof = item.proofCategory ?? def.defaultProof
+      if (proof !== 'statement') return item
+      return { ...item, grantLoginAccess: checked.has(`${def.answerKey}:${index}`) }
+    })
+  }
+  return patch as Partial<WizardAnswers>
+}
+
+/** Short label for a checklist row / review badge: "Checking · Chase". */
+export function accountRefLabel(item: IntakeAccountInput): string {
+  return (
+    join(ACCOUNT_TYPE_LABELS[String(item.accountType)] ?? str(item.accountType), str(item.institution)) ??
+    str(item.name) ??
+    'Account'
+  )
 }
 
 // ── Chapters ──────────────────────────────────────────────────────────────
@@ -968,42 +1265,82 @@ export const CHAPTERS: ChapterDef[] = [
     ],
   },
   {
+    // I3 (plan §1 screen 7, 00:34:18-00:45:35): the single grouped accounts
+    // widget is gone - one count card per account type, in his dictated
+    // order. Each count generates that many compact mini-forms. Statement
+    // day is never asked here (conversion-time concern); proof categories
+    // are locked to Statement for money accounts and selectable for loans,
+    // vehicles, and other assets. Every row folds into the review screen's
+    // grouped accounts section, so per-question summaries stay hidden.
     id: 'balance',
     label: 'Balance sheet',
     when: isBookkeeping,
     questions: [
       {
-        id: 'accounts',
-        title: 'Which accounts go on the books?',
-        help: 'Checking, savings, credit cards, loans, investments. Each one is reconciled monthly.',
-        type: 'repeatable',
+        id: 'checking-accounts',
+        title: 'How many business checking accounts do you have?',
+        help: 'Every account the business spends or receives money through. Each one is reconciled monthly against its bank statement.',
+        type: 'account-count',
         required: false,
-        repeatable: {
-          addLabel: 'Add account',
-          itemFields: [
-            { key: 'name', label: 'Account name', kind: 'text', required: true, placeholder: 'Operating Checking' },
-            {
-              key: 'accountType', label: 'Type', kind: 'select', required: true, half: true,
-              options: Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })),
-            },
-            { key: 'institution', label: 'Bank or institution', kind: 'text', half: true, placeholder: 'Columbia Bank' },
-            { key: 'statementDay', label: 'Statement day (optional)', kind: 'number', min: 1, max: 31, half: true, placeholder: '31' },
-            // 3B (01:18:40): conversion opens an expected vault slot per checked account.
-            { key: 'grantLoginAccess', label: 'We get login access (client adds it in the portal)', kind: 'checkbox' },
-          ],
-          itemValid: (i) => !!str(i.name) && !!str(i.accountType),
-          summarize: (i) => String(i.name),
-          sub: (i) => ACCOUNT_TYPE_LABELS[String(i.accountType)] ?? null,
-        },
-        get: (a) => a.accounts ?? [],
-        apply: (_a, v) => ({ accounts: v as WizardAnswers['accounts'] }),
-        summarize: (a) => {
-          const accts = a.accounts ?? []
-          if (accts.length === 0) return null
-          return accts.length <= 5
-            ? accts.map((x) => x.name).join(', ')
-            : `${accts.length} accounts`
-        },
+        accountCount: ACCOUNT_COUNT_DEFS[0],
+        get: (a) => a.checkingAccounts ?? [],
+        apply: (_a, v) => ({ checkingAccounts: v as IntakeAccountInput[] }),
+        summarize: () => null,
+      },
+      {
+        id: 'savings-accounts',
+        title: 'And how many savings accounts?',
+        help: 'Reserve, tax, or rainy-day accounts - at any bank. Same monthly reconciliation.',
+        type: 'account-count',
+        required: false,
+        accountCount: ACCOUNT_COUNT_DEFS[1],
+        get: (a) => a.savingsAccounts ?? [],
+        apply: (_a, v) => ({ savingsAccounts: v as IntakeAccountInput[] }),
+        summarize: () => null,
+      },
+      {
+        id: 'credit-cards',
+        title: 'How many business credit cards?',
+        help: 'Cards the business spends on. Each card statement reconciles monthly.',
+        type: 'account-count',
+        required: false,
+        accountCount: ACCOUNT_COUNT_DEFS[2],
+        get: (a) => a.creditCardAccounts ?? [],
+        apply: (_a, v) => ({ creditCardAccounts: v as IntakeAccountInput[] }),
+        summarize: () => null,
+      },
+      {
+        id: 'loans',
+        title: 'Any loans the business owes on?',
+        help: 'Equipment financing, an SBA loan, a line of credit, money borrowed from the owners. The balance is optional - a ballpark helps the quote.',
+        type: 'account-count',
+        required: false,
+        accountCount: ACCOUNT_COUNT_DEFS[3],
+        get: (a) => a.loanAccounts ?? [],
+        apply: (_a, v) => ({ loanAccounts: v as IntakeAccountInput[] }),
+        summarize: () => null,
+      },
+      {
+        id: 'vehicles',
+        title: 'Any vehicles the business owns?',
+        help: 'Cars, trucks, vans, trailers titled to or used by the business. A year and rough value is plenty.',
+        type: 'account-count',
+        required: false,
+        accountCount: ACCOUNT_COUNT_DEFS[4],
+        get: (a) => a.vehicleAssets ?? [],
+        apply: (_a, v) => ({ vehicleAssets: v as IntakeAccountInput[] }),
+        summarize: () => null,
+      },
+      {
+        id: 'other-assets',
+        title: 'Anything else of value?',
+        help: 'Equipment, furniture, money anyone owes the business, goodwill from buying the business, investments. If it matters to the books, list it.',
+        type: 'account-count',
+        required: false,
+        accountCount: ACCOUNT_COUNT_DEFS[5],
+        get: (a) => a.otherAssets ?? [],
+        apply: (_a, v) => ({ otherAssets: v as IntakeAccountInput[] }),
+        summarize: () => null,
       },
     ],
   },
@@ -1232,6 +1569,44 @@ export const CHAPTERS: ChapterDef[] = [
           if (!hasPayroll(a)) return null
           const ks = (a.serviceKeys ?? []).filter((k) => k.startsWith('payroll_') || k === 'process_payroll')
           return ks.length > 0 ? ks.map(serviceLabel).join(', ') : null
+        },
+      },
+    ],
+  },
+  {
+    // I3 (plan §1 screen 10, 00:49:44-00:50:28): after the money in/out
+    // chapter, the online-access checklist pulls the statement-proof accounts
+    // entered on the balance-sheet cards. Each checked account carries
+    // grantLoginAccess on its entry - conversion opens an expected vault
+    // slot per checked account (3B seeding, unchanged).
+    id: 'access',
+    label: 'Online access',
+    when: (a) => isBookkeeping(a) && statementAccountRefs(a).length > 0,
+    questions: [
+      {
+        id: 'online-access',
+        title: 'Which of these will we have online access to?',
+        help: 'Check every account we can log in to - each one opens a secure vault slot the client fills in their portal. Unchecked accounts go on the manual download list.',
+        type: 'checklist',
+        required: false,
+        dynamicOptions: (a) =>
+          statementAccountRefs(a).map((r) => ({
+            value: r.key,
+            label: r.item.name,
+            sub: accountRefLabel(r.item),
+          })),
+        get: (a) =>
+          statementAccountRefs(a)
+            .filter((r) => r.item.grantLoginAccess === true)
+            .map((r) => r.key),
+        apply: (a, v) => applyOnlineAccess(a, v as string[]),
+        summarize: (a) => {
+          const refs = statementAccountRefs(a)
+          if (refs.length === 0) return null
+          const on = refs.filter((r) => r.item.grantLoginAccess === true).length
+          return on === 0
+            ? `None of the ${refs.length} account${refs.length === 1 ? '' : 's'} - all manual`
+            : `${on} of ${refs.length} with online access`
         },
       },
     ],
@@ -1557,8 +1932,15 @@ const CLOSE_TIERS = new Set(['5', '10', '15'])
 
 /** Wizard answers -> the autosave patch (structured columns + form_data). */
 export function buildPatch(a: WizardAnswers): IntakePatch {
+  // I3: the count cards own the per-type arrays; form_data.accounts stays
+  // the canonical flattened list conversion/quote/cascade read. When no
+  // per-type key is present (the call-notes extraction path writes flat
+  // accounts only), the stored flat list passes through untouched.
+  const perTypePresent = PER_TYPE_ACCOUNT_KEYS.some((k) => a[k] !== undefined)
+  const accounts = perTypePresent ? allAccounts(a) : (a.accounts ?? [])
   const formData: IntakeFormData = {
     ...a,
+    accounts,
     serviceKeys: effectiveServiceKeys(a),
   }
   delete (formData as Record<string, unknown>).legalName
@@ -1610,7 +1992,15 @@ export function buildPatch(a: WizardAnswers): IntakePatch {
 /** Stored intake row -> wizard answers (resume / read-only review). */
 export function answersFromIntake(row: IntakeRow): WizardAnswers {
   const form = (row.formData ?? {}) as IntakeFormData
+  // I3: pre-I3 intakes carry only the flat form_data.accounts list - split
+  // it into the per-type arrays so the count cards render the accounts and
+  // a resume + autosave never wipes them. New intakes already carry the
+  // per-type arrays and round-trip verbatim.
+  const perType = PER_TYPE_ACCOUNT_KEYS.some((k) => form[k] !== undefined)
+    ? {}
+    : splitAccountsByType(form.accounts ?? [])
   return {
+    ...perType,
     ...form,
     legalName: row.legalName,
     dbaName: row.dbaName,

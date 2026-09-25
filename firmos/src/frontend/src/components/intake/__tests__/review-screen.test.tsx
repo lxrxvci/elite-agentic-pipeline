@@ -228,3 +228,82 @@ describe('ReviewScreen I2 entity rendering', () => {
     expect(screen.queryByText(/officers must be on payroll/)).toBeNull()
   })
 })
+
+describe('I3 review: accounts grouped by type with institution + proof badges', () => {
+  const accountsAnswers: WizardAnswers = {
+    legalName: 'Grouped Accounts Co',
+    engagementType: 'bookkeeping',
+    checkingAccounts: [
+      { name: 'Operating', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', grantLoginAccess: true },
+    ],
+    creditCardAccounts: [
+      { name: 'Amex Gold', accountType: 'credit_card', proofCategory: 'statement', institution: 'Amex' },
+    ],
+    loanAccounts: [
+      { name: 'Owner loan', accountType: 'loan', proofCategory: 'owner_declared', lender: 'Wren', balance: 12000 },
+    ],
+    vehicleAssets: [
+      { name: 'Transit van', accountType: 'vehicle', proofCategory: 'bill_of_sale', year: 2022, value: 28000 },
+    ],
+    otherAssets: [
+      { name: 'Espresso machine', accountType: 'other_asset', assetType: 'equipment', proofCategory: 'owner_declared' },
+    ],
+  }
+
+  function renderAccounts(answers: WizardAnswers) {
+    return render(
+      <ReviewScreen
+        intakeId={1}
+        answers={answers}
+        quote={null}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+      />,
+    )
+  }
+
+  it('groups the accounts under the balance chapter in type order, with badges', () => {
+    renderAccounts(accountsAnswers)
+    const section = screen.getByTestId('review-accounts')
+    const groups = section.querySelectorAll('[data-testid="review-account-group"]')
+    expect([...groups].map((g) => g.getAttribute('data-type'))).toEqual([
+      'checking',
+      'credit_card',
+      'loan',
+      'vehicle',
+      'fixed_assets', // the equipment bucket maps to fixed assets
+    ])
+
+    // Institution + proof + online-access badges on the money account.
+    const checking = groups[0]
+    expect(checking).toHaveTextContent('Operating')
+    expect(checking).toHaveTextContent('Chase')
+    expect(checking).toHaveTextContent('Statement')
+    expect(checking).toHaveTextContent('Online access')
+
+    // The loan carries its lender/balance detail and the owner-declared badge.
+    expect(groups[2]).toHaveTextContent('Owner loan')
+    expect(groups[2]).toHaveTextContent('Wren · balance $12,000')
+    expect(groups[2]).toHaveTextContent('Owner declared')
+
+    // The vehicle shows year/value and the bill-of-sale badge.
+    expect(groups[3]).toHaveTextContent('Transit van')
+    expect(groups[3]).toHaveTextContent('2022 · value $28,000')
+    expect(groups[3]).toHaveTextContent('Bill of sale')
+  })
+
+  it('hides the balance chapter entirely when no accounts were entered', () => {
+    renderAccounts({ legalName: 'No Accounts Co', engagementType: 'bookkeeping' })
+    expect(screen.queryByTestId('review-accounts')).toBeNull()
+    expect(screen.queryByText('Balance sheet')).toBeNull()
+  })
+
+  it('the online-access row counts the checked accounts', () => {
+    renderAccounts(accountsAnswers)
+    expect(screen.getByText('1 of 2 with online access')).toBeInTheDocument()
+  })
+})
