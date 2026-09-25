@@ -52,9 +52,14 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
 
   // ── Entity & ownership ──
   await advance(page, 'tax-structure') // skip EIN
-  await pick(page, 'option-LLC', 'dba-industry')
+  // I2: an LLC pick opens the tax-classification follow-up.
+  await pick(page, 'option-LLC', 'llc-subclass')
+  await pick(page, 'option-llc_sml', 'dba-industry')
   await advance(page, 'owners') // skip DBA/industry
-  await advance(page, 'contacts') // skip owners
+  // I2: a single-member LLC needs its one owner before Continue.
+  await page.getByLabel('Full name').fill('Live Test Owner')
+  await page.getByTestId('add-another').click()
+  await advance(page, 'contacts')
   await advance(page, 'has-cpa') // skip contacts
   await pick(page, 'option-no', 'referral') // no CPA card detail
   await pick(page, 'option-Web search', 'engagement')

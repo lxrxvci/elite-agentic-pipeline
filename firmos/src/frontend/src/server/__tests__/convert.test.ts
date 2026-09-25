@@ -760,4 +760,83 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     const owners = (row.formData as { owners?: { receivesReports?: boolean }[] }).owners;
     expect(owners?.[0]?.receivesReports).toBe(true);
   });
+
+  it("I2: a corporate structure stamps has_payroll even when payroll went unanswered", async () => {
+    // S-corp column value, no payroll answer anywhere in form_data.
+    const scorpId = await reviewableIntake({
+      legalName: "Officer Payroll Co",
+      engagementType: "project",
+      taxStructure: "S-corp",
+      formData: { serviceKeys: ["bank_feed_management"] },
+    });
+    const scorp = await convertIntakeToClient(scorpId, {}, managerPriya, TEST_TODAY);
+    const [scorpClient] = await db.select().from(clients).where(eq(clients.id, scorp.clientId));
+    expect(scorpClient.hasPayroll).toBe(true);
+
+    // LLC taxed as a C corp: the subclass rides form_data only.
+    const llcId = await reviewableIntake({
+      legalName: "LLC C-corp Co",
+      engagementType: "project",
+      taxStructure: "LLC",
+      formData: { llcSubclass: "llc_ccorp", serviceKeys: ["bank_feed_management"] },
+    });
+    const llc = await convertIntakeToClient(llcId, {}, managerPriya, TEST_TODAY);
+    const [llcClient] = await db.select().from(clients).where(eq(clients.id, llc.clientId));
+    expect(llcClient.taxStructure).toBe("LLC");
+    expect(llcClient.hasPayroll).toBe(true);
+  });
+
+  it("I2: a non-corporate structure with no payroll answer stays off payroll", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Sole Prop Co",
+      engagementType: "project",
+      taxStructure: "Sole proprietorship",
+      formData: { serviceKeys: ["bank_feed_management"] },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(client.hasPayroll).toBe(false);
+  });
+
+  it("I2: cascade keeps the guard - an entity edit to a corporate structure stamps has_payroll", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Cascade Payroll Guard Co",
+      engagementType: "project",
+      taxStructure: "Sole proprietorship",
+      formData: { serviceKeys: ["bank_feed_management"] },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
+    const [before] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(before.hasPayroll).toBe(false);
+
+    // The entity is edited after conversion; payroll was never answered.
+    await updateIntake(intakeId, { taxStructure: "S-corp" });
+    await cascadeIntakeToClient(intakeId, { taxStructure: "S-corp" }, TEST_TODAY);
+    const [after] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(after.taxStructure).toBe("S-corp");
+    expect(after.hasPayroll).toBe(true);
+  });
+
+  it("I2: leaving corporate does NOT clear a genuinely-answered payroll flag", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Real Payroll Co",
+      engagementType: "project",
+      taxStructure: "S-corp",
+      formData: { serviceKeys: ["bank_feed_management"], hasPayroll: true },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
+    // The payroll answer was real - an entity edit alone must not erase it.
+    await updateIntake(intakeId, {
+      taxStructure: "LLC",
+      formData: { llcSubclass: "llc_sml" },
+    });
+    await cascadeIntakeToClient(
+      intakeId,
+      { taxStructure: "LLC", formData: { llcSubclass: "llc_sml" } },
+      TEST_TODAY,
+    );
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(client.taxStructure).toBe("LLC");
+    expect(client.hasPayroll).toBe(true);
+  });
 });

@@ -64,7 +64,9 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
 
   // ── Entity & ownership ──
   await advance(page, 'tax-structure') // skip EIN
-  await pick(page, 'option-LLC', 'dba-industry')
+  // I2: an LLC pick opens the tax-classification follow-up (00:15:53).
+  await pick(page, 'option-LLC', 'llc-subclass')
+  await pick(page, 'option-llc_sml', 'dba-industry')
   await advance(page, 'owners') // skip DBA/industry
   // Owners: one owner with phone + the receives-reports flag.
   await page.getByLabel('Full name').fill('Wren Okafor')
@@ -149,6 +151,8 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByText('Operating Checking')).toBeVisible()
   // The CPA card answer shows on the review screen.
   await expect(page.getByText('Yes · Cascade Tax Group')).toBeVisible()
+  // I2: the LLC subclass folds into the tax-structure row.
+  await expect(page.getByText('LLC · single-member')).toBeVisible()
   // The referral row carries who to thank.
   await expect(page.getByText('CPA referral · Cascade Tax Group')).toBeVisible()
   // The typed date renders as a real date; no catch-up row exists.
@@ -251,6 +255,117 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
   await page.getByTestId('convert-confirm').click()
   await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname), { timeout: 20_000 })
   await expect(page.getByRole('heading', { name: 'E2E Far-Fetched Consulting' })).toBeVisible({
+    timeout: 15_000,
+  })
+})
+
+
+test('intake: S Corp auto-flags payroll - locked in, provider required, add-on prompted', async ({
+  page,
+}) => {
+  // I2 (00:48:07-00:49:44): a corporate structure legally requires an officer
+  // paid through payroll, so the payroll card pre-answers itself, the
+  // provider question is required, and the payroll add-on gets prompted.
+  await loginAsOwner(page)
+  await startIntake(page, 'E2E Officer Payroll Co')
+
+  // ── Contact basics ──
+  await expectQuestion(page, 'main-contact')
+  await page.getByLabel('Full name').fill('Rio Sol')
+  await advance(page, 'address')
+  await advance(page, 'tax-id')
+
+  // ── Entity: S Corp (no LLC subclass screen for a direct corporate pick) ──
+  await advance(page, 'tax-structure') // skip EIN
+  await pick(page, 'option-S-corp', 'dba-industry')
+  await advance(page, 'owners')
+
+  // ── Owner-count guard: an S corp needs at least one owner (the officer) ──
+  await page.getByTestId('continue').click()
+  // (The rule also rides the help copy; the alert is the exact-text match.)
+  await expect(
+    page.getByText('An S corp has at least one owner - the officer paid through payroll.', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expectQuestion(page, 'owners') // still here - the guard blocked
+  await page.getByLabel('Full name').fill('Rio Sol')
+  await page.getByTestId('add-another').click()
+  await advance(page, 'contacts')
+  await advance(page, 'has-cpa')
+  await pick(page, 'option-no', 'referral')
+  await pick(page, 'option-Web search', 'engagement')
+
+  // ── Engagement + software + services ──
+  await pick(page, 'option-bookkeeping', 'qbo-status')
+  await pick(page, 'option-existing', 'qbo-users')
+  await page.getByLabel('QuickBooks users').fill('2')
+  await advance(page, 'qbo-tier')
+  await pick(page, 'option-recommended', 'services')
+  await page.getByTestId('chip-bank_feed_management').click()
+  await advance(page, 'existing-client')
+
+  // ── Starting point + scope chapters ──
+  await pick(page, 'option-no', 'bk-start')
+  await page.getByLabel('Books start date').pressSequentially('01012026')
+  await advance(page, 'accounts')
+  await advance(page, 're-yes')
+  await pick(page, 'option-no', 'payment-methods')
+  await page.getByTestId('chip-check').click()
+  await advance(page, 'personal-card')
+  await pick(page, 'option-no', 'payroll')
+
+  // ── The auto-flag: callout, Yes pre-selected, No locked ──
+  await expectQuestion(page, 'payroll')
+  await expect(page.getByTestId('question-callout')).toContainText(
+    'Corporate officers must be paid through payroll',
+  )
+  await expect(page.getByTestId('option-yes')).toHaveAttribute('data-selected', 'true')
+  const noCard = page.getByTestId('option-no')
+  await expect(noCard).toHaveAttribute('aria-disabled', 'true')
+  // Clicking the locked card goes nowhere.
+  await noCard.click({ force: true }) // aria-disabled: force past actionability
+  await expectQuestion(page, 'payroll')
+  await pick(page, 'option-yes', 'payroll-provider')
+
+  // ── Provider is required (it's where the payroll reports come from) ──
+  await expect(page.getByText('where we get the payroll reports')).toBeVisible()
+  await pick(page, 'option-Gusto', 'payroll-frequency')
+  await pick(page, 'option-biweekly', 'payroll-services')
+
+  // ── The payroll add-on is prompted with a recommendation badge ──
+  await expect(page.getByTestId('recommendation-badge')).toContainText('Recommended')
+  await page.getByTestId('chip-payroll_quarterly_filings').click()
+  await advance(page, 'bk-frequency')
+
+  // ── Reporting + recurring ──
+  await pick(page, 'option-monthly', 'close-tier')
+  await pick(page, 'option-10', 'acct-method')
+  await pick(page, 'option-cash', 'bill-pay')
+  await pick(page, 'option-no', 'ten99-services')
+  await advance(page, 'reports')
+  await advance(page, 'retroactive')
+  await pick(page, 'option-no', 'default-rules')
+  await advance(page, 'rules')
+  await advance(page, 'notes')
+  await page.getByTestId('continue').click()
+
+  // ── Review: the auto-flag, the provider, and the add-on all show ──
+  await expect(page.getByTestId('review-screen')).toBeVisible()
+  await expect(page.getByText('S-corp')).toBeVisible()
+  await expect(page.getByText('Yes · officers must be on payroll')).toBeVisible()
+  await expect(page.getByText('Gusto')).toBeVisible()
+  await expect(page.getByText('Every two weeks')).toBeVisible()
+  // (exact: the quote lines render the product name "Payroll Quarterly Filings")
+  await expect(page.getByText('Payroll quarterly filings', { exact: true })).toBeVisible()
+  await page.getByTestId('submit-intake').click()
+  await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
+
+  // ── Convert: the client record carries payroll (server suite pins the stamp) ──
+  await page.getByTestId('convert-button').click()
+  await page.getByTestId('convert-confirm').click()
+  await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname), { timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'E2E Officer Payroll Co' })).toBeVisible({
     timeout: 15_000,
   })
 })

@@ -346,3 +346,105 @@ describe("computeMissing", () => {
     );
   });
 });
+
+
+// ── I2: LLC subclass extraction + corporate payroll in the missing list ────
+
+describe("I2 entity logic in extraction", () => {
+  it("accepts the LLC subclass vocabulary and rejects unknown subclasses", () => {
+    const result = coerceExtraction({
+      fields: [
+        { key: "taxStructure", value: "LLC", confidence: 0.9, evidence: "it's an LLC" },
+        { key: "llcSubclass", value: "llc_scorp", confidence: 0.9, evidence: "taxed as an S corp" },
+      ],
+    });
+    expect(result.fields.find((f) => f.key === "llcSubclass")?.value).toBe("llc_scorp");
+    expect(result.fields.find((f) => f.key === "llcSubclass")?.group).toBe("entity");
+
+    const bad = coerceExtraction({
+      fields: [{ key: "llcSubclass", value: "llc_nonprofit", confidence: 0.9, evidence: "…" }],
+    });
+    expect(bad.fields).toHaveLength(0);
+    expect(bad.rejected?.[0].reason).toContain("not one of");
+  });
+
+  it("an extracted LLC without its subclass keeps llcSubclass on the still-to-ask list", () => {
+    const result = coerceExtraction({
+      fields: [{ key: "taxStructure", value: "LLC", confidence: 0.9, evidence: "it's an LLC" }],
+      suggestedLegalName: "Riverbend Coffee Roasters LLC",
+    });
+    expect(result.missing).toContain("llcSubclass");
+    const answered = coerceExtraction({
+      fields: [
+        { key: "taxStructure", value: "LLC", confidence: 0.9, evidence: "it's an LLC" },
+        { key: "llcSubclass", value: "llc_partnership", confidence: 0.9, evidence: "two members" },
+      ],
+    });
+    expect(answered.missing).not.toContain("llcSubclass");
+    // Non-LLC structures never ask for the subclass.
+    const scorp = coerceExtraction({
+      fields: [{ key: "taxStructure", value: "S-corp", confidence: 0.9, evidence: "S corp" }],
+    });
+    expect(scorp.missing).not.toContain("llcSubclass");
+  });
+
+  it("a corporate structure demands payroll provider and frequency even with no payroll field", () => {
+    for (const corporate of [
+      [{ key: "taxStructure", value: "S-corp", confidence: 0.9, evidence: "x" }],
+      [
+        { key: "taxStructure", value: "LLC", confidence: 0.9, evidence: "x" },
+        { key: "llcSubclass", value: "llc_ccorp", confidence: 0.9, evidence: "x" },
+      ],
+    ]) {
+      const result = coerceExtraction({
+        fields: [...corporate, { key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" }],
+      });
+      expect(result.missing).toContain("payrollProvider");
+      expect(result.missing).toContain("payrollFrequency");
+    }
+    // A single-member LLC with no payroll answer asks about payroll but not the provider.
+    const smllc = coerceExtraction({
+      fields: [
+        { key: "taxStructure", value: "LLC", confidence: 0.9, evidence: "x" },
+        { key: "llcSubclass", value: "llc_sml", confidence: 0.9, evidence: "x" },
+        { key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" },
+      ],
+    });
+    expect(smllc.missing).toContain("hasPayroll");
+    expect(smllc.missing).not.toContain("payrollProvider");
+  });
+
+  it("answersFromExtraction carries the subclass through to the wizard answers", () => {
+    const answers = answersFromExtraction(
+      [
+        { key: "taxStructure", value: "LLC" },
+        { key: "llcSubclass", value: "llc_scorp" },
+      ],
+      "Subclass Co",
+    );
+    expect(answers.taxStructure).toBe("LLC");
+    expect(answers.llcSubclass).toBe("llc_scorp");
+  });
+
+  it("the stub hears an LLC tax election and a single-member LLC", async () => {
+    const stub = new StubIntakeExtractor();
+    const scorp = await stub.extract({
+      transcript: "Matthew Becker (00:15:53): It's an LLC taxed as an S corp, right?",
+      notes: null,
+    });
+    const byKey = new Map(scorp.fields.map((f) => [f.key, f]));
+    expect(byKey.get("taxStructure")?.value).toBe("LLC");
+    expect(byKey.get("llcSubclass")?.value).toBe("llc_scorp");
+
+    const sml = await stub.extract({
+      transcript: "Jason Yecny (00:26:10): You can't pay yourself like me with my single-member LLC.",
+      notes: null,
+    });
+    expect(sml.fields.find((f) => f.key === "llcSubclass")?.value).toBe("llc_sml");
+  });
+
+  it("renders the subclass label for the extraction review", () => {
+    expect(describeExtractedValue("llcSubclass", "llc_scorp")).toBe("LLC taxed as an S corp");
+    expect(describeExtractedValue("llcSubclass", "llc_sml")).toBe("Single-member LLC");
+  });
+});

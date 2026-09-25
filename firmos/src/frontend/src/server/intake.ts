@@ -139,6 +139,10 @@ export interface IntakeFormData {
   referralSource?: string | null;
   /** I1: who to thank, when the referral source is a client or CPA. */
   referralWho?: string | null;
+  /** I2 (00:15:53): the LLC tax classification follow-up - llc_sml /
+   *  llc_partnership / llc_scorp / llc_ccorp. Form-data only (the
+   *  tax_structure column keeps the stable top-level value). */
+  llcSubclass?: string | null;
   /** I1: the dedicated CPA card (00:30:14) - "Do they have a CPA who files
    *  their taxes?" plus the CPA's name/email when yes. */
   hasCpa?: boolean;

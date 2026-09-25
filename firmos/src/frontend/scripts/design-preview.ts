@@ -295,7 +295,11 @@ async function main(): Promise<void> {
     await page.waitForTimeout(300);
     await shot(page, "intake-other-input");
     await page.getByTestId("option-LLC").click(); // re-pick clears the custom text
-    await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", "dba-industry");
+    // I2 (00:15:53): the LLC pick opens the tax-classification follow-up.
+    await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", "llc-subclass");
+    await page.waitForTimeout(300);
+    await shot(page, "intake-entity-subclasses");
+    await wizardPick(page, "option-llc_sml", "dba-industry");
     await wizardAdvance(page, "owners"); // skip DBA/industry
     await page.getByLabel("Full name").fill("Wren Okafor");
     await page.getByLabel("Email (optional)").fill("wren@fernfeather.shop");
@@ -380,6 +384,47 @@ async function main(): Promise<void> {
     await page.getByTestId("review-screen").waitFor({ timeout: 15_000 });
     await page.waitForTimeout(1200); // quote debounce + server round-trip
     await shot(page, "intake-review");
+
+    // 6b. I2 corporate payroll auto-flag (00:48:07-00:49:44): jump back to the
+    //     entity chapter via the review edit link, switch to S Corp, and walk
+    //     forward to the payroll card - pre-answered, locked, and explained.
+    await page.getByTestId("edit-entity").click();
+    await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", "tax-id");
+    await wizardAdvance(page, "tax-structure"); // EIN unchanged
+    await wizardPick(page, "option-S-corp", "dba-industry"); // no subclass for a direct corporate pick
+    await wizardAdvance(page, "owners"); // skip DBA/industry
+    await wizardAdvance(page, "contacts"); // owner listed; the S-corp minimum is met
+    await wizardAdvance(page, "has-cpa"); // skip contacts
+    await wizardPick(page, "option-yes", "cpa-details"); // still preselected
+    await wizardAdvance(page, "referral");
+    await wizardPick(page, "option-Web search", "engagement");
+    await wizardPick(page, "option-bookkeeping", "qbo-status");
+    await wizardPick(page, "option-existing", "qbo-users");
+    await wizardAdvance(page, "qbo-tier"); // 2 users stands
+    await wizardPick(page, "option-recommended", "services");
+    await wizardAdvance(page, "existing-client"); // chips already picked
+    await wizardPick(page, "option-no", "bk-start");
+    await wizardAdvance(page, "accounts"); // the typed date stands
+    await wizardAdvance(page, "re-yes"); // skip accounts
+    await wizardPick(page, "option-no", "payment-methods");
+    await wizardAdvance(page, "personal-card"); // checks only
+    await wizardPick(page, "option-no", "payroll"); // B18 answer stands
+    // The payroll card pre-answers itself for a corporate structure.
+    await expect(page.getByTestId("question-callout")).toContainText(
+      "Corporate officers must be paid through payroll",
+    );
+    await expect(page.getByTestId("option-yes")).toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("option-no")).toHaveAttribute("aria-disabled", "true");
+    await page.waitForTimeout(400);
+    await shot(page, "intake-payroll-autoflag");
+    // The provider is required for corporate entities; the add-on is prompted.
+    await wizardPick(page, "option-yes", "payroll-provider");
+    await expect(page.getByText("where we get the payroll reports")).toBeVisible();
+    await wizardPick(page, "option-Gusto", "payroll-frequency");
+    await wizardPick(page, "option-biweekly", "payroll-services");
+    await expect(page.getByTestId("recommendation-badge")).toBeVisible();
+    await page.waitForTimeout(300);
+    await shot(page, "intake-payroll-services-badge");
 
     // 7. Invoices, light: the seed parks a paid + an overdue invoice together
     //    a few months back (offset depends on the seed's "today") - scan back

@@ -40,7 +40,8 @@ export interface WizardAnswers extends IntakeFormData {
 /** Monthly bookkeeping is the only recurring-books track; project and
  *  consulting (I1) both run as one-time engagements. */
 export const isBookkeeping = (a: WizardAnswers): boolean => (a.engagementType ?? 'bookkeeping') === 'bookkeeping'
-const hasPayroll = (a: WizardAnswers): boolean => isBookkeeping(a) && a.hasPayroll === true
+const hasPayroll = (a: WizardAnswers): boolean =>
+  isBookkeeping(a) && (a.hasPayroll === true || requiresOfficerPayroll(a))
 const takesCards = (a: WizardAnswers): boolean =>
   (a.paymentMethods ?? []).some((m) => m === 'card' || m === 'online')
 /** Only the three canonical QuickBooks statuses open the QBO follow-ups; a
@@ -57,6 +58,8 @@ export interface SelectOption {
   sub?: string
   /** Qualifier note shown after the pick; triggers a longer dwell. */
   note?: string
+  /** I2: greyed-out, unpickable card (the corporate payroll "No"). */
+  disabled?: boolean
 }
 
 export interface FieldDef {
@@ -93,6 +96,11 @@ export interface RepeatableDef {
   addLabel: string
   /** Draft prefill buttons, derived from the current answers. */
   prefills?: (a: WizardAnswers) => RepeatablePrefill[]
+  /** I2 (plan §3): entity-driven cap on the list size (sole prop and
+   *  single-member LLC = exactly 1 owner). Null means uncapped. */
+  maxItems?: (a: WizardAnswers) => number | null
+  /** Plain-language note that replaces the draft form once the cap is hit. */
+  capNote?: (a: WizardAnswers) => string | null
 }
 
 export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist'
@@ -100,7 +108,9 @@ export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'check
 export interface QuestionDef {
   id: string
   title: string
-  help?: string
+  /** One-sentence explainer; a function resolves it from the current answers
+   *  (I2: the EIN note for sole props, the owner-count rule, ...). */
+  help?: string | ((a: WizardAnswers) => string | null)
   type: QuestionType
   options?: SelectOption[]
   fields?: FieldDef[]
@@ -109,6 +119,17 @@ export interface QuestionDef {
   when?: (a: WizardAnswers) => boolean
   /** When false and the answer is empty, Continue acts as Skip. */
   required?: boolean
+  /** I2: info callout rendered under the help text (the corporate payroll
+   *  auto-flag). Null hides it. */
+  callout?: (a: WizardAnswers) => string | null
+  /** I2: recommendation badge pinned to the question card (the payroll
+   *  services add-on prompt for corporate entities). Null hides it. */
+  badge?: (a: WizardAnswers) => string | null
+  /** I2: per-option disable predicate (corporate payroll locks in "Yes"). */
+  optionDisabled?: (value: string, a: WizardAnswers) => boolean
+  /** `repeatable` questions only: plain-language Continue blocker over the
+   *  committed list (I2 owner-count guards). Null lets the screen advance. */
+  validateItems?: (items: Array<Record<string, unknown>>, a: WizardAnswers) => string | null
   /**
    * `fields` questions only: overrides how the form value object is built
    * from answers (default: top-level answer keys matching field keys). I1's
@@ -165,6 +186,89 @@ const join = (...parts: Array<string | null | undefined>): string | null => {
 const splitFullName = (name: string): { firstName: string; lastName: string | null } => {
   const parts = name.trim().split(/\s+/).filter(Boolean)
   return { firstName: parts[0] ?? name.trim(), lastName: parts.length > 1 ? parts.slice(1).join(' ') : null }
+}
+
+// ── I2 entity logic (plan §3, transcript 00:15:53-00:17:29 / 00:48:07-00:49:44)
+//
+// LLCs carry a tax-classification subclass; corporate structures (S Corp,
+// C Corp, LLC-taxed-as-corporate) legally require an officer paid through
+// payroll; and the entity dictates how many owners the business can have.
+
+/** The LLC subclass follow-up options. Keys are stable answer values; the
+ *  labels are the extraction vocabulary too (intake-extract.ts). */
+export const LLC_SUBCLASS_LABELS: Record<string, string> = {
+  llc_sml: 'Single-member LLC',
+  llc_partnership: 'LLC partnership',
+  llc_scorp: 'LLC taxed as an S corp',
+  llc_ccorp: 'LLC taxed as a C corp',
+}
+
+/** Short review-screen rendering folded into the tax-structure row:
+ *  "LLC · taxed as S Corp". */
+const LLC_SUBCLASS_REVIEW: Record<string, string> = {
+  llc_sml: 'single-member',
+  llc_partnership: 'partnership',
+  llc_scorp: 'taxed as S Corp',
+  llc_ccorp: 'taxed as C Corp',
+}
+
+/** True when the entity is a corporate structure - S Corp, C Corp, or an LLC
+ *  taxed as one. A corporate officer must legally be paid through payroll,
+ *  so the payroll questions pre-answer themselves (00:48:07-00:49:44). */
+export const requiresOfficerPayroll = (a: WizardAnswers): boolean =>
+  a.taxStructure === 'S-corp' ||
+  a.taxStructure === 'C-corp' ||
+  a.llcSubclass === 'llc_scorp' ||
+  a.llcSubclass === 'llc_ccorp'
+
+/** Sole props and single-member LLCs (taxed the same way) can run payroll
+ *  for employees, but the owner is never paid through payroll (00:48:57). */
+const ownerNeverOnPayroll = (a: WizardAnswers): boolean =>
+  a.taxStructure === 'Sole proprietorship' || a.llcSubclass === 'llc_sml'
+
+export interface OwnerCountRule {
+  min: number
+  /** Cap on the owners list; null means uncapped. */
+  max: number | null
+  /** Continue-blocker message when the count is below min. */
+  message: string
+  /** Note replacing the add-owner form once the cap is reached. */
+  capNote: string | null
+}
+
+/** The entity-driven owner-count guards (00:26:10): sole prop and
+ *  single-member LLC exactly 1; partnership (incl. LLC partnership) at
+ *  least 2; S Corp at least 1 (the officer on payroll). */
+export function ownerCountRule(a: WizardAnswers): OwnerCountRule | null {
+  const sub = a.taxStructure === 'LLC' ? a.llcSubclass : null
+  if (a.taxStructure === 'Sole proprietorship' || sub === 'llc_sml') {
+    const single = a.taxStructure === 'Sole proprietorship' ? 'sole proprietorship' : 'single-member LLC'
+    return {
+      min: 1,
+      max: 1,
+      message: `A ${single} has exactly one owner.`,
+      capNote: `One owner is the cap for a ${single}.`,
+    }
+  }
+  if (a.taxStructure === 'Partnership' || sub === 'llc_partnership') {
+    return { min: 2, max: null, message: 'A partnership needs at least 2 owners.', capNote: null }
+  }
+  if (a.taxStructure === 'S-corp' || sub === 'llc_scorp') {
+    return {
+      min: 1,
+      max: null,
+      message: 'An S corp has at least one owner - the officer paid through payroll.',
+      capNote: null,
+    }
+  }
+  return null
+}
+
+/** The owners-screen Continue guard; null when the count satisfies the rule. */
+export function ownerCountError(count: number, a: WizardAnswers): string | null {
+  const rule = ownerCountRule(a)
+  if (!rule || count >= rule.min) return null
+  return rule.message
 }
 
 // ── Custom "Other" answers (I1, 00:15:53: "what if it's something
@@ -452,7 +556,12 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'tax-id',
         title: 'What is the federal tax ID (EIN)?',
-        help: 'Used for 1099s and duplicate checks. You can add it later.',
+        // I2 (00:26:10): sole props probably have no EIN - a soft note, never
+        // a hard block (the field stays optional either way).
+        help: (a) =>
+          a.taxStructure === 'Sole proprietorship'
+            ? 'Most sole proprietors have no EIN - a Social Security number works, so skip this if so.'
+            : 'Used for 1099s and duplicate checks. You can add it later.',
         type: 'fields',
         required: false,
         fields: [{ key: 'taxId', label: 'EIN (optional)', kind: 'text', placeholder: '12-3456789' }],
@@ -463,19 +572,53 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'tax-structure',
         title: 'How is the business taxed?',
+        // I2: his clients don't know the lingo - one-line plain explainers.
+        help: 'The tax classification drives payroll rules, owner count, and year-end filings.',
         type: 'select',
         required: true,
         options: [
-          { value: 'LLC', label: 'LLC' },
-          { value: 'S-corp', label: 'S-corp' },
-          { value: 'C-corp', label: 'C-corp' },
-          { value: 'Sole proprietorship', label: 'Sole proprietorship' },
-          { value: 'Partnership', label: 'Partnership' },
+          { value: 'LLC', label: 'LLC', sub: 'Flexible - taxed the way you elect' },
+          { value: 'S-corp', label: 'S-corp', sub: 'Officers must be paid through payroll' },
+          { value: 'C-corp', label: 'C-corp', sub: 'Officers must be paid through payroll' },
+          { value: 'Sole proprietorship', label: 'Sole proprietorship', sub: 'One owner, no separate filing' },
+          { value: 'Partnership', label: 'Partnership', sub: 'Two or more owners' },
           { value: 'Nonprofit', label: 'Nonprofit' },
           { value: 'Other', label: 'Other / not sure' },
         ],
-        ...key('taxStructure'),
-        summarize: withCustom('tax-structure', (a) => str(a.taxStructure)),
+        get: (a) => a.taxStructure,
+        // I2: leaving LLC retires the subclass so it can never go stale and
+        // keep firing the corporate payroll logic.
+        apply: (_a, v) =>
+          v === 'LLC'
+            ? { taxStructure: 'LLC' }
+            : { taxStructure: v as string, llcSubclass: null },
+        summarize: withCustom('tax-structure', (a) => {
+          const base = str(a.taxStructure)
+          if (a.taxStructure === 'LLC' && a.llcSubclass) {
+            const sub = LLC_SUBCLASS_REVIEW[a.llcSubclass]
+            if (sub) return `LLC · ${sub}`
+          }
+          return base
+        }),
+      },
+      {
+        // I2 (00:15:53): the LLC tax-classification follow-up. The subclass
+        // drives the payroll auto-flag and the owner-count guard.
+        id: 'llc-subclass',
+        title: 'How is the LLC taxed?',
+        help: 'An LLC chooses how the IRS taxes it - that choice drives payroll and filings.',
+        type: 'select',
+        required: true,
+        allowCustom: false,
+        when: (a) => a.taxStructure === 'LLC',
+        options: [
+          { value: 'llc_sml', label: 'Single-member LLC', sub: 'One owner, taxed like a sole proprietorship' },
+          { value: 'llc_partnership', label: 'LLC partnership', sub: 'Two or more owners' },
+          { value: 'llc_scorp', label: 'Taxed as an S corp', sub: 'Officers must be paid through payroll' },
+          { value: 'llc_ccorp', label: 'Taxed as a C corp', sub: 'Officers must be paid through payroll' },
+        ],
+        ...key('llcSubclass'),
+        summarize: () => null, // folded into the tax-structure row
       },
       {
         id: 'dba-industry',
@@ -493,11 +636,21 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'owners',
         title: 'Who owns the business?',
-        help: 'Each owner with their phone and email. Check who receives the monthly reports.',
+        // I2 (00:26:10): the entity's owner-count rule rides along as helper
+        // copy, and Continue enforces it (validateItems below).
+        help: (a) =>
+          join(
+            'Each owner with their phone and email. Check who receives the monthly reports.',
+            ownerCountRule(a)?.message ?? null,
+          ),
         type: 'repeatable',
         required: false,
         repeatable: {
           addLabel: 'Add owner',
+          // I2: sole props and single-member LLCs cap at one owner - the
+          // draft form swaps for the cap note once one is listed.
+          maxItems: (a) => ownerCountRule(a)?.max ?? null,
+          capNote: (a) => ownerCountRule(a)?.capNote ?? null,
           itemFields: [
             { key: 'name', label: 'Full name', kind: 'text', required: true, placeholder: 'Wren Okafor' },
             { key: 'email', label: 'Email (optional)', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
@@ -514,6 +667,9 @@ export const CHAPTERS: ChapterDef[] = [
               i.receivesReports === true ? 'gets reports' : null,
             ),
         },
+        // I2: the entity's owner-count guard blocks Continue in plain
+        // language ("A partnership needs at least 2 owners.").
+        validateItems: (items, a) => ownerCountError(items.length, a),
         get: (a) => a.owners ?? [],
         apply: (_a, v) => ({ owners: v as WizardAnswers['owners'] }),
         summarize: (a) => {
@@ -983,16 +1139,46 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: (a) => boolWord(a.personalCardForBusiness),
       },
       {
+        // I2 (00:48:07-00:49:44): corporate structures legally require an
+        // officer paid through payroll, so the card pre-answers yes (with the
+        // why in a callout) and "No" is disabled. The answer is derived, not
+        // stored, so switching the entity back can never leave a stale flag.
         id: 'payroll',
         title: 'Do they run payroll?',
+        // Sole props (and single-member LLCs, taxed the same way) CAN run
+        // payroll for employees - but the owner is never on it (00:48:57).
+        help: (a) =>
+          requiresOfficerPayroll(a)
+            ? null
+            : ownerNeverOnPayroll(a)
+              ? 'They can run payroll for employees, but the owner is never paid through payroll.'
+              : null,
         type: 'select',
         required: true,
-        ...yesNo('hasPayroll'),
-        summarize: (a) => boolWord(a.hasPayroll),
+        callout: (a) =>
+          requiresOfficerPayroll(a)
+            ? 'Corporate officers must be paid through payroll — we\'ve pre-selected payroll.'
+            : null,
+        optionDisabled: (v, a) => requiresOfficerPayroll(a) && v === 'no',
+        get: (a) =>
+          requiresOfficerPayroll(a) ? 'yes' : a.hasPayroll === true ? 'yes' : a.hasPayroll === false ? 'no' : undefined,
+        apply: (a, v) => ({ hasPayroll: requiresOfficerPayroll(a) ? true : v === 'yes' }),
+        options: [
+          { value: 'yes', label: 'Yes' },
+          { value: 'no', label: 'No' },
+        ],
+        summarize: (a) =>
+          requiresOfficerPayroll(a) ? 'Yes · officers must be on payroll' : boolWord(a.hasPayroll),
       },
       {
         id: 'payroll-provider',
         title: 'Which payroll provider?',
+        // I2 (00:48:57): required when corporate - "that's where we get the
+        // payroll reports".
+        help: (a) =>
+          requiresOfficerPayroll(a)
+            ? 'Required for corporate entities - this is where we get the payroll reports.'
+            : 'Where the payroll reports come from.',
         type: 'select',
         required: true,
         when: hasPayroll,
@@ -1028,6 +1214,8 @@ export const CHAPTERS: ChapterDef[] = [
         type: 'multi',
         required: false,
         when: hasPayroll,
+        // I2: the payroll add-on is prompted for corporate entities.
+        badge: (a) => (requiresOfficerPayroll(a) ? 'Recommended - corporate officers must be on payroll' : null),
         options: [
           { value: 'process_payroll', label: 'Process payroll', sub: 'Quoted at review' },
           { value: 'payroll_quarterly_filings', label: 'Quarterly filings' },

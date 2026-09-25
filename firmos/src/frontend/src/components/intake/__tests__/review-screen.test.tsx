@@ -130,8 +130,7 @@ describe('ReviewScreen quote discounts (C1)', () => {
   })
 })
 
-describe('ReviewScreen I1 answer rendering', () => {
-  it('shows custom Other text verbatim, the CPA card, the referral who, and no catch-up row', () => {
+describe('ReviewScreen I1 answer rendering', () => {  it('shows custom Other text verbatim, the CPA card, the referral who, and no catch-up row', () => {
     render(
       <ReviewScreen
         intakeId={1}
@@ -166,5 +165,66 @@ describe('ReviewScreen I1 answer rendering', () => {
     expect(screen.getByText('Jan 5, 2026')).toBeInTheDocument()
     // …and the removed catch-up screen has no row anywhere.
     expect(screen.queryByText(/catch-up date/i)).toBeNull()
+  })
+})
+
+
+describe('ReviewScreen I2 entity rendering', () => {
+  it('shows the LLC subclass on the tax-structure row and the payroll auto-flag row', () => {
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={{
+          legalName: 'Subclass Co',
+          engagementType: 'bookkeeping',
+          contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true }],
+          taxStructure: 'LLC',
+          llcSubclass: 'llc_scorp',
+          hasCpa: false,
+          payrollProvider: 'Gusto',
+          payrollFrequency: 'biweekly',
+        }}
+        quote={null}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+      />,
+    )
+    // "LLC · taxed as S Corp" - the subclass folds into the one row.
+    expect(screen.getByText('LLC · taxed as S Corp')).toBeInTheDocument()
+    // The payroll row shows the derived auto-flag even with no stored answer.
+    expect(screen.getByText('Yes · officers must be on payroll')).toBeInTheDocument()
+    expect(screen.getByText('Gusto')).toBeInTheDocument()
+    expect(screen.getByText('Every two weeks')).toBeInTheDocument()
+  })
+
+  it('a single-member LLC reads "LLC · single-member"', () => {
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={{
+          legalName: 'SMLLC Co',
+          engagementType: 'bookkeeping',
+          contacts: [{ firstName: 'Wren', isPrimary: true }],
+          taxStructure: 'LLC',
+          llcSubclass: 'llc_sml',
+          hasCpa: false,
+          hasPayroll: false,
+        }}
+        quote={null}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+      />,
+    )
+    expect(screen.getByText('LLC · single-member')).toBeInTheDocument()
+    // No auto-flag: the payroll row is a plain No.
+    expect(screen.queryByText(/officers must be on payroll/)).toBeNull()
   })
 })

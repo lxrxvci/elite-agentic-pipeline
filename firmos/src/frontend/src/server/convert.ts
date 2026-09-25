@@ -12,6 +12,7 @@ import {
   type Month,
 } from "@firmos/domain";
 
+import { requiresOfficerPayroll } from "@/components/intake/registry";
 import { db } from "@/db";
 import {
   accounts,
@@ -354,7 +355,15 @@ export async function convertIntakeToClient(
         qboSubscriptionTier: form.qboSubscriptionTier ?? null,
         isRealEstateClient: form.isRealEstateClient === true,
         // E11: the payroll answer gates payroll/W-2 year-end checklist items.
-        hasPayroll: form.hasPayroll === true,
+        // I2 (00:48:07-00:49:44): a corporate structure (S Corp, C Corp, or
+        // LLC taxed as one) legally requires an officer on payroll, so the
+        // stamp holds even if the payroll answer somehow went unanswered.
+        hasPayroll:
+          form.hasPayroll === true ||
+          requiresOfficerPayroll({
+            taxStructure: intake.taxStructure,
+            llcSubclass: form.llcSubclass,
+          }),
         isProjectEngagement: isProject,
         requiresWeeklyBankFeeds: !isProject,
       })

@@ -2,10 +2,12 @@ import {
   ACCOUNT_TYPE_LABELS,
   DEPRECIATION_BUCKET_LABELS,
   FREQUENCY_LABELS,
+  LLC_SUBCLASS_LABELS,
   PAYMENT_METHOD_LABELS,
   PROPERTY_TYPE_LABELS,
   SERVICE_LABELS,
 } from '@/components/intake/registry'
+import { requiresOfficerPayroll } from '@/components/intake/registry'
 import type { WizardAnswers } from '@/components/intake/registry'
 import {
   evidenceQuote,
@@ -98,6 +100,8 @@ export interface ExtractionFieldSpec {
 }
 
 const TAX_STRUCTURES = ['LLC', 'S-corp', 'C-corp', 'Sole proprietorship', 'Partnership', 'Nonprofit', 'Other'] as const
+// I2: the LLC tax-classification subclass vocabulary (canonical labels in the registry).
+const LLC_SUBCLASSES = Object.keys(LLC_SUBCLASS_LABELS)
 const REFERRAL_SOURCES = ['CPA referral', 'Existing client', 'Web search', 'Walk-in', 'Other'] as const
 const PAYROLL_PROVIDERS = ['Gusto', 'ADP', 'QuickBooks Payroll', 'Paychex', 'Other'] as const
 const QBO_TIERS = ['simple_start', 'essentials', 'plus', 'advanced'] as const
@@ -138,6 +142,7 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'dbaName', label: 'DBA', chapter: 'entity', kind: 'string' },
   { key: 'industry', label: 'Industry', chapter: 'entity', kind: 'string' },
   { key: 'taxStructure', label: 'Tax structure', chapter: 'entity', kind: 'enum', options: TAX_STRUCTURES },
+  { key: 'llcSubclass', label: 'LLC tax classification', chapter: 'entity', kind: 'enum', options: LLC_SUBCLASSES },
   { key: 'taxId', label: 'Federal tax ID (EIN)', chapter: 'entity', kind: 'string' },
   { key: 'owners', label: 'Owners', chapter: 'entity', kind: 'owners' },
   { key: 'contacts', label: 'Contacts', chapter: 'entity', kind: 'contacts' },
@@ -539,6 +544,8 @@ const isBk = (a: Partial<WizardAnswers>) => (a.engagementType ?? 'bookkeeping') 
 const MISSING_CHECKS: readonly MissingCheck[] = [
   { key: 'legalName', when: () => true },
   { key: 'taxStructure', when: () => true },
+  // I2: an LLC without its tax classification is still "to ask".
+  { key: 'llcSubclass', when: (a) => a.taxStructure === 'LLC' },
   { key: 'serviceKeys', when: () => true },
   { key: 'isExistingClient', when: () => true },
   { key: 'engagementType', when: () => true },
@@ -549,8 +556,10 @@ const MISSING_CHECKS: readonly MissingCheck[] = [
   { key: 'bookkeepingStartDate', when: isBk },
   { key: 'isRealEstateClient', when: () => true },
   { key: 'hasPayroll', when: isBk },
-  { key: 'payrollProvider', when: (a) => isBk(a) && a.hasPayroll === true },
-  { key: 'payrollFrequency', when: (a) => isBk(a) && a.hasPayroll === true },
+  // I2: a corporate structure auto-flags payroll, so provider and frequency
+  // are required even when the payroll answer itself was never extracted.
+  { key: 'payrollProvider', when: (a) => isBk(a) && (a.hasPayroll === true || requiresOfficerPayroll(a)) },
+  { key: 'payrollFrequency', when: (a) => isBk(a) && (a.hasPayroll === true || requiresOfficerPayroll(a)) },
   {
     key: 'includeMerchantReconciliation',
     when: (a) =>
@@ -617,6 +626,7 @@ const KEY_VALUE_LABELS: Record<string, Record<string, string>> = {
   depreciationTracking: DEPRECIATION_BUCKET_LABELS,
   payrollFrequency: FREQUENCY_LABELS,
   bookkeepingFrequency: FREQUENCY_LABELS,
+  llcSubclass: LLC_SUBCLASS_LABELS,
   engagementType: { bookkeeping: 'Monthly bookkeeping', project: 'One-time project', consulting: 'Consulting' },
   quickbooksStatus: { existing: 'Already on QuickBooks Online', desktop: 'QuickBooks Desktop', none: 'No QuickBooks yet' },
   qboSubscriptionTier: { simple_start: 'Simple Start', essentials: 'Essentials', plus: 'Plus', advanced: 'Advanced' },
@@ -946,6 +956,20 @@ const STUB_RULES: readonly StubRule[] = [
     confidence: 0.7,
     // Raw capture; coercion's enum folding canonicalizes case/dashes/spaces.
     build: (m) => m[1],
+  },
+  {
+    // I2: the LLC tax classification, when the call states it ("an LLC taxed
+    // as an S corp", "a single-member LLC"). Never inferred from owner count.
+    key: 'llcSubclass',
+    pattern: /\bLLC taxed as an? (S[ -]?corp|C[ -]?corp)\b/i,
+    confidence: 0.85,
+    build: (m) => (m[1].toLowerCase().startsWith('s') ? 'llc_scorp' : 'llc_ccorp'),
+  },
+  {
+    key: 'llcSubclass',
+    pattern: /\bsingle[- ]member LLC\b/i,
+    confidence: 0.85,
+    build: () => 'llc_sml',
   },
   {
     key: 'owners',

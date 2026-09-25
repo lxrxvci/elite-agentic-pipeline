@@ -10,6 +10,7 @@ import {
   firstUnansweredScreen,
   flattenScreens,
   isBookkeeping,
+  requiresOfficerPayroll,
   visibleChapters,
   visibleQuestions,
   type WizardAnswers,
@@ -258,7 +259,8 @@ describe('custom "Other" answers (I1, 00:15:53)', () => {
   it('stores the canonical Other value plus the verbatim custom text', () => {
     const taxStructure = findQuestion('entity', 'tax-structure')!
     const picked = taxStructure.apply(base, 'Other')
-    expect(picked).toEqual({ taxStructure: 'Other' })
+    // I2: a non-LLC pick also retires any stale LLC subclass.
+    expect(picked).toEqual({ taxStructure: 'Other', llcSubclass: null })
     const a: WizardAnswers = { ...base, ...picked, customAnswers: { 'tax-structure': 'Series LLC taxed as a trust' } }
     expect(customText(a, 'tax-structure')).toBe('Series LLC taxed as a trust')
     // The review row shows the typed words verbatim, not the bare "Other".
@@ -468,6 +470,7 @@ describe('firstUnansweredScreen (resume)', () => {
       ...base,
       contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true, relationshipType: 'primary_contact' }],
       taxStructure: 'LLC',
+      llcSubclass: 'llc_sml',
       hasCpa: false,
       isExistingClient: false,
       qboUserCount: 2,
@@ -491,6 +494,7 @@ describe('firstUnansweredScreen (resume)', () => {
       ...base,
       contacts: [{ firstName: 'Wren', isPrimary: true }],
       taxStructure: 'LLC',
+      llcSubclass: 'llc_sml',
       hasCpa: false,
       isExistingClient: false,
       qboUserCount: 2,
@@ -578,5 +582,219 @@ describe('B21 default-rules checklist', () => {
     expect(q.apply(base, [])).toEqual({
       excludedDefaultRules: ['reconcile_accounts', 'categorize_transactions', 'client_questions', 'send_reports'],
     })
+  })
+})
+
+
+// ── I2 entity logic (plan §3; transcript 00:15:53-00:17:29, 00:48:07-00:49:44)
+
+describe('llc_subclass_drives_tax_structure_display (I2)', () => {
+  const taxStructure = findQuestion('entity', 'tax-structure')!
+  const subclass = findQuestion('entity', 'llc-subclass')!
+
+  it('the subclass question renders only for an LLC pick, required', () => {
+    const entity = CHAPTERS.find((c) => c.id === 'entity')!
+    const ids = (a: WizardAnswers) => visibleQuestions(entity, a).map((q) => q.id)
+    expect(ids(base)).not.toContain('llc-subclass')
+    expect(ids({ ...base, taxStructure: 'LLC' })).toContain('llc-subclass')
+    expect(ids({ ...base, taxStructure: 'S-corp' })).not.toContain('llc-subclass')
+    // It sits right after the entity-type card.
+    const llc = ids({ ...base, taxStructure: 'LLC' })
+    expect(llc.indexOf('llc-subclass')).toBe(llc.indexOf('tax-structure') + 1)
+    expect(subclass.required).toBe(true)
+    // A subclass is a governed classification - no free-text "Other" card.
+    expect(customAllowed(subclass)).toBe(false)
+  })
+
+  it('folds the subclass into the review row as "LLC · taxed as S Corp"', () => {
+    expect(taxStructure.summarize({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_scorp' })).toBe(
+      'LLC · taxed as S Corp',
+    )
+    expect(taxStructure.summarize({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_ccorp' })).toBe(
+      'LLC · taxed as C Corp',
+    )
+    expect(taxStructure.summarize({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_sml' })).toBe(
+      'LLC · single-member',
+    )
+    expect(taxStructure.summarize({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_partnership' })).toBe(
+      'LLC · partnership',
+    )
+    // No subclass picked yet: the bare top-level value.
+    expect(taxStructure.summarize({ ...base, taxStructure: 'LLC' })).toBe('LLC')
+    // The subclass question itself never renders its own row.
+    expect(subclass.summarize({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_scorp' })).toBeNull()
+  })
+
+  it('keeps the subclass on the stable answer key and rides form_data through the patch', () => {
+    expect(subclass.apply(base, 'llc_scorp')).toEqual({ llcSubclass: 'llc_scorp' })
+    const patch = buildPatch({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_scorp' })
+    expect(patch.taxStructure).toBe('LLC') // the column keeps the top-level value
+    expect(patch.formData?.llcSubclass).toBe('llc_scorp')
+  })
+
+  it('leaving LLC retires the subclass so it can never go stale', () => {
+    expect(taxStructure.apply({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_scorp' }, 'S-corp')).toEqual({
+      taxStructure: 'S-corp',
+      llcSubclass: null,
+    })
+    expect(taxStructure.apply({ ...base, llcSubclass: null }, 'LLC')).toEqual({ taxStructure: 'LLC' })
+  })
+})
+
+describe('requiresOfficerPayroll (I2)', () => {
+  it('is true for S Corp, C Corp, and LLC-taxed-as-corporate only', () => {
+    expect(requiresOfficerPayroll({ ...base, taxStructure: 'S-corp' })).toBe(true)
+    expect(requiresOfficerPayroll({ ...base, taxStructure: 'C-corp' })).toBe(true)
+    expect(requiresOfficerPayroll({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_scorp' })).toBe(true)
+    expect(requiresOfficerPayroll({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_ccorp' })).toBe(true)
+    expect(requiresOfficerPayroll({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_sml' })).toBe(false)
+    expect(requiresOfficerPayroll({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_partnership' })).toBe(false)
+    expect(requiresOfficerPayroll({ ...base, taxStructure: 'Sole proprietorship' })).toBe(false)
+    expect(requiresOfficerPayroll({ ...base, taxStructure: 'Partnership' })).toBe(false)
+    expect(requiresOfficerPayroll(base)).toBe(false)
+  })
+})
+
+describe('scorp_selection_requires_payroll_provider (I2)', () => {
+  const income = CHAPTERS.find((c) => c.id === 'income')!
+  const payroll = findQuestion('income', 'payroll')!
+  const provider = findQuestion('income', 'payroll-provider')!
+  const services = findQuestion('income', 'payroll-services')!
+  const scorp: WizardAnswers = { ...base, taxStructure: 'S-corp' }
+
+  it('pre-answers payroll yes with the callout, and "No" is disabled', () => {
+    expect(payroll.get(scorp)).toBe('yes')
+    expect(payroll.callout?.(scorp)).toBe(
+      'Corporate officers must be paid through payroll — we\'ve pre-selected payroll.',
+    )
+    expect(payroll.optionDisabled?.('no', scorp)).toBe(true)
+    expect(payroll.optionDisabled?.('yes', scorp)).toBe(false)
+    // Even a stray "no" apply cannot unset it.
+    expect(payroll.apply(scorp, 'no')).toEqual({ hasPayroll: true })
+    // And the review row explains the auto-flag.
+    expect(payroll.summarize(scorp)).toBe('Yes · officers must be on payroll')
+  })
+
+  it('opens the provider/frequency/services follow-ups even with no stored payroll answer', () => {
+    const ids = visibleQuestions(income, scorp).map((q) => q.id)
+    expect(ids).toContain('payroll-provider')
+    expect(ids).toContain('payroll-frequency')
+    expect(ids).toContain('payroll-services')
+    expect(provider.required).toBe(true)
+    expect(provider.when?.(scorp)).toBe(true)
+    expect(provider.help).toBeTypeOf('function')
+    expect((provider.help as (a: WizardAnswers) => string | null)(scorp)).toContain('payroll reports')
+  })
+
+  it('pins the payroll-services recommendation badge for corporate entities', () => {
+    expect(services.badge?.(scorp)).toBe('Recommended - corporate officers must be on payroll')
+    expect(services.badge?.({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_sml' })).toBeNull()
+  })
+
+  it('an unanswered corporate payroll block becomes the resume point', () => {
+    const a: WizardAnswers = {
+      ...base,
+      contacts: [{ firstName: 'Wren', isPrimary: true }],
+      taxStructure: 'S-corp',
+      hasCpa: false,
+      isExistingClient: false,
+      qboUserCount: 2,
+      bookkeepingStartDate: '2026-01-01',
+      serviceKeys: ['bank_feed_management'],
+      isRealEstateClient: false,
+      personalCardForBusiness: false,
+    }
+    // Payroll itself reads answered (the auto-flag); the provider does not.
+    const screens = flattenScreens(a)
+    expect(screens[firstUnansweredScreen(a)]).toMatchObject({ questionId: 'payroll-provider' })
+  })
+
+  it('llc_scorp behaves exactly like a direct S-corp pick', () => {
+    const llcScorp: WizardAnswers = { ...base, taxStructure: 'LLC', llcSubclass: 'llc_scorp' }
+    expect(payroll.get(llcScorp)).toBe('yes')
+    expect(provider.when?.(llcScorp)).toBe(true)
+    expect(services.badge?.(llcScorp)).not.toBeNull()
+  })
+
+  it('sole props keep the employee-payroll nuance as helper copy, with no auto-flag', () => {
+    const soleProp: WizardAnswers = { ...base, taxStructure: 'Sole proprietorship' }
+    expect(payroll.get(soleProp)).toBeUndefined()
+    expect(payroll.callout?.(soleProp)).toBeNull()
+    expect(payroll.optionDisabled?.('no', soleProp)).toBe(false)
+    expect((payroll.help as (a: WizardAnswers) => string | null)(soleProp)).toContain(
+      'the owner is never paid through payroll',
+    )
+    // A single-member LLC is taxed the same way - same nuance.
+    expect(
+      (payroll.help as (a: WizardAnswers) => string | null)({ ...base, taxStructure: 'LLC', llcSubclass: 'llc_sml' }),
+    ).toContain('the owner is never paid through payroll')
+  })
+})
+
+describe('partnership_requires_two_owners (I2)', () => {
+  const owners = findQuestion('entity', 'owners')!
+  const one = [{ name: 'Wren Okafor' }]
+  const two = [{ name: 'Wren Okafor' }, { name: 'Sal Vega' }]
+
+  it('blocks Continue below two owners with the plain-language message', () => {
+    for (const a of [
+      { ...base, taxStructure: 'Partnership' },
+      { ...base, taxStructure: 'LLC', llcSubclass: 'llc_partnership' },
+    ]) {
+      expect(owners.validateItems?.([], a)).toBe('A partnership needs at least 2 owners.')
+      expect(owners.validateItems?.(one, a)).toBe('A partnership needs at least 2 owners.')
+      expect(owners.validateItems?.(two, a)).toBeNull()
+      // Partnerships are uncapped.
+      expect(owners.repeatable?.maxItems?.(a)).toBeNull()
+    }
+  })
+
+  it('sole prop and single-member LLC cap at exactly one owner', () => {
+    for (const [a, single] of [
+      [{ ...base, taxStructure: 'Sole proprietorship' }, 'sole proprietorship'],
+      [{ ...base, taxStructure: 'LLC', llcSubclass: 'llc_sml' }, 'single-member LLC'],
+    ] as const) {
+      expect(owners.repeatable?.maxItems?.(a)).toBe(1)
+      expect(owners.repeatable?.capNote?.(a)).toBe(`One owner is the cap for a ${single}.`)
+      expect(owners.validateItems?.([], a)).toBe(`A ${single} has exactly one owner.`)
+      expect(owners.validateItems?.(one, a)).toBeNull()
+    }
+  })
+
+  it('an S corp needs at least one owner - the officer on payroll', () => {
+    const scorp = { ...base, taxStructure: 'S-corp' }
+    expect(owners.validateItems?.([], scorp)).toBe(
+      'An S corp has at least one owner - the officer paid through payroll.',
+    )
+    expect(owners.validateItems?.(one, scorp)).toBeNull()
+    expect(owners.repeatable?.maxItems?.(scorp)).toBeNull()
+  })
+
+  it('entities without a rule keep the list skippable and uncapped', () => {
+    for (const a of [
+      base,
+      { ...base, taxStructure: 'C-corp' },
+      { ...base, taxStructure: 'Nonprofit' },
+      { ...base, taxStructure: 'LLC' }, // subclass not picked yet
+    ]) {
+      expect(owners.validateItems?.([], a)).toBeNull()
+      expect(owners.repeatable?.maxItems?.(a)).toBeNull()
+    }
+  })
+})
+
+describe('I2 entity helper copy', () => {
+  it('soft-notes the EIN for sole props only', () => {
+    const taxId = findQuestion('entity', 'tax-id')!
+    const help = taxId.help as (a: WizardAnswers) => string | null
+    expect(help({ ...base, taxStructure: 'Sole proprietorship' })).toContain('no EIN')
+    expect(help(base)).toBe('Used for 1099s and duplicate checks. You can add it later.')
+  })
+
+  it('appends the owner-count rule to the owners card help', () => {
+    const owners = findQuestion('entity', 'owners')!
+    const help = owners.help as (a: WizardAnswers) => string | null
+    expect(help({ ...base, taxStructure: 'Partnership' })).toContain('A partnership needs at least 2 owners.')
+    expect(help(base)).toBe('Each owner with their phone and email. Check who receives the monthly reports.')
   })
 })

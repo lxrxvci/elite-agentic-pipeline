@@ -86,6 +86,7 @@ const completeAnswers: WizardAnswers = {
   legalName: 'Test Co',
   contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true, relationshipType: 'primary_contact' }],
   taxStructure: 'LLC',
+  llcSubclass: 'llc_sml',
   hasCpa: false,
   isExistingClient: false,
   engagementType: 'bookkeeping',
@@ -145,6 +146,13 @@ describe('option auto-advance', () => {
     fireEvent.click(screen.getByTestId('option-LLC'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
 
+    // I2: an LLC pick opens the tax-classification follow-up first.
+    await act(async () => {
+      vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
+    })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'llc-subclass')
+
+    fireEvent.click(screen.getByTestId('option-llc_sml'))
     await act(async () => {
       vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
     })
@@ -202,7 +210,8 @@ describe('custom "Other" option cards (I1)', () => {
     await act(async () => {
       vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
     })
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'dba-industry')
+    // I2: the LLC subclass follow-up comes next; the custom text is cleared.
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'llc-subclass')
     await act(async () => {
       vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
     })
@@ -399,5 +408,50 @@ describe('review screen', () => {
     fireEvent.click(screen.getByTestId('submit-intake'))
     await waitFor(() => expect(screen.getByTestId('submitted-success')).toBeInTheDocument())
     expect(submitIntakeForReview).toHaveBeenCalledWith(7)
+  })
+})
+
+
+describe('I2 corporate payroll auto-flag (00:48:07-00:49:44)', () => {
+  // S-corp answers with payroll never touched: the flag is derived, not stored.
+  const scorpAnswers: WizardAnswers = {
+    ...completeAnswers,
+    taxStructure: 'S-corp',
+    llcSubclass: null,
+    hasPayroll: undefined,
+    owners: [{ name: 'Wren Okafor' }],
+  }
+  const screenIndex = (a: WizardAnswers, questionId: string) =>
+    flattenScreens(a).findIndex((s) => s.kind === 'question' && s.questionId === questionId)
+
+  it('the payroll screen pre-selects Yes, locks No, and shows the officer callout', () => {
+    renderWizard(scorpAnswers, screenIndex(scorpAnswers, 'payroll'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'payroll')
+    expect(screen.getByTestId('question-callout')).toHaveTextContent(
+      'Corporate officers must be paid through payroll — we\'ve pre-selected payroll.',
+    )
+    expect(screen.getByTestId('option-yes')).toHaveAttribute('data-selected', 'true')
+    expect(screen.getByTestId('option-no')).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('the payroll-services card carries the recommendation badge', () => {
+    renderWizard(scorpAnswers, screenIndex(scorpAnswers, 'payroll-services'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'payroll-services')
+    expect(screen.getByTestId('recommendation-badge')).toHaveTextContent(
+      'Recommended - corporate officers must be on payroll',
+    )
+  })
+
+  it('no badge or callout for a plain LLC', () => {
+    renderWizard(completeAnswers, screenIndex(completeAnswers, 'payroll'))
+    expect(screen.queryByTestId('question-callout')).toBeNull()
+    expect(screen.getByTestId('option-no')).not.toHaveAttribute('aria-disabled')
+  })
+
+  it('the review screen shows the auto-flagged payroll row', () => {
+    renderWizard(scorpAnswers, flattenScreens(scorpAnswers).length - 1)
+    expect(screen.getByTestId('review-screen')).toBeInTheDocument()
+    expect(screen.getByText('Yes · officers must be on payroll')).toBeInTheDocument()
+    expect(screen.getByText('S-corp')).toBeInTheDocument()
   })
 })

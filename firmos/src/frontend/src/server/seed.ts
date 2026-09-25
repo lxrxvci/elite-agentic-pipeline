@@ -574,6 +574,8 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
     ],
     referralSource: "CPA referral",
     engagementType: "bookkeeping",
+    // I2: two members at 60/40 - the LLC is taxed as a partnership.
+    llcSubclass: "llc_partnership",
     quickbooksStatus: "existing",
     needsQuickbooksSetup: false,
     accounts: [

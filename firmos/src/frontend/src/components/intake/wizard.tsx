@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Check } from 'lucide-react'
+import { ArrowLeft, Check, Info } from 'lucide-react'
 import type { Quote } from '@firmos/domain'
 
 import { getQuote, saveIntake } from '@/server/actions/intake'
@@ -348,12 +348,37 @@ export function IntakeWizard({
                 const q = findQuestion(screen.chapterId, screen.questionId)
                 const chapter = findChapter(screen.chapterId)
                 if (!q || !chapter) return null
+                // I2: helper copy can derive from the answers (EIN note for
+                // sole props, owner-count rules, ...).
+                const help = typeof q.help === 'function' ? q.help(answers) : q.help
+                const callout = q.callout?.(answers) ?? null
+                const badge = q.badge?.(answers) ?? null
                 return (
                   <div className="rounded-xl border border-border bg-card p-6 shadow-card sm:p-8">
-                    <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
-                      {q.title}
-                    </h1>
-                    {q.help && <p className="mt-1.5 text-sm text-muted-foreground">{q.help}</p>}
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
+                        {q.title}
+                      </h1>
+                      {badge && (
+                        <span
+                          className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent-foreground"
+                          data-testid="recommendation-badge"
+                        >
+                          {badge}
+                        </span>
+                      )}
+                    </div>
+                    {help && <p className="mt-1.5 text-sm text-muted-foreground">{help}</p>}
+                    {callout && (
+                      <p
+                        className="mt-4 flex items-start gap-2.5 rounded-lg border border-firm-brand/40 bg-accent px-3.5 py-2.5 text-sm text-accent-foreground"
+                        role="note"
+                        data-testid="question-callout"
+                      >
+                        <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                        <span>{callout}</span>
+                      </p>
+                    )}
                     <div className="mt-5">
                       <QuestionScreen
                         key={`${screen.chapterId}.${screen.questionId}`}

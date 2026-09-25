@@ -6,6 +6,7 @@ import {
   type LocalDate,
 } from "@firmos/domain";
 
+import { requiresOfficerPayroll } from "@/components/intake/registry";
 import { db } from "@/db";
 import {
   clientIntakes,
@@ -189,11 +190,25 @@ export async function cascadeIntakeToClient(
 
   // 2b. E11: the payroll answer gates payroll/W-2 year-end checklist items
   //     on the client; edits to a converted intake propagate it.
-  if (patch.formData && "hasPayroll" in patch.formData) {
-    await db
-      .update(clients)
-      .set({ hasPayroll: patch.formData.hasPayroll === true, updatedAt: new Date() })
-      .where(eq(clients.id, clientId));
+  //     I2: the corporate guard holds here too (00:48:07) - editing the entity
+  //     to an S/C-corp (or an LLC taxed as one) stamps payroll even when the
+  //     payroll answer itself was not part of the edit.
+  const payrollTouched = patch.formData != null && "hasPayroll" in patch.formData;
+  const entityTouched = "taxStructure" in patch || (patch.formData != null && "llcSubclass" in patch.formData);
+  if (payrollTouched || entityTouched) {
+    // The intake row was already updated before the cascade runs, so it
+    // carries the new entity answers.
+    const storedForm = (intake.formData ?? {}) as IntakeFormData;
+    const officerPayroll = requiresOfficerPayroll({
+      taxStructure: intake.taxStructure,
+      llcSubclass: storedForm.llcSubclass,
+    });
+    if (officerPayroll || payrollTouched) {
+      await db
+        .update(clients)
+        .set({ hasPayroll: officerPayroll || patch.formData?.hasPayroll === true, updatedAt: new Date() })
+        .where(eq(clients.id, clientId));
+    }
   }
 
   // 3. Owners reconciled: added, re-percentaged, removed (§6.8).

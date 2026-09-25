@@ -90,8 +90,21 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   // ── Walk the rest: everything else the call answered stays prefilled.
   // Select screens advance by clicking the (already-selected) option card;
   // multi/fields/repeatable screens use Continue. ──
-  await pick(page, 'option-LLC', 'dba-industry')
+  // I2: the call said "it's an LLC" but never the tax classification, so the
+  // subclass follow-up is next; two named owners make it a partnership.
+  await pick(page, 'option-LLC', 'llc-subclass')
+  await pick(page, 'option-llc_partnership', 'dba-industry')
   await advance(page, 'owners')
+  // I2: the discarded owners row becomes a required re-ask - an LLC
+  // partnership needs at least 2 owners to continue.
+  await page.getByLabel('Full name').fill('Jason Mercado')
+  await page.getByTestId('add-another').click()
+  await page.getByTestId('continue').click()
+  await expectQuestion(page, 'owners') // one owner is not enough - blocked
+  // (The rule also rides the help copy; the alert is the exact-text match.)
+  await expect(page.getByText('A partnership needs at least 2 owners.', { exact: true })).toBeVisible()
+  await page.getByLabel('Full name').fill('Dana')
+  await page.getByTestId('add-another').click()
   await advance(page, 'contacts')
   await advance(page, 'has-cpa')
   await pick(page, 'option-no', 'referral')
@@ -122,8 +135,10 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByText('Riverbend Coffee Roasters LLC').first()).toBeVisible()
   await expect(page.getByText('One-time project')).toBeVisible()
-  // Owners were discarded on the review screen: no owners row here.
-  await expect(page.getByText('Jason Mercado')).toHaveCount(0)
+  // I2: the subclass folds into the tax-structure row...
+  await expect(page.getByText('LLC · partnership')).toBeVisible()
+  // ...and the owners row shows the pair the partnership guard required.
+  await expect(page.getByText('Jason Mercado, Dana')).toBeVisible()
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 })

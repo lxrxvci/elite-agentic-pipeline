@@ -48,20 +48,28 @@ export function OptionCards({
     <div className="grid gap-2.5 sm:grid-cols-2" role="listbox" aria-label="Options">
       {all.map((o) => {
         const selected = current === o.value
+        const disabled = o.disabled === true
         return (
           <button
             key={o.value}
             type="button"
             role="option"
             aria-selected={selected}
+            // I2: aria-disabled (not the disabled attribute) keeps the locked
+            // option discoverable to screen readers; the click guard enforces it.
+            aria-disabled={disabled || undefined}
             data-testid={`option-${o.value}`}
             data-selected={selected || undefined}
-            onClick={() => onPick(o.value)}
+            onClick={() => {
+              if (disabled) return
+              onPick(o.value)
+            }}
             className={cn(
               'group flex items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
               selected
                 ? 'border-firm-brand bg-accent'
                 : 'border-border bg-card hover:border-firm-brand/60 hover:bg-accent/50',
+              disabled && 'cursor-not-allowed opacity-50 hover:border-border hover:bg-card',
             )}
           >
             <span
@@ -369,6 +377,9 @@ export function RepeatableScreen({
   q,
   items,
   prefills = [],
+  maxItems = null,
+  capNote = null,
+  validateItems,
   onCommit,
   onAdvance,
 }: {
@@ -376,6 +387,12 @@ export function RepeatableScreen({
   items: Array<Record<string, unknown>>
   /** I1 (00:29:05): one-tap draft prefills, e.g. "Same as [owner name]". */
   prefills?: RepeatablePrefill[]
+  /** I2: entity-driven cap (sole prop / single-member LLC = 1 owner). */
+  maxItems?: number | null
+  /** Note replacing the draft form once the cap is reached. */
+  capNote?: string | null
+  /** I2: plain-language Continue blocker over the committed list. */
+  validateItems?: (items: Array<Record<string, unknown>>) => string | null
   onCommit: (items: Array<Record<string, unknown>>) => void
   onAdvance: () => void
 }) {
@@ -385,10 +402,12 @@ export function RepeatableScreen({
 
   const draftValid = rep.itemValid(draft)
   const draftTouched = Object.values(draft).some((v) => v != null && v !== '')
+  const capped = maxItems != null && items.length >= maxItems
 
   const removeAt = (idx: number) => onCommit(items.filter((_, i) => i !== idx))
 
   const addAnother = () => {
+    if (capped) return
     const err = validateFields(rep.itemFields, draft)
     if (err || !draftValid) {
       setError(err ?? 'A little more detail first.')
@@ -400,8 +419,10 @@ export function RepeatableScreen({
   }
 
   const finish = () => {
+    // A capped list can't grow - the draft form is hidden then, so the draft
+    // only commits while under the cap.
     let next = items
-    if (draftTouched) {
+    if (draftTouched && !capped) {
       const err = validateFields(rep.itemFields, draft)
       if (err || !draftValid) {
         setError(err ?? 'A little more detail first, or clear the form to skip.')
@@ -411,6 +432,12 @@ export function RepeatableScreen({
     }
     if (next.length === 0 && q.required) {
       setError('Add at least one, or go back.')
+      return
+    }
+    // I2: the entity's count guard runs last, over the about-to-commit list.
+    const countError = validateItems?.(next) ?? null
+    if (countError) {
+      setError(countError)
       return
     }
     setError(null)
@@ -447,36 +474,44 @@ export function RepeatableScreen({
       )}
 
       <div className="rounded-xl border border-border bg-card p-4">
-        {prefills.length > 0 && (
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">Prefill:</span>
-            {prefills.map((p, i) => (
-              <button
-                key={p.label}
+        {capped ? (
+          <p className="text-sm text-muted-foreground" data-testid="cap-note" role="note">
+            {capNote ?? 'That is the maximum for this list.'}
+          </p>
+        ) : (
+          <>
+            {prefills.length > 0 && (
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Prefill:</span>
+                {prefills.map((p, i) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    data-testid={`prefill-${i}`}
+                    onClick={() => setDraft((d) => ({ ...d, ...p.patch }))}
+                    className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground transition-colors hover:border-firm-brand/60 hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <FieldGrid fields={rep.itemFields} value={draft} onChange={(k, v) => setDraft((d) => ({ ...d, [k]: v }))} />
+            <div className="mt-3">
+              <Button
                 type="button"
-                data-testid={`prefill-${i}`}
-                onClick={() => setDraft((d) => ({ ...d, ...p.patch }))}
-                className="inline-flex items-center rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground transition-colors hover:border-firm-brand/60 hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                variant="outline"
+                size="sm"
+                onClick={addAnother}
+                disabled={!draftValid}
+                data-testid="add-another"
               >
-                {p.label}
-              </button>
-            ))}
-          </div>
+                <Plus className="h-3.5 w-3.5" aria-hidden />
+                {rep.addLabel}
+              </Button>
+            </div>
+          </>
         )}
-        <FieldGrid fields={rep.itemFields} value={draft} onChange={(k, v) => setDraft((d) => ({ ...d, [k]: v }))} />
-        <div className="mt-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={addAnother}
-            disabled={!draftValid}
-            data-testid="add-another"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden />
-            {rep.addLabel}
-          </Button>
-        </div>
       </div>
 
       {error && (
@@ -487,7 +522,9 @@ export function RepeatableScreen({
 
       <div className="flex items-center gap-3">
         <Button type="button" variant="action" onClick={finish} data-testid="continue">
-          {items.length === 0 && !q.required ? 'Skip for now' : 'Continue'}
+          {items.length === 0 && !q.required && (validateItems?.(items) ?? null) == null
+            ? 'Skip for now'
+            : 'Continue'}
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
       </div>
@@ -520,10 +557,14 @@ export function QuestionScreen({
     // I1: picking "Other - type it" opens the inline text field and waits for
     // Continue instead of auto-advancing (the wizard suppresses the timer).
     const otherOpen = customOn && current === CUSTOM_OTHER_VALUE
+    // I2: per-option locks (e.g. corporate payroll's "No").
+    const options = (q.options ?? []).map((o) =>
+      q.optionDisabled?.(o.value, answers) ? { ...o, disabled: true } : o,
+    )
     return (
       <div className="space-y-4">
         <OptionCards
-          options={q.options ?? []}
+          options={options}
           current={current}
           onPick={onPickOption}
           allowCustom={customOn}
@@ -648,6 +689,9 @@ export function QuestionScreen({
       q={q}
       items={items}
       prefills={q.repeatable?.prefills?.(answers) ?? []}
+      maxItems={q.repeatable?.maxItems?.(answers) ?? null}
+      capNote={q.repeatable?.capNote?.(answers) ?? null}
+      validateItems={q.validateItems ? (next) => q.validateItems!(next, answers) : undefined}
       onCommit={(next) => onApply(q.apply(answers, next))}
       onAdvance={onAdvance}
     />

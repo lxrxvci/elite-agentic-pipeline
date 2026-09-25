@@ -169,3 +169,103 @@ describe('contacts owner prefill (I1, 00:29:05)', () => {
     expect(screen.queryByTestId('prefill-0')).toBeNull()
   })
 })
+
+
+describe('owner-count guards on the owners screen (I2, 00:26:10)', () => {
+  const ownersQ = findQuestion('entity', 'owners')!
+
+  it('sole prop: Continue with no owners blocks with the plain-language message', () => {
+    const onAdvance = vi.fn()
+    render(
+      <Harness q={ownersQ} initial={{ taxStructure: 'Sole proprietorship' }} onAdvance={onAdvance} />,
+    )
+    // An unskippable minimum: the button reads Continue, not "Skip for now".
+    expect(screen.getByTestId('continue')).toHaveTextContent('Continue')
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('A sole proprietorship has exactly one owner.')
+  })
+
+  it('sole prop: one owner in, the add form swaps for the cap note', () => {
+    const onAdvance = vi.fn()
+    render(
+      <Harness q={ownersQ} initial={{ taxStructure: 'Sole proprietorship' }} onAdvance={onAdvance} />,
+    )
+    fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Wren Okafor' } })
+    fireEvent.click(screen.getByTestId('add-another'))
+    expect(screen.getByText('Wren Okafor')).toBeInTheDocument()
+    // Capped at 1: the draft form is gone, replaced by the note.
+    expect(screen.getByTestId('cap-note')).toHaveTextContent('One owner is the cap for a sole proprietorship.')
+    expect(screen.queryByTestId('add-another')).toBeNull()
+    expect(screen.queryByLabelText('Full name')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).toHaveBeenCalled()
+  })
+
+  it('single-member LLC caps at one owner the same way', () => {
+    render(
+      <Harness
+        q={ownersQ}
+        initial={{ taxStructure: 'LLC', llcSubclass: 'llc_sml', owners: [{ name: 'Wren Okafor' }] }}
+      />,
+    )
+    expect(screen.getByTestId('cap-note')).toHaveTextContent('One owner is the cap for a single-member LLC.')
+    expect(screen.queryByTestId('add-another')).toBeNull()
+  })
+
+  it('partnership_requires_two_owners: one owner blocks, two pass', () => {
+    const onAdvance = vi.fn()
+    render(
+      <Harness
+        q={ownersQ}
+        initial={{ taxStructure: 'LLC', llcSubclass: 'llc_partnership', owners: [{ name: 'Wren Okafor' }] }}
+        onAdvance={onAdvance}
+      />,
+    )
+    // One listed owner, empty draft: Continue blocks with the message.
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('A partnership needs at least 2 owners.')
+
+    // Add the second owner and Continue sails through.
+    fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Sal Vega' } })
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).toHaveBeenCalled()
+    expect(answersNow().owners).toHaveLength(2)
+  })
+
+  it('partnership is uncapped: a third owner still fits', () => {
+    render(
+      <Harness
+        q={ownersQ}
+        initial={{
+          taxStructure: 'Partnership',
+          owners: [{ name: 'Wren Okafor' }, { name: 'Sal Vega' }],
+        }}
+      />,
+    )
+    expect(screen.queryByTestId('cap-note')).toBeNull()
+    expect(screen.getByTestId('add-another')).toBeInTheDocument()
+  })
+})
+
+describe('corporate payroll card (I2, 00:48:07)', () => {
+  it('an S corp pre-selects Yes and locks the No card', () => {
+    render(<Harness q={findQuestion('income', 'payroll')!} initial={{ taxStructure: 'S-corp' }} />)
+    expect(screen.getByTestId('option-yes')).toHaveAttribute('data-selected', 'true')
+    const no = screen.getByTestId('option-no')
+    expect(no).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(no)
+    // The locked card never applies: still Yes, still unanswered-stored.
+    expect(answersNow().hasPayroll ?? null).toBeNull()
+  })
+
+  it('a sole prop gets the owner-never-on-payroll nuance and a live No card', () => {
+    render(<Harness q={findQuestion('income', 'payroll')!} initial={{ taxStructure: 'Sole proprietorship' }} />)
+    const no = screen.getByTestId('option-no')
+    expect(no).not.toHaveAttribute('aria-disabled')
+    fireEvent.click(no)
+    expect(answersNow().hasPayroll).toBe(false)
+  })
+})
