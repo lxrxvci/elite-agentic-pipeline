@@ -33,6 +33,8 @@ export interface PortalShellClient {
   isRealEstateClient?: boolean
   /** §16/§29 - the Chat destination renders only when can_message is on. */
   canMessage?: boolean
+  /** I6 - the Reports destination renders only when the contact receives reports. */
+  canViewReports?: boolean
 }
 
 interface PortalShellProps {
@@ -52,17 +54,19 @@ interface PortalNavItem {
 
 /**
  * Client-scoped destinations (§12). Properties appears only when the ACTING
- * client is a real-estate client (§20), and Chat only when can_message is on
- * (§16/§29); both pages guard server-side too, so the nav never promises a
- * surface the client cannot use.
+ * client is a real-estate client (§20), Chat only when can_message is on
+ * (§16/§29), and Reports only when the acting contact receives reports (I6:
+ * the intake's per-owner "receives reports" checkbox); every page guards
+ * server-side too, so the nav never promises a surface the client cannot
+ * use.
  */
-function clientNav(isRealEstate: boolean, canMessage: boolean): PortalNavItem[] {
+function clientNav(isRealEstate: boolean, canMessage: boolean, canViewReports: boolean): PortalNavItem[] {
   return [
     { href: '/portal', label: 'Home', exact: true },
     ...(canMessage ? [{ href: '/portal/chat', label: 'Chat' }] : []),
     { href: '/portal/documents', label: 'Documents' },
     { href: '/portal/statements', label: 'Statements' },
-    { href: '/portal/reports', label: 'Reports' },
+    ...(canViewReports ? [{ href: '/portal/reports', label: 'Reports' }] : []),
     ...(isRealEstate ? [{ href: '/portal/properties', label: 'Properties' }] : []),
     { href: '/portal/invoices', label: 'Invoices' },
     { href: '/portal/requests', label: 'Requests' },
@@ -157,7 +161,11 @@ export function PortalShell({ role, userName, clients, actingClientId, children 
   const nav =
     role === 'cpa'
       ? CPA_NAV
-      : clientNav(actingClient?.isRealEstateClient === true, actingClient?.canMessage === true)
+      : clientNav(
+          actingClient?.isRealEstateClient === true,
+          actingClient?.canMessage === true,
+          actingClient?.canViewReports !== false,
+        )
 
   async function signOut() {
     setSigningOut(true)

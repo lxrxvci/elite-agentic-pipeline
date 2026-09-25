@@ -412,6 +412,8 @@ export interface ClientContactRow {
   ownershipPercent: string | null;
   isPrimary: boolean;
   isCpa: boolean;
+  /** I6: whether this contact receives the client's monthly reports. */
+  receivesReports: boolean;
 }
 
 export interface ClientAccountRow {
@@ -458,6 +460,8 @@ export interface ClientDetail {
   /** Intake-stamped QBO facts (§15 pass-through); null when never captured. */
   qboUserCount: number | null;
   qboSubscriptionTier: string | null;
+  /** I6: intake payroll provider stamp; null when the client runs no payroll. */
+  payrollProvider: string | null;
   manager: StaffRef | null;
   bookkeeper: StaffRef | null;
   contacts: ClientContactRow[];
@@ -514,6 +518,7 @@ export async function getClientDetail(id: number): Promise<ClientDetail | null> 
     ownershipPercent: link.ownershipPercent,
     isPrimary: client.primaryContactId === contact.id,
     isCpa: client.cpaContactId === contact.id,
+    receivesReports: link.receivesReports,
   }));
 
   return {
@@ -540,6 +545,7 @@ export async function getClientDetail(id: number): Promise<ClientDetail | null> 
     qboLocationNames: client.qboLocationNames ?? [],
     qboUserCount: client.qboUserCount,
     qboSubscriptionTier: client.qboSubscriptionTier,
+    payrollProvider: client.payrollProvider,
     manager: client.managerId != null ? refOf(staffById.get(client.managerId)) : null,
     bookkeeper: client.bookkeeperId != null ? refOf(staffById.get(client.bookkeeperId)) : null,
     contacts: contactRows,

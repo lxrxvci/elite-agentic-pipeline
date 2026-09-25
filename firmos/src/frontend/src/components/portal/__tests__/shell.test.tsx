@@ -160,4 +160,34 @@ describe('PortalShell', () => {
     )
     expect(screen.getAllByRole('navigation', { name: 'Portal' })[0]).not.toHaveTextContent('Chat')
   })
+
+  it('Reports appears only when the acting contact receives reports (I6)', () => {
+    const withReports = [
+      {
+        clientId: 2,
+        clientName: 'Harborline Marine Supply',
+        relationship: 'owner',
+        canViewReports: true,
+      },
+    ]
+    const { unmount } = render(
+      <PortalShell role="client" userName="Alison Brewer" clients={withReports} actingClientId={2}>
+        <div>content</div>
+      </PortalShell>,
+    )
+    expect(screen.getAllByRole('navigation', { name: 'Portal' })[0]).toHaveTextContent('Reports')
+    unmount()
+
+    render(
+      <PortalShell
+        role="client"
+        userName="Alison Brewer"
+        clients={[{ ...withReports[0], canViewReports: false }]}
+        actingClientId={2}
+      >
+        <div>content</div>
+      </PortalShell>,
+    )
+    expect(screen.getAllByRole('navigation', { name: 'Portal' })[0]).not.toHaveTextContent('Reports')
+  })
 })

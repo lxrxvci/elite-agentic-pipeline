@@ -43,6 +43,7 @@ export default async function PortalLayout({ children }: { children: React.React
         clientName: c.clientName,
         isRealEstateClient: realEstateById.get(c.clientId) ?? false,
         canMessage: c.capabilities.canMessage,
+        canViewReports: c.capabilities.canViewReports,
       }))}
       actingClientId={state.access?.clientId ?? null}
     >

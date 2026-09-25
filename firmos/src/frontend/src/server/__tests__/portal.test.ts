@@ -112,6 +112,8 @@ describe.skipIf(!reachable)("portal engine (HANDOFF §12, §29)", () => {
       canUploadDocs: true,
       canViewTasks: true,
       canMessage: true,
+      // I6: report delivery defaults on for every existing link.
+      canViewReports: true,
     });
     expect(blueSpruce.capabilities.canUploadDocs).toBe(false);
     expect(blueSpruce.capabilities.canViewTasks).toBe(false);

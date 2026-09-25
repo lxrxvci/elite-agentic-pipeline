@@ -189,6 +189,36 @@ describe('ClientDetailTabs content', () => {
     expect(screen.getByText('Month end')).toBeInTheDocument()
   })
 
+  it('I6: the report-recipient badge marks owners who receive reports', () => {
+    const ownerWithReports = {
+      linkId: 1,
+      contactId: 1,
+      name: 'Alison Brewer',
+      email: 'alison@harborlinemarine.com',
+      phone: null,
+      relationshipType: 'owner',
+      ownershipPercent: '100.00',
+      isPrimary: true,
+      isCpa: false,
+      receivesReports: true,
+    }
+    const { unmount } = renderTabs()
+    // The seeded fixture owner receives reports: the badge renders, and the
+    // payroll provider stamp shows in Details.
+    expect(screen.getByText('Reports')).toBeInTheDocument()
+    expect(screen.getByText('Payroll provider')).toBeInTheDocument()
+    expect(screen.getByText('Gusto')).toBeInTheDocument()
+    unmount()
+
+    renderTabs({
+      detail: makeDetail({
+        contacts: [{ ...ownerWithReports, receivesReports: false }],
+        owners: [],
+      }),
+    })
+    expect(screen.queryByText('Reports')).not.toBeInTheDocument()
+  })
+
   it('renders the onboarding checklist with status chips', async () => {
     const user = userEvent.setup()
     renderTabs()

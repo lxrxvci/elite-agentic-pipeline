@@ -66,6 +66,8 @@ export interface CascadeSummary {
   ownersAdded: number;
   ownersRepercentaged: number;
   ownersRemoved: number;
+  /** I6: a CPA-card edit created or updated the client's CPA contact. */
+  cpaUpdated: boolean;
   ruleTitlesUpdated: number;
   reportDefinitionsAdded: number;
   customRulesAdded: number;
@@ -91,6 +93,9 @@ const DIRECT_FIELD_MAP = {
   bookkeepingFrequency: "bookkeepingFrequency",
   billingFrequency: "billingFrequency",
   monthlyCloseTier: "monthlyCloseTier",
+  // I6: the payroll provider captured on the intake rides onto the client
+  // (same stamp as conversion, kept in sync by edits).
+  payrollProvider: "payrollProvider",
 } as const satisfies Record<string, keyof typeof clients.$inferInsert>;
 
 /** form_data keys that change the quote (§6.5 pricing-relevant). */
@@ -128,6 +133,14 @@ function fullName(c: { firstName: string | null; lastName: string | null }): str
   return [c.firstName, c.lastName].filter(Boolean).join(" ").trim().toLowerCase();
 }
 
+function splitName(name: string): { firstName: string; lastName: string | null } {
+  const parts = name.trim().split(/\s+/);
+  return {
+    firstName: parts[0] ?? name.trim(),
+    lastName: parts.length > 1 ? parts.slice(1).join(" ") : null,
+  };
+}
+
 export async function cascadeIntakeToClient(
   intakeId: number,
   patch: IntakePatch,
@@ -149,6 +162,7 @@ export async function cascadeIntakeToClient(
     ownersAdded: 0,
     ownersRepercentaged: 0,
     ownersRemoved: 0,
+    cpaUpdated: false,
     ruleTitlesUpdated: 0,
     reportDefinitionsAdded: 0,
     customRulesAdded: 0,
@@ -211,7 +225,10 @@ export async function cascadeIntakeToClient(
     }
   }
 
-  // 3. Owners reconciled: added, re-percentaged, removed (§6.8).
+  // 3. Owners reconciled: added, re-percentaged, removed (§6.8). I6: a
+  //    name-matched owner ALSO absorbs the submitted contact details (email,
+  //    phone) and the receives-reports flag - the checkbox drives report
+  //    delivery, so an edit that only flips it must still land.
   const submittedOwners = patch.owners ?? (patch.formData?.owners as IntakeOwnerInput[] | undefined);
   if (submittedOwners) {
     const links = await db
@@ -221,6 +238,7 @@ export async function cascadeIntakeToClient(
         firstName: contacts.firstName,
         lastName: contacts.lastName,
         ownershipPercent: contactClientLinks.ownershipPercent,
+        receivesReports: contactClientLinks.receivesReports,
       })
       .from(contactClientLinks)
       .innerJoin(contacts, eq(contacts.id, contactClientLinks.contactId))
@@ -246,6 +264,21 @@ export async function cascadeIntakeToClient(
             .where(eq(contactClientLinks.id, existing.linkId));
           summary.ownersRepercentaged += 1;
         }
+        // I6: explicit submissions move; an omitted flag preserves the stored
+        // opt-out (only submitted fields cascade).
+        const contactSet: Record<string, unknown> = {};
+        if (owner.email !== undefined) contactSet.email = owner.email ?? null;
+        if (owner.phone !== undefined) contactSet.phone = owner.phone ?? null;
+        if (Object.keys(contactSet).length > 0) {
+          contactSet.updatedAt = new Date();
+          await db.update(contacts).set(contactSet).where(eq(contacts.id, existing.contactId));
+        }
+        if (owner.receivesReports !== undefined && existing.receivesReports !== owner.receivesReports) {
+          await db
+            .update(contactClientLinks)
+            .set({ receivesReports: owner.receivesReports })
+            .where(eq(contactClientLinks.id, existing.linkId));
+        }
       } else {
         const parts = owner.name.trim().split(/\s+/);
         const [contact] = await db
@@ -263,6 +296,7 @@ export async function cascadeIntakeToClient(
           clientId,
           relationshipType: "owner",
           ownershipPercent: percent,
+          receivesReports: owner.receivesReports ?? true,
         });
         summary.ownersAdded += 1;
       }
@@ -276,6 +310,63 @@ export async function cascadeIntakeToClient(
           .set({ contactId: null })
           .where(and(eq(intakeOwners.intakeId, intakeId), eq(intakeOwners.contactId, link.contactId)));
         summary.ownersRemoved += 1;
+      }
+    }
+  }
+
+  // 3b. I6 (logic map, CPA cascade gap): post-conversion edits to the CPA
+  //     card flow to the client record, mirroring the conversion path - an
+  //     existing CPA contact gets the new name/email, a missing one is
+  //     created and linked (clients.cpa_contact_id included). hasCpa=false
+  //     never deletes: like the contacts cascade, removal is not implied by
+  //     an edit.
+  if (patch.formData != null && ("hasCpa" in patch.formData || "cpaName" in patch.formData || "cpaEmail" in patch.formData)) {
+    const card = patch.formData;
+    if (card.hasCpa === true) {
+      const cpaName = typeof card.cpaName === "string" ? card.cpaName.trim() : "";
+      if (cpaName !== "") {
+        const { firstName, lastName } = splitName(cpaName);
+        const cpaEmail =
+          typeof card.cpaEmail === "string" && card.cpaEmail.trim() !== "" ? card.cpaEmail.trim() : null;
+        // Current link wins; fall back to any existing cpa-role link.
+        let cpaContactId = client.cpaContactId;
+        if (cpaContactId == null) {
+          const [existingCpaLink] = await db
+            .select({ contactId: contactClientLinks.contactId })
+            .from(contactClientLinks)
+            .where(
+              and(
+                eq(contactClientLinks.clientId, clientId),
+                eq(contactClientLinks.relationshipType, "cpa"),
+              ),
+            )
+            .limit(1);
+          cpaContactId = existingCpaLink?.contactId ?? null;
+        }
+        if (cpaContactId != null) {
+          await db
+            .update(contacts)
+            .set({ firstName, lastName, email: cpaEmail, updatedAt: new Date() })
+            .where(eq(contacts.id, cpaContactId));
+        } else {
+          const [contact] = await db
+            .insert(contacts)
+            .values({ type: "individual", firstName, lastName, email: cpaEmail })
+            .returning();
+          cpaContactId = contact.id;
+          await db.insert(contactClientLinks).values({
+            contactId: contact.id,
+            clientId,
+            relationshipType: "cpa",
+          });
+        }
+        if (client.cpaContactId !== cpaContactId) {
+          await db
+            .update(clients)
+            .set({ cpaContactId, updatedAt: new Date() })
+            .where(eq(clients.id, clientId));
+        }
+        summary.cpaUpdated = true;
       }
     }
   }

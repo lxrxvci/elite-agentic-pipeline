@@ -127,6 +127,13 @@
       "when": 1790326710941,
       "tag": "0017_petite_queen_noir",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790338080256,
+      "tag": "0018_thankful_ghost_rider",
+      "breakpoints": true
     }
   ]
 }

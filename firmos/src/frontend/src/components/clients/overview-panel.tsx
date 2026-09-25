@@ -256,6 +256,7 @@ export function OverviewPanel({
             value={detail.qboUserCount != null ? String(detail.qboUserCount) : null}
           />
           <Field label="QBO plan" value={qboTierLabel(detail.qboSubscriptionTier)} />
+          {detail.payrollProvider != null && <Field label="Payroll provider" value={detail.payrollProvider} />}
           <Field
             label="Bookkeeping start"
             value={detail.bookkeepingStartDate ? fullDateLabel(detail.bookkeepingStartDate) : null}
@@ -308,6 +309,14 @@ export function OverviewPanel({
                     {c.isCpa && (
                       <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                         CPA
+                      </span>
+                    )}
+                    {c.relationshipType === 'owner' && c.receivesReports && (
+                      <span
+                        className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+                        title="Monthly reports are delivered to this owner"
+                      >
+                        Reports
                       </span>
                     )}
                   </p>

@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { formatLocalDate, type LocalDate } from "@firmos/domain";
 
 import { db } from "@/db";
-import { clientReports } from "@/db/schema";
+import { clientReports, contactClientLinks } from "@/db/schema";
 
 import { localToday } from "./dates";
 import { getDocumentTree, type DocumentRow } from "./documents";
@@ -64,6 +64,23 @@ function docPeriod(doc: DocumentRow): { year: number; month: number } {
 }
 
 /**
+ * I6 (logic map - owner "receives reports" checkboxes): report delivery is
+ * per owner contact. A contact whose link opts out gets a calendar with no
+ * report work on it - the same shape the page renders for a client with no
+ * report schedule, so the read never leaks due dates or documents to a
+ * non-recipient. Default true (an absent flag never removes reports).
+ */
+async function contactReceivesReports(contactId: number | null, clientId: number): Promise<boolean> {
+  if (contactId == null) return true;
+  const [link] = await db
+    .select({ receivesReports: contactClientLinks.receivesReports })
+    .from(contactClientLinks)
+    .where(and(eq(contactClientLinks.contactId, contactId), eq(contactClientLinks.clientId, clientId)))
+    .limit(1);
+  return link?.receivesReports ?? true;
+}
+
+/**
  * The acting client's report year as twelve month cells. Expected months
  * come from client_reports (the same schedule the staff year grid's reports
  * stream scores); delivered evidence is a completed row OR a report document
@@ -79,6 +96,15 @@ export async function getPortalReportsCalendar(
   today: LocalDate = localToday(),
 ): Promise<PortalReportCell[]> {
   await requirePortalClientAccess(user, clientId);
+  if (!(await contactReceivesReports(user.contactId, clientId))) {
+    return Array.from({ length: 12 }, (_, i) => ({
+      year,
+      month: i + 1,
+      state: "no_work" as const,
+      dueDate: null,
+      docs: [],
+    }));
+  }
   const todayStr = formatLocalDate(today);
 
   const [rows, tree] = await Promise.all([

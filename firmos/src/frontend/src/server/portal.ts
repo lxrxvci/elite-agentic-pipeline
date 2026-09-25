@@ -118,12 +118,14 @@ export async function requirePortalEnabled(): Promise<void> {
 
 // ── Portal context: linked clients + capabilities (§12) ───────────────────
 
-export type PortalCapability = "can_upload_docs" | "can_view_tasks" | "can_message";
+export type PortalCapability = "can_upload_docs" | "can_view_tasks" | "can_message" | "can_view_reports";
 
 export interface PortalCapabilities {
   canUploadDocs: boolean;
   canViewTasks: boolean;
   canMessage: boolean;
+  /** I6: report delivery per owner contact (receives_reports on the link). */
+  canViewReports: boolean;
 }
 
 export interface PortalClientAccess {
@@ -175,6 +177,9 @@ export async function getPortalContext(user: SessionUser): Promise<PortalContext
       canUploadDocs: row?.canUploadDocs ?? false,
       canViewTasks: row?.canViewTasks ?? true,
       canMessage: row?.canMessage ?? true,
+      // Report delivery defaults on; the client-role branch below overrides it
+      // from the contact link's receives_reports flag (I6).
+      canViewReports: true,
     };
     if (role === "cpa") caps.canUploadDocs = false; // §12 forced off for CPAs
     return caps;
@@ -184,7 +189,11 @@ export async function getPortalContext(user: SessionUser): Promise<PortalContext
   if (user.contactId != null) {
     if (role === "client") {
       const rows = await db
-        .select({ client: clients, relationshipType: contactClientLinks.relationshipType })
+        .select({
+          client: clients,
+          relationshipType: contactClientLinks.relationshipType,
+          receivesReports: contactClientLinks.receivesReports,
+        })
         .from(contactClientLinks)
         .innerJoin(clients, eq(clients.id, contactClientLinks.clientId))
         .where(eq(contactClientLinks.contactId, user.contactId));
@@ -192,7 +201,7 @@ export async function getPortalContext(user: SessionUser): Promise<PortalContext
         clientId: r.client.id,
         clientName: clientName(r.client),
         relationship: r.relationshipType,
-        capabilities: capabilitiesFor(r.client.id),
+        capabilities: { ...capabilitiesFor(r.client.id), canViewReports: r.receivesReports },
       }));
     } else {
       const rows = await db
@@ -233,7 +242,9 @@ export function assertPortalCapability(
       ? access.capabilities.canUploadDocs
       : capability === "can_view_tasks"
         ? access.capabilities.canViewTasks
-        : access.capabilities.canMessage;
+        : capability === "can_view_reports"
+          ? access.capabilities.canViewReports
+          : access.capabilities.canMessage;
   if (!granted) throw new PortalCapabilityError(capability);
 }
 

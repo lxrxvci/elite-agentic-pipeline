@@ -43,6 +43,7 @@ const contacts: ClientContactRow[] = [
     ownershipPercent: '100',
     isPrimary: true,
     isCpa: false,
+    receivesReports: true,
   },
   {
     linkId: 2,
@@ -54,6 +55,7 @@ const contacts: ClientContactRow[] = [
     ownershipPercent: null,
     isPrimary: false,
     isCpa: false,
+    receivesReports: true,
   },
 ]
 

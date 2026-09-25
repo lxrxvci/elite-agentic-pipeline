@@ -130,6 +130,10 @@ export const clients = pgTable(
     // E11: the intake payroll answer ("Do they run payroll?"), stamped at
     // conversion; gates payroll/W-2 year-end checklist items at populate time.
     hasPayroll: boolean("has_payroll").notNull().default(false),
+    // I6: the payroll provider captured on the intake (required for corporate
+    // entities, I2), stamped at conversion so the year-end package work knows
+    // where the payroll reports come from.
+    payrollProvider: text("payroll_provider"),
 
     // QuickBooks and real estate - name arrays priced at $25/class|location.
     qboClassNames: jsonb("qbo_class_names").$type<string[]>(),
@@ -185,6 +189,11 @@ export const contactClientLinks = pgTable(
       .references(() => clients.id, { onDelete: "cascade" }),
     relationshipType: relationshipTypeEnum("relationship_type").notNull().default("related"),
     ownershipPercent: numeric("ownership_percent", { precision: 5, scale: 2 }),
+    // I6: whether this contact receives the client's monthly reports (the
+    // intake's per-owner "receives reports" checkbox stamps it at conversion;
+    // the cascade keeps it in sync). Default true so pre-existing links keep
+    // receiving reports.
+    receivesReports: boolean("receives_reports").notNull().default(true),
     createdAt: createdAt(),
   },
   (t) => [

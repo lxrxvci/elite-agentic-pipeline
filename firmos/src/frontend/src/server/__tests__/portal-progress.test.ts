@@ -2,9 +2,9 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/db";
-import { clientReports, clients, users } from "@/db/schema";
+import { clientReports, clients, contactClientLinks, users } from "@/db/schema";
 import { toSessionUser, type SessionUser } from "@/server/auth/guards";
-import { PortalAccessDeniedError } from "@/server/portal";
+import { getPortalContext, PortalAccessDeniedError } from "@/server/portal";
 import { getPortalReportsCalendar, getPortalYearGrid } from "@/server/portal-progress";
 import { seedDatabase } from "@/server/seed";
 
@@ -153,6 +153,67 @@ describe.skipIf(!reachable)("portal progress reads (Wave 4 portal parity)", () =
       await db
         .delete(clientReports)
         .where(and(eq(clientReports.clientId, harborlineId), eq(clientReports.attributedYear, 2025)));
+    }
+  });
+
+  it("I6: a contact whose link opts out of reports sees no report work (recipient selection)", async () => {
+    // Stage a scheduled, undelivered month for 2025.
+    await db.insert(clientReports).values({
+      clientId: harborlineId,
+      name: "Monthly Financial Package",
+      attributedYear: 2025,
+      attributedMonth: 6,
+      dueDate: "2025-07-10",
+    });
+    // Flip Alison's owner link off, the way an intake owner edit would.
+    const [link] = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, harborlineId), eq(contactClientLinks.relationshipType, "owner")))
+      .limit(1);
+    await db
+      .update(contactClientLinks)
+      .set({ receivesReports: false })
+      .where(eq(contactClientLinks.id, link.id));
+
+    try {
+      // The portal contacts read honors the flag...
+      const ctx = await getPortalContext(alison);
+      const harborline = ctx.clients.find((c) => c.clientId === harborlineId)!;
+      expect(harborline.capabilities.canViewReports).toBe(false);
+      // Other clients on the same contact are untouched (per-link flag).
+      const blueSpruce = ctx.clients.find((c) => c.clientId === blueSpruceId)!;
+      expect(blueSpruce.capabilities.canViewReports).toBe(true);
+
+      // ...and the report-delivery read returns twelve empty months: no due
+      // dates, no documents leak to a non-recipient.
+      const cells = await getPortalReportsCalendar(alison, harborlineId, 2025, TEST_TODAY);
+      expect(cells).toHaveLength(12);
+      expect(cells.every((c) => c.state === "no_work")).toBe(true);
+      expect(cells.every((c) => c.dueDate === null && c.docs.length === 0)).toBe(true);
+
+      // Flag back on: the scheduled month is visible again.
+      await db
+        .update(contactClientLinks)
+        .set({ receivesReports: true })
+        .where(eq(contactClientLinks.id, link.id));
+      const restored = await getPortalReportsCalendar(alison, harborlineId, 2025, TEST_TODAY);
+      expect(restored[5].state).toBe("past_due");
+      expect(restored[5].dueDate).toBe("2025-07-10");
+    } finally {
+      await db
+        .update(contactClientLinks)
+        .set({ receivesReports: true })
+        .where(eq(contactClientLinks.id, link.id));
+      await db
+        .delete(clientReports)
+        .where(
+          and(
+            eq(clientReports.clientId, harborlineId),
+            eq(clientReports.attributedYear, 2025),
+            eq(clientReports.attributedMonth, 6),
+          ),
+        );
     }
   });
 });

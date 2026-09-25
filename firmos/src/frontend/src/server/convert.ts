@@ -167,6 +167,8 @@ function defaultRuleSpecs(tierDay: number, excludedKeys: ReadonlySet<string> = n
 export const PERSONAL_CARD_REMINDER_TITLE = "Ask client for personal-card business-expense breakdown";
 /** B18: the reminder lands on the 1st, asking for the prior month's breakdown. */
 const PERSONAL_CARD_REMINDER_DAY = 1;
+/** I6 (logic map): seeded when the merchant-recon answer is yes. */
+export const MERCHANT_RECONCILIATION_TITLE = "Merchant reconciliation";
 
 function scheduleForCadence(
   frequency: string | null | undefined,
@@ -372,6 +374,10 @@ export async function convertIntakeToClient(
             taxStructure: intake.taxStructure,
             llcSubclass: form.llcSubclass,
           }),
+        // I6 (logic map): the payroll provider captured on the intake rides
+        // onto the client so the year-end package work knows where the
+        // payroll reports come from.
+        payrollProvider: intake.payrollProvider ?? form.payrollProvider ?? null,
         isProjectEngagement: isProject,
         requiresWeeklyBankFeeds: !isProject,
       })
@@ -463,9 +469,9 @@ export async function convertIntakeToClient(
 
     // 4. Owners (intake_owners rows win; form_data owners are the fallback).
     //    I1: the table has no phone/receives-reports columns, so those fields
-    //    merge in from the form_data copy by owner name. receivesReports has
-    //    no contact_client_links column yet - it stays on the intake record
-    //    (schema gap flagged for a later phase).
+    //    merge in from the form_data copy by owner name. I6: receivesReports
+    //    lands on the new link column (default true - an unchecked box in a
+    //    legacy intake means "not captured", never "opted out").
     let ownerLinksCreated = 0;
     const ownerRows = await tx
       .select()
@@ -482,6 +488,8 @@ export async function convertIntakeToClient(
             email: o.email,
             ownershipPercent: o.ownershipPercent,
             phone: formOwnersByName.get(o.name.trim().toLowerCase())?.phone ?? null,
+            receivesReports:
+              formOwnersByName.get(o.name.trim().toLowerCase())?.receivesReports ?? true,
           }))
         : (form.owners ?? []).map((o) => ({
             id: null as number | null,
@@ -489,6 +497,7 @@ export async function convertIntakeToClient(
             email: o.email ?? null,
             ownershipPercent: o.ownershipPercent == null ? null : String(o.ownershipPercent),
             phone: o.phone ?? null,
+            receivesReports: o.receivesReports ?? true,
           }));
     for (const owner of owners) {
       const { firstName, lastName } = splitName(owner.name);
@@ -502,6 +511,7 @@ export async function convertIntakeToClient(
         clientId,
         relationshipType: "owner",
         ownershipPercent: owner.ownershipPercent,
+        receivesReports: owner.receivesReports,
       });
       ownerLinksCreated += 1;
       if (owner.id != null) {
@@ -689,6 +699,32 @@ export async function convertIntakeToClient(
           title: PERSONAL_CARD_REMINDER_TITLE,
           scheduleType: "monthly",
           dayOfMonth: PERSONAL_CARD_REMINDER_DAY,
+          nextRun,
+          assigneeId: bookkeeperId,
+        });
+        recurringRulesCreated += 1;
+      }
+
+      // I6 (logic map): the merchant-recon "yes" answer is more than billing -
+      // the monthly merchant reconciliation task seeds here on the close
+      // cadence, next to the other monthly close work.
+      if (form.includeMerchantReconciliation === true) {
+        const nextRun = initialNextRun(
+          {
+            schedule_type: schedule.scheduleType,
+            day_of_month: Number.isNaN(tierDay) ? 15 : tierDay,
+            anchor_month: schedule.anchorMonth,
+            next_run: intake.bookkeepingStartDate ?? formatLocalDate(today),
+          },
+          intake.bookkeepingStartDate,
+          today,
+        );
+        await tx.insert(recurringTasks).values({
+          clientId,
+          title: MERCHANT_RECONCILIATION_TITLE,
+          scheduleType: schedule.scheduleType,
+          dayOfMonth: Number.isNaN(tierDay) ? 15 : tierDay,
+          anchorMonth: schedule.anchorMonth,
           nextRun,
           assigneeId: bookkeeperId,
         });

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/db";
@@ -19,7 +19,7 @@ import {
   users,
 } from "@/db/schema";
 import { cascadeIntakeToClient } from "@/server/cascade";
-import { ConversionError, convertIntakeToClient } from "@/server/convert";
+import { ConversionError, convertIntakeToClient, PERSONAL_CARD_REMINDER_TITLE } from "@/server/convert";
 import {
   createIntake,
   getIntake,
@@ -94,6 +94,9 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     expect(client.bookkeeperId).toBe(bookkeeperSofia);
     expect(client.monthlyCloseTier).toBe("10");
     expect(client.isProjectEngagement).toBe(false);
+    // I6: the intake's payroll provider (Gusto, form_data + column) rides
+    // onto the client next to the has_payroll stamp.
+    expect(client.payrollProvider).toBe("Gusto");
 
     // Billing template with amounts straight from the PRICING table.
     const template = client.recurringServicesTemplate as {
@@ -161,17 +164,24 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     expect(byName.get("Stripe")?.proofCategory).toBe("statement");
 
     // Recurring rules: 4 defaults (monthly, tier day 10) + 1 custom weekly
-    // + 2 specialty report rules (C10: each report definition recurs as its
-    // own rule on the report's cadence).
+    // + 1 merchant reconciliation (I6: the merchant-recon yes answer seeds
+    // the monthly task) + 2 specialty report rules (C10: each report
+    // definition recurs as its own rule on the report's cadence).
     const rules = await db
       .select()
       .from(recurringTasks)
       .where(eq(recurringTasks.clientId, client.id));
-    expect(rules).toHaveLength(7);
+    expect(rules).toHaveLength(8);
     const titles = rules.map((r) => r.title);
     for (const t of ["Reconcile Accounts", "Categorize Transactions", "Client Questions", "Send Reports"]) {
       expect(titles).toContain(t);
     }
+    // I6: the merchant-recon answer seeds the monthly merchant
+    // reconciliation task on the close cadence.
+    const merchantRule = rules.find((r) => r.title === "Merchant reconciliation");
+    expect(merchantRule?.scheduleType).toBe("monthly");
+    expect(merchantRule?.dayOfMonth).toBe(10); // the client's tier day
+    expect(merchantRule?.assigneeId).toBe(bookkeeperSofia);
     // C10: the two report definitions became recurring rules at their own
     // cadence, carrying the data-source note slot (null here).
     const monthlyReportRule = rules.find((r) => r.title === "Monthly Financial Package");
@@ -221,7 +231,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
 
     expect(result.onboardingTasksCreated).toBe(8);
     expect(result.reportRowsCreated).toBe(16);
-    expect(result.recurringRulesCreated).toBe(7); // 4 defaults + 1 custom + 2 specialty report rules (C10)
+    expect(result.recurringRulesCreated).toBe(8); // 4 defaults + 1 custom + 1 merchant recon (I6) + 2 specialty report rules (C10)
     expect(result.tasksGenerated).not.toBeNull();
   });
 
@@ -868,16 +878,18 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     expect(form.customAnswers?.["qbo-status"]).toBe("Wave");
   });
 
-  it("I1: owner phone reaches the owner contact; receivesReports stays on the intake", async () => {
+  it("I1+I6: owner phone reaches the owner contact; receivesReports stamps the link", async () => {
     const intakeId = await reviewableIntake({
       legalName: "Owner Detail Co",
       engagementType: "project",
       owners: [
         { name: "Wren Okafor", email: "wren@x.co", phone: "5035550182", receivesReports: true },
+        { name: "Sal Vega", email: "sal@x.co" },
       ],
       formData: {
         owners: [
-          { name: "Wren Okafor", email: "wren@x.co", phone: "5035550182", receivesReports: true },
+          { name: "Wren Okafor", email: "wren@x.co", phone: "5035550182", receivesReports: false },
+          { name: "Sal Vega", email: "sal@x.co", receivesReports: true },
         ],
       },
     });
@@ -892,13 +904,22 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       .select()
       .from(contactClientLinks)
       .where(and(eq(contactClientLinks.clientId, result.clientId), eq(contactClientLinks.relationshipType, "owner")));
-    expect(ownerLinks).toHaveLength(1);
-    const [ownerContact] = await db.select().from(contacts).where(eq(contacts.id, ownerLinks[0].contactId));
-    expect(ownerContact.phone).toBe("5035550182");
-    // No link column exists yet - the flag stays on the intake's form_data.
-    const row = await getIntake(intakeId);
-    const owners = (row.formData as { owners?: { receivesReports?: boolean }[] }).owners;
-    expect(owners?.[0]?.receivesReports).toBe(true);
+    expect(ownerLinks).toHaveLength(2);
+    const byContact = new Map(
+      await Promise.all(
+        ownerLinks.map(async (l) => {
+          const [c] = await db.select().from(contacts).where(eq(contacts.id, l.contactId));
+          return [c.lastName ?? c.firstName, { link: l, contact: c }] as const;
+        }),
+      ),
+    );
+    // The form_data copy wins for the phone/receivesReports merge by name.
+    const wren = byContact.get("Okafor")!;
+    expect(wren.contact.phone).toBe("5035550182");
+    expect(wren.link.receivesReports).toBe(false);
+    // An owner without the checkbox answers still defaults to receiving.
+    const sal = byContact.get("Vega")!;
+    expect(sal.link.receivesReports).toBe(true);
   });
 
   it("I2: a corporate structure stamps has_payroll even when payroll went unanswered", async () => {
@@ -978,5 +999,388 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     expect(client.taxStructure).toBe("LLC");
     expect(client.hasPayroll).toBe(true);
+  });
+
+  // ── I6: conversion wiring sweep (logic map §2 + the flagged loose ends) ──
+
+  it("I6 migration: receives_reports exists with a true default; clients gains payroll_provider", async () => {
+    const [col] = await db.execute(sql`
+      SELECT is_nullable AS "isNullable", column_default AS "columnDefault"
+      FROM information_schema.columns
+      WHERE table_name = 'contact_client_links' AND column_name = 'receives_reports'
+    `);
+    expect(col).toBeDefined();
+    expect(col.isNullable).toBe("NO");
+    expect(String(col.columnDefault)).toContain("true");
+    const [pcol] = await db.execute(sql`
+      SELECT data_type AS "dataType"
+      FROM information_schema.columns
+      WHERE table_name = 'clients' AND column_name = 'payroll_provider'
+    `);
+    expect(pcol).toBeDefined();
+    expect(pcol.dataType).toBe("text");
+  });
+
+  it("I6: the payroll provider rides onto the client and cascades on edits", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Provider Note Co",
+      taxStructure: "S-corp",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        hasPayroll: true,
+        payrollProvider: "Gusto",
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(client.hasPayroll).toBe(true);
+    expect(client.payrollProvider).toBe("Gusto");
+
+    // A post-conversion provider edit flows through the direct field map.
+    await updateIntake(intakeId, { payrollProvider: "ADP" });
+    await cascadeIntakeToClient(intakeId, { payrollProvider: "ADP" }, TEST_TODAY);
+    const [after] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(after.payrollProvider).toBe("ADP");
+  });
+
+  it("I6: merchant recon seeds the monthly task only when the answer is yes", async () => {
+    const yesId = await reviewableIntake({
+      legalName: "Merchant Yes Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management", "merchant_account_reconciliation"],
+        merchantAccounts: [{ name: "Stripe", processor: "Stripe" }],
+        includeMerchantReconciliation: true,
+      },
+    });
+    const yes = await convertIntakeToClient(yesId, {}, managerDana, TEST_TODAY);
+    const yesRules = await db
+      .select()
+      .from(recurringTasks)
+      .where(and(eq(recurringTasks.clientId, yes.clientId), eq(recurringTasks.title, "Merchant reconciliation")));
+    expect(yesRules).toHaveLength(1);
+    expect(yesRules[0].scheduleType).toBe("monthly");
+    expect(yesRules[0].dayOfMonth).toBe(10);
+
+    // No answer (or a no) seeds nothing - no orphan tasks.
+    const noId = await reviewableIntake({
+      legalName: "Merchant No Co",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        merchantAccounts: [{ name: "Stripe", processor: "Stripe" }],
+        includeMerchantReconciliation: false,
+      },
+    });
+    const no = await convertIntakeToClient(noId, {}, managerDana, TEST_TODAY);
+    const noRules = await db
+      .select()
+      .from(recurringTasks)
+      .where(and(eq(recurringTasks.clientId, no.clientId), eq(recurringTasks.title, "Merchant reconciliation")));
+    expect(noRules).toHaveLength(0);
+  });
+
+  it("I6: owner edits cascade email/phone and the receives-reports flag to matched contacts", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Owner Cascade Co",
+      engagementType: "project",
+      owners: [{ name: "Pat Miller", email: "pat@x.co", ownershipPercent: 100 }],
+      formData: {
+        owners: [
+          { name: "Pat Miller", email: "pat@x.co", phone: "5035550111", receivesReports: true },
+        ],
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
+    const clientId = result.clientId;
+
+    const before = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, clientId), eq(contactClientLinks.relationshipType, "owner")));
+    expect(before).toHaveLength(1);
+    expect(before[0].receivesReports).toBe(true);
+    const [contactBefore] = await db.select().from(contacts).where(eq(contacts.id, before[0].contactId));
+    expect(contactBefore.phone).toBe("5035550111");
+
+    // Post-conversion edit: new email + phone, reports opted out, plus a new owner.
+    const patch: IntakePatch = {
+      owners: [
+        { name: "Pat Miller", email: "pat.miller@x.co", phone: "5035550222", receivesReports: false, ownershipPercent: 60 },
+        { name: "Sam Miller", email: "sam@x.co", phone: "5035550333", receivesReports: true, ownershipPercent: 40 },
+      ],
+    };
+    await updateIntake(intakeId, patch);
+    const summary = await cascadeIntakeToClient(intakeId, patch, TEST_TODAY);
+    expect(summary.ownersAdded).toBe(1);
+
+    const links = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, clientId), eq(contactClientLinks.relationshipType, "owner")));
+    expect(links).toHaveLength(2);
+    const pat = links.find((l) => l.contactId === before[0].contactId)!;
+    expect(pat.receivesReports).toBe(false);
+    const [patContact] = await db.select().from(contacts).where(eq(contacts.id, pat.contactId));
+    expect(patContact.email).toBe("pat.miller@x.co");
+    expect(patContact.phone).toBe("5035550222");
+    // The newly added owner carries the submitted flag too.
+    const sam = links.find((l) => l.id !== before[0].id)!;
+    expect(sam.receivesReports).toBe(true);
+    const [samContact] = await db.select().from(contacts).where(eq(contacts.id, sam.contactId));
+    expect(samContact.email).toBe("sam@x.co");
+  });
+
+  it("I6: a receives-reports edit sent as a form_data owner slice cascades too", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Owner Slice Co",
+      engagementType: "project",
+      owners: [{ name: "Pat Miller", email: "pat@x.co", ownershipPercent: 100 }],
+      formData: {
+        owners: [{ name: "Pat Miller", email: "pat@x.co", receivesReports: true }],
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
+
+    // The wizard autosaves step slices through form_data.owners.
+    await updateIntake(intakeId, {
+      formData: {
+        owners: [{ name: "Pat Miller", email: "pat@x.co", receivesReports: false }],
+      },
+    });
+    await cascadeIntakeToClient(
+      intakeId,
+      { formData: { owners: [{ name: "Pat Miller", email: "pat@x.co", receivesReports: false }] } },
+      TEST_TODAY,
+    );
+    const [link] = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, result.clientId), eq(contactClientLinks.relationshipType, "owner")));
+    expect(link.receivesReports).toBe(false);
+  });
+
+  it("I6: the CPA card cascades - create after conversion, then update in place, no dupe", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "CPA Cascade Co",
+      engagementType: "project",
+      formData: { serviceKeys: ["bank_feed_management"] },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
+    const clientId = result.clientId;
+    let [client] = await db.select().from(clients).where(eq(clients.id, clientId));
+    expect(client.cpaContactId).toBeNull();
+
+    // Create path: the CPA card is answered after conversion.
+    const createPatch: IntakePatch = {
+      formData: { hasCpa: true, cpaName: "Cascade Tax Group", cpaEmail: "team@cascadetax.example" },
+    };
+    await updateIntake(intakeId, createPatch);
+    const created = await cascadeIntakeToClient(intakeId, createPatch, TEST_TODAY);
+    expect(created.cpaUpdated).toBe(true);
+
+    [client] = await db.select().from(clients).where(eq(clients.id, clientId));
+    expect(client.cpaContactId).not.toBeNull();
+    const [cpa] = await db.select().from(contacts).where(eq(contacts.id, client.cpaContactId!));
+    expect(cpa.firstName).toBe("Cascade");
+    expect(cpa.lastName).toBe("Tax Group");
+    expect(cpa.email).toBe("team@cascadetax.example");
+    let cpaLinks = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, clientId), eq(contactClientLinks.relationshipType, "cpa")));
+    expect(cpaLinks).toHaveLength(1);
+    expect(cpaLinks[0].contactId).toBe(client.cpaContactId);
+
+    // Update path: a name/email edit flows to the SAME contact - no dupe.
+    const updatePatch: IntakePatch = {
+      formData: { hasCpa: true, cpaName: "Renamed Tax Group", cpaEmail: "hello@renamed.example" },
+    };
+    await updateIntake(intakeId, updatePatch);
+    const updated = await cascadeIntakeToClient(intakeId, updatePatch, TEST_TODAY);
+    expect(updated.cpaUpdated).toBe(true);
+
+    cpaLinks = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, clientId), eq(contactClientLinks.relationshipType, "cpa")));
+    expect(cpaLinks).toHaveLength(1);
+    const [cpaAfter] = await db.select().from(contacts).where(eq(contacts.id, cpaLinks[0].contactId));
+    expect(cpaAfter.firstName).toBe("Renamed");
+    expect(cpaAfter.lastName).toBe("Tax Group");
+    expect(cpaAfter.email).toBe("hello@renamed.example");
+    const [clientAfter] = await db.select().from(clients).where(eq(clients.id, clientId));
+    expect(clientAfter.cpaContactId).toBe(cpaAfter.id);
+  });
+
+  it("I6: the CPA card update path also lands when the link exists but cpa_contact_id is null", async () => {
+    // Legacy-shaped data: a cpa-role contact + link exist, but the client FK
+    // is null (pre-link parity data, or an admin cleared it). The cascade
+    // must find the link, update it, and backfill the client FK - never
+    // duplicate.
+    const intakeId = await reviewableIntake({
+      legalName: "CPA Backfill Co",
+      engagementType: "project",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        contacts: [{ entityName: "Cascade Tax Group", relationshipType: "cpa" }],
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
+    const clientId = result.clientId;
+    await db.update(clients).set({ cpaContactId: null }).where(eq(clients.id, clientId));
+    const [client] = await db.select().from(clients).where(eq(clients.id, clientId));
+    expect(client.cpaContactId).toBeNull();
+
+    const patch: IntakePatch = {
+      formData: { hasCpa: true, cpaName: "Cascade Tax Group", cpaEmail: "team@cascadetax.example" },
+    };
+    await updateIntake(intakeId, patch);
+    await cascadeIntakeToClient(intakeId, patch, TEST_TODAY);
+
+    const cpaLinks = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, clientId), eq(contactClientLinks.relationshipType, "cpa")));
+    expect(cpaLinks).toHaveLength(1);
+    const [clientAfter] = await db.select().from(clients).where(eq(clients.id, clientId));
+    expect(clientAfter.cpaContactId).toBe(cpaLinks[0].contactId);
+    const [cpaContact] = await db.select().from(contacts).where(eq(contacts.id, cpaLinks[0].contactId));
+    expect(cpaContact.email).toBe("team@cascadetax.example");
+  });
+
+  it("I6 full logic-map graph: every §2 conversion row lands end-to-end", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Logic Map Co",
+      taxStructure: "S-corp",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "15",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: [
+          "bank_feed_management",
+          "account_reconciliations",
+          "merchant_account_reconciliation",
+          "monthly_reporting_15",
+          "class_tracking",
+          "1099_collection",
+          "1099_per_filing",
+        ],
+        hasPayroll: true,
+        payrollProvider: "ADP",
+        payrollFrequency: "monthly",
+        paymentMethods: ["card"],
+        merchantAccounts: [{ name: "Stripe", processor: "Stripe" }],
+        includeMerchantReconciliation: true,
+        estimated1099Count: 3,
+        include1099Collection: true,
+        qboClassNames: ["Retail", "Online"],
+        personalCardForBusiness: true,
+        reportDefinitions: [{ name: "Monthly Financial Package", frequency: "monthly" }],
+        owners: [
+          {
+            name: "Wren Okafor",
+            email: "wren@lm.co",
+            phone: "5035550100",
+            ownershipPercent: 100,
+            receivesReports: true,
+          },
+        ],
+        hasCpa: true,
+        cpaName: "Cascade Tax Group",
+        cpaEmail: "team@cascadetax.example",
+        referralSource: "CPA referral",
+        referralWho: "Cascade Tax Group",
+      },
+    });
+
+    const result = await convertIntakeToClient(
+      intakeId,
+      { managerId: managerDana, bookkeeperId: bookkeeperSofia },
+      managerDana,
+      TEST_TODAY,
+    );
+    const clientId = result.clientId;
+    const [client] = await db.select().from(clients).where(eq(clients.id, clientId));
+
+    // §2 - corporate entity: payroll required (I2) + provider note on the client.
+    expect(client.hasPayroll).toBe(true);
+    expect(client.payrollProvider).toBe("ADP");
+
+    // §2 - payment methods = merchant processors: merchant recon add-on task
+    // + the account on the books + the billing flag.
+    const merchantRule = await db
+      .select()
+      .from(recurringTasks)
+      .where(and(eq(recurringTasks.clientId, clientId), eq(recurringTasks.title, "Merchant reconciliation")));
+    expect(merchantRule).toHaveLength(1);
+    expect(client.includeMerchantReconciliation).toBe(true);
+
+    // §2 - 1099 contractors: collection + filing count stamped (priced via the
+    // services template; the 3C outreach automation chases vendors from here).
+    expect(client.estimated1099Count).toBe(3);
+    expect(client.include1099Collection).toBe(true);
+    const template = client.recurringServicesTemplate as { service_key: string; quantity: number }[];
+    expect(template.find((l) => l.service_key === "1099_collection")).toBeDefined();
+    expect(template.find((l) => l.service_key === "1099_per_filing")?.quantity).toBe(3);
+
+    // §2 - income tracking = classes: class tracking priced per class.
+    expect(template.find((l) => l.service_key === "class_tracking")?.quantity).toBe(2);
+    // §2 - report frequency + close tier: the reporting line prices at the 15 tier.
+    expect(template.find((l) => l.service_key === "monthly_reporting_15")).toBeDefined();
+
+    // §2 - personal card for business: the monthly breakdown reminder rule.
+    const personalCard = await db
+      .select()
+      .from(recurringTasks)
+      .where(and(eq(recurringTasks.clientId, clientId), eq(recurringTasks.title, PERSONAL_CARD_REMINDER_TITLE)));
+    expect(personalCard).toHaveLength(1);
+
+    // §2 - report frequency: the Client Questions rule runs on the same
+    // (monthly) cadence as the reports.
+    const questions = await db
+      .select()
+      .from(recurringTasks)
+      .where(and(eq(recurringTasks.clientId, clientId), eq(recurringTasks.title, "Client Questions")));
+    expect(questions[0].scheduleType).toBe("monthly");
+
+    // §2 - owner "receives reports": the owner link carries the flag that
+    // drives report delivery + portal visibility.
+    const ownerLinks = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, clientId), eq(contactClientLinks.relationshipType, "owner")));
+    expect(ownerLinks).toHaveLength(1);
+    expect(ownerLinks[0].receivesReports).toBe(true);
+    const [ownerContact] = await db.select().from(contacts).where(eq(contacts.id, ownerLinks[0].contactId));
+    expect(ownerContact.phone).toBe("5035550100");
+
+    // §2 - CPA exists: CPA contact + link + client FK.
+    expect(client.cpaContactId).not.toBeNull();
+    const cpaLinks = await db
+      .select()
+      .from(contactClientLinks)
+      .where(and(eq(contactClientLinks.clientId, clientId), eq(contactClientLinks.relationshipType, "cpa")));
+    expect(cpaLinks).toHaveLength(1);
+
+    // §2 - referral = CPA: WHO is captured on the intake record.
+    const row = await getIntake(intakeId);
+    const form = row.formData as { referralWho?: string };
+    expect(form.referralWho).toBe("Cascade Tax Group");
+
+    // §2 - report selections: the monthly package materializes rows for the
+    // current year and recurs as its own rule.
+    const reports = await db.select().from(clientReports).where(eq(clientReports.clientId, clientId));
+    expect(reports.length).toBeGreaterThan(0);
+    const specialty = await db
+      .select()
+      .from(recurringTasks)
+      .where(and(eq(recurringTasks.clientId, clientId), eq(recurringTasks.title, "Monthly Financial Package")));
+    expect(specialty).toHaveLength(1);
   });
 });

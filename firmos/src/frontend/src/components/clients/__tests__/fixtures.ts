@@ -136,6 +136,7 @@ export function makeDetail(overrides: Partial<ClientDetail> = {}): ClientDetail 
     qboLocationNames: ['Portland'],
     qboUserCount: 2,
     qboSubscriptionTier: 'plus',
+    payrollProvider: 'Gusto',
     manager: dana,
     bookkeeper: jorge,
     contacts: [
@@ -149,6 +150,7 @@ export function makeDetail(overrides: Partial<ClientDetail> = {}): ClientDetail 
         ownershipPercent: '100.00',
         isPrimary: true,
         isCpa: false,
+        receivesReports: true,
       },
     ],
     owners: [],

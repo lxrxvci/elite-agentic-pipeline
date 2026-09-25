@@ -23,9 +23,9 @@ export interface IntakeOwnerInput {
   ownershipPercent?: number | null;
   /**
    * I1 (00:27:59): owners carry a phone and a receives-reports flag. Both
-   * live on form_data only - intake_owners has no columns for them yet and
-   * contact_client_links has no receives_reports column (schema gap flagged
-   * for a later phase; conversion reads the form_data copy by owner name).
+   * live on form_data only - intake_owners has no columns for them (I6 grew
+   * contact_client_links.receives_reports instead; conversion and the cascade
+   * read the form_data copy by owner name).
    */
   phone?: string | null;
   receivesReports?: boolean;
@@ -400,8 +400,9 @@ async function replaceIntakeOwners(intakeId: number, owners: IntakeOwnerInput[])
   );
   await db.delete(intakeOwners).where(eq(intakeOwners.intakeId, intakeId));
   if (owners.length === 0) return;
-  // I1: phone/receivesReports stay on form_data.owners - intake_owners has no
-  // columns for them yet (schema gap flagged; conversion merges by name).
+  // I1/I6: phone/receivesReports stay on form_data.owners - intake_owners has
+  // no columns for them; the link column (receives_reports) is stamped from
+  // this copy at conversion/merge.
   await db.insert(intakeOwners).values(
     owners.map((o) => ({
       intakeId,
