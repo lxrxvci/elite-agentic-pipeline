@@ -267,8 +267,8 @@ export function WorkstationQueue({
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
   const [viewName, setViewName] = useState('')
-  // Task detail drawer: the open card (task / bank_feed / reconciliation),
-  // null when closed. Reports select without a detail read.
+  // Task detail drawer: the open card (every kind opens it - tasks get the
+  // full read, feeds/recons the I5 SOP read, reports the upload surface).
   const [drawerCard, setDrawerCard] = useState<WorkCard | null>(null)
   // Focus mode: collapse the queue to the single next card (view mode only).
   const [focusMode, setFocusMode] = useState(false)
@@ -562,8 +562,8 @@ export function WorkstationQueue({
   // ── Optimistic mutations (rollback + toast on failure) ──
   // useCallback so the memoized WorkCardRow props stay referentially stable
   // across cursor moves; identity changes only when its real inputs do.
-  const complete = useCallback(
-    async (card: WorkCard) => {
+  const markCompletedOptimistic = useCallback(
+    (card: WorkCard) => {
       const key = workCardKey(card)
       if (completed.some((e) => workCardKey(e.card) === key)) return
       setCompleted((prev) => [...prev, { card }])
@@ -585,6 +585,15 @@ export function WorkstationQueue({
           setCelebration({ ...big, key })
         }
       }
+    },
+    [completed, openCards, celebrationsEnabled, queue.today],
+  )
+
+  const complete = useCallback(
+    async (card: WorkCard) => {
+      const key = workCardKey(card)
+      if (completed.some((e) => workCardKey(e.card) === key)) return
+      markCompletedOptimistic(card)
 
       const result = await completeWorkCard({ kind: card.kind, id: card.id }, true)
       if (!result.ok) {
@@ -596,7 +605,7 @@ export function WorkstationQueue({
         void refreshClockStatus()
       }
     },
-    [completed, openCards, celebrationsEnabled, queue.today],
+    [completed, markCompletedOptimistic],
   )
 
   async function reopen(entry: CompletedEntry) {
@@ -619,19 +628,26 @@ export function WorkstationQueue({
     else void reopen({ card })
   }
 
+  // The drawer's report upload completed the card SERVER-side (the report
+  // flow): strip + celebrate it here without re-running the completion
+  // mutation, and resync the clock (the upload stopped the card's timer).
+  const handleDrawerServerCompleted = useCallback(() => {
+    if (drawerCard == null) return
+    markCompletedOptimistic(drawerCard)
+    void refreshClockStatus()
+  }, [drawerCard, markCompletedOptimistic])
+
   // Stable row callbacks for the memoized WorkCardRow: identities only change
   // when the underlying data does, so a cursor move re-renders just the two
   // rows whose `selected` flipped.
   const handleCardSelect = useCallback(
     (card: WorkCard) => {
       setRawCursor(flatIndexByKey.get(workCardKey(card)) ?? 0)
-      // Task-kind cards open the full detail drawer; bank-feed and
-      // reconciliation cards open the lighter institution-SOP drawer (I5:
-      // the learning center lives one click away on exactly the cards whose
-      // bank has quirks). Report cards stay click-to-select only.
-      if (card.kind === 'task' || card.kind === 'bank_feed' || card.kind === 'reconciliation') {
-        setDrawerCard(card)
-      }
+      // Every kind opens the drawer: task-kind cards get the full detail
+      // read; bank-feed and reconciliation cards the lighter institution-SOP
+      // read (I5); report cards the upload DO surface (01:39:05 - "clicking
+      // it should take you to where you finish that task").
+      setDrawerCard(card)
     },
     [flatIndexByKey],
   )
@@ -667,12 +683,8 @@ export function WorkstationQueue({
       } else if ((e.key === 'e' || e.key === 'E') && navCards[cursor]) {
         e.preventDefault()
         void complete(navCards[cursor])
-      } else if (
-        e.key === 'Enter' &&
-        navCards[cursor] &&
-        navCards[cursor].kind !== 'report'
-      ) {
-        // Tasks, bank feeds, and reconciliations open the drawer (I5).
+      } else if (e.key === 'Enter' && navCards[cursor]) {
+        // Every kind opens the drawer (reports get the upload DO surface).
         e.preventDefault()
         setDrawerCard(navCards[cursor])
       } else if (e.key === 'x' || e.key === 'X') {
@@ -1742,6 +1754,7 @@ export function WorkstationQueue({
         onToggleComplete={(completed) => {
           if (drawerCard) drawerToggleComplete(drawerCard, completed)
         }}
+        onServerCompleted={handleDrawerServerCompleted}
       />
 
       <RequestOverrideDialog

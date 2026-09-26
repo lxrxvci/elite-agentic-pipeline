@@ -1,18 +1,23 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
+
 import { AuthError, canAccessStatements, requireStaff } from '@/server/auth/guards'
+import { BumperLaneLockedError } from '@/server/bumper-lanes'
 import { localToday } from '@/server/dates'
 import {
   DocumentError,
   deleteDocument,
   promoteToStatement,
   uploadDocument,
+  uploadReportDocument,
   uploadStatement,
   type DocumentRow,
   type StatementUploadResult,
 } from '@/server/documents'
 import { getAccountStatementStatus, type StatementStatus } from '@/server/statements'
 import { UploadValidationError } from '@/server/uploads'
+import { completeReportRowsForDocument, type ReportUploadCompletion } from '@/server/work-items'
 
 /**
  * Document mutations (HANDOFF §13). General uploads require any staff role;
@@ -32,6 +37,10 @@ function failure(error: unknown): { ok: false; error: string } {
   // leaks internals or storage paths.
   if (error instanceof UploadValidationError || error instanceof DocumentError) {
     return { ok: false, error: error.message }
+  }
+  // D6/D8: the lane reason IS the message (same contract as completeWorkCard).
+  if (error instanceof BumperLaneLockedError) {
+    return { ok: false, error: error.reason }
   }
   if (error instanceof AuthError) {
     return { ok: false, error: 'You do not have permission to do that.' }
@@ -90,6 +99,64 @@ export async function uploadDocumentAction(
       today: localToday(),
     })
     return { ok: true, data: document }
+  } catch (error) {
+    return failure(error)
+  }
+}
+
+// ── Report upload (the drawer's DO surface for the report flow) ────────────
+
+export interface ReportUploadActionData {
+  document: DocumentRow
+  /** Which report rows this upload completed + whether the month's "Send
+      Reports" summary task auto-completed through the §6.3 sync. */
+  completion: ReportUploadCompletion
+}
+
+/**
+ * The report flow entry point (owner walkthrough 01:39:05). Any staff member
+ * may upload (same posture as general documents - no delegated flag); the
+ * upload attributes to the card/task's period, then the wiring completes the
+ * period's open report rows and lets the bidirectional sync close the summary
+ * task. Lane-locked rows fail before any row moves, with the lane reason.
+ */
+export async function uploadReportDocumentAction(
+  formData: FormData,
+): Promise<ActionResult<ReportUploadActionData>> {
+  const user = await requireStaffUser()
+  if (!user) return { ok: false, error: 'Your session expired - sign in again.' }
+
+  const clientId = numberField(formData, 'clientId')
+  const year = numberField(formData, 'year')
+  const month = numberField(formData, 'month')
+  const bytes = await fileBytesOf(formData)
+  const file = formData.get('file')
+  if (clientId == null) return { ok: false, error: 'Choose a client first.' }
+  if (year == null || month == null) {
+    return { ok: false, error: 'The report period is missing - reload and try again.' }
+  }
+  if (!bytes || !(file instanceof File)) return { ok: false, error: 'Choose a file to upload.' }
+
+  try {
+    const document = await uploadReportDocument({
+      clientId,
+      uploadedById: user.id,
+      fileName: file.name,
+      mimeType: file.type || null,
+      bytes,
+      year,
+      month,
+      today: localToday(),
+    })
+    const completion = await completeReportRowsForDocument(
+      clientId,
+      { year, month },
+      document.id,
+      user.id,
+    )
+    revalidatePath('/workstation')
+    revalidatePath(`/clients/${clientId}`)
+    return { ok: true, data: { document, completion } }
   } catch (error) {
     return failure(error)
   }

@@ -6,9 +6,11 @@ import { requireStaff } from "@/server/auth/guards";
 import {
   addTaskNote,
   assignTask,
+  getReportCardDetail,
   getTaskDetail,
   getWorkCardSopDetail,
   setSubtaskCompleted,
+  type ReportCardDetail,
   type TaskDetail,
   type WorkCardSopDetail,
   type WorkCardSopKind,
@@ -43,6 +45,17 @@ export async function getWorkCardSopDetailAction(
 ): Promise<ActionResult<WorkCardSopDetail>> {
   try {
     return { ok: true, data: await getWorkCardSopDetail(kind, id) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** The drawer's report-card read (the upload DO surface for report cards). */
+export async function getReportCardDetailAction(
+  reportId: number,
+): Promise<ActionResult<ReportCardDetail>> {
+  try {
+    return { ok: true, data: await getReportCardDetail(reportId) };
   } catch (error) {
     return fail(error);
   }

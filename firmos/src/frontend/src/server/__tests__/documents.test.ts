@@ -16,10 +16,12 @@ import {
   deleteDocument,
   documentGroupOf,
   getDocumentTree,
+  latestReportDocument,
   mmddyy,
   promoteToStatement,
   statementRelPath,
   uploadDocument,
+  uploadReportDocument,
   uploadStatement,
 } from "@/server/documents";
 import { seedDatabase } from "@/server/seed";
@@ -211,6 +213,88 @@ describe.skipIf(!reachable)("documents engine (DB-backed)", () => {
         today: TEST_TODAY,
       }),
     ).rejects.toThrow(DocumentError);
+  });
+
+  it("report upload: stores in the protected Reports tree with the attributed period stamped", async () => {
+    const harborline = await clientByName("Harborline Marine Supply");
+    const mara = await userByEmail("mara@blueledgerbooks.com");
+    const period = { year: 2026, month: 7 };
+
+    const doc = await uploadReportDocument({
+      clientId: harborline.id,
+      uploadedById: mara.id,
+      fileName: "July Financial Package.pdf",
+      mimeType: "application/pdf",
+      bytes: PDF_BYTES,
+      year: period.year,
+      month: period.month,
+      today: TEST_TODAY,
+    });
+
+    // The report flow owns the protected Reports folder: year subfolder,
+    // MMDDYY stem, doc_type + attributed period the §6.3 gate reads.
+    expect(doc.storedPath).toBe(
+      `harborline-marine-supply/Documents/Reports/2026/${mmddyy(TEST_TODAY)}.pdf`,
+    );
+    expect(doc.docType).toBe("report");
+    expect(doc.attributedYear).toBe(2026);
+    expect(doc.attributedMonth).toBe(7);
+    const driver = await getStorageDriver();
+    const stored = await driver.get(doc.storedPath);
+    expect(Buffer.from(stored).equals(Buffer.from(PDF_BYTES))).toBe(true);
+
+    // The gate's own read sees the upload for the period.
+    const latest = await latestReportDocument(harborline.id, period);
+    expect(latest?.fileName).toBe("July Financial Package.pdf");
+
+    // Same-day re-upload inserts a NEW row at a suffixed path (a period can
+    // hold the monthly package and a quarterly summary side by side).
+    const second = await uploadReportDocument({
+      clientId: harborline.id,
+      uploadedById: mara.id,
+      fileName: "quarterly-summary.pdf",
+      mimeType: "application/pdf",
+      bytes: PDF_BYTES,
+      year: period.year,
+      month: period.month,
+      today: TEST_TODAY,
+    });
+    expect(second.id).not.toBe(doc.id);
+    expect(second.storedPath).toBe(
+      `harborline-marine-supply/Documents/Reports/2026/${mmddyy(TEST_TODAY)}-2.pdf`,
+    );
+    // ...and the period read now points at the newest file.
+    const newest = await latestReportDocument(harborline.id, period);
+    expect(newest?.id).toBe(second.id);
+  });
+
+  it("report upload rejects a bad period and honors the layered validation", async () => {
+    const harborline = await clientByName("Harborline Marine Supply");
+    const mara = await userByEmail("mara@blueledgerbooks.com");
+    await expect(
+      uploadReportDocument({
+        clientId: harborline.id,
+        uploadedById: mara.id,
+        fileName: "x.pdf",
+        mimeType: "application/pdf",
+        bytes: PDF_BYTES,
+        year: 2026,
+        month: 13,
+        today: TEST_TODAY,
+      }),
+    ).rejects.toThrow(DocumentError);
+    await expect(
+      uploadReportDocument({
+        clientId: harborline.id,
+        uploadedById: mara.id,
+        fileName: "evil.exe",
+        mimeType: "application/octet-stream",
+        bytes: MZ_BYTES,
+        year: 2026,
+        month: 7,
+        today: TEST_TODAY,
+      }),
+    ).rejects.toThrow(UploadValidationError);
   });
 
   it("statement upload: month-end attribution round-trips onto the deterministic path", async () => {

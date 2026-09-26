@@ -8,11 +8,12 @@ import { toast } from 'sonner'
 import { completeWorkCard } from '@/server/actions/work'
 import type { ClientWork } from '@/server/clients'
 import type { WorkCard } from '@/server/queue'
+import type { ClientYearGrid, YearGridStream } from '@/server/year-grid'
 
 import { ClientWorkList, type WorkCellFilter } from './client-work-list'
 import { CloseStepper } from './close-stepper'
-import { YearGrid, type YearGridFilter } from './year-grid'
-import type { ClientYearGrid } from '@/server/year-grid'
+import { STREAM_KIND, STREAM_LABEL, YearGrid, type YearGridFilter } from './year-grid'
+import { monthLabel } from '@/shared/lib/date-display'
 
 /**
  * The client Work tab: the guided close stepper and the year progress grid
@@ -68,11 +69,46 @@ interface ClientWorkTabProps {
   grid: ClientYearGrid
   prevYearHref: string
   nextYearHref: string
+  /** Deep-link seeds (drawer close-step/surface links): drill the list into
+      one stream + period column and anchor the stepper on that month. */
+  initialStream?: YearGridStream | null
+  initialMonth?: number | null
 }
 
-export function ClientWorkTab({ work, grid, prevYearHref, nextYearHref }: ClientWorkTabProps) {
+/** The grid cell a deep link points at: the stream row's column covering the
+ *  given calendar month (quarterly columns aggregate several). */
+function seededFilter(
+  grid: ClientYearGrid,
+  stream: YearGridStream | null,
+  month: number | null,
+): YearGridFilter | null {
+  if (stream == null) return null
+  const row = grid.rows.find((r) => r.stream === stream)
+  const cell = month != null ? row?.cells.find((c) => c.months.includes(month)) : undefined
+  if (row == null || cell == null) return null
+  return {
+    kind: STREAM_KIND[stream],
+    stream,
+    year: cell.year,
+    month: cell.month,
+    months: cell.months,
+    label: `${STREAM_LABEL[stream]} · ${monthLabel(cell.year, cell.month)}`,
+  }
+}
+
+export function ClientWorkTab({ work, grid, prevYearHref, nextYearHref, initialStream = null, initialMonth = null }: ClientWorkTabProps) {
   const router = useRouter()
-  const [filter, setFilter] = useState<YearGridFilter | null>(null)
+  const [filter, setFilter] = useState<YearGridFilter | null>(() =>
+    seededFilter(grid, initialStream, initialMonth),
+  )
+  // Year navigation drops the deep-link params: reseed from the new payload
+  // (nulls when the URL no longer carries a drill-down) instead of keeping a
+  // filter pinned to the old year's months.
+  const [filterYear, setFilterYear] = useState(grid.year)
+  if (filterYear !== grid.year) {
+    setFilterYear(grid.year)
+    setFilter(seededFilter(grid, initialStream, initialMonth))
+  }
   // Optimistic completions: hide the row at once; the server refresh then
   // re-reads the grid and a cell that flipped to complete celebrates.
   const [completedKeys, setCompletedKeys] = useState<Set<string>>(new Set())
@@ -106,7 +142,7 @@ export function ClientWorkTab({ work, grid, prevYearHref, nextYearHref }: Client
 
   return (
     <div className="space-y-4">
-      <CloseStepper grid={grid} prevYearHref={prevYearHref} nextYearHref={nextYearHref} />
+      <CloseStepper grid={grid} prevYearHref={prevYearHref} nextYearHref={nextYearHref} initialMonth={initialMonth} />
 
       <YearGrid
         grid={grid}

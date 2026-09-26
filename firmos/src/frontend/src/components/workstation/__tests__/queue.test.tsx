@@ -5,6 +5,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyRolloverAction, completeWorkCard } from '@/server/actions/work'
 import type { CompleteWorkCardResult } from '@/server/actions/work'
 import { getClockStatusAction } from '@/server/actions/time'
+import {
+  getReportCardDetailAction,
+  getTaskDetailAction,
+  getWorkCardSopDetailAction,
+} from '@/server/actions/tasks'
 import type { UnifiedQueue, WorkCard } from '@/server/queue'
 import type { ClockStatus } from '@/server/time-tracking'
 import { __resetClockStatusForTests } from '@/shared/lib/clock-status'
@@ -25,7 +30,25 @@ vi.mock('@/server/actions/time', () => ({
   getClockStatusAction: vi.fn(),
 }))
 
+// The drawer opens from card clicks (report cards included since the action
+// -surface wave); it dynamic-imports these modules - pin them so the drawer
+// renders without a database.
+vi.mock('@/server/actions/tasks', () => ({
+  getTaskDetailAction: vi.fn(),
+  getWorkCardSopDetailAction: vi.fn(),
+  getReportCardDetailAction: vi.fn(),
+  setSubtaskCompletedAction: vi.fn(),
+  addTaskNoteAction: vi.fn(),
+  assignTaskAction: vi.fn(),
+}))
+vi.mock('@/server/actions/documents', () => ({
+  uploadReportDocumentAction: vi.fn(),
+}))
+
 const mockClockStatus = vi.mocked(getClockStatusAction)
+const mockReportCardDetail = vi.mocked(getReportCardDetailAction)
+const mockTaskDetail = vi.mocked(getTaskDetailAction)
+const mockCardSopDetail = vi.mocked(getWorkCardSopDetailAction)
 
 const EMPTY_CLOCK: ClockStatus = {
   clockedIn: true,
@@ -157,6 +180,29 @@ beforeEach(() => {
   __resetClockStatusForTests()
   mockClockStatus.mockReset()
   mockClockStatus.mockResolvedValue({ ok: true, data: EMPTY_CLOCK })
+  // Drawer reads: error-shaped defaults (the drawer's quiet error state) -
+  // tests that open a drawer install their own payload.
+  mockTaskDetail.mockReset()
+  mockTaskDetail.mockResolvedValue({ ok: false, error: 'Not loaded in this test.' })
+  mockCardSopDetail.mockReset()
+  mockCardSopDetail.mockResolvedValue({ ok: false, error: 'Not loaded in this test.' })
+  mockReportCardDetail.mockReset()
+  mockReportCardDetail.mockResolvedValue({
+    ok: true,
+    data: {
+      kind: 'report',
+      id: 3,
+      title: 'August management report',
+      clientId: 2,
+      clientName: 'Copperline Coffee',
+      dueDate: '2026-08-31',
+      attributedYear: 2026,
+      attributedMonth: 8,
+      completedAt: null,
+      documentFileName: null,
+      today: '2026-08-23',
+    },
+  })
 })
 
 describe('WorkstationQueue - My Day default (D1)', () => {
@@ -858,5 +904,32 @@ describe('I5 institution SOP count badge (learning center)', () => {
   it('task cards never carry the badge (their SOPs live in the task drawer)', () => {
     renderRow({ kind: 'task', id: 24, status: 'due_today', sopCount: 3 })
     expect(screen.queryByTestId('card-sop-count')).not.toBeInTheDocument()
+  })
+})
+
+describe('Drawer opening per kind (01:39:05: every card opens its DO surface)', () => {
+  it('clicking a report card opens the drawer with the report upload surface', async () => {
+    // Radix primitives call pointer-capture APIs jsdom does not implement.
+    if (!Element.prototype.hasPointerCapture) {
+      Element.prototype.hasPointerCapture = () => false
+      Element.prototype.setPointerCapture = () => {}
+      Element.prototype.releasePointerCapture = () => {}
+    }
+    const user = userEvent.setup()
+    renderQueue()
+    await switchToAllWork(user)
+    // Report cards used to be click-to-select only; now the drawer IS the
+    // place you finish the report.
+    await user.click(screen.getByText('August management report'))
+    const drawer = await screen.findByTestId('task-drawer')
+    expect(mockReportCardDetail).toHaveBeenCalledWith(3)
+    expect(await within(drawer).findByTestId('task-drawer-title')).toHaveTextContent(
+      'August management report',
+    )
+    expect(within(drawer).getByTestId('report-upload-dropzone')).toBeInTheDocument()
+    expect(within(drawer).getByTestId('reports-surface-link')).toHaveAttribute(
+      'href',
+      '/clients/2?tab=reports&year=2026&month=8',
+    )
   })
 })

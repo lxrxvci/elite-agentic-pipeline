@@ -1,7 +1,8 @@
 'use client'
 
 import * as React from 'react'
-import { BookOpen, CalendarCheck, ExternalLink, Flag, ListChecks, MessageSquare, StickyNote, Video } from 'lucide-react'
+import Link from 'next/link'
+import { BookOpen, CalendarCheck, ExternalLink, FileText, Flag, ListChecks, MessageSquare, StickyNote, Video } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -17,15 +18,18 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { CloseStepSegments, closeStepTitleKey } from '@/components/clients/close-stepper'
-import type { TaskDetail, TaskDetailSop, WorkCardSopDetail } from '@/server/task-detail'
+import type { ReportUploadActionData } from '@/server/actions/documents'
+import type { ReportCardDetail, TaskDetail, TaskDetailSop, WorkCardSopDetail } from '@/server/task-detail'
 import type { WorkCardKind } from '@/server/queue'
 import type { CloseStepKey, CloseSteps } from '@/server/year-grid'
 import { avatarStyle } from '@/shared/lib/avatar-hue'
+import { closeStepHref, reportsSurfaceHref, workSurfaceHref } from '@/shared/lib/client-deep-links'
 import { dueAging, monthLabel, periodLabel, stampLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 import { WorkStatusBadge, type WorkStatus } from '@/shared/ui/work'
 
 import { KIND_META, KIND_STYLE, TaskTimerToggle } from './work-card'
+import { ReportUploadDropzone } from './report-upload'
 
 /**
  * Task detail drawer (owner call notes: "each task has potential to have an
@@ -38,6 +42,14 @@ import { KIND_META, KIND_STYLE, TaskTimerToggle } from './work-card'
  * institution SOPs for the card's bank, so "where statements live, check
  * images, portal quirks" surface exactly where the work happens. Cards whose
  * bank has no SOPs yet get a quiet empty state, never an error.
+ *
+ * The action-surface wave (owner walkthrough 01:39:05: "clicking it should
+ * take you to where you finish that task"): the drawer stays the context
+ * panel and gains the DO surface per kind. Report tasks and report cards get
+ * the period's report-file dropzone (upload -> row completes -> the §6.3
+ * sync closes the summary task) plus the deep link to the client's reports
+ * surface; feed/recon cards get the deep link into the client's Work tab;
+ * the month-close stepper's steps link to the same surfaces per period.
  *
  * Every SOP card carries the staleness failsafe: "Updated {date}" plus the
  * change note when present, so staff can see at a glance whether the
@@ -191,8 +203,9 @@ function SectionHeading({ icon: Icon, children }: { icon: typeof BookOpen; child
 
 interface TaskDrawerProps {
   /** The open card: task-kind cards get the full detail read; bank-feed and
-   *  reconciliation cards get the lighter institution-SOP read (I5). null
-   *  closes the drawer. */
+   *  reconciliation cards get the lighter institution-SOP read (I5); report
+   *  cards get the report action surface (upload + deep link). null closes
+   *  the drawer. */
   card: { kind: WorkCardKind; id: number } | null
   open: boolean
   /** The card the drawer opened from: client + period + title, used to show
@@ -206,13 +219,18 @@ interface TaskDrawerProps {
   onOpenChange: (open: boolean) => void
   /** Complete/re-open delegates to the queue's optimistic mutation. */
   onToggleComplete: (completed: boolean) => void
+  /** The upload path completed the card server-side (report flow): the queue
+   *  moves the card into its completed strip + rolls the D4 celebration
+   *  WITHOUT re-calling the completion mutation. */
+  onServerCompleted?: () => void
 }
 
-const DRAWER_KINDS = new Set<WorkCardKind>(['task', 'bank_feed', 'reconciliation'])
+const DRAWER_KINDS = new Set<WorkCardKind>(['task', 'bank_feed', 'reconciliation', 'report'])
 
-export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onToggleComplete }: TaskDrawerProps) {
+export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onToggleComplete, onServerCompleted }: TaskDrawerProps) {
   const [detail, setDetail] = React.useState<TaskDetail | null>(null)
   const [cardDetail, setCardDetail] = React.useState<WorkCardSopDetail | null>(null)
+  const [reportDetail, setReportDetail] = React.useState<ReportCardDetail | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [noteDraft, setNoteDraft] = React.useState('')
   const [busy, setBusy] = React.useState(false)
@@ -227,25 +245,24 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
   const ctxMonth = closeContext?.month ?? null
   const stepKey: CloseStepKey | null = closeContext ? closeStepTitleKey(closeContext.title) : null
 
+  const refreshCloseSteps = React.useCallback(async () => {
+    if (stepKey == null || ctxClientId == null || ctxYear == null || ctxMonth == null) return
+    try {
+      // Dynamic import: the actions module pulls in @/db, and drawer jsdom
+      // tests render without a database (same seam as the detail read).
+      const m = await import('@/server/actions/close-steps')
+      const res = await m.getCloseStepsAction(ctxClientId, ctxYear, ctxMonth)
+      if (res.ok) setCloseSteps(res.data)
+    } catch {
+      // No server reach in tests; the context strip simply stays hidden.
+    }
+  }, [stepKey, ctxClientId, ctxYear, ctxMonth])
+
   React.useEffect(() => {
     setCloseSteps(null)
     if (!open || stepKey == null || ctxClientId == null || ctxYear == null || ctxMonth == null) return
-    let cancelled = false
-    void (async () => {
-      try {
-        // Dynamic import: the actions module pulls in @/db, and drawer jsdom
-        // tests render without a database (same seam as the detail read).
-        const m = await import('@/server/actions/close-steps')
-        const res = await m.getCloseStepsAction(ctxClientId, ctxYear, ctxMonth)
-        if (!cancelled && res.ok) setCloseSteps(res.data)
-      } catch {
-        // No server reach in tests; the context strip simply stays hidden.
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [open, stepKey, ctxClientId, ctxYear, ctxMonth])
+    void refreshCloseSteps()
+  }, [open, stepKey, ctxClientId, ctxYear, ctxMonth, refreshCloseSteps])
 
   const refresh = React.useCallback(async (target: { kind: WorkCardKind; id: number }) => {
     // Dynamic import: the actions module pulls in @/db, and queue/drawer
@@ -255,6 +272,18 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
       const res = await m.getTaskDetailAction(target.id)
       if (res.ok) {
         setDetail(res.data)
+        setError(null)
+      } else {
+        setError(res.error)
+      }
+      return
+    }
+    // Report cards: the action surface read (row state + the period's file).
+    if (target.kind === 'report') {
+      const m = await import('@/server/actions/tasks')
+      const res = await m.getReportCardDetailAction(target.id)
+      if (res.ok) {
+        setReportDetail(res.data)
         setError(null)
       } else {
         setError(res.error)
@@ -283,6 +312,7 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
     if (open && kind != null && id != null && DRAWER_KINDS.has(kind)) {
       setDetail(null)
       setCardDetail(null)
+      setReportDetail(null)
       setError(null)
       setNoteDraft('')
       void refresh({ kind, id })
@@ -342,6 +372,32 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
     }
   }
 
+  // The report flow (owner walkthrough 01:39:05): the file landed, the
+  // server completed the period's open report rows, and - when that settled
+  // the month - the §6.3 sync closed the "Send Reports" task. Reflect the
+  // done state in the drawer; the queue strips/celebrates completed cards
+  // without re-running the mutation (onServerCompleted).
+  function handleReportUploaded(data: ReportUploadActionData) {
+    const { document, completion } = data
+    if (card?.kind === 'report') {
+      if (completion.completedRowIds.includes(card.id)) {
+        toast.success(`${document.fileName} uploaded - report complete`)
+        onServerCompleted?.()
+      } else {
+        toast.success(`Uploaded ${document.fileName}`)
+      }
+    } else if (completion.summaryTaskCompleted) {
+      toast.success(`${document.fileName} uploaded - reports done for the month`)
+      onServerCompleted?.()
+    } else {
+      toast.success(`Uploaded ${document.fileName} - the report file is on file`)
+    }
+    // The stepper strip scores from the same engine: re-read so the Reports
+    // segment flips to done in place.
+    void refreshCloseSteps()
+    if (card != null) void refresh(card)
+  }
+
   const task = detail?.task ?? null
   const badge = task ? (TASK_STATUS_BADGE[task.status] ?? { status: 'on_track' as WorkStatus, label: task.status }) : null
   const aging = detail && task ? dueAging(task.dueDate, detail.today) : null
@@ -367,13 +423,15 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
             <p className="text-xs text-muted-foreground">{error}</p>
           </div>
         )}
-        {error == null && detail == null && cardDetail == null && (
+        {error == null && detail == null && cardDetail == null && reportDetail == null && (
           <SheetHeader className="border-b border-border p-5">
             <SheetTitle>{isTaskCard ? 'Loading task…' : 'Loading card…'}</SheetTitle>
             <SheetDescription>
               {isTaskCard
                 ? 'Fetching the detail, checklist, and linked SOPs.'
-                : 'Fetching the bank SOPs for this card.'}
+                : card?.kind === 'report'
+                  ? 'Fetching the report and its file state.'
+                  : 'Fetching the bank SOPs for this card.'}
             </SheetDescription>
           </SheetHeader>
         )}
@@ -459,13 +517,53 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
                     Month close - {monthLabel(closeSteps.year, closeSteps.month)}
                   </SectionHeading>
                   <div className="rounded-lg border border-border bg-card p-3">
-                    <CloseStepSegments steps={closeSteps.steps} currentKey={stepKey} />
+                    {/* Every step links to the client's surface for that period
+                        (owner: "clicking it should take you to where you finish
+                        that task"); the state engine is unchanged. */}
+                    <CloseStepSegments
+                      steps={closeSteps.steps}
+                      currentKey={stepKey}
+                      hrefs={Object.fromEntries(
+                        closeSteps.steps.map((s) => [
+                          s.key,
+                          closeStepHref(closeSteps.clientId, closeSteps.year, closeSteps.month, s.key),
+                        ]),
+                      )}
+                    />
                     {closeSteps.allDone && (
                       <p className="mt-2 text-center text-[11px] font-medium text-status-on-track">
                         Books closed for {monthLabel(closeSteps.year, closeSteps.month)}
                       </p>
                     )}
                   </div>
+                </section>
+              )}
+
+              {/* §6.3 report gate: a report task's DO surface is the period's
+                  file upload; the gate copy lives on the Complete button. */}
+              {detail.reportGate != null && task.clientId != null && (
+                <section aria-label="Report file" className="space-y-2" data-testid="drawer-report-section">
+                  <SectionHeading icon={FileText}>
+                    Report file - {monthLabel(detail.reportGate.year, detail.reportGate.month)}
+                  </SectionHeading>
+                  <ReportUploadDropzone
+                    clientId={task.clientId}
+                    year={detail.reportGate.year}
+                    month={detail.reportGate.month}
+                    uploadedFileName={detail.reportGate.fileName}
+                    onUploaded={handleReportUploaded}
+                  />
+                  <Link
+                    href={reportsSurfaceHref(task.clientId, {
+                      year: detail.reportGate.year,
+                      month: detail.reportGate.month,
+                    })}
+                    data-testid="reports-surface-link"
+                    className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-xs font-medium text-firm-action transition-colors duration-150 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                    Open this client’s Reports tab
+                  </Link>
                 </section>
               )}
 
@@ -595,15 +693,24 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
                 <span className="text-xs text-muted-foreground">Task timer</span>
               </div>
               {/* B4: a parent task cannot complete with an open checklist -
-                  the server enforces it too; here the affordance explains it. */}
+                  the server enforces it too; here the affordance explains it.
+                  §6.3: a report task completes only once its report file is
+                  uploaded - same pattern, the gate copy names the fix. */}
               {(() => {
                 const openSubtasks = detail.subtasks.filter((s) => !s.isCompleted).length
-                const gated = !isCompleted && openSubtasks > 0
+                const reportGated =
+                  !isCompleted && detail.reportGate != null && !detail.reportGate.documentUploaded
+                const gated = !isCompleted && (openSubtasks > 0 || reportGated)
                 return (
                   <div className="flex items-center gap-2">
-                    {gated && (
+                    {openSubtasks > 0 && !isCompleted && (
                       <span className="text-[11px] text-muted-foreground" data-testid="subtask-gate-note">
                         {openSubtasks} checklist item{openSubtasks === 1 ? '' : 's'} still open
+                      </span>
+                    )}
+                    {reportGated && (
+                      <span className="text-[11px] text-muted-foreground" data-testid="report-gate-note">
+                        Upload the report file to complete
                       </span>
                     )}
                     <Button
@@ -612,7 +719,13 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
                       variant={isCompleted ? 'outline' : 'default'}
                       data-testid="drawer-complete-toggle"
                       disabled={gated}
-                      title={gated ? 'Finish the checklist first' : undefined}
+                      title={
+                        reportGated
+                          ? 'Upload the report file first'
+                          : openSubtasks > 0 && !isCompleted
+                            ? 'Finish the checklist first'
+                            : undefined
+                      }
                       onClick={() => {
                         onToggleComplete(!isCompleted)
                         onOpenChange(false)
@@ -687,6 +800,24 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
                 </SheetHeader>
 
                 <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                  {/* The DO surface for feed/recon work is the client's Work
+                      tab (01:39:05) - one deep link lands on the card's own
+                      period + stream drill-down. */}
+                  <Link
+                    href={workSurfaceHref(cardDetail.clientId, {
+                      year: cardDetail.attributedYear,
+                      month: cardDetail.attributedMonth,
+                      stream: cardKind === 'bank_feed' ? 'bank_feeds' : 'reconciliations',
+                    })}
+                    data-testid="work-surface-link"
+                    className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-medium text-foreground transition-colors duration-150 hover:border-firm-action/60 hover:bg-firm-action-soft/40 hover:text-firm-action focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                    {cardKind === 'bank_feed'
+                      ? 'Open this week in the client’s Work tab'
+                      : 'Open this month in the client’s Work tab'}
+                  </Link>
+
                   <section aria-label="Bank SOPs" className="space-y-2">
                     <SectionHeading icon={BookOpen}>{heading}</SectionHeading>
                     {cardDetail.sops.length === 0 ? (
@@ -725,6 +856,103 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
                     }}
                   >
                     Complete card
+                  </Button>
+                </div>
+              </>
+            )
+          })()}
+
+        {/* Report cards: the DO surface (01:39:05) - the period's report file
+            upload (which completes the row server-side and lets the §6.3 sync
+            close the "Send Reports" task), the deep link into the client's
+            reports surface, and the plain complete/re-open arm. */}
+        {error == null && card?.kind === 'report' && reportDetail != null &&
+          (() => {
+            const meta = KIND_META.report
+            const reportAging = dueAging(reportDetail.dueDate, reportDetail.today)
+            const isDone = reportDetail.completedAt != null
+            return (
+              <>
+                <SheetHeader className="gap-2 border-b border-border p-5 pr-10">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold',
+                        KIND_STYLE.report.chip,
+                      )}
+                    >
+                      <meta.Icon className="h-3 w-3" aria-hidden />
+                      {meta.label}
+                    </span>
+                    {isDone && <WorkStatusBadge status="on_track" label="Completed" />}
+                    <span
+                      className={cn(
+                        'tnum rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                        KIND_STYLE.report.chip,
+                      )}
+                    >
+                      {periodLabel(reportDetail.attributedYear, reportDetail.attributedMonth)}
+                    </span>
+                  </div>
+                  <SheetTitle data-testid="task-drawer-title">{reportDetail.title}</SheetTitle>
+                  <SheetDescription asChild>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                      {reportDetail.clientName && (
+                        <span className="font-medium">{reportDetail.clientName}</span>
+                      )}
+                      <span
+                        className={cn(
+                          'tnum font-medium',
+                          reportAging.tone === 'overdue' && 'text-status-overdue',
+                          reportAging.tone === 'today' && 'text-status-due-soon',
+                          (reportAging.tone === 'future' || reportAging.tone === 'none') &&
+                            'text-muted-foreground',
+                        )}
+                      >
+                        {reportAging.label}
+                      </span>
+                    </div>
+                  </SheetDescription>
+                </SheetHeader>
+
+                <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                  <section aria-label="Report file" className="space-y-2" data-testid="drawer-report-section">
+                    <SectionHeading icon={FileText}>
+                      Report file - {monthLabel(reportDetail.attributedYear, reportDetail.attributedMonth)}
+                    </SectionHeading>
+                    <ReportUploadDropzone
+                      clientId={reportDetail.clientId}
+                      year={reportDetail.attributedYear}
+                      month={reportDetail.attributedMonth}
+                      uploadedFileName={reportDetail.documentFileName}
+                      onUploaded={handleReportUploaded}
+                    />
+                    <Link
+                      href={reportsSurfaceHref(reportDetail.clientId, {
+                        year: reportDetail.attributedYear,
+                        month: reportDetail.attributedMonth,
+                      })}
+                      data-testid="reports-surface-link"
+                      className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-xs font-medium text-firm-action transition-colors duration-150 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                      Open this client’s Reports tab
+                    </Link>
+                  </section>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 border-t border-border p-4">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={isDone ? 'outline' : 'default'}
+                    data-testid="drawer-complete-toggle"
+                    onClick={() => {
+                      onToggleComplete(!isDone)
+                      onOpenChange(false)
+                    }}
+                  >
+                    {isDone ? 'Re-open card' : 'Complete card'}
                   </Button>
                 </div>
               </>

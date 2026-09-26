@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { addTaskNoteAction, assignTaskAction, getTaskDetailAction, getWorkCardSopDetailAction, setSubtaskCompletedAction } from '@/server/actions/tasks'
+import { addTaskNoteAction, assignTaskAction, getReportCardDetailAction, getTaskDetailAction, getWorkCardSopDetailAction, setSubtaskCompletedAction } from '@/server/actions/tasks'
 import { getCloseStepsAction } from '@/server/actions/close-steps'
-import type { TaskDetail, WorkCardSopDetail } from '@/server/task-detail'
+import { uploadReportDocumentAction } from '@/server/actions/documents'
+import type { ReportCardDetail, TaskDetail, WorkCardSopDetail } from '@/server/task-detail'
 import type { CloseSteps } from '@/server/year-grid'
 
 import { TaskDrawer } from '../task-drawer'
@@ -22,6 +23,7 @@ beforeEach(() => {
 vi.mock('@/server/actions/tasks', () => ({
   getTaskDetailAction: vi.fn(),
   getWorkCardSopDetailAction: vi.fn(),
+  getReportCardDetailAction: vi.fn(),
   setSubtaskCompletedAction: vi.fn(),
   addTaskNoteAction: vi.fn(),
   assignTaskAction: vi.fn(),
@@ -30,6 +32,11 @@ vi.mock('@/server/actions/tasks', () => ({
 // The SOP staleness flag dynamic-imports the templates action module.
 vi.mock('@/server/actions/templates', () => ({
   flagSopStaleAction: vi.fn(),
+}))
+
+// The report dropzone dynamic-imports the documents action module.
+vi.mock('@/server/actions/documents', () => ({
+  uploadReportDocumentAction: vi.fn(),
 }))
 
 // The month-close context strip dynamic-imports this action.
@@ -48,10 +55,12 @@ import { flagSopStaleAction } from '@/server/actions/templates'
 
 const mockDetail = vi.mocked(getTaskDetailAction)
 const mockCardDetail = vi.mocked(getWorkCardSopDetailAction)
+const mockReportDetail = vi.mocked(getReportCardDetailAction)
 const mockToggle = vi.mocked(setSubtaskCompletedAction)
 const mockAddNote = vi.mocked(addTaskNoteAction)
 const mockAssign = vi.mocked(assignTaskAction)
 const mockFlagStale = vi.mocked(flagSopStaleAction)
+const mockReportUpload = vi.mocked(uploadReportDocumentAction)
 
 const TASK_CARD = { kind: 'task' as const, id: 42 }
 
@@ -103,7 +112,26 @@ function detail(partial?: Partial<TaskDetail>): TaskDetail {
       { id: 3, name: 'Jorge Medina', openCount: 12 },
       { id: 6, name: 'Sofia Lindqvist', openCount: 4 },
     ],
+    reportGate: null,
     canFlagStale: true,
+    today: '2026-08-15',
+    ...partial,
+  }
+}
+
+/** The report-card action-surface payload. */
+function reportDetail(partial?: Partial<ReportCardDetail>): ReportCardDetail {
+  return {
+    kind: 'report',
+    id: 5,
+    title: 'Monthly Financial Package',
+    clientId: 1,
+    clientName: 'Harborline Marine Supply',
+    dueDate: '2026-08-15',
+    attributedYear: 2026,
+    attributedMonth: 7,
+    completedAt: null,
+    documentFileName: null,
     today: '2026-08-15',
     ...partial,
   }
@@ -151,10 +179,18 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockDetail.mockResolvedValue({ ok: true, data: detail() })
   mockCardDetail.mockResolvedValue({ ok: true, data: cardDetail() })
+  mockReportDetail.mockResolvedValue({ ok: true, data: reportDetail() })
   mockToggle.mockResolvedValue({ ok: true, data: { subtaskId: 12, isCompleted: true } })
   mockAddNote.mockResolvedValue({ ok: true, data: { noteId: 99 } })
   mockAssign.mockResolvedValue({ ok: true, data: { assigneeId: 6 } })
   mockFlagStale.mockResolvedValue({ ok: true, data: {} as never })
+  mockReportUpload.mockResolvedValue({
+    ok: true,
+    data: {
+      document: { id: 900, fileName: 'july-package.pdf' } as never,
+      completion: { completedRowIds: [5], summaryTaskCompleted: true },
+    },
+  })
 })
 
 describe('TaskDrawer', () => {
@@ -449,5 +485,281 @@ describe('TaskDrawer month-close context', () => {
     expect(await screen.findByTestId('task-drawer-title')).toBeInTheDocument()
     expect(mockCloseSteps).not.toHaveBeenCalled()
     expect(screen.queryByTestId('drawer-close-steps')).not.toBeInTheDocument()
+  })
+
+  it('links every stepper segment to the client surface for the period', async () => {
+    mockCloseSteps.mockResolvedValue({ ok: true, data: closeStepsFixture() })
+    render(
+      <TaskDrawer
+        card={TASK_CARD}
+        open={true}
+        closeContext={{ clientId: 1, year: 2026, month: 8, title: 'Send Reports' }}
+        onOpenChange={() => {}}
+        onToggleComplete={() => {}}
+      />,
+    )
+    const strip = await screen.findByTestId('drawer-close-steps')
+    const hrefFor = (step: string) =>
+      within(strip.querySelector(`[data-step="${step}"]`) as HTMLElement)
+        .getByTestId('close-step-link')
+        .getAttribute('href')
+    expect(hrefFor('categorize')).toBe('/clients/1?tab=work&year=2026&month=8&stream=bank_feeds')
+    expect(hrefFor('reconcile')).toBe('/clients/1?tab=work&year=2026&month=8&stream=reconciliations')
+    expect(hrefFor('questions')).toBe('/clients/1?tab=work&year=2026&month=8&stream=tasks')
+    expect(hrefFor('reports')).toBe('/clients/1?tab=reports&year=2026&month=8')
+    // The link carries the state in its accessible name, not color alone.
+    expect(
+      within(strip.querySelector('[data-step="reports"]') as HTMLElement).getByTestId('close-step-link'),
+    ).toHaveAccessibleName('Send Reports: Not due yet - open this step')
+  })
+})
+
+describe('TaskDrawer report gate (the report-task DO surface, 01:39:05)', () => {
+  const SEND_REPORTS = { kind: 'task' as const, id: 42 }
+
+  function gatedDetail(partial?: Partial<TaskDetail>): TaskDetail {
+    return detail({
+      task: { ...detail().task, title: 'Send Reports' },
+      // No open checklist: only the document gate can hold the Complete arm.
+      subtasks: [],
+      reportGate: { year: 2026, month: 7, documentUploaded: false, fileName: null },
+      ...partial,
+    })
+  }
+
+  it('gates Complete behind the report file with explanatory copy', async () => {
+    mockDetail.mockResolvedValue({ ok: true, data: gatedDetail() })
+    render(
+      <TaskDrawer card={SEND_REPORTS} open={true} onOpenChange={() => {}} onToggleComplete={() => {}} />,
+    )
+    // The DO surface: the period's dropzone plus the deep link.
+    const section = await screen.findByTestId('drawer-report-section')
+    expect(section).toHaveTextContent('Report file - Jul 2026')
+    expect(screen.getByTestId('report-upload-dropzone')).toBeInTheDocument()
+    expect(screen.getByTestId('reports-surface-link')).toHaveAttribute(
+      'href',
+      '/clients/1?tab=reports&year=2026&month=7',
+    )
+    // The Complete arm explains the gate instead of silently failing.
+    const button = screen.getByTestId('drawer-complete-toggle')
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'Upload the report file first')
+    expect(screen.getByTestId('report-gate-note')).toHaveTextContent(
+      'Upload the report file to complete',
+    )
+    expect(screen.queryByTestId('subtask-gate-note')).not.toBeInTheDocument()
+  })
+
+  it('lifts the gate once the period has a report file on record', async () => {
+    mockDetail.mockResolvedValue({
+      ok: true,
+      data: gatedDetail({
+        reportGate: { year: 2026, month: 7, documentUploaded: true, fileName: 'july-package.pdf' },
+      }),
+    })
+    render(
+      <TaskDrawer card={SEND_REPORTS} open={true} onOpenChange={() => {}} onToggleComplete={() => {}} />,
+    )
+    await screen.findByTestId('drawer-report-section')
+    expect(screen.getByTestId('report-file-present')).toHaveTextContent('july-package.pdf')
+    expect(screen.queryByTestId('report-gate-note')).not.toBeInTheDocument()
+    expect(screen.getByTestId('drawer-complete-toggle')).toBeEnabled()
+  })
+
+  it('does not render the report section for non-report tasks', async () => {
+    renderDrawer()
+    await screen.findByTestId('task-drawer-title')
+    expect(screen.queryByTestId('drawer-report-section')).not.toBeInTheDocument()
+  })
+
+  it('uploads through the picker (keyboard path) and lets the server close the task', async () => {
+    const user = userEvent.setup()
+    mockDetail
+      .mockResolvedValueOnce({ ok: true, data: gatedDetail() })
+      .mockResolvedValue({
+        ok: true,
+        data: gatedDetail({
+          reportGate: { year: 2026, month: 7, documentUploaded: true, fileName: 'july-package.pdf' },
+        }),
+      })
+    const onServerCompleted = vi.fn()
+    render(
+      <TaskDrawer
+        card={SEND_REPORTS}
+        open={true}
+        onOpenChange={() => {}}
+        onToggleComplete={() => {}}
+        onServerCompleted={onServerCompleted}
+      />,
+    )
+
+    const dropzone = await screen.findByTestId('report-upload-dropzone')
+    // Keyboard contract: the zone is a real button (focus/Enter opens the
+    // picker) wrapping a labeled file input - upload is never drag-only.
+    expect(dropzone.tagName).toBe('BUTTON')
+    expect(dropzone).toHaveAccessibleName('Upload the Jul 2026 report file')
+    const input = screen.getByTestId('report-upload-input')
+    expect(input).toHaveAccessibleName('Choose the Jul 2026 report file')
+    const clickSpy = vi.spyOn(input as HTMLInputElement, 'click')
+    await user.click(dropzone)
+    expect(clickSpy).toHaveBeenCalled()
+
+    const file = new File(['%PDF-1.7'], 'july-package.pdf', { type: 'application/pdf' })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(mockReportUpload).toHaveBeenCalledTimes(1))
+    const formData = mockReportUpload.mock.calls[0][0] as FormData
+    expect(formData.get('clientId')).toBe('1')
+    expect(formData.get('year')).toBe('2026')
+    expect(formData.get('month')).toBe('7')
+    expect(formData.get('file')).toBe(file)
+
+    // summaryTaskCompleted -> the queue strips/celebrates without re-mutating,
+    // and the drawer re-reads so the gate renders lifted.
+    await waitFor(() => expect(onServerCompleted).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mockDetail).toHaveBeenCalledTimes(2))
+    expect(await screen.findByTestId('report-file-present')).toHaveTextContent('july-package.pdf')
+  })
+
+  it('keeps the task open when the upload lands but the sync did not close it', async () => {
+    mockDetail.mockResolvedValue({ ok: true, data: gatedDetail() })
+    mockReportUpload.mockResolvedValue({
+      ok: true,
+      data: {
+        document: { id: 901, fileName: 'partial.pdf' } as never,
+        completion: { completedRowIds: [], summaryTaskCompleted: false },
+      },
+    })
+    const onServerCompleted = vi.fn()
+    render(
+      <TaskDrawer
+        card={SEND_REPORTS}
+        open={true}
+        onOpenChange={() => {}}
+        onToggleComplete={() => {}}
+        onServerCompleted={onServerCompleted}
+      />,
+    )
+    const input = await screen.findByTestId('report-upload-input')
+    fireEvent.change(input, {
+      target: { files: [new File(['%PDF-1.7'], 'partial.pdf', { type: 'application/pdf' })] },
+    })
+    await waitFor(() => expect(mockReportUpload).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mockDetail).toHaveBeenCalledTimes(2))
+    expect(onServerCompleted).not.toHaveBeenCalled()
+  })
+})
+
+describe('TaskDrawer report cards (the upload DO surface)', () => {
+  const REPORT_CARD = { kind: 'report' as const, id: 5 }
+
+  function renderReportCard(onToggleComplete = vi.fn(), onServerCompleted = vi.fn()) {
+    render(
+      <TaskDrawer
+        card={REPORT_CARD}
+        open={true}
+        onOpenChange={() => {}}
+        onToggleComplete={onToggleComplete}
+        onServerCompleted={onServerCompleted}
+      />,
+    )
+    return { onToggleComplete, onServerCompleted }
+  }
+
+  it('renders the report header, dropzone, and the Reports-tab deep link', async () => {
+    renderReportCard()
+    expect(await screen.findByTestId('task-drawer-title')).toHaveTextContent(
+      'Monthly Financial Package',
+    )
+    expect(mockReportDetail).toHaveBeenCalledWith(5)
+    expect(mockDetail).not.toHaveBeenCalled()
+    expect(mockCardDetail).not.toHaveBeenCalled()
+    expect(screen.getByText('Harborline Marine Supply')).toBeInTheDocument()
+    expect(screen.getByText('Jul 2026')).toBeInTheDocument()
+    expect(screen.getByTestId('report-upload-dropzone')).toBeInTheDocument()
+    expect(screen.getByTestId('reports-surface-link')).toHaveAttribute(
+      'href',
+      '/clients/1?tab=reports&year=2026&month=7',
+    )
+    // No task-only chrome.
+    expect(screen.queryByText('Checklist')).not.toBeInTheDocument()
+    expect(screen.queryByText('Notes')).not.toBeInTheDocument()
+  })
+
+  it('drops the file: the row completes server-side and the queue is told', async () => {
+    const { onServerCompleted } = renderReportCard()
+    const dropzone = await screen.findByTestId('report-upload-dropzone')
+    const file = new File(['%PDF-1.7'], 'july-package.pdf', { type: 'application/pdf' })
+    fireEvent.drop(dropzone, { dataTransfer: { files: [file] } })
+
+    await waitFor(() => expect(mockReportUpload).toHaveBeenCalledTimes(1))
+    // This card's row is in the completed set -> strip + celebrate via the queue.
+    await waitFor(() => expect(onServerCompleted).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mockReportDetail).toHaveBeenCalledTimes(2))
+  })
+
+  it('shows the file of record and the re-open arm for a completed report', async () => {
+    mockReportDetail.mockResolvedValue({
+      ok: true,
+      data: reportDetail({
+        completedAt: '2026-08-12T18:00:00.000Z',
+        documentFileName: 'july-package.pdf',
+      }),
+    })
+    const { onToggleComplete } = renderReportCard()
+    expect(await screen.findByTestId('report-file-present')).toHaveTextContent('july-package.pdf')
+    const button = screen.getByTestId('drawer-complete-toggle')
+    expect(button).toHaveTextContent('Re-open card')
+    const user = userEvent.setup()
+    await user.click(button)
+    expect(onToggleComplete).toHaveBeenCalledWith(false)
+  })
+
+  it('completes an open report card through the queue mutation', async () => {
+    const { onToggleComplete } = renderReportCard()
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('drawer-complete-toggle'))
+    expect(onToggleComplete).toHaveBeenCalledWith(true)
+  })
+})
+
+describe('TaskDrawer feed/recon deep links (01:39:05)', () => {
+  it('bank-feed cards link to the card’s week in the client Work tab', async () => {
+    render(
+      <TaskDrawer
+        card={{ kind: 'bank_feed', id: 7 }}
+        open={true}
+        onOpenChange={() => {}}
+        onToggleComplete={() => {}}
+      />,
+    )
+    expect(await screen.findByTestId('task-drawer-title')).toBeInTheDocument()
+    expect(screen.getByTestId('work-surface-link')).toHaveAttribute(
+      'href',
+      '/clients/1?tab=work&year=2026&month=8&stream=bank_feeds',
+    )
+    expect(screen.getByTestId('work-surface-link')).toHaveTextContent(
+      'Open this week in the client’s Work tab',
+    )
+  })
+
+  it('reconciliation cards link to the card’s month in the client Work tab', async () => {
+    mockCardDetail.mockResolvedValue({
+      ok: true,
+      data: cardDetail({ kind: 'reconciliation', id: 9, title: 'Reconcile Operating Checking' }),
+    })
+    render(
+      <TaskDrawer
+        card={{ kind: 'reconciliation', id: 9 }}
+        open={true}
+        onOpenChange={() => {}}
+        onToggleComplete={() => {}}
+      />,
+    )
+    expect(await screen.findByTestId('task-drawer-title')).toBeInTheDocument()
+    expect(screen.getByTestId('work-surface-link')).toHaveAttribute(
+      'href',
+      '/clients/1?tab=work&year=2026&month=8&stream=reconciliations',
+    )
   })
 })

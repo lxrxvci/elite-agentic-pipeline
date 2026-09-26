@@ -5,7 +5,7 @@ import { DoorOpen, FolderOpen, KeyRound, Landmark, Mail, ReceiptText, Repeat, Sc
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { ClientBilling, ClientDetail, ClientWork } from '@/server/clients'
-import type { ClientYearGrid } from '@/server/year-grid'
+import type { ClientYearGrid, YearGridStream } from '@/server/year-grid'
 
 import { BillingPanel, type ClientInvoiceTimelineItem } from './billing-panel'
 import { ClientWorkTab } from './client-work-tab'
@@ -47,8 +47,13 @@ interface ClientDetailTabsProps {
   bookkeepers?: StaffOption[]
   /** Full billing timeline (C16) for the Billing tab (owner/admin only). */
   clientInvoices?: ClientInvoiceTimelineItem[]
-  /** Deep-linkable tab (e.g. ?tab=billing for screenshots). */
+  /** Deep-linkable tab (e.g. ?tab=billing for screenshots; ?tab=reports
+      aliases to the Work tab's reports stream). */
   defaultTab?: string
+  /** Work tab deep-link seeds: drill the grid into one stream and/or anchor
+      the close stepper on one month (drawer "finish it" links). */
+  workInitialStream?: YearGridStream | null
+  workInitialMonth?: number | null
   /** Server-composed Documents tab panel. */
   documentsPanel?: ReactNode
   /** Server-composed Statements tab panel. */
@@ -75,7 +80,7 @@ interface ClientDetailTabsProps {
   missingCredentials?: number
 }
 
-export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel, correspondencePanel, unreadCorrespondence = 0, credentialsPanel, missingCredentials = 0 }: ClientDetailTabsProps) {
+export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, workInitialStream = null, workInitialMonth = null, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel, correspondencePanel, unreadCorrespondence = 0, credentialsPanel, missingCredentials = 0 }: ClientDetailTabsProps) {
   /* Segmented-pill tab strip (DESIGN-FRESHBOOKS §1): the active tab is the
      brand pill (bg-primary/text-primary-foreground keeps AA in both themes);
      icons inherit currentColor, so they follow the pill for free. */
@@ -172,6 +177,8 @@ export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yea
           grid={yearGrid}
           prevYearHref={yearGridPrevHref}
           nextYearHref={yearGridNextHref}
+          initialStream={workInitialStream}
+          initialMonth={workInitialMonth}
         />
       </TabsContent>
       <TabsContent value="recurring" className="mt-4">

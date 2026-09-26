@@ -1,11 +1,12 @@
 import { and, asc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
-import { formatLocalDate, type LocalDate } from "@firmos/domain";
+import { formatLocalDate, isReportTaskName, workPeriodForDue, workPeriodForRow, type LocalDate } from "@firmos/domain";
 
 import { db } from "@/db";
 import {
   accountReconciliations,
   accounts,
   clientManualEntries,
+  clientReports,
   clients,
   institutions,
   recurringTaskSopLinks,
@@ -22,6 +23,7 @@ import { normalizeInstitutionKey } from "@/shared/lib/institution-key";
 import { logEvent } from "./audit";
 import { getStaffOpenWorkCounts } from "./capacity";
 import { localToday } from "./dates";
+import { getDocumentById, latestReportDocument } from "./documents";
 import { institutionNameByKey } from "./institutions";
 import { listInstitutionKeyedSops, matchInstitutionSops, type SopTemplateRow } from "./templates";
 
@@ -44,6 +46,11 @@ import { listInstitutionKeyedSops, matchInstitutionSops, type SopTemplateRow } f
  * concrete SOP↔work linkage for TASK cards stays the recurring_task_sop_links
  * bridge; feed/recon cards never need per-card rows because the match is a
  * pure function of the account's bank.
+ *
+ * The action-surface wave (01:39:05): getTaskDetail also mirrors the §6.3
+ * report gate (reportGate) so the drawer's Complete arm can explain itself,
+ * and getReportCardDetail is the report-kind card's own light read - the
+ * row state plus the period's report file, nothing else.
  */
 
 /** Manager+ may flag a SOP stale from the drawer (role or the SOP edit flag). */
@@ -127,6 +134,17 @@ export interface TaskDetail {
   /** E13: every active staff member with their open-work count, for the
    *  assign select. One batched read (capacity.getStaffOpenWorkCounts). */
   assignableStaff: TaskDetailAssignableStaff[];
+  /** §6.3 report gate, mirrored for the drawer: set when the task is a report
+   *  task ("Send Reports" / "Prepare …") with a client - the Complete action
+   *  is document-gated, so the drawer surfaces the upload as the DO path.
+   *  documentUploaded/fileName come from the same documents read the gate
+   *  uses; the period mirrors completeTask's derivation exactly. */
+  reportGate: {
+    year: number;
+    month: number;
+    documentUploaded: boolean;
+    fileName: string | null;
+  } | null;
   /** I5: manager+ sees the flag-stale action on each SOP card. */
   canFlagStale: boolean;
   /** Firm-local today, ISO-local - aging math never uses the client clock. */
@@ -235,6 +253,30 @@ export async function getTaskDetail(taskId: number, today: LocalDate = localToda
           .orderBy(asc(clientManualEntries.position), asc(clientManualEntries.id))
       : [];
 
+  // §6.3 report gate mirror: the same period derivation completeTask uses
+  // (stored period, then due-date derivation, then the current work period).
+  let reportGate: TaskDetail["reportGate"] = null;
+  if (task.clientId != null && isReportTaskName(task.title)) {
+    const period =
+      task.attributedYear != null && task.attributedMonth != null
+        ? { year: task.attributedYear, month: task.attributedMonth }
+        : task.dueDate != null
+          ? workPeriodForRow({
+              attributed_year: task.attributedYear,
+              attributed_month: task.attributedMonth,
+              due_date: task.dueDate,
+              title: task.title,
+            })
+          : workPeriodForDue(today);
+    const doc = await latestReportDocument(task.clientId, period);
+    reportGate = {
+      year: period.year,
+      month: period.month,
+      documentUploaded: doc != null,
+      fileName: doc?.fileName ?? null,
+    };
+  }
+
   return {
     task: {
       id: task.id,
@@ -278,6 +320,7 @@ export async function getTaskDetail(taskId: number, today: LocalDate = localToda
       name: w.name,
       openCount: w.openCount,
     })),
+    reportGate,
     canFlagStale: canFlagSopStale(user),
     today: formatLocalDate(today),
   };
@@ -419,6 +462,65 @@ export async function getWorkCardSopDetail(
     hasInstitution: displayByKey.size > 0,
     sops: await toTaskDetailSops(matched),
     canFlagStale: canFlagSopStale(user),
+    today: formatLocalDate(today),
+  };
+}
+
+// ── Report card drawer read (the DO surface for report-kind cards) ────────
+
+export interface ReportCardDetail {
+  kind: "report";
+  id: number;
+  /** The report definition name ("Monthly Financial Package"). */
+  title: string;
+  clientId: number;
+  clientName: string | null;
+  dueDate: string | null;
+  attributedYear: number;
+  attributedMonth: number;
+  completedAt: string | null;
+  /** The period's current report file - the row's linked document wins, else
+      the newest doc_type='report' for the period (what the §6.3 gate reads). */
+  documentFileName: string | null;
+  today: string;
+}
+
+/**
+ * The drawer's report-card read: one client_reports row plus the period's
+ * report file state. No SOPs, no checklist - the card's work IS the upload,
+ * so the read is exactly what the action surface needs.
+ */
+export async function getReportCardDetail(
+  reportId: number,
+  today: LocalDate = localToday(),
+): Promise<ReportCardDetail> {
+  await requireStaff();
+
+  const [row] = await db.select().from(clientReports).where(eq(clientReports.id, reportId)).limit(1);
+  if (!row) throw new TaskDetailError(404, `Report ${reportId} not found`);
+
+  const [clientRow, linkedDoc, periodDoc] = await Promise.all([
+    db
+      .select({ legalName: clients.legalName, dbaName: clients.dbaName })
+      .from(clients)
+      .where(eq(clients.id, row.clientId))
+      .limit(1)
+      .then((r) => r[0]),
+    row.documentId != null ? getDocumentById(row.documentId) : Promise.resolve(null),
+    latestReportDocument(row.clientId, { year: row.attributedYear, month: row.attributedMonth }),
+  ]);
+
+  return {
+    kind: "report",
+    id: row.id,
+    title: row.name,
+    clientId: row.clientId,
+    clientName: clientRow ? (clientRow.dbaName ?? clientRow.legalName) : null,
+    dueDate: row.dueDate,
+    attributedYear: row.attributedYear,
+    attributedMonth: row.attributedMonth,
+    completedAt: row.completedAt?.toISOString() ?? null,
+    documentFileName: linkedDoc?.fileName ?? periodDoc?.fileName ?? null,
     today: formatLocalDate(today),
   };
 }

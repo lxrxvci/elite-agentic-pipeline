@@ -5,7 +5,9 @@ import { db } from "@/db";
 import {
   accounts,
   clientManualEntries,
+  clientReports,
   clients,
+  documents,
   recurringTaskSopLinks,
   recurringTasks,
   sopTemplates,
@@ -14,7 +16,7 @@ import {
   users,
 } from "@/db/schema";
 import { seedDatabase } from "@/server/seed";
-import { addTaskNote, getTaskDetail, setSubtaskCompleted } from "@/server/task-detail";
+import { addTaskNote, getReportCardDetail, getTaskDetail, setSubtaskCompleted } from "@/server/task-detail";
 import {
   applySopToClient,
   autoLinkInstitutionSops,
@@ -281,5 +283,98 @@ describe.skipIf(!reachable)("task detail engine + SOP institution auto-linking",
       .from(recurringTaskSopLinks)
       .where(eq(recurringTaskSopLinks.sopTemplateId, sop.id));
     expect(links.length).toBe(0);
+  });
+
+  // The drawer's report flow (01:39:05): report tasks carry the §6.3 gate
+  // state so Complete can explain "upload the report file"; report cards get
+  // their own light read for the upload surface.
+  it("mirrors the report-document gate onto report tasks only", async () => {
+    const [sendReports] = await db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.clientId, harborlineId), eq(tasks.title, "Send Reports")))
+      .limit(1);
+    if (!sendReports) throw new Error("seeded Send Reports task not found");
+
+    // No report file yet: the gate is up, pointing at the task's period.
+    const gated = await getTaskDetail(sendReports.id, TEST_TODAY);
+    expect(gated.reportGate).not.toBeNull();
+    expect(gated.reportGate).toMatchObject({
+      year: sendReports.attributedYear,
+      month: sendReports.attributedMonth,
+      documentUploaded: false,
+      fileName: null,
+    });
+
+    await db.insert(documents).values({
+      clientId: harborlineId,
+      fileName: "financial-package.pdf",
+      storedPath: `harborline-marine-supply/Documents/Reports/${sendReports.attributedYear}/gate-pin.pdf`,
+      docType: "report",
+      attributedYear: sendReports.attributedYear,
+      attributedMonth: sendReports.attributedMonth,
+      uploadedById: theoId,
+    });
+
+    const lifted = await getTaskDetail(sendReports.id, TEST_TODAY);
+    expect(lifted.reportGate).toMatchObject({
+      documentUploaded: true,
+      fileName: "financial-package.pdf",
+    });
+
+    // A plain task never carries the gate.
+    const plain = await getTaskDetail(ruleTaskId, TEST_TODAY);
+    expect(plain.reportGate).toBeNull();
+  });
+
+  it("getReportCardDetail reads the row plus the period's report file", async () => {
+    const [report] = await db
+      .select()
+      .from(clientReports)
+      .where(eq(clientReports.clientId, harborlineId))
+      .limit(1);
+    if (!report) throw new Error("seeded report row not found");
+
+    const before = await getReportCardDetail(report.id, TEST_TODAY);
+    expect(before.kind).toBe("report");
+    expect(before.clientId).toBe(harborlineId);
+    expect(before.clientName).toBe("Harborline Marine Supply");
+    expect(before.attributedYear).toBe(report.attributedYear);
+    expect(before.attributedMonth).toBe(report.attributedMonth);
+    expect(before.completedAt).toBeNull();
+    expect(before.today).toBe("2026-08-15");
+
+    // The period read falls back to the newest report document; the row's
+    // own linked document wins once stamped.
+    const [a] = await db
+      .insert(documents)
+      .values({
+        clientId: harborlineId,
+        fileName: "period-package.pdf",
+        storedPath: `harborline-marine-supply/Documents/Reports/${report.attributedYear}/card-pin-a.pdf`,
+        docType: "report",
+        attributedYear: report.attributedYear,
+        attributedMonth: report.attributedMonth,
+        uploadedById: theoId,
+      })
+      .returning();
+    const [b] = await db
+      .insert(documents)
+      .values({
+        clientId: harborlineId,
+        fileName: "linked-package.pdf",
+        storedPath: `harborline-marine-supply/Documents/Reports/${report.attributedYear}/card-pin-b.pdf`,
+        docType: "report",
+        attributedYear: report.attributedYear,
+        attributedMonth: report.attributedMonth,
+        uploadedById: theoId,
+      })
+      .returning();
+    await db.update(clientReports).set({ documentId: a.id }).where(eq(clientReports.id, report.id));
+
+    const after = await getReportCardDetail(report.id, TEST_TODAY);
+    expect(after.documentFileName).toBe("period-package.pdf");
+    // The newest period doc would be b; the link still wins.
+    expect(b.id).toBeGreaterThan(a.id);
   });
 });

@@ -93,14 +93,22 @@ const STEP_STATE: Record<YearGridCellState, StepStateMeta> = {
  * the last segment chip and fills left to right as steps complete (color
  * transition only, 300ms, motion-safe gated). Shared by the Work tab panel
  * and the task drawer's in-context mini stepper.
+ *
+ * When `hrefs` are supplied (the drawer strip), each segment is also a deep
+ * link to the client's surface for that step and period - the state engine
+ * is untouched, only the affordance is added.
  */
 export function CloseStepSegments({
   steps,
   currentKey = null,
+  hrefs,
 }: {
   steps: CloseStep[]
   /** Drawer context: the step the open task belongs to gets a ring. */
   currentKey?: CloseStepKey | null
+  /** Step -> deep link (drawer). Omitted on the Work tab, where the stepper
+   *  IS the surface and links would only reload it. */
+  hrefs?: Partial<Record<CloseStepKey, string>>
 }) {
   const doneCount = steps.filter((s) => s.state === 'complete').length
   // Fill the gaps, not the chips: k done steps fill min(k, n-1) of n-1 gaps.
@@ -125,15 +133,10 @@ export function CloseStepSegments({
         const { Icon: KindIcon } = KIND_META[STEP_KIND[step.key]]
         const done = step.state === 'complete'
         const StateIcon = meta.Icon
-        return (
-          <li
-            key={step.key}
-            data-testid="close-step"
-            data-step={step.key}
-            data-state={step.state}
-            aria-label={`${step.label}: ${meta.line(step)}`}
-            className="relative flex min-w-0 flex-1 flex-col items-center gap-1 text-center"
-          >
+        const href = hrefs?.[step.key] ?? null
+        const stateLine = `${step.label}: ${meta.line(step)}`
+        const body = (
+          <>
             <span
               aria-hidden
               className={cn(
@@ -142,6 +145,7 @@ export function CloseStepSegments({
                   ? 'border-status-on-track/40 bg-status-on-track-bg text-status-on-track'
                   : cn('border-transparent', KIND_STYLE[STEP_KIND[step.key]].chip),
                 currentKey === step.key && 'ring-2 ring-ring/50',
+                href != null && 'group-hover:ring-1 group-hover:ring-ring/60',
               )}
             >
               {done ? (
@@ -150,13 +154,41 @@ export function CloseStepSegments({
                 <KindIcon className="h-3.5 w-3.5" />
               )}
             </span>
-            <span className="w-full truncate px-0.5 text-[11px] font-medium text-foreground">
+            <span
+              className={cn(
+                'w-full truncate px-0.5 text-[11px] font-medium text-foreground',
+                href != null && 'underline-offset-2 group-hover:underline',
+              )}
+            >
               {STEP_SHORT_LABEL[step.key]}
             </span>
             <span className={cn('tnum inline-flex items-center gap-1 text-[10px]', meta.fg)}>
               {StateIcon && <StateIcon className="h-2.5 w-2.5" aria-hidden />}
               {meta.line(step)}
             </span>
+          </>
+        )
+        return (
+          <li
+            key={step.key}
+            data-testid="close-step"
+            data-step={step.key}
+            data-state={step.state}
+            aria-label={href == null ? stateLine : undefined}
+            className="relative flex min-w-0 flex-1 flex-col items-center gap-1 text-center"
+          >
+            {href != null ? (
+              <Link
+                href={href}
+                data-testid="close-step-link"
+                aria-label={`${stateLine} - open this step`}
+                className="group flex w-full min-w-0 flex-col items-center gap-1 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {body}
+              </Link>
+            ) : (
+              body
+            )}
           </li>
         )
       })}
@@ -178,16 +210,28 @@ interface CloseStepperProps {
   grid: ClientYearGrid
   prevYearHref: string
   nextYearHref: string
+  /** Deep-link seed (drawer step links): anchor on the column covering this
+      calendar month instead of the current work period. */
+  initialMonth?: number | null
 }
 
-export function CloseStepper({ grid, prevYearHref, nextYearHref }: CloseStepperProps) {
-  const [selected, setSelected] = useState(() => defaultColumnIndex(grid))
+/** The column a deep link targets: the one whose covered months include it. */
+function seededColumnIndex(grid: ClientYearGrid, month: number | null): number | null {
+  if (month == null) return null
+  const index = grid.closeSteps.findIndex((cs) => cs.months.includes(month))
+  return index === -1 ? null : index
+}
+
+export function CloseStepper({ grid, prevYearHref, nextYearHref, initialMonth = null }: CloseStepperProps) {
+  const [selected, setSelected] = useState(
+    () => seededColumnIndex(grid, initialMonth) ?? defaultColumnIndex(grid),
+  )
   // Year navigation remounts the grid payload: re-anchor on the new year's
-  // current period instead of keeping a stale column index.
+  // deep-linked month when present, else the new year's current period.
   const [selectedYear, setSelectedYear] = useState(grid.year)
   if (selectedYear !== grid.year) {
     setSelectedYear(grid.year)
-    setSelected(defaultColumnIndex(grid))
+    setSelected(seededColumnIndex(grid, initialMonth) ?? defaultColumnIndex(grid))
   }
 
   const current: CloseSteps | undefined = grid.closeSteps[selected]

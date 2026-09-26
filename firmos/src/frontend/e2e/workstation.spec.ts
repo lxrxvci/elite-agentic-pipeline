@@ -134,3 +134,64 @@ test('workstation: bank-feed card opens the drawer with the Bank SOPs section', 
   await page.keyboard.press('Escape')
   await expect(drawer).toHaveCount(0)
 })
+
+/**
+ * The drawer action surface (owner walkthrough 01:39:05: "clicking it should
+ * take you to where you finish that task"). A "Send Reports" card's drawer is
+ * where the work finishes: the month-close stepper links out per step, the
+ * Complete arm explains its document gate, and dropping the period's report
+ * file completes the report rows, auto-closes the summary task through the
+ * §6.3 sync, and strips the card from the queue - no reload.
+ */
+test('workstation: the Send Reports drawer finishes the task via the report upload', async ({
+  page,
+}) => {
+  await page.goto('/workstation')
+  await page.getByTestId('view-tab-queue').click()
+  await page.getByTestId('work-day-chip-all').click()
+  await expect(page.getByTestId('work-card').first()).toBeVisible()
+
+  const target = page
+    .locator('[data-testid="work-card"][data-kind="task"]', { hasText: 'Send Reports' })
+    .first()
+  await expect(target).toBeVisible()
+  const key = await target.getAttribute('data-card-key')
+  const cardByKey = page.locator(`[data-card-key="${key}"]`)
+  await target.scrollIntoViewIfNeeded()
+  await target.click()
+
+  // The drawer: stepper segments are links, the dropzone is the DO surface,
+  // and the gated Complete arm explains itself instead of silently failing.
+  const drawer = page.getByTestId('task-drawer')
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByTestId('drawer-close-steps')).toBeVisible()
+  expect(await drawer.getByTestId('close-step-link').count()).toBe(4)
+  await expect(drawer.getByTestId('report-upload-dropzone')).toBeVisible()
+  await expect(drawer.getByTestId('drawer-complete-toggle')).toBeDisabled()
+  await expect(drawer.getByTestId('report-gate-note')).toHaveText(
+    'Upload the report file to complete',
+  )
+
+  // Drop the period's report file straight into the drawer (a real PDF - the
+  // upload validation sniffs magic bytes).
+  await drawer.getByTestId('report-upload-input').setInputFiles({
+    name: 'monthly-package.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7\ne2e report package\n'),
+  })
+
+  // The drawer reflects done: the file is on record and the arm flips to
+  // re-open (the upload completed the row and the sync closed the task)…
+  await expect(drawer.getByTestId('report-file-present')).toContainText('monthly-package.pdf')
+  await expect(drawer.getByTestId('drawer-complete-toggle')).toHaveText('Re-open task')
+  // …and the queue strips the card with the undo affordance, no reload.
+  await expect(
+    page.getByTestId('completed-strip').getByText('Completed - Send Reports'),
+  ).toBeVisible()
+  await expect(cardByKey).toHaveCount(0)
+
+  // Server truth: the upload is the completion - a reload keeps it done.
+  await page.waitForLoadState('networkidle')
+  await page.reload()
+  await expect(cardByKey).toHaveCount(0)
+})

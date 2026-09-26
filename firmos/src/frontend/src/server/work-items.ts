@@ -220,21 +220,12 @@ async function setTaskCompleted(taskId: number, completed: boolean, userId: numb
     .where(eq(tasks.id, taskId));
 }
 
-/**
- * Row → task sync (§6.3): when every row in (client, attributed month, kind)
- * is settled (complete OR waiting_on_client, domain isSettled), auto-complete
- * the month's summary task; when any row re-opens, re-open the task.
- */
-async function syncSummaryTask(
+/** The month's summary task for a periodic kind (title match, §6.3/§19). */
+async function findSummaryTask(
   kind: PeriodicKind,
   clientId: number,
   period: Month,
-  userId: number,
-  now: string,
-): Promise<void> {
-  const rows = await loadKindRows(kind, clientId, period);
-  const allSettled = rows.length > 0 && rows.every((r) => isSettled(rowLike(r)));
-
+): Promise<typeof tasks.$inferSelect | undefined> {
   const candidates = await db
     .select()
     .from(tasks)
@@ -247,16 +238,37 @@ async function syncSummaryTask(
         ne(tasks.status, "cancelled"),
       ),
     );
-  const task = candidates.find((t) => reverseSyncTargetForTaskTitle(t.title) === kind);
-  if (!task) return;
+  return candidates.find((t) => reverseSyncTargetForTaskTitle(t.title) === kind);
+}
+
+/**
+ * Row → task sync (§6.3): when every row in (client, attributed month, kind)
+ * is settled (complete OR waiting_on_client, domain isSettled), auto-complete
+ * the month's summary task; when any row re-opens, re-open the task.
+ * Returns true only when this call completed the task (the upload wiring
+ * surfaces that to the drawer so it can celebrate the auto-close).
+ */
+async function syncSummaryTask(
+  kind: PeriodicKind,
+  clientId: number,
+  period: Month,
+  userId: number,
+  now: string,
+): Promise<boolean> {
+  const rows = await loadKindRows(kind, clientId, period);
+  const allSettled = rows.length > 0 && rows.every((r) => isSettled(rowLike(r)));
+  const task = await findSummaryTask(kind, clientId, period);
+  if (!task) return false;
 
   if (allSettled && task.status !== "completed") {
     // §6.3 guard applies on every completion path for report tasks.
-    if (kind === "client_reports" && !(await reportDocumentExists(clientId, period))) return;
+    if (kind === "client_reports" && !(await reportDocumentExists(clientId, period))) return false;
     await setTaskCompleted(task.id, true, userId, now);
+    return true;
   } else if (!allSettled && task.status === "completed") {
     await setTaskCompleted(task.id, false, userId, now);
   }
+  return false;
 }
 
 // ── Single-row mutations ──────────────────────────────────────────────────
@@ -319,6 +331,84 @@ export async function setReportCompleted(
   const load = async () =>
     (await db.select().from(clientReports).where(eq(clientReports.id, id)).limit(1))[0];
   return (await setRowCompleted("client_reports", id, completed, userId, load)) as ReportRow;
+}
+
+// ── Report upload wiring (the drawer's DO surface) ────────────────────────
+
+export interface ReportUploadCompletion {
+  /** Report rows this upload completed (already-complete rows stay put). */
+  completedRowIds: number[];
+  /** True when the upload tipped the month: the "Send Reports" summary task
+      auto-completed through the §6.3 row → task sync. */
+  summaryTaskCompleted: boolean;
+}
+
+/**
+ * A report file landed for (client, period): link it to the period's report
+ * rows and complete the open ones (schema §7: a report row "completes by
+ * uploading the report file"). The summary task then closes through the
+ * EXISTING bidirectional sync - which now passes its §6.3 document guard
+ * because the upload already inserted the doc_type='report' row.
+ *
+ * The lane gate (D6/D8) is checked up front for every row we would complete,
+ * so a lane-locked month fails BEFORE any row moves; the document itself was
+ * already stored by the caller (uploads are never lane-gated).
+ */
+export async function completeReportRowsForDocument(
+  clientId: number,
+  period: Month,
+  documentId: number,
+  userId: number,
+): Promise<ReportUploadCompletion> {
+  const rows = (await loadKindRows("client_reports", clientId, period)) as ReportRow[];
+  const open = rows.filter((r) => r.completedAt == null);
+  for (const row of open) {
+    await assertBumperLaneAllows(userId, "report", row.id);
+  }
+
+  const now = nowIso();
+  const completedRowIds: number[] = [];
+  for (const row of rows) {
+    // Every row of the period points at the latest file; open rows complete
+    // through the same domain transition as the card completer (§30 conv. 3).
+    await db
+      .update(clientReports)
+      .set({ documentId, updatedAt: new Date() })
+      .where(eq(clientReports.id, row.id));
+    if (row.completedAt == null) {
+      await applyRowTransition("client_reports", row, true, userId, now);
+      completedRowIds.push(row.id);
+    }
+  }
+
+  let summaryTaskCompleted = await syncSummaryTask("client_reports", clientId, period, userId, now);
+
+  // Zero-row periods (the recurring "Send Reports" rule can outrun the
+  // client's report definitions - the task exists, no report rows do): the
+  // row → task sync deliberately requires rows, but the upload IS the
+  // explicit finish, so close the summary task through the task path itself
+  // (completeTask keeps every guard: the document check now passes, the B4
+  // checklist gate and the D6/D8 lane gate still apply).
+  if (!summaryTaskCompleted && rows.length === 0) {
+    const task = await findSummaryTask("client_reports", clientId, period);
+    if (task && task.status !== "completed") {
+      await completeTask(task.id, true, userId);
+      summaryTaskCompleted = true;
+    }
+  }
+
+  // D5 parity: finishing report work stops the user's report activity timer
+  // (completeTask already stopped the per-task timer in the zero-row path).
+  if (completedRowIds.length > 0 || summaryTaskCompleted) {
+    await stopActivityTimer(
+      userId,
+      KIND_ACTIVITY_TYPE.report as NonDayActivityType,
+      clientId,
+      new Date(now),
+    );
+  }
+
+  return { completedRowIds, summaryTaskCompleted };
 }
 
 // ── Task → row sync ───────────────────────────────────────────────────────

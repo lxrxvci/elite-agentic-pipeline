@@ -60,6 +60,18 @@ test('workstation has no serious/critical axe violations', async ({ page }) => {
   await expect(page.getByTestId('sop-empty')).toBeVisible()
   await expectAccessible(page, 'workstation (card drawer)')
   await page.keyboard.press('Escape')
+  // Let the sheet fully detach before the next click (its exit overlay
+  // intercepts pointer events while animating out).
+  await expect(page.getByTestId('task-drawer')).toHaveCount(0)
+
+  // The action-surface wave: a report card opens the upload DO surface -
+  // scan the dropzone, the deep link, and the complete arm.
+  const reportCard = page.locator('[data-testid="work-card"][data-kind="report"]').first()
+  await reportCard.click()
+  await expect(page.getByTestId('report-upload-dropzone')).toBeVisible()
+  await expect(page.getByTestId('reports-surface-link')).toBeVisible()
+  await expectAccessible(page, 'workstation (report drawer)')
+  await page.keyboard.press('Escape')
 })
 
 test('SOP templates admin has no serious/critical axe violations', async ({ page }) => {

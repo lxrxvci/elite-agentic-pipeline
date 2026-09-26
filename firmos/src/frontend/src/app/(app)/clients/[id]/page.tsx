@@ -63,12 +63,12 @@ export default async function ClientDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ tab?: string; year?: string }>
+  searchParams: Promise<{ tab?: string; year?: string; month?: string; stream?: string }>
 }) {
   const { id: rawId } = await params
   const id = Number(rawId)
   if (!Number.isInteger(id) || id <= 0) notFound()
-  const { tab, year: rawYear } = await searchParams
+  const { tab, year: rawYear, month: rawMonth, stream: rawStream } = await searchParams
 
   const user = await requireStaff()
   const canSeeBilling = user.normalizedRole === 'owner' || user.normalizedRole === 'admin'
@@ -360,7 +360,24 @@ export default async function ClientDetailPage({
     .filter((u) => u.isActive)
     .map((u) => ({ id: u.id, name: staffNameOf(u) }))
 
-  const deepTab = ['work', 'recurring', 'billing', 'tax', 'w9', 'offboarding', 'projects', 'properties', 'correspondence', 'credentials'].includes(tab ?? '') ? tab : undefined
+  // Deep links (drawer "go where you finish it" surfaces): `?tab=reports`
+  // aliases to the Work tab drilled into the reports stream (reports live in
+  // the work grid; there is no separate tab), and `month`/`stream` seed the
+  // Work tab's stepper column + list filter.
+  const parsedMonth = Number(rawMonth)
+  const workInitialMonth =
+    Number.isInteger(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12 ? parsedMonth : null
+  const streamParam = ['bank_feeds', 'reconciliations', 'reports', 'tasks'].includes(rawStream ?? '')
+    ? (rawStream as 'bank_feeds' | 'reconciliations' | 'reports' | 'tasks')
+    : null
+  const reportsAlias = tab === 'reports'
+  const deepTab = ['work', 'recurring', 'billing', 'tax', 'w9', 'offboarding', 'projects', 'properties', 'correspondence', 'credentials'].includes(tab ?? '')
+    ? tab
+    : reportsAlias
+      ? 'work'
+      : undefined
+  const workInitialStream =
+    deepTab === 'work' ? (reportsAlias ? ('reports' as const) : streamParam) : null
 
   // Hero stat row (DESIGN-FRESHBOOKS §5): computed from reads this page
   // already owns - the unified-queue slice and the owner/admin invoice list.
@@ -477,6 +494,8 @@ export default async function ClientDetailPage({
         yearGrid={yearGrid}
         yearGridPrevHref={`/clients/${id}?tab=work&year=${year - 1}`}
         yearGridNextHref={`/clients/${id}?tab=work&year=${year + 1}`}
+        workInitialStream={workInitialStream}
+        workInitialMonth={workInitialMonth}
         billing={billing}
         showBilling={canSeeBilling}
         canEditWorkDay={canEditWorkDay}

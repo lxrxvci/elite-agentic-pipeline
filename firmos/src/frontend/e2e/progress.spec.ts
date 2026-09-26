@@ -83,6 +83,16 @@ test('progress: bookkeepers still land on the workstation', async ({ page }) => 
   await page.waitForURL((url) => url.pathname === '/workstation', { timeout: 15_000 })
   await expect(page.getByRole('heading', { name: 'Workstation' })).toBeVisible()
 
+  // D3: the rollover dialog auto-opens on a bookkeeper's first landing of the
+  // day when overdue assigned work exists (jorge is seeded with plenty). It
+  // owns the pointer while open - dismiss it before navigating. The dialog is
+  // hydration-driven, so wait briefly for it; if it never opens, move on.
+  const rolloverLater = page.getByTestId('rollover-later')
+  await rolloverLater
+    .waitFor({ state: 'visible', timeout: 5_000 })
+    .then(() => rolloverLater.click())
+    .catch(() => {})
+
   // The board is one click away for every staff role.
   await page.getByRole('link', { name: 'Progress' }).click()
   await page.waitForURL((url) => url.pathname === '/progress', { timeout: 15_000 })

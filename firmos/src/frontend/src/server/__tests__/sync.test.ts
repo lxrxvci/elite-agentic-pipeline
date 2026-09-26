@@ -14,6 +14,7 @@ import { seedDatabase } from "@/server/seed";
 import { getCurrentUserId } from "@/server/session";
 import {
   ReportDocumentRequiredError,
+  completeReportRowsForDocument,
   completeTask,
   setBankFeedCompleted,
 } from "@/server/work-items";
@@ -184,5 +185,146 @@ describe.skipIf(!reachable)("bidirectional sync (§6.3)", () => {
       );
     expect(reports.length).toBeGreaterThan(0);
     for (const r of reports) expect(r.completedAt).not.toBeNull();
+  });
+
+  // The drawer's report flow (owner walkthrough 01:39:05): the upload wiring
+  // completes the period's open report rows, links the file, and closes the
+  // summary task through the existing row → task sync. Uses June so the
+  // July-scoped tests above stay untouched.
+  it("uploading the report document completes the period's rows and the 'Send Reports' task", async () => {
+    const JUNE = { year: 2026, month: 6 };
+    const juneTask = await db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.clientId, harborlineId),
+          eq(tasks.attributedYear, JUNE.year),
+          eq(tasks.attributedMonth, JUNE.month),
+          eq(tasks.title, "Send Reports"),
+        ),
+      )
+      .then((rows) => rows[0]);
+    expect(juneTask).toBeDefined();
+    expect(juneTask.status).not.toBe("completed");
+
+    const juneReports = await db
+      .select()
+      .from(clientReports)
+      .where(
+        and(
+          eq(clientReports.clientId, harborlineId),
+          eq(clientReports.attributedYear, JUNE.year),
+          eq(clientReports.attributedMonth, JUNE.month),
+        ),
+      );
+    expect(juneReports.length).toBeGreaterThan(0);
+    for (const r of juneReports) expect(r.completedAt).toBeNull();
+
+    // The report flow: the document row exists first (uploadReportDocument),
+    // then the wiring completes the rows it covers.
+    const [doc] = await db
+      .insert(documents)
+      .values({
+        clientId: harborlineId,
+        fileName: "june-financial-package.pdf",
+        storedPath: `harborline-marine-supply/Documents/Reports/${JUNE.year}/june-package.pdf`,
+        docType: "report",
+        attributedYear: JUNE.year,
+        attributedMonth: JUNE.month,
+        uploadedById: userId,
+      })
+      .returning();
+
+    const result = await completeReportRowsForDocument(harborlineId, JUNE, doc.id, userId);
+
+    const openIds = juneReports.map((r) => r.id).sort();
+    expect([...result.completedRowIds].sort()).toEqual(openIds);
+    expect(result.summaryTaskCompleted).toBe(true);
+
+    const after = await db
+      .select()
+      .from(clientReports)
+      .where(
+        and(
+          eq(clientReports.clientId, harborlineId),
+          eq(clientReports.attributedYear, JUNE.year),
+          eq(clientReports.attributedMonth, JUNE.month),
+        ),
+      );
+    for (const r of after) {
+      expect(r.completedAt).not.toBeNull();
+      expect(r.completedById).toBe(userId);
+      expect(r.documentId).toBe(doc.id);
+    }
+
+    const taskAfter = await db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, juneTask.id))
+      .then((rows) => rows[0]);
+    expect(taskAfter.status).toBe("completed");
+    expect(taskAfter.completedById).toBe(userId);
+
+    // Idempotent re-upload path: rows already complete -> nothing moves, no
+    // double completion of the task.
+    const again = await completeReportRowsForDocument(harborlineId, JUNE, doc.id, userId);
+    expect(again.completedRowIds).toEqual([]);
+    expect(again.summaryTaskCompleted).toBe(false);
+  });
+
+  // Zero-row periods are real (the recurring "Send Reports" rule outruns the
+  // client's report definitions): the seed's own 2025-12 instance has a
+  // summary task but no report rows. The row → task sync requires rows, so
+  // the upload wiring closes the row-less summary task through completeTask.
+  it("uploading closes a 'Send Reports' task whose period has no report rows", async () => {
+    const STALE = { year: 2025, month: 12 };
+    const task = await db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.clientId, harborlineId),
+          eq(tasks.title, "Send Reports"),
+          eq(tasks.attributedYear, STALE.year),
+          eq(tasks.attributedMonth, STALE.month),
+        ),
+      )
+      .then((rows) => rows[0]);
+    expect(task).toBeDefined();
+    expect(task.status).not.toBe("completed");
+
+    const rows = await db
+      .select()
+      .from(clientReports)
+      .where(
+        and(
+          eq(clientReports.clientId, harborlineId),
+          eq(clientReports.attributedYear, STALE.year),
+          eq(clientReports.attributedMonth, STALE.month),
+        ),
+      );
+    expect(rows).toHaveLength(0);
+
+    const [doc] = await db
+      .insert(documents)
+      .values({
+        clientId: harborlineId,
+        fileName: "december-package.pdf",
+        storedPath: `harborline-marine-supply/Documents/Reports/${STALE.year}/zero-row-pin.pdf`,
+        docType: "report",
+        attributedYear: STALE.year,
+        attributedMonth: STALE.month,
+        uploadedById: userId,
+      })
+      .returning();
+
+    const result = await completeReportRowsForDocument(harborlineId, STALE, doc.id, userId);
+    expect(result.completedRowIds).toEqual([]);
+    expect(result.summaryTaskCompleted).toBe(true);
+
+    const after = await db.select().from(tasks).where(eq(tasks.id, task.id)).then((r) => r[0]);
+    expect(after.status).toBe("completed");
+    expect(after.completedById).toBe(userId);
   });
 });

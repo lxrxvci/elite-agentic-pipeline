@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { ClientYearGrid, CloseStep } from '@/server/year-grid'
 
-import { CloseStepper, closeStepTitleKey } from '../close-stepper'
+import { CloseStepper, CloseStepSegments, closeStepTitleKey } from '../close-stepper'
 import { makeCloseStep, makeCloseSteps, makeYearGrid } from './fixtures'
 
 /**
@@ -130,5 +130,50 @@ describe('closeStepTitleKey', () => {
     expect(closeStepTitleKey('Send Reports')).toBe('reports')
     expect(closeStepTitleKey('Client Questions follow-up')).toBeNull()
     expect(closeStepTitleKey('Weekly deposit review')).toBeNull()
+  })
+})
+
+describe('CloseStepSegments deep links (drawer action surface)', () => {
+  const HREFS = {
+    categorize: '/clients/1?tab=work&year=2026&month=8&stream=bank_feeds',
+    reconcile: '/clients/1?tab=work&year=2026&month=8&stream=reconciliations',
+    questions: '/clients/1?tab=work&year=2026&month=8&stream=tasks',
+    reports: '/clients/1?tab=reports&year=2026&month=8',
+  } as const
+
+  it('renders each segment as a link when hrefs are supplied', () => {
+    render(<CloseStepSegments steps={makeCloseSteps(8).steps} hrefs={HREFS} />)
+    const links = screen.getAllByTestId('close-step-link')
+    expect(links).toHaveLength(4)
+    const byStep = (step: string) =>
+      screen
+        .getAllByTestId('close-step')
+        .find((el) => el.getAttribute('data-step') === step)!
+        .querySelector('[data-testid="close-step-link"]')
+    for (const [step, href] of Object.entries(HREFS)) {
+      expect(byStep(step)).toHaveAttribute('href', href)
+    }
+    // State stays readable in the accessible name; the li keeps the plain
+    // state label off when linked (the link owns the name).
+    expect(byStep('reports')).toHaveAccessibleName('Send Reports: Not due yet - open this step')
+  })
+
+  it('keeps the Work-tab stepper link-free when no hrefs are passed', () => {
+    renderStepper()
+    expect(screen.queryByTestId('close-step-link')).not.toBeInTheDocument()
+    // The plain state aria-labels stay on the segments themselves.
+    expect(screen.getByLabelText('Categorize Transactions: Not due yet')).toBeInTheDocument()
+  })
+
+  it('anchors the stepper on a deep-linked month', () => {
+    render(
+      <CloseStepper
+        grid={makeYearGrid()}
+        prevYearHref="/clients/1?tab=work&year=2025"
+        nextYearHref="/clients/1?tab=work&year=2027"
+        initialMonth={3}
+      />,
+    )
+    expect(screen.getByRole('heading', { name: 'Close Mar 2026' })).toBeInTheDocument()
   })
 })

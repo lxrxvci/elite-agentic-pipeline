@@ -103,6 +103,23 @@ export function generalRelPath(
   return [clientSlug(client), "Documents", folder, `${mmddyy(date)}.${ext}`].join("/");
 }
 
+/** §13 report tree: {client}/Documents/Reports/{year}/{MMDDYY}.{ext} - the year
+ *  subfolder mirrors the statement tree's per-period grouping. */
+export function reportRelPath(
+  client: Pick<ClientRow, "dbaName" | "legalName">,
+  period: Month,
+  uploadDate: LocalDate,
+  ext: string,
+): string {
+  return [
+    clientSlug(client),
+    "Documents",
+    "Reports",
+    String(period.year),
+    `${mmddyy(uploadDate)}.${ext}`,
+  ].join("/");
+}
+
 // ── Shared helpers ────────────────────────────────────────────────────────
 
 async function requireClient(clientId: number): Promise<ClientRow> {
@@ -413,6 +430,100 @@ export async function promoteToStatement(
   await unlinkIfUnreferenced(document.storedPath);
   await touchLastStatementDate(account, formatLocalDate(statementDate));
   return { document: row, period, storedPath: newPath, updatedInPlace: true };
+}
+
+// ── Report upload (§13: the report flow owns the protected Reports folder) ──
+
+export interface UploadReportInput {
+  clientId: number;
+  uploadedById: number;
+  fileName: string;
+  mimeType?: string | null;
+  bytes: Uint8Array;
+  /** The accounting period the report is FOR (the card/task's attributed month). */
+  year: number;
+  month: number;
+  today: LocalDate;
+}
+
+/**
+ * The report flow (owner walkthrough 01:39:05: "clicking it should take you to
+ * where you finish that task"): the drawer's dropzone lands the period's report
+ * file here. doc_type='report' with the attributed period stamped is exactly
+ * the row the §6.3 report-task gate (work-items.reportDocumentExists) reads,
+ * so a successful upload ungates the "Send Reports" task.
+ *
+ * Like general uploads, every upload inserts a NEW row (a period can have
+ * several report files - the monthly package plus a quarterly summary); the
+ * deterministic path is collision-suffixed rather than updated in place.
+ */
+export async function uploadReportDocument(input: UploadReportInput): Promise<DocumentRow> {
+  const validated = validateUpload(input.fileName, input.mimeType ?? null, input.bytes);
+  const client = await requireClient(input.clientId);
+  if (
+    !Number.isInteger(input.year) ||
+    input.year < 2000 ||
+    input.year > 2100 ||
+    !Number.isInteger(input.month) ||
+    input.month < 1 ||
+    input.month > 12
+  ) {
+    throw new DocumentError("The report period must be a valid year and month.");
+  }
+  const period: Month = { year: input.year, month: input.month };
+
+  const driver = await getStorageDriver();
+  let relPath = reportRelPath(client, period, input.today, validated.ext);
+  for (let n = 2; await pathTaken(relPath); n++) {
+    relPath = reportRelPath(client, period, input.today, validated.ext).replace(
+      /\.[^.]+$/,
+      `-${n}.${validated.ext}`,
+    );
+  }
+
+  await driver.put(relPath, validated.bytes);
+  try {
+    const [row] = await db
+      .insert(documents)
+      .values({
+        clientId: client.id,
+        uploadedById: input.uploadedById,
+        fileName: validated.fileName,
+        storedPath: relPath,
+        mimeType: validated.mimeType || null,
+        sizeBytes: validated.bytes.length,
+        docType: "report",
+        attributedYear: period.year,
+        attributedMonth: period.month,
+      })
+      .returning();
+    return row;
+  } catch (err) {
+    // Compensate: never leave an orphaned file behind a failed insert.
+    await driver.delete(relPath).catch(() => undefined);
+    throw err;
+  }
+}
+
+/** The newest report file for a client+period (the gate state + drawer read). */
+export async function latestReportDocument(
+  clientId: number,
+  period: Month,
+): Promise<Pick<DocumentRow, "id" | "fileName"> | null> {
+  const [row] = await db
+    .select({ id: documents.id, fileName: documents.fileName })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.clientId, clientId),
+        eq(documents.docType, "report"),
+        eq(documents.attributedYear, period.year),
+        eq(documents.attributedMonth, period.month),
+      ),
+    )
+    .orderBy(desc(documents.id))
+    .limit(1);
+  return row ?? null;
 }
 
 // ── Folder tree read (§7/§13) ─────────────────────────────────────────────
