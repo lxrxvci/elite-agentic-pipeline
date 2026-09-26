@@ -6,6 +6,7 @@ import { ArrowLeft } from 'lucide-react'
 import { formatLocalDate } from '@firmos/domain'
 
 import { ClientDetailTabs } from '@/components/clients/client-detail-tabs'
+import { ClientClockChip } from '@/components/clients/client-clock-chip'
 import { ClientRecurringPanel } from '@/components/clients/client-recurring-panel'
 import { cadenceTierLabel, fullDateLabel, moneyLabel } from '@/components/clients/format'
 import { ClientContactCard } from '@/components/clients/contact-card'
@@ -439,6 +440,8 @@ export default async function ClientDetailPage({
           </div>
 
           <div className="flex items-center gap-6">
+            {/* Clock-C1: one-tap client clock on the record header. */}
+            <ClientClockChip clientId={id} />
             <StaffAvatars manager={detail.manager} bookkeeper={detail.bookkeeper} />
             <dl className="flex gap-6 text-right">
               <div>

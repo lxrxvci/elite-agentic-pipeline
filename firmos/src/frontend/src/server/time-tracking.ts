@@ -1,6 +1,7 @@
-import { and, eq, gt, isNull, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
   generalTimeMinutes,
+  isBreakActivityType,
   isUnpaidActivityType,
   mergedMinutes,
   mergeIntervals,
@@ -20,14 +21,22 @@ import {
 } from "@/db/schema";
 
 import type { UserRole } from "./auth/guards";
+import {
+  parseTimeReference,
+  resolveTimeReferenceLabels,
+  timeReferenceKey,
+  type TimeReference,
+} from "./time-references";
 
 /**
  * Time tracking engine (HANDOFF §6.6, §17).
  *
- * Three independent timers OVERLAP BY DESIGN: the day clock-in (umbrella,
- * one at a time), the per-activity workstation timer (starting one
- * auto-closes the previous non-day entry), and the per-task timer
- * (tasks.clocked_in_at + task_time_entries, independent of the workstation).
+ * The day clock-in is the umbrella session (one at a time). Clock-C1 adds
+ * the SINGLE WORK-TIMER INVARIANT: at most one client/work timer runs per
+ * user. Starting an activity timer closes the previous activity AND every
+ * open task timer; starting a task timer closes every open task timer AND
+ * the open activity. The day umbrella and break/lunch activities are never
+ * closed by a switch (breaks are client-agnostic, not work).
  *
  * §29 fix by construction: NO total anywhere in this module sums raw
  * durations. Every report total comes from the @firmos/domain interval
@@ -104,15 +113,42 @@ async function closeWorkstationEntry(
     .where(eq(workstationTimeEntries.id, entryId));
 }
 
+/** A timer the single-work-timer invariant auto-stopped on a switch. */
+export interface StoppedTimer {
+  kind: "activity" | "task";
+  entryId: number;
+  activityType?: string;
+  taskId?: number;
+  taskTitle?: string;
+  clientId: number | null;
+  clientName: string | null;
+  /** Toast-ready label: the client name, else the task/activity name. */
+  label: string;
+}
+
+/** What a start switched away from; empty `stopped` = a clean start. */
+export interface TimerSwitch {
+  stopped: StoppedTimer[];
+}
+
+export interface ClosedTaskTimer {
+  id: number;
+  taskId: number;
+  taskTitle: string;
+  clientId: number | null;
+}
+
 /** §17: close every open task_time_entries row for the user and clear the
- *  owning tasks' clocked_in_at. Returns the closed entry ids. */
-async function closeOpenTaskTimers(userId: number, endAt: Date): Promise<number[]> {
+ *  owning tasks' clocked_in_at. Returns the closed entries (task title and
+ *  client resolved, so switch responses never re-query). */
+async function closeOpenTaskTimers(userId: number, endAt: Date): Promise<ClosedTaskTimer[]> {
   const open = await db
-    .select()
+    .select({ entry: taskTimeEntries, taskTitle: tasks.title, taskClientId: tasks.clientId })
     .from(taskTimeEntries)
+    .innerJoin(tasks, eq(taskTimeEntries.taskId, tasks.id))
     .where(and(eq(taskTimeEntries.userId, userId), isNull(taskTimeEntries.endedAt)));
-  const closedIds: number[] = [];
-  for (const entry of open) {
+  const closed: ClosedTaskTimer[] = [];
+  for (const { entry, taskTitle, taskClientId } of open) {
     await db
       .update(taskTimeEntries)
       .set({
@@ -120,9 +156,9 @@ async function closeOpenTaskTimers(userId: number, endAt: Date): Promise<number[
         durationMinutes: minutesBetween(entry.startedAt, endAt),
       })
       .where(eq(taskTimeEntries.id, entry.id));
-    closedIds.push(entry.id);
+    closed.push({ id: entry.id, taskId: entry.taskId, taskTitle, clientId: taskClientId });
   }
-  const taskIds = [...new Set(open.map((e) => e.taskId))];
+  const taskIds = [...new Set(open.map((r) => r.entry.taskId))];
   for (const taskId of taskIds) {
     // Only clear when no other open entry remains for the task (another
     // user's timer could still be running on it).
@@ -135,7 +171,7 @@ async function closeOpenTaskTimers(userId: number, endAt: Date): Promise<number[
       await db.update(tasks).set({ clockedInAt: null }).where(eq(tasks.id, taskId));
     }
   }
-  return closedIds;
+  return closed;
 }
 
 /**
@@ -153,9 +189,23 @@ async function closeDayCascade(
   for (const activity of activities) {
     await closeWorkstationEntry(activity.id, activity.startedAt, endAt, autoClosed);
   }
-  const closedTaskEntryIds = await closeOpenTaskTimers(userId, endAt);
+  const closedTaskTimers = await closeOpenTaskTimers(userId, endAt);
   await closeWorkstationEntry(day.id, day.startedAt, endAt, autoClosed);
-  return { closedActivityIds: activities.map((a) => a.id), closedTaskEntryIds };
+  return {
+    closedActivityIds: activities.map((a) => a.id),
+    closedTaskEntryIds: closedTaskTimers.map((t) => t.id),
+  };
+}
+
+/** Batch-resolve client names for switch reporting (one query, no N+1). */
+async function clientNameById(ids: readonly number[]): Promise<Map<number, string>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const rows = await db
+    .select({ id: clients.id, name: clients.legalName, dba: clients.dbaName })
+    .from(clients)
+    .where(inArray(clients.id, unique));
+  return new Map(rows.map((r) => [r.id, r.dba ?? r.name]));
 }
 
 // ── Day session (§6.6 "The umbrella session. One at a time.") ─────────────
@@ -200,32 +250,82 @@ export async function clockOut(userId: number, now: Date = new Date()): Promise<
 
 export type NonDayActivityType = Exclude<WorkstationEntry["activityType"], "day">;
 
+export interface StartActivityResult {
+  entry: WorkstationEntry;
+  /** What the single-work-timer invariant auto-stopped (empty = clean start). */
+  switch: TimerSwitch;
+}
+
+/**
+ * §17 activity timer, Clock-C1 client-first: every work (non-break) activity
+ * carries the client being worked - that is the whole feature. Break/lunch
+ * kinds stay client-agnostic. Starting any activity closes the previous
+ * activity AND every open task timer (one work timer per user); the day
+ * umbrella is untouched. `reference` stamps which concrete row the timer
+ * runs on (periodic card starts: bank_feed/reconciliation/report row id).
+ */
 export async function startActivity(
   userId: number,
   activityType: NonDayActivityType,
   clientId?: number,
   now: Date = new Date(),
-): Promise<WorkstationEntry> {
+  reference?: TimeReference | null,
+): Promise<StartActivityResult> {
   if ((activityType as string) === "day") {
     throw new TimeTrackingError(400, "Use clockIn for the day session");
   }
+  if (!isBreakActivityType(activityType) && clientId == null) {
+    throw new TimeTrackingError(400, "Pick a client before starting a work timer");
+  }
   const day = await openDayEntry(userId);
   if (!day) throw new TimeTrackingError(409, "Clock in before starting an activity");
+
+  const stopped: StoppedTimer[] = [];
   const previous = await openActivityEntries(userId);
+  const stoppedTaskTimers = await closeOpenTaskTimers(userId, now);
+  const names = await clientNameById([
+    ...previous.map((e) => e.clientId),
+    ...stoppedTaskTimers.map((t) => t.clientId),
+  ].filter((id): id is number => id != null));
   for (const entry of previous) {
     await closeWorkstationEntry(entry.id, entry.startedAt, now, false);
+    const clientName = entry.clientId != null ? (names.get(entry.clientId) ?? null) : null;
+    stopped.push({
+      kind: "activity",
+      entryId: entry.id,
+      activityType: entry.activityType,
+      clientId: entry.clientId,
+      clientName,
+      label: clientName ?? entry.activityType,
+    });
   }
+  for (const taskTimer of stoppedTaskTimers) {
+    const clientName = taskTimer.clientId != null ? (names.get(taskTimer.clientId) ?? null) : null;
+    stopped.push({
+      kind: "task",
+      entryId: taskTimer.id,
+      taskId: taskTimer.taskId,
+      taskTitle: taskTimer.taskTitle,
+      clientId: taskTimer.clientId,
+      clientName,
+      label: clientName ?? taskTimer.taskTitle,
+    });
+  }
+
+  const ref = reference ?? null;
   const [entry] = await db
     .insert(workstationTimeEntries)
     .values({
       userId,
       activityType,
       clientId: clientId ?? null,
+      referenceType: ref?.type ?? null,
+      referenceId: ref?.id ?? null,
       startedAt: now,
       lastActivityAt: now,
     })
     .returning();
-  return entry;
+  return { entry, switch: { stopped } };
 }
 
 /**
@@ -264,24 +364,71 @@ export async function heartbeat(userId: number, now: Date = new Date()): Promise
   return updated.length;
 }
 
-// ── Task timer (§6.6: independent of the workstation session, by design) ──
+// ── Task timer (§6.6 + Clock-C1: part of the one-work-timer invariant) ────
 
+export interface StartTaskTimerResult {
+  entry: typeof taskTimeEntries.$inferSelect;
+  /** What the single-work-timer invariant auto-stopped (empty = clean start). */
+  switch: TimerSwitch;
+}
+
+/**
+ * Task timers imply their client (tasks.client_id rides the join into every
+ * report - no separate stamping). Clock-C1: starting task B stops task A
+ * AND the open work activity, so a client can never be double-credited by
+ * overlapping timers. Break/lunch activities are NOT work and stay running;
+ * the day umbrella is untouched.
+ */
 export async function startTaskTimer(
   userId: number,
   taskId: number,
   now: Date = new Date(),
-): Promise<typeof taskTimeEntries.$inferSelect> {
+): Promise<StartTaskTimerResult> {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
   if (!task) throw new TimeTrackingError(404, `Task ${taskId} not found`);
   if (task.clockedInAt != null) {
     throw new TimeTrackingError(409, `Task ${taskId} already has a running timer`);
   }
+
+  const stopped: StoppedTimer[] = [];
+  const stoppedTaskTimers = await closeOpenTaskTimers(userId, now);
+  const activities = await openActivityEntries(userId);
+  const stoppedActivities = activities.filter((e) => !isBreakActivityType(e.activityType));
+  const names = await clientNameById([
+    ...stoppedTaskTimers.map((t) => t.clientId),
+    ...stoppedActivities.map((e) => e.clientId),
+  ].filter((id): id is number => id != null));
+  for (const taskTimer of stoppedTaskTimers) {
+    const clientName = taskTimer.clientId != null ? (names.get(taskTimer.clientId) ?? null) : null;
+    stopped.push({
+      kind: "task",
+      entryId: taskTimer.id,
+      taskId: taskTimer.taskId,
+      taskTitle: taskTimer.taskTitle,
+      clientId: taskTimer.clientId,
+      clientName,
+      label: clientName ?? taskTimer.taskTitle,
+    });
+  }
+  for (const activity of stoppedActivities) {
+    await closeWorkstationEntry(activity.id, activity.startedAt, now, false);
+    const clientName = activity.clientId != null ? (names.get(activity.clientId) ?? null) : null;
+    stopped.push({
+      kind: "activity",
+      entryId: activity.id,
+      activityType: activity.activityType,
+      clientId: activity.clientId,
+      clientName,
+      label: clientName ?? activity.activityType,
+    });
+  }
+
   const [entry] = await db
     .insert(taskTimeEntries)
     .values({ taskId, userId, startedAt: now })
     .returning();
   await db.update(tasks).set({ clockedInAt: now }).where(eq(tasks.id, taskId));
-  return entry;
+  return { entry, switch: { stopped } };
 }
 
 export interface StopTaskTimerResult {
@@ -346,6 +493,11 @@ export interface ClockStatus {
     entryId: number;
     activityType: string;
     clientId: number | null;
+    /** Clock-C1: resolved display name (dba ?? legal) - the widget never
+     *  renders a bare id. Null for breaks and legacy client-less rows. */
+    clientName: string | null;
+    referenceType: string | null;
+    referenceId: number | null;
     startedAt: string;
     elapsedMinutes: number;
   } | null;
@@ -353,6 +505,8 @@ export interface ClockStatus {
     entryId: number;
     taskId: number;
     taskTitle: string;
+    clientId: number | null;
+    clientName: string | null;
     startedAt: string;
     elapsedMinutes: number;
   }[];
@@ -364,9 +518,16 @@ export async function getClockStatus(userId: number, now: Date = new Date()): Pr
   const activities = await openActivityEntries(userId);
   const activity = activities[0];
   const openTask = await db
-    .select({ entry: taskTimeEntries, taskTitle: tasks.title })
+    .select({
+      entry: taskTimeEntries,
+      taskTitle: tasks.title,
+      clientId: tasks.clientId,
+      clientName: clients.legalName,
+      clientDba: clients.dbaName,
+    })
     .from(taskTimeEntries)
     .innerJoin(tasks, eq(taskTimeEntries.taskId, tasks.id))
+    .leftJoin(clients, eq(tasks.clientId, clients.id))
     .where(and(eq(taskTimeEntries.userId, userId), isNull(taskTimeEntries.endedAt)));
   const lastActivityCandidates = [day?.lastActivityAt, activity?.lastActivityAt].filter(
     (d): d is Date => d != null,
@@ -375,6 +536,15 @@ export async function getClockStatus(userId: number, now: Date = new Date()): Pr
     lastActivityCandidates.length > 0
       ? new Date(Math.max(...lastActivityCandidates.map((d) => d.getTime())))
       : null;
+  let activityClientName: string | null = null;
+  if (activity?.clientId != null) {
+    const [row] = await db
+      .select({ name: clients.legalName, dba: clients.dbaName })
+      .from(clients)
+      .where(eq(clients.id, activity.clientId))
+      .limit(1);
+    activityClientName = row ? (row.dba ?? row.name) : null;
+  }
   return {
     clockedIn: day != null,
     dayStartedAt: day?.startedAt.toISOString() ?? null,
@@ -384,6 +554,9 @@ export async function getClockStatus(userId: number, now: Date = new Date()): Pr
           entryId: activity.id,
           activityType: activity.activityType,
           clientId: activity.clientId,
+          clientName: activityClientName,
+          referenceType: activity.referenceType,
+          referenceId: activity.referenceId,
           startedAt: activity.startedAt.toISOString(),
           elapsedMinutes: minutesBetween(activity.startedAt, now),
         }
@@ -392,11 +565,95 @@ export async function getClockStatus(userId: number, now: Date = new Date()): Pr
       entryId: r.entry.id,
       taskId: r.entry.taskId,
       taskTitle: r.taskTitle,
+      clientId: r.clientId,
+      clientName: r.clientName != null ? (r.clientDba ?? r.clientName) : null,
       startedAt: r.entry.startedAt.toISOString(),
       elapsedMinutes: minutesBetween(r.entry.startedAt, now),
     })),
     lastActivityAt: lastActivityAt?.toISOString() ?? null,
   };
+}
+
+// ── Clock-C1 client picker options ────────────────────────────────────────
+
+export interface ClockClientOption {
+  id: number;
+  name: string;
+  /** The client's assigned work day of week is today (the ~8 daily clients). */
+  isToday: boolean;
+  /** ISO of the user's most recent timer for this client, when known. */
+  lastWorkedAt: string | null;
+}
+
+/**
+ * The widget's client step, recency-ordered: today's work-day clients first
+ * (alphabetical), then clients by the user's most recent timers, then every
+ * other active client (alphabetical) so the fuzzy search can reach anyone.
+ */
+export async function listClockClients(
+  userId: number,
+  weekday: number,
+): Promise<ClockClientOption[]> {
+  const [todayRows, recentRows, activeRows] = await Promise.all([
+    db
+      .select({ id: clients.id, name: clients.legalName, dba: clients.dbaName })
+      .from(clients)
+      .where(
+        and(
+          eq(clients.workDayOfWeek, weekday),
+          eq(clients.isActive, true),
+          eq(clients.isPaused, false),
+        ),
+      )
+      .orderBy(clients.legalName),
+    db
+      .select({
+        clientId: workstationTimeEntries.clientId,
+        lastWorkedAt: sql<string>`max(${workstationTimeEntries.startedAt})`,
+      })
+      .from(workstationTimeEntries)
+      .where(
+        and(
+          eq(workstationTimeEntries.userId, userId),
+          isNotNull(workstationTimeEntries.clientId),
+        ),
+      )
+      .groupBy(workstationTimeEntries.clientId)
+      .orderBy(desc(sql`max(${workstationTimeEntries.startedAt})`))
+      .limit(20),
+    db
+      .select({ id: clients.id, name: clients.legalName, dba: clients.dbaName })
+      .from(clients)
+      .where(and(eq(clients.isActive, true), eq(clients.isPaused, false)))
+      .orderBy(clients.legalName),
+  ]);
+
+  const options: ClockClientOption[] = [];
+  const seen = new Set<number>();
+  for (const row of todayRows) {
+    seen.add(row.id);
+    options.push({ id: row.id, name: row.dba ?? row.name, isToday: true, lastWorkedAt: null });
+  }
+  const recentClientIds = recentRows.map((r) => r.clientId).filter((id): id is number => id != null);
+  const recentNames = await clientNameById(recentClientIds);
+  for (const row of recentRows) {
+    if (row.clientId == null || seen.has(row.clientId)) continue;
+    const name = recentNames.get(row.clientId);
+    if (!name) continue;
+    seen.add(row.clientId);
+    options.push({
+      id: row.clientId,
+      name,
+      isToday: false,
+      lastWorkedAt: new Date(row.lastWorkedAt).toISOString(),
+    });
+  }
+  for (const row of activeRows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    options.push({ id: row.id, name: row.dba ?? row.name, isToday: false, lastWorkedAt: null });
+  }
+  return options;
 }
 
 // ── Stale cleanup job (§17 idle handling) ─────────────────────────────────
@@ -765,6 +1022,9 @@ export interface DailyWorkEntry {
   label: string;
   kind: "activity" | "task";
   clientName: string | null;
+  /** Clock-C1: resolved reference label ("Bank feed 01/05-01/11"), when the
+   *  entry stamps a concrete work row. */
+  referenceLabel: string | null;
 }
 
 export interface DailyHours {
@@ -843,9 +1103,16 @@ export async function getDailyHours(opts: {
     label: string;
     kind: "activity" | "task";
     clientName: string | null;
+    referenceLabel: string | null;
   }
   const workEntries: RawWorkEntry[] = [];
   const workIntervals: Interval[] = [];
+
+  // Clock-C1: batch-resolve reference labels for the stamped rows (one query
+  // per reference type present, never an N+1 per entry).
+  const referenceLabels = await resolveTimeReferenceLabels(
+    workstationRows.map((row) => parseTimeReference(row.entry.referenceType, row.entry.referenceId)),
+  );
 
   for (const row of workstationRows) {
     const interval = clip(row.entry.startedAt, row.entry.endedAt ?? to, from, to);
@@ -854,12 +1121,14 @@ export async function getDailyHours(opts: {
       dayIntervals.push(interval);
     } else {
       workIntervals.push(interval);
+      const ref = parseTimeReference(row.entry.referenceType, row.entry.referenceId);
       workEntries.push({
         startedAt: row.entry.startedAt,
         endedAt: row.entry.endedAt ?? to,
         label: row.entry.activityType,
         kind: "activity",
         clientName: row.clientName,
+        referenceLabel: ref ? (referenceLabels.get(timeReferenceKey(ref)) ?? null) : null,
       });
     }
   }
@@ -873,6 +1142,7 @@ export async function getDailyHours(opts: {
       label: row.taskTitle,
       kind: "task",
       clientName: row.clientName,
+      referenceLabel: null, // task rows resolve through the title already
     });
   }
 
@@ -900,6 +1170,7 @@ export async function getDailyHours(opts: {
             label: e.label,
             kind: e.kind,
             clientName: e.clientName,
+            referenceLabel: e.referenceLabel,
           };
         })
         .filter((e): e is DailyWorkEntry => e != null)

@@ -23,7 +23,12 @@ interface DailyHoursPanelProps {
 }
 
 function entryLabel(entry: DailyHours['entries'][number]): string {
-  const what = entry.kind === 'activity' ? activityLabel(entry.label) : entry.label
+  // Clock-C1: a stamped reference replaces the generic kind label with the
+  // concrete row ("Bank feed 01/05-01/11" instead of "Bank feeds").
+  const what =
+    entry.kind === 'activity'
+      ? (entry.referenceLabel ?? activityLabel(entry.label))
+      : entry.label
   return entry.clientName ? `${what} - ${entry.clientName}` : what
 }
 

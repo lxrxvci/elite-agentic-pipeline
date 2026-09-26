@@ -134,6 +134,13 @@
       "when": 1790338080256,
       "tag": "0018_thankful_ghost_rider",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790400158401,
+      "tag": "0019_lucky_norrin_radd",
+      "breakpoints": true
     }
   ]
 }

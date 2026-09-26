@@ -17,7 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { LANE_STAGE_LABEL } from '@firmos/domain'
+import { LANE_STAGE_LABEL, isBreakActivityType } from '@firmos/domain'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,7 +31,7 @@ import {
 } from '@/components/ui/select'
 import { completeWorkCard } from '@/server/actions/work'
 import type { QueueBucket, UnifiedQueue, WorkCard, WorkCardKind } from '@/server/queue'
-import { refreshClockStatus } from '@/shared/lib/clock-status'
+import { refreshClockStatus, useClockStatus } from '@/shared/lib/clock-status'
 import { weekdayLabel, weekdayOf } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
 
@@ -502,6 +502,15 @@ export function WorkstationQueue({
   // the client name, rows inside render embedded.
   const myDayGroups = useMemo(() => groupByClient(myDayCards), [myDayCards])
   const myDayFlat = useMemo(() => myDayGroups.flatMap((g) => g.cards), [myDayGroups])
+
+  // Clock-C1 (C2's always-on indicator): the client group whose timer is
+  // running gets a subtle on-the-clock dot in its My Day header. Breaks are
+  // client-agnostic, so a running break lights no group.
+  const clock = useClockStatus()
+  const onClockClientId =
+    clock?.currentActivity != null && !isBreakActivityType(clock.currentActivity.activityType)
+      ? clock.currentActivity.clientId
+      : null
 
   const flatVisible = view === 'my-day' ? myDayFlat : queueFlatVisible
 
@@ -1606,6 +1615,15 @@ export function WorkstationQueue({
               >
                 <h2 className="flex items-center justify-between gap-2 border-b border-border bg-muted/40 px-4 py-2">
                   <span className="flex min-w-0 items-center gap-2">
+                    {onClockClientId === group.clientId && (
+                      <span
+                        role="img"
+                        aria-label="On the clock"
+                        title="On the clock"
+                        data-testid="my-day-on-clock-dot"
+                        className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-status-on-track"
+                      />
+                    )}
                     <span className="truncate text-sm font-semibold text-foreground">
                       {group.clientName}
                     </span>

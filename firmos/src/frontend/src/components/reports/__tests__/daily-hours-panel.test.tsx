@@ -22,6 +22,7 @@ const days: DailyHours[] = [
         label: 'reconciliations',
         kind: 'activity',
         clientName: 'Harborline Marine Supply',
+        referenceLabel: null,
       },
       {
         startedAt: '2026-08-10T13:00:00',
@@ -29,6 +30,7 @@ const days: DailyHours[] = [
         label: 'Categorize Transactions',
         kind: 'task',
         clientName: 'Harborline Marine Supply',
+        referenceLabel: null,
       },
     ],
   },
@@ -42,6 +44,21 @@ const days: DailyHours[] = [
         label: 'bank_feeds',
         kind: 'activity',
         clientName: null,
+        referenceLabel: null,
+      },
+    ],
+  },
+  {
+    date: '2026-08-12',
+    totalMinutes: 55,
+    entries: [
+      {
+        startedAt: '2026-08-12T09:00:00',
+        endedAt: '2026-08-12T09:55:00',
+        label: 'bank_feeds',
+        kind: 'activity',
+        clientName: 'Blue Spruce Ventures',
+        referenceLabel: 'Bank feed 08/10-08/16',
       },
     ],
   },
@@ -59,7 +76,11 @@ describe('DailyHoursPanel', () => {
     expect(getDailyHoursAction).toHaveBeenCalledWith(7, '2026-08-01', '2026-08-15')
 
     const dayRows = screen.getAllByTestId('daily-hours-day')
-    expect(dayRows.map((r) => r.getAttribute('data-date'))).toEqual(['2026-08-10', '2026-08-11'])
+    expect(dayRows.map((r) => r.getAttribute('data-date'))).toEqual([
+      '2026-08-10',
+      '2026-08-11',
+      '2026-08-12',
+    ])
     expect(within(dayRows[0]).getByText(/Aug 10/)).toBeInTheDocument()
     expect(within(dayRows[0]).getByText('6.00 h')).toBeInTheDocument()
     expect(within(dayRows[1]).getByText('3.00 h')).toBeInTheDocument()
@@ -93,6 +114,19 @@ describe('DailyHoursPanel', () => {
     expect(
       await screen.findByText('Managers can only view their direct reports'),
     ).toBeInTheDocument()
+  })
+
+  it('renders the resolved reference label instead of the bare kind (Clock-C1)', async () => {
+    const user = userEvent.setup()
+    await renderPanel()
+
+    await user.click(screen.getByText(/Aug 12/))
+    const entries = screen.getAllByTestId('daily-hours-entry')
+    expect(entries).toHaveLength(1)
+    // "Blue Spruce - Bank feed 08/10-08/16" style: the concrete row, not
+    // the generic "Bank feeds" kind label.
+    expect(entries[0]).toHaveTextContent('Bank feed 08/10-08/16 - Blue Spruce Ventures')
+    expect(entries[0]).not.toHaveTextContent('Bank feeds -')
   })
 
   it('scales each day mini-bar against the biggest day in the range', async () => {

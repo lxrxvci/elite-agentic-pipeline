@@ -1,8 +1,9 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
+import { toast } from 'sonner'
 
-import type { ClockStatus } from '@/server/time-tracking'
+import type { ClockStatus, TimerSwitch } from '@/server/time-tracking'
 
 /**
  * Shared clock-status store (fixes the per-card N+1: every TaskTimerToggle
@@ -81,4 +82,15 @@ export function __resetClockStatusForTests(): void {
 /** Subscribe to the shared clock status; null until the first read lands. */
 export function useClockStatus(): ClockStatus | null {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+}
+
+/**
+ * Clock-C1 switch toast (single-work-timer invariant): a start that
+ * auto-stopped a previous timer says so - "Stopped Harborline Marine Supply
+ * and switched". Clean starts (nothing stopped) stay quiet.
+ */
+export function toastTimerSwitch(timerSwitch: TimerSwitch): void {
+  if (timerSwitch.stopped.length === 0) return
+  const names = [...new Set(timerSwitch.stopped.map((s) => s.clientName ?? s.taskTitle ?? s.label))]
+  toast.success(`Stopped ${names.join(' + ')} and switched`)
 }

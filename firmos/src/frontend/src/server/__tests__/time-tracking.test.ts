@@ -165,15 +165,24 @@ describe.skipIf(!reachable)("time tracking engine (HANDOFF §6.6, §17, §29)", 
     const t2 = await makeTask({ clientId: c.id, assigneeId: u.id });
 
     await clockIn(u.id, d(11, 9));
-    await startActivity(u.id, "bank_feeds", c.id, d(11, 9, 5));
+    const activity = await startActivity(u.id, "bank_feeds", c.id, d(11, 9, 5));
+    // Clock-C1: the task-timer start already closed the work activity, and
+    // starting t2 already stopped t1 (one work timer per user) - the cascade
+    // only has t2 and the day umbrella left to close.
     await startTaskTimer(u.id, t1.id, d(11, 9, 10));
     await startTaskTimer(u.id, t2.id, d(11, 9, 20));
 
     const result = await clockOut(u.id, d(11, 17));
     expect(result.clockedOut).toBe(true);
-    expect(result.closedActivityIds).toHaveLength(1);
-    expect(result.closedTaskEntryIds).toHaveLength(2);
+    expect(result.closedActivityIds).toHaveLength(0);
+    expect(result.closedTaskEntryIds).toHaveLength(1);
     expect(result.entry!.durationMinutes).toBe(480);
+
+    const [activityAfter] = await db
+      .select()
+      .from(workstationTimeEntries)
+      .where(eq(workstationTimeEntries.id, activity.entry.id));
+    expect(activityAfter.endedAt).toEqual(d(11, 9, 10));
 
     const open = await db
       .select()
@@ -185,14 +194,16 @@ describe.skipIf(!reachable)("time tracking engine (HANDOFF §6.6, §17, §29)", 
           eq(workstationTimeEntries.endedAt, d(11, 17)),
         ),
       );
-    expect(open).toHaveLength(2); // day + activity
+    expect(open).toHaveLength(1); // only the day umbrella
 
-    const openTaskEntries = await db
+    const taskEntries = await db
       .select()
       .from(taskTimeEntries)
-      .where(and(eq(taskTimeEntries.userId, u.id), eq(taskTimeEntries.endedAt, d(11, 17))));
-    expect(openTaskEntries).toHaveLength(2);
-    expect(openTaskEntries.find((e) => e.taskId === t1.id)!.durationMinutes).toBe(470);
+      .where(inArray(taskTimeEntries.taskId, [t1.id, t2.id]));
+    // t1 was stopped by the switch at 9:20 (10 minutes), t2 by the cascade.
+    expect(taskEntries.find((e) => e.taskId === t1.id)!.endedAt).toEqual(d(11, 9, 20));
+    expect(taskEntries.find((e) => e.taskId === t1.id)!.durationMinutes).toBe(10);
+    expect(taskEntries.find((e) => e.taskId === t2.id)!.endedAt).toEqual(d(11, 17));
 
     const [t1After] = await db.select().from(tasks).where(eq(tasks.id, t1.id));
     expect(t1After.clockedInAt).toBeNull();
@@ -205,19 +216,20 @@ describe.skipIf(!reachable)("time tracking engine (HANDOFF §6.6, §17, §29)", 
 
   it("starting a new activity auto-closes the previous non-day entry (§17)", async () => {
     const u = await makeUser("bookkeeper");
+    const c = await makeClient();
     await clockIn(u.id, d(12, 9));
-    const first = await startActivity(u.id, "bank_feeds", undefined, d(12, 9, 10));
-    const second = await startActivity(u.id, "reconciliations", undefined, d(12, 10, 30));
+    const first = await startActivity(u.id, "bank_feeds", c.id, d(12, 9, 10));
+    const second = await startActivity(u.id, "reconciliations", c.id, d(12, 10, 30));
 
     const [firstAfter] = await db
       .select()
       .from(workstationTimeEntries)
-      .where(eq(workstationTimeEntries.id, first.id));
+      .where(eq(workstationTimeEntries.id, first.entry.id));
     expect(firstAfter.endedAt).toEqual(d(12, 10, 30));
     expect(firstAfter.durationMinutes).toBe(80);
 
     const status = await getClockStatus(u.id, d(12, 11));
-    expect(status.currentActivity!.entryId).toBe(second.id);
+    expect(status.currentActivity!.entryId).toBe(second.entry.id);
     expect(status.currentActivity!.activityType).toBe("reconciliations");
 
     await clockOut(u.id, d(12, 17));
@@ -225,8 +237,9 @@ describe.skipIf(!reachable)("time tracking engine (HANDOFF §6.6, §17, §29)", 
 
   it("heartbeat updates last_activity_at on all open entries (§17)", async () => {
     const u = await makeUser("bookkeeper");
+    const c = await makeClient();
     await clockIn(u.id, d(13, 9));
-    await startActivity(u.id, "dashboard", undefined, d(13, 9, 5));
+    await startActivity(u.id, "dashboard", c.id, d(13, 9, 5));
 
     const touched = await heartbeat(u.id, d(13, 9, 20));
     expect(touched).toBe(2);

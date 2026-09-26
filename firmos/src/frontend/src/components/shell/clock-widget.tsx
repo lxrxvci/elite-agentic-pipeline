@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Check, ChevronDown, Clock, LogOut, TimerReset } from 'lucide-react'
+import { Check, ChevronDown, Clock, LogOut, Search, SquareCheck, TimerReset } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -17,27 +17,35 @@ import {
   clockOutAction,
   getClockStatusAction,
   heartbeatAction,
+  listClockClientsAction,
   startActivityAction,
+  type TimerStartData,
 } from '@/server/actions/time'
-import type { ClockStatus, NonDayActivityType } from '@/server/time-tracking'
+import type { ClockClientOption, ClockStatus, NonDayActivityType } from '@/server/time-tracking'
 import { ACTIVITY_META, ACTIVITY_TYPES, formatClock } from '@/components/reports/format'
+import { toastTimerSwitch } from '@/shared/lib/clock-status'
+import { isBreakActivityType } from '@firmos/domain'
 import { cn } from '@/shared/lib/utils'
 
 /**
- * Top-bar time clock (HANDOFF §6.6, §17). One widget, four truthful states:
+ * Top-bar time clock (HANDOFF §6.6, §17), Clock-C1 client-first: the widget
+ * is a CLIENT clock, not an activity-kind clock. Four truthful states:
  *
  *   loading  - first poll has not returned; renders the neutral stub.
  *   out      - "Not clocked in" + one-click Clock in.
- *   in       - green state dot, ticking day elapsed (tnum), current-activity
- *              chip with the 7-activity switcher, and Clock out (inline
- *              confirm when task timers are open - clock-out closes them).
+ *   in       - green state dot + ticking day total, then the client chip:
+ *              current client name + ticking timer elapsed + activity kind.
+ *              The chip opens the switcher: recency-ordered clients (today's
+ *              work-day clients first, then recent), fuzzy search, one-tap
+ *              resume; activity kinds start on the current/last client;
+ *              breaks stay client-agnostic. "s" quick-switches to the next
+ *              recent client (never while typing or inside a menu/dialog).
  *   autoOut  - a poll found the session closed without a local clock-out
  *              (the stale-cleanup auto_clock_out path); one-click re-clock.
  *
- * Truthfulness contract: every mutation re-reads getClockStatus from the
- * action result; the tick between polls is display-only and re-anchors to
- * dayStartedAt on every server read. Poll 30s, heartbeat 60s while clocked
- * in, display tick 1s.
+ * Every work start carries a client (server-enforced); a start that
+ * auto-stops the previous timer toasts "Stopped X and switched". Poll 30s,
+ * heartbeat 60s while clocked in, display tick 1s.
  */
 
 const POLL_MS = 30_000
@@ -46,18 +54,39 @@ const TICK_MS = 1_000
 
 type WidgetState = 'loading' | 'out' | 'in' | 'autoOut'
 
+const WORK_ACTIVITY_TYPES = ACTIVITY_TYPES.filter((t) => !isBreakActivityType(t))
+const BREAK_ACTIVITY_TYPES = ACTIVITY_TYPES.filter((t) => isBreakActivityType(t))
+
+/** Light fuzzy match: every query character in order, case-insensitive. */
+function fuzzyMatch(name: string, query: string): boolean {
+  const n = name.toLowerCase()
+  const q = query.toLowerCase()
+  if (n.includes(q)) return true
+  let i = 0
+  for (const ch of n) {
+    if (ch === q[i]) i += 1
+    if (i === q.length) return true
+  }
+  return q.length === 0
+}
+
 export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
   const [status, setStatus] = React.useState<ClockStatus | null>(null)
   const [autoOut, setAutoOut] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [confirmOut, setConfirmOut] = React.useState(false)
+  const [clients, setClients] = React.useState<ClockClientOption[] | null>(null)
+  const [clientQuery, setClientQuery] = React.useState('')
   const [, setTick] = React.useState(0)
 
   // True only for a clock-out the user initiated from this widget - any
   // other in -> out transition means the server closed the session (stale).
   const localClockOutRef = React.useRef(false)
   const clockedInRef = React.useRef(false)
+  // The kind a bare client switch resumes: the running work kind, else the
+  // last work kind seen this session, else "tasks".
+  const lastWorkKindRef = React.useRef<NonDayActivityType>('tasks')
 
   const applyStatus = React.useCallback((next: ClockStatus) => {
     if (clockedInRef.current && !next.clockedIn && !localClockOutRef.current) {
@@ -66,6 +95,10 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
     if (next.clockedIn) setAutoOut(false)
     clockedInRef.current = next.clockedIn
     localClockOutRef.current = false
+    const kind = next.currentActivity?.activityType
+    if (kind != null && !isBreakActivityType(kind)) {
+      lastWorkKindRef.current = kind as NonDayActivityType
+    }
     setStatus(next)
   }, [])
 
@@ -74,11 +107,17 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
     if (result.ok) applyStatus(result.data)
   }, [applyStatus])
 
+  const loadClients = React.useCallback(async () => {
+    const result = await listClockClientsAction()
+    if (result.ok) setClients(result.data)
+  }, [])
+
   React.useEffect(() => {
     void refresh()
+    void loadClients()
     const poll = setInterval(() => void refresh(), pollMs)
     return () => clearInterval(poll)
-  }, [refresh, pollMs])
+  }, [refresh, loadClients, pollMs])
 
   const clockedIn = status?.clockedIn === true && !autoOut
 
@@ -108,6 +147,88 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
       setBusy(false)
     }
   }
+
+  async function runStart(
+    action: () => Promise<{ ok: true; data: TimerStartData } | { ok: false; error: string }>,
+  ) {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await action()
+      if (result.ok) {
+        applyStatus(result.data.status)
+        toastTimerSwitch(result.data.switch)
+        setConfirmOut(false)
+        setClientQuery('')
+      } else {
+        setError(result.error)
+        await refresh()
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const activity = status?.currentActivity ?? null
+  const openTimers = status?.openTaskTimers ?? []
+  // The invariant leaves exactly one work timer: an activity, or - when a
+  // task timer holds the work clock - the first (only) task timer.
+  const taskTimer = activity == null ? (openTimers[0] ?? null) : null
+  const currentClientId = activity?.clientId ?? taskTimer?.clientId ?? null
+
+  /** The client a kind pick or client switch lands on: the running client,
+   *  else the most recently worked, else the first of today's clients. */
+  function defaultClientId(): number | null {
+    if (currentClientId != null) return currentClientId
+    const recent = clients?.find((c) => c.lastWorkedAt != null)
+    if (recent) return recent.id
+    return clients?.[0]?.id ?? null
+  }
+
+  function startClientTimer(client: ClockClientOption) {
+    if (busy || client.id === currentClientId) return
+    void runStart(() => startActivityAction(lastWorkKindRef.current, client.id))
+  }
+
+  function pickKind(type: NonDayActivityType) {
+    const clientId = defaultClientId()
+    if (clientId == null) {
+      setError('Pick a client first - work time always belongs to a client.')
+      return
+    }
+    void runStart(() => startActivityAction(type, clientId))
+  }
+
+  // "s" quick-switch: cycle today's + recent clients one tap at a time.
+  React.useEffect(() => {
+    if (!clockedIn) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 's' && e.key !== 'S') return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+      // Never fire inside an open menu/dialog (Radix renders these roles).
+      if (document.querySelector('[role="menu"], [role="dialog"]')) return
+      const recent = (clients ?? []).filter((c) => c.isToday || c.lastWorkedAt != null)
+      if (recent.length === 0) return
+      const index = recent.findIndex((c) => c.id === currentClientId)
+      const next = recent[(index + 1) % recent.length]
+      if (next.id === currentClientId) return
+      e.preventDefault()
+      startClientTimer(next)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clockedIn, clients, status, busy])
 
   const state: WidgetState = status == null ? 'loading' : autoOut ? 'autoOut' : status.clockedIn ? 'in' : 'out'
 
@@ -172,9 +293,23 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
     status?.dayStartedAt != null
       ? (Date.now() - new Date(status.dayStartedAt).getTime()) / 1000
       : (status?.dayElapsedMinutes ?? 0) * 60
-  const activity = status?.currentActivity ?? null
   const activityMeta = activity ? ACTIVITY_META[activity.activityType as keyof typeof ACTIVITY_META] : null
-  const openTimers = status?.openTaskTimers ?? []
+  const onBreak = activity != null && isBreakActivityType(activity.activityType)
+  const activitySeconds = activity
+    ? (Date.now() - new Date(activity.startedAt).getTime()) / 1000
+    : 0
+  const filteredClients =
+    clientQuery.trim().length > 0
+      ? (clients ?? []).filter((c) => fuzzyMatch(c.name, clientQuery.trim())).slice(0, 8)
+      : (clients ?? []).slice(0, 10)
+
+  const triggerLabel = activity
+    ? activity.clientName != null
+      ? `On the clock: ${activity.clientName}${activityMeta ? `, ${activityMeta.label}` : ''}`
+      : `On ${activityMeta?.label ?? 'break'}`
+    : taskTimer
+      ? `On the clock: ${taskTimer.clientName ?? 'client'}, task ${taskTimer.taskTitle}`
+      : 'Pick a client to start timing'
 
   return (
     <div
@@ -192,50 +327,139 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
         </span>
       </span>
 
-      <DropdownMenu onOpenChange={(open) => !open && setConfirmOut(false)}>
+      <DropdownMenu
+        onOpenChange={(open) => {
+          if (open) void loadClients()
+          else {
+            setConfirmOut(false)
+            setClientQuery('')
+          }
+        }}
+      >
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="flex h-full items-center gap-1.5 px-2.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={activityMeta ? `Current activity: ${activityMeta.label}` : 'Start an activity'}
+            className="flex h-full max-w-72 items-center gap-1.5 px-2.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={triggerLabel}
+            data-testid="clock-client"
+            data-on-break={onBreak || undefined}
           >
-            {activityMeta ? (
+            {activityMeta && activity ? (
               <>
-                <activityMeta.Icon aria-hidden className="h-3.5 w-3.5" />
-                <span>{activityMeta.label}</span>
+                <activityMeta.Icon aria-hidden className="h-3.5 w-3.5 shrink-0" />
+                {activity.clientName != null ? (
+                  <span className="truncate font-medium text-foreground" data-testid="clock-client-name">
+                    {activity.clientName}
+                  </span>
+                ) : null}
+                <span className={cn('shrink-0', activity.clientName != null && 'hidden sm:inline')}>
+                  {activity.clientName != null ? `· ${activityMeta.label}` : activityMeta.label}
+                </span>
+                <span className="tnum shrink-0 font-medium text-foreground" data-testid="clock-activity-elapsed">
+                  {formatClock(activitySeconds)}
+                </span>
+              </>
+            ) : taskTimer ? (
+              <>
+                {/* A task timer holds the work clock: client + task, ticking. */}
+                <SquareCheck aria-hidden className="h-3.5 w-3.5 shrink-0" />
+                {taskTimer.clientName != null ? (
+                  <span className="truncate font-medium text-foreground" data-testid="clock-client-name">
+                    {taskTimer.clientName}
+                  </span>
+                ) : null}
+                <span className="hidden shrink-0 truncate sm:inline" data-testid="clock-task-title">
+                  · {taskTimer.taskTitle}
+                </span>
+                <span className="tnum shrink-0 font-medium text-foreground" data-testid="clock-activity-elapsed">
+                  {formatClock(
+                    (Date.now() - new Date(taskTimer.startedAt).getTime()) / 1000,
+                  )}
+                </span>
               </>
             ) : (
-              <span>No activity</span>
+              <span>Pick a client</span>
             )}
-            <ChevronDown aria-hidden className="h-3 w-3" />
+            <ChevronDown aria-hidden className="h-3 w-3 shrink-0" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-60">
-          <DropdownMenuLabel>Activity timer</DropdownMenuLabel>
-          {ACTIVITY_TYPES.map((type) => {
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuLabel>Client timer</DropdownMenuLabel>
+          <div className="px-2 pb-1.5">
+            <div className="flex items-center gap-1.5 rounded-md border border-input px-2">
+              <Search aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <input
+                value={clientQuery}
+                onChange={(e) => setClientQuery(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+                placeholder="Search clients…"
+                aria-label="Search clients"
+                data-testid="clock-client-search"
+                className="h-7 w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+          </div>
+          {filteredClients.length === 0 ? (
+            <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
+              {clients == null ? 'Loading clients…' : 'No clients match.'}
+            </p>
+          ) : (
+            filteredClients.map((client) => {
+              const current = client.id === currentClientId
+              return (
+                <DropdownMenuItem
+                  key={client.id}
+                  disabled={busy || current}
+                  onSelect={() => startClientTimer(client)}
+                  className="gap-2"
+                  data-testid="clock-client-option"
+                  data-client-id={client.id}
+                >
+                  <span className="flex-1 truncate">{client.name}</span>
+                  {client.isToday && (
+                    <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      Today
+                    </span>
+                  )}
+                  {current && <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-status-on-track" />}
+                </DropdownMenuItem>
+              )
+            })
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Activity kind</DropdownMenuLabel>
+          {WORK_ACTIVITY_TYPES.map((type) => {
+            const meta = ACTIVITY_META[type]
+            const current = !onBreak && activity?.activityType === type
+            return (
+              <DropdownMenuItem
+                key={type}
+                disabled={busy || current}
+                onSelect={() => pickKind(type as NonDayActivityType)}
+                className="gap-2"
+              >
+                <meta.Icon aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="flex-1">{meta.label}</span>
+                {current && <Check aria-hidden className="h-3.5 w-3.5 text-status-on-track" />}
+              </DropdownMenuItem>
+            )
+          })}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Breaks and lunch</DropdownMenuLabel>
+          {BREAK_ACTIVITY_TYPES.map((type) => {
             const meta = ACTIVITY_META[type]
             const current = activity?.activityType === type
-            // F2: a separator before the break/lunch kinds keeps the work
-            // timers and the unpaid/paid break timers visually apart.
-            const firstBreak = type === 'break_paid'
             return (
-              <React.Fragment key={type}>
-                {firstBreak && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>Breaks and lunch</DropdownMenuLabel>
-                  </>
-                )}
-                <DropdownMenuItem
-                  disabled={busy || current}
-                  onSelect={() => void run(() => startActivityAction(type as NonDayActivityType))}
-                  className="gap-2"
-                >
-                  <meta.Icon aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="flex-1">{meta.label}</span>
-                  {current && <Check aria-hidden className="h-3.5 w-3.5 text-status-on-track" />}
-                </DropdownMenuItem>
-              </React.Fragment>
+              <DropdownMenuItem
+                key={type}
+                disabled={busy || current}
+                onSelect={() => void runStart(() => startActivityAction(type as NonDayActivityType))}
+                className="gap-2"
+              >
+                <meta.Icon aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="flex-1">{meta.label}</span>
+                {current && <Check aria-hidden className="h-3.5 w-3.5 text-status-on-track" />}
+              </DropdownMenuItem>
             )
           })}
           <DropdownMenuSeparator />
@@ -248,6 +472,7 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
                 {openTimers.map((t) => (
                   <p key={t.entryId} className="mt-0.5 truncate text-[11px] text-muted-foreground">
                     <span className="tnum">{formatClock(t.elapsedMinutes * 60)}</span> · {t.taskTitle}
+                    {t.clientName ? ` (${t.clientName})` : ''}
                   </p>
                 ))}
               </div>

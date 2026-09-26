@@ -3,6 +3,11 @@ import { alias } from "drizzle-orm/pg-core";
 
 import { db } from "@/db";
 import { clients, users, workstationTimeEditRequests, workstationTimeEntries } from "@/db/schema";
+import {
+  parseTimeReference,
+  resolveTimeReferenceLabels,
+  timeReferenceKey,
+} from "@/server/time-references";
 
 /**
  * Reports read-side queries that the engines do not cover (the engines own
@@ -15,6 +20,8 @@ export interface RecentTimeEntry {
   entryId: number;
   activityType: string;
   clientName: string | null;
+  /** Clock-C1: resolved reference label ("Bank feed 01/05-01/11"), when stamped. */
+  referenceLabel: string | null;
   startedAt: string;
   endedAt: string | null;
   durationMinutes: number | null;
@@ -28,6 +35,7 @@ export async function listRecentTimeEntries(userId: number, limit = 20): Promise
     .select({
       entry: workstationTimeEntries,
       clientName: clients.legalName,
+      clientDba: clients.dbaName,
     })
     .from(workstationTimeEntries)
     .leftJoin(clients, eq(workstationTimeEntries.clientId, clients.id))
@@ -46,16 +54,24 @@ export async function listRecentTimeEntries(userId: number, limit = 20): Promise
     if (!latestByEntry.has(r.timeEntryId)) latestByEntry.set(r.timeEntryId, r);
   }
 
-  return rows.map(({ entry, clientName }) => ({
-    entryId: entry.id,
-    activityType: entry.activityType,
-    clientName,
-    startedAt: entry.startedAt.toISOString(),
-    endedAt: entry.endedAt?.toISOString() ?? null,
-    durationMinutes: entry.durationMinutes,
-    autoClosed: entry.autoClosed,
-    editStatus: latestByEntry.get(entry.id)?.status ?? null,
-  }));
+  const referenceLabels = await resolveTimeReferenceLabels(
+    rows.map(({ entry }) => parseTimeReference(entry.referenceType, entry.referenceId)),
+  );
+
+  return rows.map(({ entry, clientName, clientDba }) => {
+    const ref = parseTimeReference(entry.referenceType, entry.referenceId);
+    return {
+      entryId: entry.id,
+      activityType: entry.activityType,
+      clientName: clientName != null ? (clientDba ?? clientName) : null,
+      referenceLabel: ref ? (referenceLabels.get(timeReferenceKey(ref)) ?? null) : null,
+      startedAt: entry.startedAt.toISOString(),
+      endedAt: entry.endedAt?.toISOString() ?? null,
+      durationMinutes: entry.durationMinutes,
+      autoClosed: entry.autoClosed,
+      editStatus: latestByEntry.get(entry.id)?.status ?? null,
+    };
+  });
 }
 
 /** Pending state for the My Hours page: the user's own open requests. */

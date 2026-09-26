@@ -6,7 +6,7 @@ import { BookOpen, Check, FileText, Landmark, Lock, RefreshCw, SquareCheck, Squa
 import { moneyLabel } from '@/components/clients/format'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { refreshClockStatus, useClockStatus } from '@/shared/lib/clock-status'
+import { refreshClockStatus, toastTimerSwitch, useClockStatus } from '@/shared/lib/clock-status'
 import { avatarStyle } from '@/shared/lib/avatar-hue'
 import { dayLabel, dueAging, periodLabel } from '@/shared/lib/date-display'
 import { cn } from '@/shared/lib/utils'
@@ -101,10 +101,15 @@ export function TaskTimerToggle({
     setBusy(true)
     try {
       const m = await import('@/server/actions/time')
-      const result = running ? await m.stopTaskTimerAction(taskId) : await m.startTaskTimerAction(taskId)
+      if (running) {
+        await m.stopTaskTimerAction(taskId)
+      } else {
+        const result = await m.startTaskTimerAction(taskId)
+        // Clock-C1: starting task B stops task A server-side - say so.
+        if (result.ok) toastTimerSwitch(result.data.switch)
+      }
       // Whether it applied or the server rejected it (409), resync everyone
       // from the shared store instead of a per-card status read.
-      void result
       await refreshClockStatus()
     } catch {
       // no server reach in tests; leave state as-is
@@ -171,7 +176,13 @@ export function CardTimerControl({
     !isTask &&
     clock?.currentActivity != null &&
     clock.currentActivity.activityType === activityType &&
-    (clock.currentActivity.clientId == null || clock.currentActivity.clientId === card.clientId)
+    // Clock-C1: a reference-stamped timer belongs to exactly this row; a
+    // plain client clock (widget-started, no reference) matches the client.
+    (clock.currentActivity.referenceId != null
+      ? clock.currentActivity.referenceId === card.id &&
+        clock.currentActivity.referenceType === card.kind
+      : clock.currentActivity.clientId == null ||
+        clock.currentActivity.clientId === card.clientId)
   const running = isTask ? taskTimer != null : activityRunning === true
   const startedAt = isTask ? taskTimer?.startedAt : running ? clock?.currentActivity?.startedAt : undefined
 
@@ -189,11 +200,21 @@ export function CardTimerControl({
     try {
       const m = await import('@/server/actions/time')
       if (isTask) {
-        if (running) await m.stopTaskTimerAction(card.id)
-        else await m.startTaskTimerAction(card.id)
+        if (running) {
+          await m.stopTaskTimerAction(card.id)
+        } else {
+          const result = await m.startTaskTimerAction(card.id)
+          if (result.ok) toastTimerSwitch(result.data.switch)
+        }
       } else if (activityType) {
-        if (running) await m.stopActivityAction(activityType, card.clientId)
-        else await m.startActivityAction(activityType, card.clientId)
+        if (running) {
+          await m.stopActivityAction(activityType, card.clientId)
+        } else {
+          // Clock-C1: stamp the periodic row the timer runs on, so hours
+          // views resolve "Bank feed 01/05-01/11" instead of the bare kind.
+          const result = await m.startActivityAction(activityType, card.clientId, card.kind, card.id)
+          if (result.ok) toastTimerSwitch(result.data.switch)
+        }
       }
       // Applied or rejected (409), resync everyone from the shared store.
       await refreshClockStatus()

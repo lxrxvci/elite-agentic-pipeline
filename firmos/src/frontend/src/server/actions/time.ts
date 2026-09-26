@@ -26,15 +26,19 @@ import {
   getDailyHours,
   getHoursReport,
   heartbeat,
+  listClockClients,
   startActivity,
   startTaskTimer,
   stopActivityTimer,
   stopTaskTimer,
+  type ClockClientOption,
   type ClockStatus,
   type DailyHours,
   type HoursReport,
   type NonDayActivityType,
+  type TimerSwitch,
 } from "@/server/time-tracking";
+import { parseTimeReference, type TimeReferenceType } from "@/server/time-references";
 
 /**
  * Time tracking and payroll server actions (HANDOFF §6.6, §17, §21).
@@ -87,19 +91,36 @@ export async function heartbeatAction(): Promise<ActionResult<{ touched: number 
   }
 }
 
+/** Clock-C1: a start's payload - the post-switch status plus what the
+ *  single-work-timer invariant auto-stopped, so the UI can toast
+ *  "Stopped Harborline Marine Supply and switched". */
+export interface TimerStartData {
+  status: ClockStatus;
+  switch: TimerSwitch;
+}
+
 export async function startActivityAction(
   activityType: NonDayActivityType,
   clientId?: number,
-): Promise<ActionResult<ClockStatus>> {
+  referenceType?: TimeReferenceType | null,
+  referenceId?: number | null,
+): Promise<ActionResult<TimerStartData>> {
   try {
     const userId = await getCurrentUserId();
     // D5 card Start: the card path never makes the user clock in first -
     // the day umbrella opens implicitly, then the activity timer starts.
     await clockIn(userId);
-    await startActivity(userId, activityType, clientId);
+    const reference = parseTimeReference(referenceType ?? null, referenceId ?? null);
+    const { switch: timerSwitch } = await startActivity(
+      userId,
+      activityType,
+      clientId,
+      new Date(),
+      reference,
+    );
     const status = await getClockStatus(userId);
     revalidatePath("/workstation");
-    return { ok: true, data: status };
+    return { ok: true, data: { status, switch: timerSwitch } };
   } catch (error) {
     return fail(error);
   }
@@ -121,13 +142,13 @@ export async function stopActivityAction(
   }
 }
 
-export async function startTaskTimerAction(taskId: number): Promise<ActionResult<ClockStatus>> {
+export async function startTaskTimerAction(taskId: number): Promise<ActionResult<TimerStartData>> {
   try {
     const userId = await getCurrentUserId();
-    await startTaskTimer(userId, taskId);
+    const { switch: timerSwitch } = await startTaskTimer(userId, taskId);
     const status = await getClockStatus(userId);
     revalidatePath("/workstation");
-    return { ok: true, data: status };
+    return { ok: true, data: { status, switch: timerSwitch } };
   } catch (error) {
     return fail(error);
   }
@@ -149,6 +170,16 @@ export async function getClockStatusAction(): Promise<ActionResult<ClockStatus>>
   try {
     const userId = await getCurrentUserId();
     return { ok: true, data: await getClockStatus(userId) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** Clock-C1: the widget's client-step options (today's clients, then recent). */
+export async function listClockClientsAction(): Promise<ActionResult<ClockClientOption[]>> {
+  try {
+    const userId = await getCurrentUserId();
+    return { ok: true, data: await listClockClients(userId, new Date().getDay()) };
   } catch (error) {
     return fail(error);
   }

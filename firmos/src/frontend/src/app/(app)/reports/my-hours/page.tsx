@@ -187,6 +187,14 @@ export default async function MyHoursPage({
                   <TableRow key={entry.entryId} data-testid="time-entry-row">
                     <TableCell className="pl-6 text-sm">
                       {activityLabel(entry.activityType)}
+                      {entry.referenceLabel && (
+                        <span
+                          className="ml-1.5 text-xs text-muted-foreground"
+                          data-testid="time-entry-reference"
+                        >
+                          · {entry.referenceLabel}
+                        </span>
+                      )}
                       {entry.autoClosed && (
                         <span className="ml-2 text-[11px] text-muted-foreground">auto-closed</span>
                       )}

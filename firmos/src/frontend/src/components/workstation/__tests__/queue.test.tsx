@@ -4,7 +4,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { applyRolloverAction, completeWorkCard } from '@/server/actions/work'
 import type { CompleteWorkCardResult } from '@/server/actions/work'
+import { getClockStatusAction } from '@/server/actions/time'
 import type { UnifiedQueue, WorkCard } from '@/server/queue'
+import type { ClockStatus } from '@/server/time-tracking'
+import { __resetClockStatusForTests } from '@/shared/lib/clock-status'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 import { quickCelebrationRoll } from '../my-day'
@@ -15,6 +18,23 @@ vi.mock('@/server/actions/work', () => ({
   completeWorkCard: vi.fn(),
   applyRolloverAction: vi.fn(),
 }))
+
+// The shared clock-status store dynamically imports this module; give it a
+// quiet default so only the tests that set a status see timer chrome.
+vi.mock('@/server/actions/time', () => ({
+  getClockStatusAction: vi.fn(),
+}))
+
+const mockClockStatus = vi.mocked(getClockStatusAction)
+
+const EMPTY_CLOCK: ClockStatus = {
+  clockedIn: true,
+  dayStartedAt: new Date().toISOString(),
+  dayElapsedMinutes: 30,
+  currentActivity: null,
+  openTaskTimers: [],
+  lastActivityAt: null,
+}
 
 // The saved-views seam talks to /api/saved-views over fetch; stub a minimal
 // in-memory REST surface so these tests stay focused on the queue.
@@ -134,6 +154,9 @@ beforeEach(() => {
   mockComplete.mockResolvedValue({ ok: true })
   mockRollover.mockReset()
   mockRollover.mockResolvedValue({ ok: true, applied: 1, skipped: [] })
+  __resetClockStatusForTests()
+  mockClockStatus.mockReset()
+  mockClockStatus.mockResolvedValue({ ok: true, data: EMPTY_CLOCK })
 })
 
 describe('WorkstationQueue - My Day default (D1)', () => {
@@ -189,6 +212,71 @@ describe('WorkstationQueue - My Day default (D1)', () => {
     expect(screen.getAllByTestId('work-card')).toHaveLength(5)
     expect(screen.getByText('August management report')).toBeInTheDocument()
     expect(screen.getByText('Reconcile Checking')).toBeInTheDocument()
+  })
+
+  it('Clock-C1: the group header dots the client that is on the clock', async () => {
+    // Two actionable clients; the timer runs on Harborline (clientId 1).
+    const twoClients: UnifiedQueue = {
+      ...queue,
+      buckets: {
+        ...queue.buckets,
+        overdue: [card({ kind: 'bank_feed', id: 1, status: 'overdue', title: 'Bank feed week of 2026-08-17' })],
+        due_today: [
+          card({ kind: 'task', id: 2, status: 'due_today', title: 'Close August books', dueDate: '2026-08-23' }),
+          card({ kind: 'task', id: 6, status: 'due_today', title: 'Copperline close', dueDate: '2026-08-23', clientId: 2, clientName: 'Copperline Coffee' }),
+        ],
+      },
+    }
+    mockClockStatus.mockResolvedValue({
+      ok: true,
+      data: {
+        ...EMPTY_CLOCK,
+        currentActivity: {
+          entryId: 9,
+          activityType: 'bank_feeds',
+          clientId: 1,
+          clientName: 'Harborline Marine',
+          referenceType: 'bank_feed',
+          referenceId: 1,
+          startedAt: new Date().toISOString(),
+          elapsedMinutes: 3,
+        },
+      },
+    })
+    renderQueue(twoClients)
+
+    const groups = await screen.findAllByTestId('my-day-client')
+    expect(groups).toHaveLength(2)
+    await waitFor(() => {
+      const harborline = groups.find((g) => g.textContent?.includes('Harborline Marine'))!
+      expect(within(harborline).getByTestId('my-day-on-clock-dot')).toBeInTheDocument()
+    })
+    const copperline = groups.find((g) => g.textContent?.includes('Copperline Coffee'))!
+    expect(within(copperline).queryByTestId('my-day-on-clock-dot')).not.toBeInTheDocument()
+  })
+
+  it('Clock-C1: a running break dots no client group', async () => {
+    mockClockStatus.mockResolvedValue({
+      ok: true,
+      data: {
+        ...EMPTY_CLOCK,
+        currentActivity: {
+          entryId: 9,
+          activityType: 'lunch_unpaid',
+          clientId: null,
+          clientName: null,
+          referenceType: null,
+          referenceId: null,
+          startedAt: new Date().toISOString(),
+          elapsedMinutes: 3,
+        },
+      },
+    })
+    renderQueue()
+    await screen.findAllByTestId('my-day-client')
+    // Let the store's status land before asserting absence.
+    await waitFor(() => expect(mockClockStatus).toHaveBeenCalled())
+    expect(screen.queryByTestId('my-day-on-clock-dot')).not.toBeInTheDocument()
   })
 })
 

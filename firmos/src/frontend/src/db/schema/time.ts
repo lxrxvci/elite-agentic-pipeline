@@ -42,6 +42,13 @@ export const workstationTimeEntries = pgTable(
     activityType: workActivityTypeEnum("activity_type").notNull(),
     // Optional work context for the hours-clocked breakdown (§21).
     clientId: integer("client_id").references(() => clients.id, { onDelete: "set null" }),
+    // Clock-C1 (original parity): which concrete work item the timer ran on -
+    // bank_feed -> weekly_bank_feeds.id, reconciliation ->
+    // account_reconciliations.id, report -> client_reports.id, task ->
+    // tasks.id, project -> projects.id. Null = plain client/kind-scoped time
+    // (widget client clock, breaks). Polymorphic by design, no FK.
+    referenceType: text("reference_type"),
+    referenceId: integer("reference_id"),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }).notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
     durationMinutes: integer("duration_minutes"),

@@ -25,6 +25,8 @@ vi.mock('@/server/actions/time', () => ({
   stopActivityAction: vi.fn(),
 }))
 
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+
 const mockStatus = vi.mocked(getClockStatusAction)
 const mockStart = vi.mocked(startTaskTimerAction)
 const mockStop = vi.mocked(stopTaskTimerAction)
@@ -42,6 +44,9 @@ function status(partial: Partial<ClockStatus>): ClockStatus {
     ...partial,
   }
 }
+
+/** Clock-C1 start payload: status + the invariant's switch report. */
+const started = (next: ClockStatus) => ({ ok: true as const, data: { status: next, switch: { stopped: [] } } })
 
 function taskCard(): WorkCard {
   return {
@@ -84,6 +89,8 @@ const RUNNING_TIMER = {
   entryId: 7,
   taskId: 42,
   taskTitle: 'Reconcile August',
+  clientId: 1,
+  clientName: 'Harborline Marine',
   startedAt: new Date().toISOString(),
   elapsedMinutes: 0,
 }
@@ -92,6 +99,9 @@ const RUNNING_ACTIVITY = {
   entryId: 9,
   activityType: 'bank_feeds',
   clientId: 1,
+  clientName: 'Harborline Marine',
+  referenceType: 'bank_feed',
+  referenceId: 50,
   startedAt: new Date().toISOString(),
   elapsedMinutes: 0,
 }
@@ -112,7 +122,7 @@ describe('WorkCardRow card timer (D5 timeboxing)', () => {
   })
 
   it('starts the task timer and reflects the running state from the server', async () => {
-    mockStart.mockResolvedValue({ ok: true, data: status({}) })
+    mockStart.mockResolvedValue(started(status({})))
     // Mount reads empty timers; the post-toggle refresh reads them running.
     mockStatus
       .mockResolvedValueOnce({ ok: true, data: status({}) })
@@ -156,6 +166,8 @@ describe('WorkCardRow card timer (D5 timeboxing)', () => {
             entryId: 7,
             taskId: 42,
             taskTitle: 'Reconcile August',
+            clientId: 1,
+            clientName: 'Harborline Marine',
             startedAt: new Date().toISOString(),
             elapsedMinutes: 4,
           },
@@ -170,8 +182,8 @@ describe('WorkCardRow card timer (D5 timeboxing)', () => {
     )
   })
 
-  it('periodic cards drive the activity timer (kind-mapped, client-scoped)', async () => {
-    mockStartActivity.mockResolvedValue({ ok: true, data: status({}) })
+  it('periodic cards drive the activity timer (kind-mapped, client-scoped, reference-stamped)', async () => {
+    mockStartActivity.mockResolvedValue(started(status({})))
     mockStatus
       .mockResolvedValueOnce({ ok: true, data: status({}) })
       .mockResolvedValue({ ok: true, data: status({ currentActivity: RUNNING_ACTIVITY }) })
@@ -179,8 +191,9 @@ describe('WorkCardRow card timer (D5 timeboxing)', () => {
 
     const start = await screen.findByTestId('card-timer-start')
     await userEvent.click(start)
-    // bank_feed maps to the bank_feeds activity with the card's client.
-    expect(mockStartActivity).toHaveBeenCalledWith('bank_feeds', 1)
+    // bank_feed maps to the bank_feeds activity with the card's client AND
+    // the periodic row's reference (Clock-C1).
+    expect(mockStartActivity).toHaveBeenCalledWith('bank_feeds', 1, 'bank_feed', 50)
     await waitFor(() =>
       expect(screen.getByTestId('card-timer-running')).toBeInTheDocument(),
     )
@@ -194,10 +207,33 @@ describe('WorkCardRow card timer (D5 timeboxing)', () => {
     )
   })
 
+  it('marks only the referenced row running when the timer stamps a reference', async () => {
+    // The timer runs on week row 50; the same client's week row 51 must not
+    // light up (reference beats bare-client matching).
+    mockStatus.mockResolvedValue({
+      ok: true,
+      data: status({ currentActivity: RUNNING_ACTIVITY }),
+    })
+    renderRow({ ...taskCard(), kind: 'bank_feed', id: 51 })
+    expect(await screen.findByTestId('card-timer-start')).toBeInTheDocument()
+    expect(screen.queryByTestId('card-timer-running')).not.toBeInTheDocument()
+  })
+
+  it('a client clock with no reference still matches the client’s cards', async () => {
+    mockStatus.mockResolvedValue({
+      ok: true,
+      data: status({
+        currentActivity: { ...RUNNING_ACTIVITY, referenceType: null, referenceId: null },
+      }),
+    })
+    renderRow({ ...taskCard(), kind: 'bank_feed', id: 51 })
+    expect(await screen.findByTestId('card-timer-running')).toBeInTheDocument()
+  })
+
   it('does not mark a card running for another client’s activity', async () => {
     mockStatus.mockResolvedValue({
       ok: true,
-      data: status({ currentActivity: { ...RUNNING_ACTIVITY, clientId: 999 } }),
+      data: status({ currentActivity: { ...RUNNING_ACTIVITY, clientId: 999, referenceType: null, referenceId: null } }),
     })
     renderRow({ ...taskCard(), kind: 'bank_feed', id: 51 })
     expect(await screen.findByTestId('card-timer-start')).toBeInTheDocument()

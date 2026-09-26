@@ -7,9 +7,10 @@ import {
   clockOutAction,
   getClockStatusAction,
   heartbeatAction,
+  listClockClientsAction,
   startActivityAction,
 } from '@/server/actions/time'
-import type { ClockStatus } from '@/server/time-tracking'
+import type { ClockClientOption, ClockStatus } from '@/server/time-tracking'
 
 import { ClockWidget } from '../clock-widget'
 
@@ -19,13 +20,22 @@ vi.mock('@/server/actions/time', () => ({
   heartbeatAction: vi.fn(),
   startActivityAction: vi.fn(),
   getClockStatusAction: vi.fn(),
+  listClockClientsAction: vi.fn(),
 }))
+
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const mockStatus = vi.mocked(getClockStatusAction)
 const mockClockIn = vi.mocked(clockInAction)
 const mockClockOut = vi.mocked(clockOutAction)
 const mockStartActivity = vi.mocked(startActivityAction)
+const mockClients = vi.mocked(listClockClientsAction)
 vi.mocked(heartbeatAction).mockResolvedValue({ ok: true, data: { touched: 1 } })
+
+const CLIENTS: ClockClientOption[] = [
+  { id: 1, name: 'Harborline Marine Supply', isToday: true, lastWorkedAt: null },
+  { id: 2, name: 'Blue Spruce Ventures', isToday: false, lastWorkedAt: new Date().toISOString() },
+]
 
 function status(partial: Partial<ClockStatus>): ClockStatus {
   return {
@@ -39,22 +49,30 @@ function status(partial: Partial<ClockStatus>): ClockStatus {
   }
 }
 
+const RUNNING_ACTIVITY = {
+  entryId: 11,
+  activityType: 'tasks',
+  clientId: 1,
+  clientName: 'Harborline Marine Supply',
+  referenceType: null,
+  referenceId: null,
+  startedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+  elapsedMinutes: 20,
+}
+
 const clockedInStatus = status({
   clockedIn: true,
   dayStartedAt: new Date(Date.now() - 65 * 60_000).toISOString(),
   dayElapsedMinutes: 65,
-  currentActivity: {
-    entryId: 11,
-    activityType: 'tasks',
-    clientId: null,
-    startedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
-    elapsedMinutes: 20,
-  },
+  currentActivity: RUNNING_ACTIVITY,
 })
+
+const cleanStart = (next: ClockStatus) => ({ ok: true as const, data: { status: next, switch: { stopped: [] } } })
 
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(heartbeatAction).mockResolvedValue({ ok: true, data: { touched: 1 } })
+  mockClients.mockResolvedValue({ ok: true, data: CLIENTS })
 })
 
 describe('ClockWidget', () => {
@@ -73,56 +91,146 @@ describe('ClockWidget', () => {
     expect(screen.getByTestId('clock-elapsed')).toBeInTheDocument()
   })
 
-  it('clocked in: shows ticking elapsed and the current activity chip', async () => {
+  it('clocked in: shows the client name with ticking elapsed and the day total', async () => {
     mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
 
     render(<ClockWidget />)
     await screen.findByTestId('clock-elapsed')
-    expect(screen.getByRole('button', { name: /current activity: tasks/i })).toBeInTheDocument()
-    // 65 minutes -> h:mm:ss format with tabular numerals.
+    // Client-first: the chip leads with the client name + kind + its own timer.
+    expect(screen.getByTestId('clock-client-name')).toHaveTextContent('Harborline Marine Supply')
+    expect(screen.getByRole('button', { name: /on the clock: harborline marine supply, tasks/i })).toBeInTheDocument()
+    expect(screen.getByTestId('clock-activity-elapsed').textContent).toMatch(/^2\d:\d\d$/)
+    // The day total keeps ticking in the green segment (65 minutes -> h:mm:ss).
     expect(screen.getByTestId('clock-elapsed').textContent).toMatch(/^1:0\d:\d\d$/)
   })
 
-  it('switches activity from the dropdown', async () => {
+  it('widget_switch_stamps_client', async () => {
     mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
+    const switched = status({
+      ...clockedInStatus,
+      currentActivity: {
+        ...RUNNING_ACTIVITY,
+        clientId: 2,
+        clientName: 'Blue Spruce Ventures',
+      },
+    })
     mockStartActivity.mockResolvedValue({
       ok: true,
-      data: status({
-        ...clockedInStatus,
-        currentActivity: { ...clockedInStatus.currentActivity!, activityType: 'bank_feeds' },
-      }),
+      data: {
+        status: switched,
+        switch: {
+          stopped: [
+            {
+              kind: 'activity',
+              entryId: 11,
+              activityType: 'tasks',
+              clientId: 1,
+              clientName: 'Harborline Marine Supply',
+              label: 'Harborline Marine Supply',
+            },
+          ],
+        },
+      },
     })
 
     render(<ClockWidget />)
-    await userEvent.click(await screen.findByRole('button', { name: /current activity: tasks/i }))
-    await userEvent.click(screen.getByRole('menuitem', { name: /bank feeds/i }))
+    await userEvent.click(await screen.findByTestId('clock-client'))
+    await userEvent.click(screen.getByRole('menuitem', { name: /blue spruce ventures/i }))
 
-    expect(mockStartActivity).toHaveBeenCalledWith('bank_feeds')
+    // One tap on the client switches the timer: the start carries the client
+    // and resumes the running kind.
+    expect(mockStartActivity).toHaveBeenCalledWith('tasks', 2)
+    const { toast } = await import('sonner')
+    expect(toast.success).toHaveBeenCalledWith('Stopped Harborline Marine Supply and switched')
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /current activity: bank feeds/i })).toBeInTheDocument(),
+      expect(screen.getByTestId('clock-client-name')).toHaveTextContent('Blue Spruce Ventures'),
     )
   })
 
-  it('offers the F2 paid/unpaid break and lunch kinds in the dropdown', async () => {
+  it('fuzzy-searches the client list', async () => {
     mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
 
     render(<ClockWidget />)
-    await userEvent.click(await screen.findByRole('button', { name: /current activity: tasks/i }))
+    await userEvent.click(await screen.findByTestId('clock-client'))
+    await userEvent.type(screen.getByTestId('clock-client-search'), 'spruce')
+    const options = screen.getAllByTestId('clock-client-option')
+    expect(options).toHaveLength(1)
+    expect(options[0]).toHaveTextContent('Blue Spruce Ventures')
+  })
 
-    expect(screen.getByRole('menuitem', { name: /break \(paid\)/i })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /break \(unpaid\)/i })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /lunch \(paid\)/i })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /lunch \(unpaid\)/i })).toBeInTheDocument()
+  it('kind picks start on the current client; breaks start client-less', async () => {
+    mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
+    mockStartActivity.mockResolvedValue(cleanStart(clockedInStatus))
 
-    mockStartActivity.mockResolvedValue({
+    render(<ClockWidget />)
+    await userEvent.click(await screen.findByTestId('clock-client'))
+    await userEvent.click(screen.getByRole('menuitem', { name: /bank feeds/i }))
+    // The activity start ALWAYS carries a client (the running one).
+    expect(mockStartActivity).toHaveBeenCalledWith('bank_feeds', 1)
+
+    mockStartActivity.mockClear()
+    await userEvent.click(await screen.findByTestId('clock-client'))
+    await userEvent.click(screen.getByRole('menuitem', { name: /lunch \(unpaid\)/i }))
+    // Breaks stay client-agnostic.
+    expect(mockStartActivity).toHaveBeenCalledWith('lunch_unpaid')
+  })
+
+  it('kind picks fall back to the most recent client when nothing is running', async () => {
+    const noActivity = status({ ...clockedInStatus, currentActivity: null })
+    mockStatus.mockResolvedValue({ ok: true, data: noActivity })
+    mockStartActivity.mockResolvedValue(cleanStart(clockedInStatus))
+
+    render(<ClockWidget />)
+    await userEvent.click(await screen.findByRole('button', { name: /pick a client to start timing/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /reconciliations/i }))
+    // No current client: the picker defaults to the most recently worked one.
+    expect(mockStartActivity).toHaveBeenCalledWith('reconciliations', 2)
+  })
+
+  it('"s" quick-switches to the next recent client and skips typing targets', async () => {
+    mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
+    mockStartActivity.mockResolvedValue(cleanStart(clockedInStatus))
+
+    render(<ClockWidget />)
+    await screen.findByTestId('clock-client-name')
+    // Wait for the client list to land (the hotkey reads it).
+    await waitFor(() => expect(mockClients).toHaveBeenCalled())
+
+    // Current client is id 1; the next in recency order is id 2.
+    await userEvent.keyboard('s')
+    await waitFor(() => expect(mockStartActivity).toHaveBeenCalledWith('tasks', 2))
+  })
+
+  it('shows the task timer as the current clock when one holds the work timer', async () => {
+    // The invariant: a task timer start closes the open activity, so the
+    // widget must surface the task's client + title as the current clock.
+    mockStatus.mockResolvedValue({
       ok: true,
       data: status({
         ...clockedInStatus,
-        currentActivity: { ...clockedInStatus.currentActivity!, activityType: 'lunch_unpaid' },
+        currentActivity: null,
+        openTaskTimers: [
+          {
+            entryId: 5,
+            taskId: 42,
+            taskTitle: 'Reconcile August',
+            clientId: 2,
+            clientName: 'Blue Spruce Ventures',
+            startedAt: new Date(Date.now() - 7 * 60_000).toISOString(),
+            elapsedMinutes: 7,
+          },
+        ],
       }),
     })
-    await userEvent.click(screen.getByRole('menuitem', { name: /lunch \(unpaid\)/i }))
-    expect(mockStartActivity).toHaveBeenCalledWith('lunch_unpaid')
+
+    render(<ClockWidget />)
+    await screen.findByTestId('clock-elapsed')
+    expect(screen.getByTestId('clock-client-name')).toHaveTextContent('Blue Spruce Ventures')
+    expect(screen.getByTestId('clock-task-title')).toHaveTextContent('Reconcile August')
+    expect(screen.getByTestId('clock-activity-elapsed').textContent).toMatch(/^0[67]:\d\d$/)
+    expect(
+      screen.getByRole('button', { name: /on the clock: blue spruce ventures, task reconcile august/i }),
+    ).toBeInTheDocument()
   })
 
   it('confirms clock-out when task timers are open', async () => {
@@ -133,6 +241,8 @@ describe('ClockWidget', () => {
           entryId: 5,
           taskId: 42,
           taskTitle: 'Reconcile August',
+          clientId: 1,
+          clientName: 'Harborline Marine Supply',
           startedAt: new Date().toISOString(),
           elapsedMinutes: 9,
         },
@@ -142,7 +252,7 @@ describe('ClockWidget', () => {
     mockClockOut.mockResolvedValue({ ok: true, data: status({}) })
 
     render(<ClockWidget />)
-    await userEvent.click(await screen.findByRole('button', { name: /current activity: tasks/i }))
+    await userEvent.click(await screen.findByTestId('clock-client'))
     // First click arms the confirm instead of clocking out.
     await userEvent.click(screen.getByRole('menuitem', { name: /^clock out$/i }))
     expect(mockClockOut).not.toHaveBeenCalled()
