@@ -33,7 +33,12 @@ import {
   setQuickNoteCompleted,
   QuickAddError,
 } from "@/server/quick-add";
-import { calculateIntakeQuoteWithConfig, type TemplateLineItem } from "@/server/quote";
+import {
+  buildRecurringServicesTemplate,
+  calculateIntakeQuote,
+  calculateIntakeQuoteWithConfig,
+  type TemplateLineItem,
+} from "@/server/quote";
 import { seedDatabase } from "@/server/seed";
 import { getOrCreateClientChecklist } from "@/server/tax";
 import { createOnboardingTemplate, updateOnboardingTemplate } from "@/server/templates";
@@ -989,5 +994,97 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
       .from(recurringTasks)
       .where(eq(recurringTasks.clientId, noResult.clientId));
     expect(noRules.find((r) => r.title === "Send Reports")?.description ?? null).toBeNull();
+  });
+});
+
+// ── J4 (meeting #3, V4) server-layer pins ────────────────────────────────────
+
+describe.skipIf(!reachable)("J4 direct price editing (server layer)", () => {
+  // V4 (01:01:22-01:02:14): servicePrices ride the quote-level map through
+  // toQuoteInput; every line kind honors the override, and the billing
+  // template carries it as the equivalent per-cycle discount (so invoices
+  // bill the overridden price exactly) plus the raw price_override field.
+  it("price_edit_replaces_discount_flow", () => {
+    const quote = calculateIntakeQuote(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management", "account_reconciliations", "process_payroll"],
+        accounts: [
+          { name: "Chase Checking · 4411", accountType: "checking", proofCategory: "statement" },
+          { name: "Chase Savings · 1005", accountType: "savings", proofCategory: "statement" },
+        ],
+        serviceDiscounts: { account_reconciliations: 10 },
+        servicePrices: { account_reconciliations: 40, process_payroll: 200 },
+      },
+      TEST_TODAY,
+    );
+    const recon = quote.lines.find((l) => l.service_key === "account_reconciliations")!;
+    // 2 statement accounts x $25 = $50 standard; the $40 override wins over
+    // the legacy $10 discount outright.
+    expect(recon.amount).toBe(50);
+    expect(recon.discount).toBe(10);
+    expect(recon.price_override).toBe(40);
+    // The unpriced payroll line prices at the override.
+    const payroll = quote.lines.find((l) => l.service_key === "process_payroll")!;
+    expect(payroll.unpriced).toBe(true);
+    expect(payroll.price_override).toBe(200);
+    // Totals: 100 + 40 + 200 effective.
+    expect(quote.totals.effectiveMonthly).toBe(340);
+
+    const template = buildRecurringServicesTemplate(quote);
+    const reconTemplate = template.find((l) => l.service_key === "account_reconciliations")!;
+    // The equivalent discount: 2 x $25 - $40 = $10 - invoices bill $40.
+    expect(reconTemplate.discount).toBe(10);
+    expect(reconTemplate.price_override).toBe(40);
+    const payrollTemplate = template.find((l) => l.service_key === "process_payroll")!;
+    // An override on an unpriced line cannot express as a discount; the raw
+    // field carries and the priced-at-review note stays.
+    expect(payrollTemplate.unit_price).toBeNull();
+    expect(payrollTemplate.price_override).toBe(200);
+    expect(payrollTemplate.notes).toContain("no amount stated");
+  });
+
+  // Legacy intakes carrying only serviceDiscounts price byte-identically to
+  // the pre-J4 engine: the discount nets, no override is stamped, and the
+  // template carries the discount verbatim.
+  it("legacy discount data still prices identically", () => {
+    const quote = calculateIntakeQuote(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management"],
+        serviceDiscounts: { bank_feed_management: 25 },
+      },
+      TEST_TODAY,
+    );
+    const line = quote.lines.find((l) => l.service_key === "bank_feed_management")!;
+    expect(line.discount).toBe(25);
+    expect(line.price_override).toBeUndefined();
+    expect(quote.totals.effectiveMonthly).toBe(75);
+    const template = buildRecurringServicesTemplate(quote);
+    const row = template.find((l) => l.service_key === "bank_feed_management")!;
+    expect(row.discount).toBe(25);
+    expect(row.price_override).toBeUndefined();
+  });
+
+  // A retro-line override prices the whole cleanup flat; the template line
+  // derives its discount from the gross (months x rate), not the overridden
+  // amount, so billing still lands on the override.
+  it("retro_override_prices_flat_and_carries_to_the_template", () => {
+    const quote = calculateIntakeQuote(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management", "retroactive_bookkeeping"],
+        bookkeepingStartDate: "2026-01-01",
+        servicePrices: { retroactive_bookkeeping: 500 },
+      },
+      TEST_TODAY, // 2026-08-15 -> 7 retro months x $100/mo = $700 standard
+    );
+    expect(quote.retroactive?.months).toBe(7);
+    expect(quote.retroactive?.total).toBe(500);
+    expect(quote.totals.totalOneTime).toBe(500); // once, never twice
+    const template = buildRecurringServicesTemplate(quote);
+    const retroTemplate = template.find((l) => l.service_key === "retroactive_bookkeeping")!;
+    expect(retroTemplate.discount).toBe(200); // 7 x $100 gross - $500 override
+    expect(retroTemplate.price_override).toBe(500);
   });
 });

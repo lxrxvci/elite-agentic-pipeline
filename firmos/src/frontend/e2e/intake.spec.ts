@@ -97,20 +97,8 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByLabel('Name (optional)').fill('Cascade Tax Group')
   await advance(page, 'engagement')
 
-  // ── Engagement type, then accounting software ──
-  await pick(page, 'option-bookkeeping', 'qbo-status')
-  await pick(page, 'option-existing', 'qbo-users')
-  await page.getByLabel('QuickBooks users').fill('2')
-  await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'services')
-
-  // ── Services (I4): the three standards are pre-selected; add-ons toggle ──
-  await expect(page.getByTestId('services-standards')).toContainText('Included in every engagement')
-  await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
-  await expect(page.getByTestId('standard-account_reconciliations')).toHaveAttribute('data-checked', 'true')
-  await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
-  await page.getByTestId('addon-invoicing').click()
-  await advance(page, 'existing-client')
+  // ── Engagement type; N1 (00:12:50): services + QBO scope moved to the END ──
+  await pick(page, 'option-bookkeeping', 'existing-client')
 
   // ── Starting point: new client; the renamed start question (N2) ──
   await pick(page, 'option-no', 'bk-start')
@@ -226,7 +214,26 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await advance(page, 'reports') // skip 1099
   await advance(page, 'preliminary-reports') // skip special reports
   // R6: the preliminary-reports toggle; R7: no retroactive question anymore.
-  await pick(page, 'option-no', 'notes')
+  // N1 (00:12:50): the answers have qualified the scope - services + the QBO
+  // scope cards come NOW, at the end of the flow.
+  await pick(page, 'option-no', 'services')
+
+  // ── Services (I4): the three standards are pre-selected; add-ons toggle.
+  // N1: the bill answers above already qualified bill entry - it badges. ──
+  await expect(page.getByTestId('services-standards')).toContainText('Included in every engagement')
+  await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
+  await expect(page.getByTestId('standard-account_reconciliations')).toHaveAttribute('data-checked', 'true')
+  await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
+  await expect(page.getByTestId('later-badge-record_bills')).toHaveText('Added by your answers')
+  await expect(page.getByTestId('later-badge-1099_collection')).toHaveCount(0)
+  await page.getByTestId('addon-invoicing').click()
+  await advance(page, 'qbo-status')
+
+  // ── The QBO scope block moved with services (N1) ──
+  await pick(page, 'option-existing', 'qbo-users')
+  await page.getByLabel('QuickBooks users').fill('2')
+  await advance(page, 'qbo-tier')
+  await pick(page, 'option-recommended', 'notes')
   await advance(page, 'rules') // skip internal notes
   // J3 (R1): custom recurring work lands on the scheduler next; add one rule.
   await page.getByLabel('Title').fill('Weekly deposit review')
@@ -274,8 +281,17 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByTestId('live-quote')).toBeVisible()
   await expect(page.getByTestId('live-quote')).toHaveAttribute('data-revealed', 'true')
   await expect(page.getByTestId('review-quote')).toBeVisible()
+  // V2 (01:00:07-01:00:53): sections render COLLAPSED (title + one-line
+  // summary), the first one open - expanding one auto-collapses the previous.
+  await expect(page.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.getByText('Yes · Cascade Tax Group')).toHaveCount(0)
+  // The main contact row shows the formatted phone (first section is open).
+  await expect(page.getByText('Wren Okafor · (503) 555-0182 · wren@e2ebloom.example')).toBeVisible()
   // I3: accounts render grouped by type with institution + proof badges.
   // J1 (D2): the bank -> type -> last4 standard everywhere.
+  await page.getByTestId('section-toggle-balance').click()
+  await expect(page.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'false')
   const reviewAccounts = page.getByTestId('review-accounts')
   await expect(reviewAccounts).toBeVisible()
   await expect(reviewAccounts).toContainText('Chase Checking · 4411')
@@ -286,19 +302,23 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(reviewAccounts).toContainText('2022 Ford Transit (vehicle loan)')
   // The online-access row counts the checked statement accounts (3 now:
   // checking + card + the vehicle loan).
+  await page.getByTestId('section-toggle-access').click()
   await expect(page.getByText('1 of 3 with online access')).toBeVisible()
   // The CPA card answer shows on the review screen.
+  await page.getByTestId('section-toggle-entity').click()
   await expect(page.getByText('Yes · Cascade Tax Group')).toBeVisible()
   // I2: the LLC subclass folds into the tax-structure row.
   await expect(page.getByText('LLC · single-member')).toBeVisible()
   // The referral row carries who to thank.
   await expect(page.getByText('CPA referral · Cascade Tax Group')).toBeVisible()
   // The typed date renders as a real date; no catch-up row exists.
+  await page.getByTestId('section-toggle-starting').click()
   await expect(page.getByText('Jan 1, 2026')).toBeVisible()
   await expect(page.getByText(/catch-up date/i)).toHaveCount(0)
   // A45: the established date renders as its own row beside the books start.
   await expect(page.getByText('Mar 1, 2019')).toBeVisible()
   // A41: both money-behavior questions carry review rows.
+  await page.getByTestId('section-toggle-income').click()
   await expect(page.getByText("Do they ever deposit anything that isn't business income?")).toBeVisible()
   await expect(page.getByText('Do they ever pay for non-business things on business accounts?')).toBeVisible()
   // J2 (E1): the mandatory note shows on the yes row.
@@ -306,14 +326,64 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
     page.getByText('Yes · Owner covers a bill from his personal account some months'),
   ).toBeVisible()
   // J2 (E6): the bills split carries both rows, locations included.
+  await page.getByTestId('section-toggle-reporting').click()
   await expect(page.getByText('Should we record their bills?')).toBeVisible()
   await expect(page.getByText('Yes · pays at: Vendor websites')).toBeVisible()
-  // The main contact row shows the formatted phone.
-  await expect(page.getByText('Wren Okafor · (503) 555-0182 · wren@e2ebloom.example')).toBeVisible()
+
+  // V6/V7 (01:04:00-01:06:58): the estimate buckets recurring services by
+  // frequency with the math visible; one-time fees list separately. V5: the
+  // reconciliation breakdown lists the actual accounts with count x rate.
+  await page.getByTestId('section-toggle-quote').click()
+  await expect(page.getByTestId('estimate-bucket-monthly')).toContainText('Bank Feed Management')
+  await expect(page.getByTestId('estimate-math-account_reconciliations')).toHaveText(
+    '2 accounts × $25 = $50/mo',
+  )
+  await page.getByTestId('breakdown-toggle-account_reconciliations').click()
+  await expect(page.getByTestId('breakdown-account_reconciliations')).toContainText(
+    'Chase Checking · 4411',
+  )
+  await expect(page.getByTestId('breakdown-account_reconciliations')).toContainText(
+    'E2E First Tech Credit card · 1005',
+  )
+  // The J3 schedule committed: bill recording lives in the weekly bucket.
+  await expect(page.getByTestId('estimate-bucket-weekly')).toContainText('Record Bills')
   // Two QBO users, no tracking: the matrix recommends Essentials.
   await expect(
     page.getByTestId('review-quote').getByText('QuickBooks Essentials (recommended)'),
   ).toBeVisible()
+  // V4 (01:01:22-01:02:14): direct price editing, no discount boxes - edit
+  // the bank-feed price to $90 and the estimate follows the server re-quote.
+  // (The rail panel has a twin editor; these target the estimate's.)
+  await expect(page.locator('body')).not.toContainText('−$')
+  const feedLine = page.getByTestId('estimate-line-bank_feed_management')
+  await feedLine.getByTestId('price-edit-bank_feed_management').click()
+  await feedLine.getByTestId('price-input-bank_feed_management').fill('90')
+  await feedLine.getByTestId('price-save-bank_feed_management').click()
+  await expect(feedLine.getByTestId('price-value-bank_feed_management')).toHaveText('$90', {
+    timeout: 15_000,
+  })
+  // Reset restores the standard price.
+  await feedLine.getByTestId('price-reset-bank_feed_management').click()
+  await expect(feedLine.getByTestId('price-value-bank_feed_management')).toHaveText('$100', {
+    timeout: 15_000,
+  })
+
+  // V1 (00:58:28-00:59:29): edit opens the question's hero card in an
+  // overlay - never a navigation back into the wizard.
+  await page.getByTestId('edit-recurring').click()
+  const overlay = page.getByTestId('edit-overlay')
+  await expect(overlay).toBeVisible()
+  await expect(overlay).toHaveAttribute('data-question', 'notes')
+  await expect(page.getByTestId('review-screen')).toBeVisible()
+  await expect(page.getByTestId('question-screen')).toHaveCount(0)
+  await overlay.getByLabel('Internal notes (optional)').fill('Wants the close by the 10th.')
+  await overlay.getByTestId('continue').click()
+  await expect(overlay).toHaveCount(0)
+  // The review updated in place; the wizard behind never moved.
+  await expect(page.getByTestId('question-screen')).toHaveCount(0)
+  await page.getByTestId('section-toggle-recurring').click()
+  await expect(page.getByText('Notes on file')).toBeVisible()
+
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 
@@ -379,25 +449,28 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
   await pick(page, 'option-Web search', 'engagement') // no referral-who for web
 
   // Consulting: balance sheet, income, and reporting chapters disappear.
-  await pick(page, 'option-consulting', 'qbo-status')
-  await pick(page, 'option-none', 'qbo-setup')
-  await pick(page, 'option-no', 'qbo-users')
-  await page.getByLabel('QuickBooks users').fill('1')
-  await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'services')
+  // N1: services + the QBO scope block moved to the end of the flow.
+  await pick(page, 'option-consulting', 'existing-client')
+  await pick(page, 'option-no', 're-yes') // consulting: no books-start screen
+  await pick(page, 'option-no', 'services') // not real estate
   // I4: the standards are pre-selected on every engagement type; pricing
   // stays hidden until the review (the collapsed rail offers a staff peek).
   await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
   await expect(page.getByTestId('quote-hidden')).toBeVisible()
-  await advance(page, 'existing-client')
-  await pick(page, 'option-no', 're-yes') // consulting: no books-start screen
-  await pick(page, 'option-no', 'notes') // not real estate; R7: no retroactive question anymore
+  await advance(page, 'qbo-status')
+  await pick(page, 'option-none', 'qbo-setup')
+  await pick(page, 'option-no', 'qbo-users')
+  await page.getByLabel('QuickBooks users').fill('1')
+  await advance(page, 'qbo-tier')
+  await pick(page, 'option-recommended', 'notes')
   await advance(page, 'rules') // skip internal notes; J3: notes now open the chapter
   await page.getByTestId('continue').click() // skip custom rules; the scheduler is bookkeeping-only
 
-  // ── Review: consulting label + the verbatim custom text ──
+  // ── Review: consulting label + the verbatim custom text (V2: expand the sections) ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
+  await page.getByTestId('section-toggle-engagement').click()
   await expect(page.getByText('Consulting', { exact: true })).toBeVisible()
+  await page.getByTestId('section-toggle-entity').click()
   await expect(page.getByText('Series LLC taxed as a trust')).toBeVisible()
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
@@ -448,15 +521,8 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await pick(page, 'option-no', 'referral')
   await pick(page, 'option-Web search', 'engagement')
 
-  // ── Engagement + software + services ──
-  await pick(page, 'option-bookkeeping', 'qbo-status')
-  await pick(page, 'option-existing', 'qbo-users')
-  await page.getByLabel('QuickBooks users').fill('2')
-  await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'services')
-  // I4: standards pre-selected, no add-ons for this engagement.
-  await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
-  await advance(page, 'existing-client')
+  // ── Engagement; N1: the scope block moved to the end of the flow ──
+  await pick(page, 'option-bookkeeping', 'existing-client')
 
   // ── Starting point + scope chapters ──
   await pick(page, 'option-no', 'bk-start')
@@ -520,14 +586,24 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await page.getByTestId('chip-payroll_quarterly_filings').click()
   await advance(page, 'bk-frequency')
 
-  // ── Reporting + recurring ──
+  // ── Reporting, then the N1 scope block at the end ──
   await pick(page, 'option-monthly', 'close-tier')
   await pick(page, 'option-10', 'acct-method')
   await pick(page, 'option-cash', 'record-bills')
   await pick(page, 'option-no', 'ten99-services') // no bill recording, so no pay-bills card (E6)
   await advance(page, 'reports')
   await advance(page, 'preliminary-reports')
-  await pick(page, 'option-no', 'notes') // R6: preliminary-reports toggle; R7: retro question gone
+  // R6: preliminary-reports toggle; R7: retro question gone. N1: services
+  // comes now, badging the payroll add-on the answers qualified.
+  await pick(page, 'option-no', 'services')
+  // I4: standards pre-selected, no add-ons for this engagement.
+  await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
+  await expect(page.getByTestId('later-badge-payroll')).toHaveText('Added by your answers')
+  await advance(page, 'qbo-status')
+  await pick(page, 'option-existing', 'qbo-users')
+  await page.getByLabel('QuickBooks users').fill('2')
+  await advance(page, 'qbo-tier')
+  await pick(page, 'option-recommended', 'notes')
   await advance(page, 'rules')
   await advance(page, 'routine-scheduler')
   // J3: the S-corp payroll auto-flag derives the payroll card - biweekly.
@@ -535,9 +611,11 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await expect(page.getByTestId('schedule-summary-payroll-handling')).toContainText('Every 2 weeks on Friday')
   await page.getByTestId('continue').click()
 
-  // ── Review: the auto-flag, the provider, and the add-on all show ──
+  // ── Review: the auto-flag, the provider, and the add-on all show (V2: expand) ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
+  await page.getByTestId('section-toggle-entity').click()
   await expect(page.getByText('S-corp')).toBeVisible()
+  await page.getByTestId('section-toggle-income').click()
   await expect(page.getByText('Yes · officers must be on payroll')).toBeVisible()
   await expect(page.getByText('E2E SurePayroll')).toBeVisible()
   await expect(page.getByText('Every two weeks')).toBeVisible()

@@ -186,19 +186,12 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'referral')
 
-  // On to the balance chapter for the D1 mini-form.
+  // On to the balance chapter for the D1 mini-form. N1 (meeting #3): the
+  // services + QBO scope block moved to the END of the flow, so starting
+  // point comes right after the engagement pick now.
   await page.getByTestId('option-Web search').click()
   await expect(question).toHaveAttribute('data-question', 'engagement')
   await page.getByTestId('option-bookkeeping').click()
-  await expect(question).toHaveAttribute('data-question', 'qbo-status')
-  await page.getByTestId('option-existing').click()
-  await expect(question).toHaveAttribute('data-question', 'qbo-users')
-  await page.getByLabel('QuickBooks users').fill('2')
-  await page.getByTestId('continue').click()
-  await expect(question).toHaveAttribute('data-question', 'qbo-tier')
-  await page.getByTestId('option-recommended').click()
-  await expect(question).toHaveAttribute('data-question', 'services')
-  await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'existing-client')
   await page.getByTestId('option-no').click()
   await expect(question).toHaveAttribute('data-question', 'bk-start')
@@ -266,6 +259,16 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'preliminary-reports')
   await page.getByTestId('option-no').click()
+  // N1: the answer-qualified scope block (services, then QBO) at the end.
+  await expect(question).toHaveAttribute('data-question', 'services')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'qbo-status')
+  await page.getByTestId('option-existing').click()
+  await expect(question).toHaveAttribute('data-question', 'qbo-users')
+  await page.getByLabel('QuickBooks users').fill('2')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'qbo-tier')
+  await page.getByTestId('option-recommended').click()
   await expect(question).toHaveAttribute('data-question', 'notes')
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'rules')
@@ -279,6 +282,25 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await expect(page.getByTestId('schedule-controls-categorize_transactions')).toBeVisible()
   await settle()
   await expectAccessible(page, 'wizard - routine scheduler schedule controls open (J3)')
+
+  // J4 (V1/V2): the review screen's accordion + edit overlay scan clean.
+  await page.getByTestId('continue').click()
+  await expect(page.getByTestId('review-screen')).toBeVisible()
+  // The review reveal + price-pop animations run ~500ms; axe must measure
+  // final colors (same settle pattern as the wizard scans).
+  await page.waitForTimeout(800)
+  await expectAccessible(page, 'review - collapsed sections (J4)')
+  // Expand the estimate (V6) and open a row edit overlay (V1).
+  await page.getByTestId('section-toggle-quote').click()
+  await settle()
+  await expectAccessible(page, 'review - bucketed estimate open (J4)')
+  // One-open-at-a-time collapsed the contact section - re-open it first.
+  await page.getByTestId('section-toggle-contact').click()
+  await page.getByTestId('edit-row-main-contact').click()
+  await expect(page.getByTestId('edit-overlay')).toBeVisible()
+  await settle()
+  await expectAccessible(page, 'review - edit overlay open (J4/V1)')
+  await page.keyboard.press('Escape')
 })
 
 test('calendar has no serious/critical axe violations', async ({ page }) => {

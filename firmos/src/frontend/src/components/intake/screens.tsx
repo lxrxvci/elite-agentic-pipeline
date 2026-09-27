@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowRight, Check, Plus, X } from 'lucide-react'
+import { ArrowRight, Check, Info, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import type { ContactLookupResults } from '@/server/contact-lookup'
@@ -19,6 +19,7 @@ import { RoutineSchedulerScreen } from './routine-scheduler'
 import {
   CUSTOM_OTHER_VALUE,
   customAllowed,
+  laterAddonQualified,
   type FieldDef,
   type QuestionDef,
   type RepeatablePrefill,
@@ -33,6 +34,59 @@ import {
  * referral questions, and the payroll-provider / merchant-processor fields
  * read their database lists - all data arrives via props from the wizard.
  */
+
+// ── The hero card chrome ──────────────────────────────────────────────────
+
+/**
+ * The question hero: title + recommendation badge + help + info callout.
+ * Shared by the wizard card and - J4 (V1, meeting #3 00:58:28-00:59:29) -
+ * the review screen's edit overlay, so editing in place looks and behaves
+ * exactly like the question itself.
+ */
+export function QuestionHero({
+  q,
+  answers,
+  titleAs: Title = 'h1',
+}: {
+  q: QuestionDef
+  answers: WizardAnswers
+  /** h1 on the wizard screen; h2 inside the dialog overlay. */
+  titleAs?: 'h1' | 'h2'
+}) {
+  // I2: helper copy can derive from the answers (EIN note for sole props,
+  // owner-count rules, ...).
+  const help = typeof q.help === 'function' ? q.help(answers) : q.help
+  const callout = q.callout?.(answers) ?? null
+  const badge = q.badge?.(answers) ?? null
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2.5">
+        <Title className="font-display text-2xl font-semibold tracking-tight text-foreground">
+          {q.title}
+        </Title>
+        {badge && (
+          <span
+            className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent-foreground"
+            data-testid="recommendation-badge"
+          >
+            {badge}
+          </span>
+        )}
+      </div>
+      {help && <p className="mt-1.5 text-sm text-muted-foreground">{help}</p>}
+      {callout && (
+        <p
+          className="mt-4 flex items-start gap-2.5 rounded-lg border border-firm-brand/40 bg-accent px-3.5 py-2.5 text-sm text-accent-foreground"
+          role="note"
+          data-testid="question-callout"
+        >
+          <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span>{callout}</span>
+        </p>
+      )}
+    </>
+  )
+}
 
 // ── Option cards (single select) ──────────────────────────────────────────
 
@@ -149,18 +203,25 @@ export function MultiChips({
  * guided list, not a mixed card grid. The three standards render as an
  * "Included in every engagement" group - pre-selected, never unselectable;
  * the add-ons render as toggle rows on the same service keys as before.
- * Add-ons quoted but captured by their own cards later (payroll, bill entry,
+ * Add-ons quoted but captured by their own cards (payroll, bill entry,
  * 1099 prep, specialty reports, merchant reconciliation) are listed for
  * completeness. Continue always commits the standards, even untouched.
+ *
+ * N1 (meeting #3, 00:12:50): the screen sits at the END of the flow, so
+ * those later answers are already in - rows they qualified carry an
+ * "Added by your answers" badge.
  */
 export function ServicesScreen({
   q,
   values,
+  answers,
   onCommit,
   onAdvance,
 }: {
   q: QuestionDef
   values: string[]
+  /** N1: the current answers - later-addon rows badge when already qualified. */
+  answers: WizardAnswers
   onCommit: (values: string[]) => void
   onAdvance: () => void
 }) {
@@ -242,17 +303,30 @@ export function ServicesScreen({
       </section>
 
       {grouping.laterAddons.length > 0 && (
-        <section data-testid="services-later-addons" aria-label="Quoted in their own questions">
+        <section data-testid="services-later-addons" aria-label="Qualified by your answers">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Quoted in their own questions
+            Qualified by your answers
           </h2>
           <ul className="mt-2 divide-y divide-border rounded-xl border border-dashed border-border bg-muted/40 px-4">
-            {grouping.laterAddons.map((o) => (
-              <li key={o.value} className="flex items-baseline justify-between gap-3 py-2" data-testid={`later-${o.value}`}>
-                <span className="text-sm text-muted-foreground">{o.label}</span>
-                {o.sub && <span className="shrink-0 text-[11px] text-muted-foreground">{o.sub}</span>}
-              </li>
-            ))}
+            {grouping.laterAddons.map((o) => {
+              const qualified = laterAddonQualified(o.value, answers)
+              return (
+                <li key={o.value} className="flex items-baseline justify-between gap-3 py-2" data-testid={`later-${o.value}`}>
+                  <span className="text-sm text-muted-foreground">{o.label}</span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {qualified && (
+                      <span
+                        className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground"
+                        data-testid={`later-badge-${o.value}`}
+                      >
+                        Added by your answers
+                      </span>
+                    )}
+                    {o.sub && <span className="text-[11px] text-muted-foreground">{o.sub}</span>}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
         </section>
       )}
@@ -1177,12 +1251,14 @@ export function QuestionScreen({
 
   // I4: the services screen (standards group + add-on toggles) replaces the
   // generic chip grid; the answer key and service_key wiring are unchanged.
+  // N1: answers ride along so later-addon rows can badge answer-qualified scope.
   if (q.type === 'multi' && q.services) {
     const values = (q.get(answers) as string[]) ?? []
     return (
       <ServicesScreen
         q={q}
         values={values}
+        answers={answers}
         onCommit={(next) => onApply(q.apply(answers, next))}
         onAdvance={onAdvance}
       />

@@ -2,11 +2,16 @@
 
 import { useEffect, useMemo, useRef } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
-import { QBO_TIER_LABEL, type Quote } from '@firmos/domain'
+import type { Quote } from '@firmos/domain'
 
 import { cn } from '@/shared/lib/utils'
 
 import { formatMoney } from './format'
+import { PriceEditControl } from './price-edit'
+import { lineCycleLabel, quoteLineName, quoteLineNet } from './review-estimate'
+
+// Re-exported for the existing consumers (review screen, tests).
+export { quoteLineName, quoteLineNet }
 
 /**
  * The persistent live-quote panel. Every number on it comes from the
@@ -18,11 +23,13 @@ import { formatMoney } from './format'
  * block under the line list. The effective-monthly figure pulses on change
  * and line items flash when their amount moves.
  *
- * C1 follow-through: when `discounts` + `onDiscountChange` are provided (the
- * editable wizard), every priced line carries a "$ off per cycle" input and
- * shows its net amount; the panel list grows to every line in that mode so no
- * line is undiscountable. Discounts ride form_data through autosave and the
- * quote recomputes from the server on every change.
+ * J4 (V4, meeting #3 01:01:22-01:02:14): the panel captures DIRECT PRICE
+ * edits (dollars per billing cycle) instead of the old discount boxes -
+ * "negative = positive makes no sense". Overrides ride form_data
+ * .servicePrices through autosave; legacy stored discounts still net their
+ * lines (standard struck through) until someone edits or resets the price.
+ * The panel list grows to every line in editable mode so no line is
+ * uneditable. The quote recomputes from the server on every change.
  *
  * I4 (plan §3D, 00:22:46-00:24:22): the panel is the ONLY surface that shows
  * money mid-wizard, so the wizard hides it entirely until the review screen
@@ -32,9 +39,11 @@ import { formatMoney } from './format'
  * `reveal` plays a one-time entrance, reduced-motion safe.
  */
 
-/** Shared shell so the hidden card occupies the same rail/bottom-bar footprint. */
+/** Shared shell so the hidden card occupies the same rail/bottom-bar footprint.
+ *  J4 (V3): no lg:sticky here - the wizard's rail wrapper owns stickiness so
+ *  the notes rail scrolls WITH the pricing card. */
 export const QUOTE_PANEL_SHELL =
-  'rounded-xl border border-border bg-card max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40 max-lg:rounded-none max-lg:border-x-0 max-lg:border-b-0 max-lg:shadow-[0_-8px_24px_oklch(0_0_0/0.08)] lg:sticky lg:top-6'
+  'rounded-xl border border-border bg-card max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40 max-lg:rounded-none max-lg:border-x-0 max-lg:border-b-0 max-lg:shadow-[0_-8px_24px_oklch(0_0_0/0.08)]'
 
 /**
  * The collapsed quote rail (I4): no amounts, just the staff peek toggle.
@@ -67,70 +76,18 @@ export function QuoteHiddenCard({ onShow }: { onShow: () => void }) {
 
 const TOP_LINES = 4
 
-/** Display name for a quote line; the recommended QBO tier is called out. */
-export function quoteLineName(quote: Quote, line: Quote['lines'][number]): string {
-  if (quote.qbo && line.service_key === quote.qbo.serviceKey && quote.qbo.recommended) {
-    return `${QBO_TIER_LABEL[quote.qbo.tier]} (recommended)`
-  }
-  return line.product_name
-}
-
-/** A line's net after its per-cycle discount, clamped at zero (engine rule). */
-export function quoteLineNet(line: Quote['lines'][number]): number | null {
-  if (line.amount == null) return null
-  return Math.max(0, line.amount - (line.discount ?? 0))
-}
-
-function DiscountInput({
-  line,
-  value,
-  onChange,
-}: {
-  line: Quote['lines'][number]
-  value: number
-  onChange: (dollars: number) => void
-}) {
-  return (
-    <span className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
-      <label
-        htmlFor={`discount-${line.service_key}`}
-        className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-      >
-        −$
-      </label>
-      <input
-        id={`discount-${line.service_key}`}
-        data-testid={`discount-${line.service_key}`}
-        type="number"
-        inputMode="decimal"
-        min={0}
-        step="1"
-        aria-label={`Discount per billing cycle for ${line.product_name}`}
-        placeholder="0"
-        value={value === 0 ? '' : String(value)}
-        onChange={(e) => {
-          const n = Number(e.target.value)
-          onChange(e.target.value === '' || !Number.isFinite(n) ? 0 : Math.max(0, n))
-        }}
-        className="tnum h-6 w-16 rounded-md border border-input bg-background px-1.5 text-right text-[11px] text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-      />
-    </span>
-  )
-}
-
 export function QuotePanel({
   quote,
   loading,
-  discounts,
-  onDiscountChange,
+  onPriceChange,
   onHidePricing,
   reveal = false,
 }: {
   quote: Quote | null
   loading: boolean
-  /** Editable per-line discounts (flat $ off per billing cycle), keyed by service key. */
-  discounts?: Record<string, number>
-  onDiscountChange?: (serviceKey: string, dollars: number) => void
+  /** J4 (V4): direct per-line price editing - dollars = the new per-cycle
+   *  price, null = reset to standard. Its presence makes the panel editable. */
+  onPriceChange?: (serviceKey: string, dollars: number | null) => void
   /** I4: staff peek control, rendered only while pricing is peeked on a
    *  non-review screen (the review reveal never offers to re-hide). */
   onHidePricing?: () => void
@@ -138,7 +95,7 @@ export function QuotePanel({
   reveal?: boolean
 }) {
   const amount = quote?.totals.effectiveMonthly ?? null
-  const editable = discounts != null && onDiscountChange != null
+  const editable = onPriceChange != null
   // Zero-quantity lines (e.g. reconciliations before any account exists)
   // are noise; hide them. The priced retroactive line leaves the list too -
   // it has its own one-time block below. Amounts shown are always the
@@ -150,7 +107,7 @@ export function QuotePanel({
       ),
     [quote],
   )
-  const unpricedCount = lines.filter((l) => l.unpriced).length
+  const unpricedCount = lines.filter((l) => l.unpriced && l.price_override == null).length
   const retro = quote?.retroactive && quote.retroactive.months > 0 ? quote.retroactive : null
   // Editable mode lists every line so each one can carry a discount;
   // read-only mode stays compact at the top few.
@@ -244,35 +201,42 @@ export function QuotePanel({
           <ul className="mt-3 hidden space-y-1 border-t border-border pt-3 lg:block">
             {visibleLines.map((l) => {
               const net = quoteLineNet(l)
-              const discounted = (l.discount ?? 0) > 0
+              const deviates = net != null && l.amount != null && net !== l.amount
               return (
                 <li
                   key={l.service_key}
                   className={cn(
-                    'flex items-baseline justify-between gap-3 px-1 py-0.5 text-xs',
+                    'group flex items-baseline justify-between gap-3 px-1 py-0.5 text-xs',
                     flashed.current.has(l.service_key) && 'fi-line-flash',
                   )}
                 >
                   <span className="truncate text-muted-foreground">{quote ? quoteLineName(quote, l) : l.product_name}</span>
-                  {l.unpriced ? (
+                  {l.unpriced && l.price_override == null && !editable ? (
                     <span className="shrink-0 text-[11px] italic text-muted-foreground">quoted at review</span>
                   ) : (
                     <span className="flex shrink-0 items-baseline gap-2">
-                      {editable && (
-                        <DiscountInput
-                          line={l}
-                          value={discounts[l.service_key] ?? 0}
-                          onChange={(dollars) => onDiscountChange(l.service_key, dollars)}
+                      {editable ? (
+                        <PriceEditControl
+                          serviceKey={l.service_key}
+                          name={quote ? quoteLineName(quote, l) : l.product_name}
+                          cycleLabel={lineCycleLabel(l, quote?.billingCycle ?? 1)}
+                          standard={l.amount}
+                          effective={net}
+                          deviates={deviates || l.price_override != null}
+                          onSave={(dollars) => onPriceChange(l.service_key, dollars)}
                         />
+                      ) : (
+                        <>
+                          {deviates && (
+                            <span className="tnum text-[11px] text-muted-foreground line-through">
+                              {formatMoney(l.amount!)}
+                            </span>
+                          )}
+                          <span className="tnum font-medium text-foreground">
+                            {net != null ? formatMoney(net) : ''}
+                          </span>
+                        </>
                       )}
-                      {discounted && l.amount != null && (
-                        <span className="tnum text-[11px] text-muted-foreground line-through">
-                          {formatMoney(l.amount)}
-                        </span>
-                      )}
-                      <span className="tnum font-medium text-foreground">
-                        {net != null ? formatMoney(net) : ''}
-                      </span>
                     </span>
                   )}
                 </li>

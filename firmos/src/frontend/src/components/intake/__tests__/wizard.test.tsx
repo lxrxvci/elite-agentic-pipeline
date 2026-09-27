@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Quote } from '@firmos/domain'
 
@@ -383,22 +383,25 @@ describe('quote panel: QBO recommendation and priced retroactive', () => {
     expect(screen.queryByText('Retroactive Bookkeeping')).not.toBeInTheDocument()
   })
 
-  it('the review screen carries the recommended tier and the retroactive section', async () => {
+  it('the review screen carries the recommended tier and the retroactive one-time block (V7)', async () => {
     getQuote.mockImplementation(async () => ({ ok: true as const, data: QUOTE_WITH_EXTRAS }))
     const reviewIndex = flattenScreens(completeAnswers).length - 1
     renderWizard(completeAnswers, reviewIndex)
     await waitFor(() => expect(screen.getByTestId('review-quote')).toBeInTheDocument(), { timeout: 3000 })
 
+    fireEvent.click(screen.getByTestId('section-toggle-quote'))
     expect(screen.getAllByText('QuickBooks Essentials (recommended)').length).toBeGreaterThan(0)
-    const section = screen.getByTestId('review-retroactive')
-    expect(section).toHaveTextContent('$1,120')
-    expect(section).toHaveTextContent('one-time')
-    expect(section).toHaveTextContent('7 monthly line items')
-    expect(section).toHaveTextContent('from Jan 2026')
-    expect(section).toHaveTextContent('$160')
-    // Not double-rendered in the main quote list.
-    const quoteList = screen.getByTestId('review-quote')
-    expect(quoteList).not.toHaveTextContent('Retroactive Bookkeeping')
+    // V7: retroactive cleanup lives in the separate one-time fees block with
+    // its months x rate math and the per-period split.
+    const oneTime = screen.getByTestId('estimate-one-time')
+    expect(oneTime).toHaveTextContent('$1,120')
+    expect(oneTime).toHaveTextContent('One-time fees')
+    expect(screen.getByTestId('one-time-math-retroactive_bookkeeping')).toHaveTextContent(
+      '7 months × $160/mo',
+    )
+    expect(screen.getByTestId('retro-periods')).toHaveTextContent('2026: 7 months')
+    // Not double-rendered in the recurring buckets.
+    expect(screen.getByTestId('estimate-recurring')).not.toHaveTextContent('Retroactive Bookkeeping')
   })
 })
 
@@ -450,7 +453,8 @@ describe('running notes rail', () => {
     )
     // Rail lists the seeded note while editing…
     expect(screen.getAllByTestId('running-note').length).toBeGreaterThan(0)
-    // …and the review screen carries the same note.
+    // …and the review screen carries the same note (V2: expand the section).
+    fireEvent.click(screen.getByTestId('section-toggle-notes'))
     const section = screen.getByTestId('review-running-notes')
     expect(section).toHaveTextContent('Wants weekly deposits reviewed')
   })
@@ -459,11 +463,53 @@ describe('running notes rail', () => {
 describe('review screen', () => {
   const reviewIndex = flattenScreens(completeAnswers).length - 1
 
-  it('edit links jump back to the chapter question', async () => {
+  // J4 (V1, meeting #3 00:58:28-00:59:29): clicking Edit on the review page
+  // used to dump Jason back into the wizard mid-flow ("that's crazy"). Now
+  // the question's hero card opens in a modal overlay; the wizard behind
+  // never moves, and saving updates the review in place.
+  it('edit_overlay_never_navigates', async () => {
     renderWizard(completeAnswers, reviewIndex)
     expect(screen.getByTestId('review-screen')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('edit-contact'))
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'legal-name')
+
+    // A row-level edit opens THAT question in the overlay - the review stays
+    // mounted and no question screen ever renders.
+    fireEvent.click(screen.getByTestId('edit-row-main-contact'))
+    const overlay = await screen.findByTestId('edit-overlay')
+    expect(overlay).toHaveAttribute('data-question', 'main-contact')
+    expect(overlay).toHaveTextContent('Who is the main contact?')
+    expect(screen.queryByTestId('question-screen')).toBeNull()
+    expect(screen.getByTestId('review-screen')).toBeInTheDocument()
+
+    // Edit in place and save (Continue): the overlay closes, the wizard
+    // never navigated, and the review row updated.
+    const nameInput = within(overlay).getByLabelText('Full name')
+    fireEvent.change(nameInput, { target: { value: 'Wren Changed' } })
+    fireEvent.click(within(overlay).getByTestId('continue'))
+    await waitFor(() => expect(screen.queryByTestId('edit-overlay')).toBeNull())
+    expect(screen.queryByTestId('question-screen')).toBeNull()
+    expect(screen.getByTestId('review-screen')).toBeInTheDocument()
+    // The first section (contact) is open by default - the row reads fresh.
+    expect(screen.getByText('Wren Changed')).toBeInTheDocument()
+
+    // The save rode the same apply/autosave path as any wizard edit.
+    await waitFor(() => expect(saveIntake).toHaveBeenCalled())
+    const last = saveIntake.mock.calls.at(-1)?.[0] as {
+      patch: { formData?: { contacts?: Array<{ firstName?: string; lastName?: string }> } }
+    }
+    expect(last.patch.formData?.contacts?.[0]).toMatchObject({ firstName: 'Wren', lastName: 'Changed' })
+  })
+
+  it('a select pick inside the overlay applies and closes immediately', async () => {
+    renderWizard(completeAnswers, reviewIndex)
+    fireEvent.click(screen.getByTestId('edit-engagement'))
+    const overlay = await screen.findByTestId('edit-overlay')
+    expect(overlay).toHaveAttribute('data-question', 'engagement')
+    fireEvent.click(within(overlay).getByTestId('option-project'))
+    await waitFor(() => expect(screen.queryByTestId('edit-overlay')).toBeNull())
+    expect(screen.queryByTestId('question-screen')).toBeNull()
+    // The engagement row re-reads from the new answer (and the scope
+    // chapters vanish - the review re-derives in place).
+    expect(screen.getByText('One-time project')).toBeInTheDocument()
   })
 
   it('duplicate matches render a warning with the reason, then submit anyway works', async () => {
@@ -488,6 +534,26 @@ describe('review screen', () => {
     fireEvent.click(screen.getByTestId('submit-intake'))
     await waitFor(() => expect(screen.getByTestId('submitted-success')).toBeInTheDocument())
     expect(submitIntakeForReview).toHaveBeenCalledWith(7)
+  })
+})
+
+describe('notes rail scrolls with the pricing card (V3, meeting #3 01:01:22)', () => {
+  it('the rail is one sticky unit holding BOTH the pricing card and the notes box', () => {
+    const reviewIndex = flattenScreens(completeAnswers).length - 1
+    renderWizard(completeAnswers, reviewIndex)
+    const rail = screen.getByTestId('wizard-rail')
+    // One sticky, viewport-capped, internally scrolling unit on large
+    // screens - the notes box can never be stranded at the top of a long
+    // review while the pricing card rides along.
+    expect(rail.className).toContain('lg:sticky')
+    expect(rail.className).toContain('lg:top-6')
+    expect(rail.className).toContain('lg:max-h-')
+    expect(rail.className).toContain('lg:overflow-y-auto')
+    expect(within(rail).queryByTestId('live-quote') ?? within(rail).getByTestId('quote-hidden')).toBeInTheDocument()
+    expect(within(rail).getByTestId('running-notes')).toBeInTheDocument()
+    // The pricing card no longer sticks on its own.
+    const panel = screen.queryByTestId('live-quote') ?? screen.getByTestId('quote-hidden')
+    expect(panel.className).not.toContain('lg:sticky')
   })
 })
 
@@ -530,8 +596,11 @@ describe('I2 corporate payroll auto-flag (00:48:07-00:49:44)', () => {  // S-cor
   it('the review screen shows the auto-flagged payroll row', () => {
     renderWizard(scorpAnswers, flattenScreens(scorpAnswers).length - 1)
     expect(screen.getByTestId('review-screen')).toBeInTheDocument()
-    expect(screen.getByText('Yes · officers must be on payroll')).toBeInTheDocument()
+    // V2: expand the sections carrying the rows.
+    fireEvent.click(screen.getByTestId('section-toggle-entity'))
     expect(screen.getByText('S-corp')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('section-toggle-income'))
+    expect(screen.getByText('Yes · officers must be on payroll')).toBeInTheDocument()
   })
 })
 

@@ -5,8 +5,10 @@ import type { Quote } from '@firmos/domain'
 import { QuoteHiddenCard, QuotePanel, quoteLineNet } from '../quote-panel'
 
 /**
- * C1 follow-through: the quote panel captures a per-line discount (flat $ off
- * per billing cycle) and shows the net amount; read-only mode is unchanged.
+ * J4 (V4, meeting #3 01:01:22-01:02:14): the quote panel captures DIRECT
+ * PRICE edits (dollars per billing cycle) instead of the old discount boxes.
+ * Legacy stored discounts still net their lines (standard struck through)
+ * until the price is edited or reset. Read-only mode is unchanged.
  * I4: QuoteHiddenCard is the collapsed rail (staff peek toggle, no amounts);
  * the review reveal plays a one-time entrance.
  */
@@ -45,44 +47,63 @@ const QUOTE: Quote = {
   },
 }
 
-describe('QuotePanel discounts (C1)', () => {
-  it('quoteLineNet clamps the discount at zero', () => {
-    expect(quoteLineNet(QUOTE.lines[0])).toBe(75)
+describe('QuotePanel direct price editing (V4)', () => {
+  it('quoteLineNet: the override wins, the legacy discount nets, both clamp at zero', () => {
+    expect(quoteLineNet(QUOTE.lines[0])).toBe(75) // 100 - 25 legacy discount
     expect(quoteLineNet({ ...QUOTE.lines[0], discount: 250 })).toBe(0)
     expect(quoteLineNet({ ...QUOTE.lines[0], discount: 0 })).toBe(100)
+    expect(quoteLineNet({ ...QUOTE.lines[0], price_override: 60 })).toBe(60) // beats the discount
     expect(quoteLineNet(QUOTE.lines[1])).toBeNull() // unpriced
+    // ...but an override prices even an unpriced line.
+    expect(quoteLineNet({ ...QUOTE.lines[1], price_override: 200 })).toBe(200)
   })
 
-  it('editable mode renders a discount input per priced line and reports changes', () => {
-    const onDiscountChange = vi.fn()
-    render(
-      <QuotePanel
-        quote={QUOTE}
-        loading={false}
-        discounts={{ bank_feed_management: 25 }}
-        onDiscountChange={onDiscountChange}
-      />,
-    )
-    const input = screen.getByTestId('discount-bank_feed_management')
-    expect(input).toHaveValue(25)
-    // The discounted line shows gross struck through + the net.
-    const row = input.closest('li')!
+  it('editable mode renders a price editor per line and reports saves and resets', () => {
+    const onPriceChange = vi.fn()
+    render(<QuotePanel quote={QUOTE} loading={false} onPriceChange={onPriceChange} />)
+
+    // The legacy-discounted line shows the standard struck through + the net,
+    // with NO discount input and no negative numbers anywhere.
+    const row = screen.getByText('Bank Feed Management').closest('li')!
     expect(row).toHaveTextContent('$100')
     expect(row).toHaveTextContent('$75')
-    // Unpriced lines never get an input.
-    expect(screen.queryByTestId('discount-process_payroll')).toBeNull()
+    expect(screen.queryByTestId('discount-bank_feed_management')).toBeNull()
+    expect(row.textContent).not.toMatch(/−\$|-\$/)
 
-    fireEvent.change(input, { target: { value: '40' } })
-    expect(onDiscountChange).toHaveBeenCalledWith('bank_feed_management', 40)
-    // Clearing the input means no discount.
-    fireEvent.change(input, { target: { value: '' } })
-    expect(onDiscountChange).toHaveBeenCalledWith('bank_feed_management', 0)
+    // Open the editor: the effective price prefills.
+    fireEvent.click(screen.getByTestId('price-edit-bank_feed_management'))
+    const input = screen.getByTestId('price-input-bank_feed_management')
+    expect(input).toHaveValue(75)
+    fireEvent.change(input, { target: { value: '80' } })
+    fireEvent.click(screen.getByTestId('price-save-bank_feed_management'))
+    expect(onPriceChange).toHaveBeenCalledWith('bank_feed_management', 80)
+
+    // Saving the standard price writes a reset (no pointless override).
+    fireEvent.click(screen.getByTestId('price-edit-bank_feed_management'))
+    fireEvent.change(screen.getByTestId('price-input-bank_feed_management'), { target: { value: '100' } })
+    fireEvent.click(screen.getByTestId('price-save-bank_feed_management'))
+    expect(onPriceChange).toHaveBeenCalledWith('bank_feed_management', null)
+
+    // The reset affordance (deviating line) clears override + legacy discount.
+    fireEvent.click(screen.getByTestId('price-reset-bank_feed_management'))
+    expect(onPriceChange).toHaveBeenCalledWith('bank_feed_management', null)
+    expect(onPriceChange).toHaveBeenCalledTimes(3)
   })
 
-  it('read-only mode renders net amounts without inputs', () => {
+  it('an unpriced line gets an editor too - the price is set at review', () => {
+    const onPriceChange = vi.fn()
+    render(<QuotePanel quote={QUOTE} loading={false} onPriceChange={onPriceChange} />)
+    const row = screen.getByText('Process Payroll').closest('li')!
+    expect(row).toHaveTextContent('quoted at review')
+    fireEvent.click(screen.getByTestId('price-edit-process_payroll'))
+    fireEvent.change(screen.getByTestId('price-input-process_payroll'), { target: { value: '200' } })
+    fireEvent.click(screen.getByTestId('price-save-process_payroll'))
+    expect(onPriceChange).toHaveBeenCalledWith('process_payroll', 200)
+  })
+
+  it('read-only mode renders net amounts without editors', () => {
     render(<QuotePanel quote={QUOTE} loading={false} />)
-    expect(screen.queryByTestId('discount-bank_feed_management')).toBeNull()
-    // The line nets the discount (the /mo headline matches too - scope to the line).
+    expect(screen.queryByTestId('price-edit-bank_feed_management')).toBeNull()
     const line = screen.getByText('Bank Feed Management').closest('li')!
     expect(line).toHaveTextContent('$75')
   })
@@ -107,13 +128,7 @@ describe('QuoteHiddenCard + reveal (I4, plan §3D)', () => {
   it('the peeked panel carries the discreet hide control', () => {
     const onHide = vi.fn()
     render(
-      <QuotePanel
-        quote={QUOTE}
-        loading={false}
-        discounts={{}}
-        onDiscountChange={() => {}}
-        onHidePricing={onHide}
-      />,
+      <QuotePanel quote={QUOTE} loading={false} onPriceChange={() => {}} onHidePricing={onHide} />,
     )
     const toggle = screen.getByTestId('quote-hide-toggle')
     expect(toggle).toHaveAttribute('aria-pressed', 'true')

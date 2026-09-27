@@ -581,16 +581,38 @@ export const SERVICES_ADDON_OPTIONS: SelectOption[] = [
   { value: 'additional_therapist_tracking', label: 'Therapist tracking' },
 ]
 
-/** Add-ons quoted by rule 1 (00:18:13) but captured by their own cards later
- *  in the wizard (payroll, bill entry, 1099 prep, specialty reports, merchant
- *  reconciliation) - listed so the catalog on this screen is complete. */
+/** Add-ons quoted by rule 1 (00:18:13) but captured by their own cards
+ *  (payroll, bill entry, 1099 prep, specialty reports, merchant
+ *  reconciliation) - listed so the catalog on this screen is complete.
+ *  N1 (meeting #3): the screen sits at the END of the flow now, so those
+ *  answers are already in when it renders - qualified rows badge "Added by
+ *  your answers" (see SERVICES_LATER_ADDON_QUALIFIED). */
 export const SERVICES_LATER_ADDON_ROWS: SelectOption[] = [
-  { value: 'payroll', label: 'Payroll', sub: 'Asked with the payroll questions' },
-  { value: 'record_bills', label: 'Bill entry', sub: 'Asked in the reporting chapter' },
-  { value: '1099_collection', label: '1099 prep', sub: 'Asked in the reporting chapter' },
-  { value: 'specialty_reports', label: 'Specialty reports', sub: 'Asked in the reporting chapter' },
-  { value: 'merchant_account_reconciliation', label: 'Merchant reconciliation', sub: 'Asked with the income questions' },
+  { value: 'payroll', label: 'Payroll', sub: 'Set by the payroll answers' },
+  { value: 'record_bills', label: 'Bill entry', sub: 'Set by the bill answers' },
+  { value: '1099_collection', label: '1099 prep', sub: 'Set by the 1099 answers' },
+  { value: 'specialty_reports', label: 'Specialty reports', sub: 'Set by the reports answers' },
+  { value: 'merchant_account_reconciliation', label: 'Merchant reconciliation', sub: 'Set by the income answers' },
 ]
+
+/** N1: whether the earlier answers already qualified a later add-on - the
+ *  same derivations effectiveServiceKeys applies, keyed by the row value. */
+export const SERVICES_LATER_ADDON_QUALIFIED: Record<string, (a: WizardAnswers) => boolean> = {
+  payroll: (a) =>
+    (a.serviceKeys ?? []).some((k) => k.startsWith('payroll_') || k === 'process_payroll') ||
+    a.payrollSelfProcessed === true,
+  record_bills: (a) => (a.recordBills ?? a.includeBillPay) === true,
+  '1099_collection': (a) =>
+    a.include1099Collection === true ||
+    a.include1099FullManagement === true ||
+    (a.serviceKeys ?? []).some((k) => k.startsWith('1099_')),
+  specialty_reports: (a) => (a.reportDefinitions ?? []).length > 0,
+  merchant_account_reconciliation: (a) => a.includeMerchantReconciliation === true,
+}
+
+/** True when this later-addon row was already qualified by the answers. */
+export const laterAddonQualified = (value: string, a: WizardAnswers): boolean =>
+  SERVICES_LATER_ADDON_QUALIFIED[value]?.(a) ?? false
 
 const SERVICES_ADDON_VALUES = new Set(SERVICES_ADDON_OPTIONS.map((o) => o.value))
 const SERVICES_STANDARD_VALUES = new Set(SERVICES_STANDARD_ROWS.map((r) => r.value))
@@ -1419,10 +1441,14 @@ export function routineScheduleSummary(a: WizardAnswers): string | null {
 
 export const CHAPTERS: ChapterDef[] = [
   // I1 (plan §1, 00:24:22-00:31:55): Jason's dictated conversation order -
-  // contact basics, entity & ownership, engagement type, accounting
-  // software, services, starting point - then the scope chapters in their
-  // existing relative order. Answer keys are unchanged from the old layout;
-  // only screen order and grouping moved.
+  // contact basics, entity & ownership, engagement type, starting point -
+  // then the scope chapters in their existing relative order.
+  // N1 (meeting #3, 00:12:50): the services + software-scope chapters moved
+  // to the END of the flow - the earlier answers qualify the scope ("we'll
+  // qualify them by having the questions"), so "What are we taking on?" and
+  // the QBO scope cards land just before the recurring/scheduler closeout.
+  // Answer keys are unchanged from the old layout; only screen order and
+  // grouping moved.
   {
     id: 'contact',
     label: 'Contact basics',
@@ -1851,138 +1877,6 @@ export const CHAPTERS: ChapterDef[] = [
               : str(a.engagementType)
                 ? 'Monthly bookkeeping'
                 : null),
-      },
-    ],
-  },
-  {
-    id: 'software',
-    label: 'Accounting software',
-    questions: [
-      {
-        id: 'qbo-status',
-        title: 'Where do they stand with QuickBooks?',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'existing', label: 'Already on QuickBooks Online' },
-          { value: 'desktop', label: 'On QuickBooks Desktop', sub: 'Needs a migration to Online' },
-          { value: 'none', label: 'No QuickBooks yet' },
-        ],
-        ...key('quickbooksStatus'),
-        summarize: withCustom('qbo-status', (a) =>
-          a.quickbooksStatus === 'existing' ? 'On QBO' : a.quickbooksStatus === 'desktop' ? 'QBO migration' : a.quickbooksStatus === 'none' ? 'No QuickBooks yet' : null),
-      },
-      {
-        id: 'qbo-setup',
-        title: 'Should we handle the QuickBooks setup?',
-        type: 'select',
-        required: true,
-        when: (a) => a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none',
-        ...yesNo('needsQuickbooksSetup'),
-        summarize: (a) =>
-          a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none'
-            ? boolWord(a.needsQuickbooksSetup)
-            : null,
-      },
-      {
-        id: 'qbo-users',
-        title: 'How many people need QuickBooks access?',
-        help: 'Seats drive the plan: two users need at least Essentials, four need Plus.',
-        type: 'fields',
-        required: true,
-        when: hasQbo,
-        fields: [{ key: 'qboUserCount', label: 'QuickBooks users', kind: 'number', min: 1, max: 25, required: true, placeholder: '2' }],
-        get: (a) => a.qboUserCount,
-        apply: (_a, v) => {
-          const raw = (v as Record<string, unknown>).qboUserCount
-          const n = raw === '' || raw == null ? null : Number(raw)
-          return { qboUserCount: Number.isFinite(n as number) ? (n as number) : null }
-        },
-        summarize: (a) =>
-          hasQbo(a) && a.qboUserCount != null
-            ? `${a.qboUserCount} user${a.qboUserCount === 1 ? '' : 's'}`
-            : null,
-      },
-      {
-        id: 'qbo-tier',
-        title: 'Which QuickBooks plan?',
-        help: 'Class or location tracking needs Plus. Pick a plan, or let the quote recommend one from the seat count.',
-        type: 'select',
-        required: true,
-        when: hasQbo,
-        options: [
-          { value: 'recommended', label: 'Recommend for me', sub: 'From user count and tracking needs' },
-          { value: 'simple_start', label: 'Simple Start', sub: '1 user' },
-          { value: 'essentials', label: 'Essentials', sub: 'Up to 3 users' },
-          { value: 'plus', label: 'Plus', sub: 'Up to 5 users, class and location tracking' },
-          { value: 'advanced', label: 'Advanced', sub: 'More than 5 users' },
-        ],
-        // "Recommend for me" (null) is the default; it preselects so resume
-        // never parks on this question.
-        get: (a) => (hasQbo(a) ? (a.qboSubscriptionTier ?? 'recommended') : undefined),
-        apply: (_a, v) => ({
-          qboSubscriptionTier:
-            v === 'recommended' ? null : (v as WizardAnswers['qboSubscriptionTier']),
-        }),
-        summarize: withCustom('qbo-tier', (a) => {
-          if (!hasQbo(a)) return null
-          const labels: Record<string, string> = {
-            simple_start: 'Simple Start',
-            essentials: 'Essentials',
-            plus: 'Plus',
-            advanced: 'Advanced',
-          }
-          return a.qboSubscriptionTier
-            ? (labels[a.qboSubscriptionTier] ?? a.qboSubscriptionTier)
-            : 'Recommended at quote'
-        }),
-      },
-    ],
-  },
-  {
-    // I1: services sit right after software (plan §1 row 5). I4 (§3C,
-    // 00:18:13-00:19:27): the screen is the three standards - pre-selected,
-    // never unselectable - plus modular add-on toggles. The answer key and
-    // every service_key are unchanged; selections the screen no longer
-    // renders (legacy loans_and_liabilities, branch-derived keys) pass
-    // through apply() untouched so old intakes keep quoting and converting.
-    id: 'services',
-    label: 'Services',
-    questions: [
-      {
-        id: 'services',
-        title: 'What are we taking on?',
-        help: 'Three things come with every engagement. Add anything else in scope - payroll, bills, 1099s, and specialty reports are asked in their own questions.',
-        type: 'multi',
-        required: true,
-        options: SERVICES_ADDON_OPTIONS,
-        services: {
-          standards: SERVICES_STANDARD_ROWS,
-          laterAddons: SERVICES_LATER_ADDON_ROWS,
-        },
-        // The full stored key set: the standards (written on the first pass)
-        // or any legacy/branch-derived selection make the question read as
-        // answered, so resume never re-parks here; the screen renders only
-        // its own add-on rows as toggles.
-        get: (a) => a.serviceKeys ?? [],
-        apply: (a, v) => {
-          const picked = (v as string[]).filter((k) => SERVICES_ADDON_VALUES.has(k))
-          // Reconcile by service key: anything the screen doesn't render
-          // (legacy loans_and_liabilities, payroll/1099/reporting keys the
-          // later cards own) survives the rewrite.
-          const preserved = (a.serviceKeys ?? []).filter(
-            (k) => !SERVICES_ADDON_VALUES.has(k) && !SERVICES_STANDARD_VALUES.has(k),
-          )
-          return { serviceKeys: [...SERVICES_STANDARD_KEYS, ...preserved, ...picked] }
-        },
-        summarize: (a) => {
-          const stored = a.serviceKeys ?? []
-          if (stored.length === 0) return null
-          const addons = stored.filter((k) => SERVICES_ADDON_VALUES.has(k))
-          return addons.length > 0
-            ? `The 3 standards + ${addons.map(serviceLabel).join(', ')}`
-            : 'The 3 standards'
-        },
       },
     ],
   },
@@ -2716,6 +2610,140 @@ export const CHAPTERS: ChapterDef[] = [
         required: true,
         ...yesNo('sendPreliminaryReports'),
         summarize: (a) => boolWord(a.sendPreliminaryReports),
+      },
+    ],
+  },
+  {
+    // I4 (§3C, 00:18:13-00:19:27): the screen is the three standards -
+    // pre-selected, never unselectable - plus modular add-on toggles.
+    // N1 (meeting #3, 00:12:50): the chapter moved to the END of the flow,
+    // just before the recurring closeout - the earlier answers qualify the
+    // scope, and the screen badges what they already added. The answer key
+    // and every service_key are unchanged; selections the screen no longer
+    // renders (legacy loans_and_liabilities, branch-derived keys) pass
+    // through apply() untouched so old intakes keep quoting and converting.
+    id: 'services',
+    label: 'Services',
+    questions: [
+      {
+        id: 'services',
+        title: 'What are we taking on?',
+        help: 'Three things come with every engagement. Add anything else in scope - payroll, bills, 1099s, and specialty reports were already qualified by your answers above.',
+        type: 'multi',
+        required: true,
+        options: SERVICES_ADDON_OPTIONS,
+        services: {
+          standards: SERVICES_STANDARD_ROWS,
+          laterAddons: SERVICES_LATER_ADDON_ROWS,
+        },
+        // The full stored key set: the standards (written on the first pass)
+        // or any legacy/branch-derived selection make the question read as
+        // answered, so resume never re-parks here; the screen renders only
+        // its own add-on rows as toggles.
+        get: (a) => a.serviceKeys ?? [],
+        apply: (a, v) => {
+          const picked = (v as string[]).filter((k) => SERVICES_ADDON_VALUES.has(k))
+          // Reconcile by service key: anything the screen doesn't render
+          // (legacy loans_and_liabilities, payroll/1099/reporting keys the
+          // later cards own) survives the rewrite.
+          const preserved = (a.serviceKeys ?? []).filter(
+            (k) => !SERVICES_ADDON_VALUES.has(k) && !SERVICES_STANDARD_VALUES.has(k),
+          )
+          return { serviceKeys: [...SERVICES_STANDARD_KEYS, ...preserved, ...picked] }
+        },
+        summarize: (a) => {
+          const stored = a.serviceKeys ?? []
+          if (stored.length === 0) return null
+          const addons = stored.filter((k) => SERVICES_ADDON_VALUES.has(k))
+          return addons.length > 0
+            ? `The 3 standards + ${addons.map(serviceLabel).join(', ')}`
+            : 'The 3 standards'
+        },
+      },
+    ],
+  },
+  {
+    id: 'software',
+    label: 'Accounting software',
+    questions: [
+      {
+        id: 'qbo-status',
+        title: 'Where do they stand with QuickBooks?',
+        type: 'select',
+        required: true,
+        options: [
+          { value: 'existing', label: 'Already on QuickBooks Online' },
+          { value: 'desktop', label: 'On QuickBooks Desktop', sub: 'Needs a migration to Online' },
+          { value: 'none', label: 'No QuickBooks yet' },
+        ],
+        ...key('quickbooksStatus'),
+        summarize: withCustom('qbo-status', (a) =>
+          a.quickbooksStatus === 'existing' ? 'On QBO' : a.quickbooksStatus === 'desktop' ? 'QBO migration' : a.quickbooksStatus === 'none' ? 'No QuickBooks yet' : null),
+      },
+      {
+        id: 'qbo-setup',
+        title: 'Should we handle the QuickBooks setup?',
+        type: 'select',
+        required: true,
+        when: (a) => a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none',
+        ...yesNo('needsQuickbooksSetup'),
+        summarize: (a) =>
+          a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none'
+            ? boolWord(a.needsQuickbooksSetup)
+            : null,
+      },
+      {
+        id: 'qbo-users',
+        title: 'How many people need QuickBooks access?',
+        help: 'Seats drive the plan: two users need at least Essentials, four need Plus.',
+        type: 'fields',
+        required: true,
+        when: hasQbo,
+        fields: [{ key: 'qboUserCount', label: 'QuickBooks users', kind: 'number', min: 1, max: 25, required: true, placeholder: '2' }],
+        get: (a) => a.qboUserCount,
+        apply: (_a, v) => {
+          const raw = (v as Record<string, unknown>).qboUserCount
+          const n = raw === '' || raw == null ? null : Number(raw)
+          return { qboUserCount: Number.isFinite(n as number) ? (n as number) : null }
+        },
+        summarize: (a) =>
+          hasQbo(a) && a.qboUserCount != null
+            ? `${a.qboUserCount} user${a.qboUserCount === 1 ? '' : 's'}`
+            : null,
+      },
+      {
+        id: 'qbo-tier',
+        title: 'Which QuickBooks plan?',
+        help: 'Class or location tracking needs Plus. Pick a plan, or let the quote recommend one from the seat count.',
+        type: 'select',
+        required: true,
+        when: hasQbo,
+        options: [
+          { value: 'recommended', label: 'Recommend for me', sub: 'From user count and tracking needs' },
+          { value: 'simple_start', label: 'Simple Start', sub: '1 user' },
+          { value: 'essentials', label: 'Essentials', sub: 'Up to 3 users' },
+          { value: 'plus', label: 'Plus', sub: 'Up to 5 users, class and location tracking' },
+          { value: 'advanced', label: 'Advanced', sub: 'More than 5 users' },
+        ],
+        // "Recommend for me" (null) is the default; it preselects so resume
+        // never parks on this question.
+        get: (a) => (hasQbo(a) ? (a.qboSubscriptionTier ?? 'recommended') : undefined),
+        apply: (_a, v) => ({
+          qboSubscriptionTier:
+            v === 'recommended' ? null : (v as WizardAnswers['qboSubscriptionTier']),
+        }),
+        summarize: withCustom('qbo-tier', (a) => {
+          if (!hasQbo(a)) return null
+          const labels: Record<string, string> = {
+            simple_start: 'Simple Start',
+            essentials: 'Essentials',
+            plus: 'Plus',
+            advanced: 'Advanced',
+          }
+          return a.qboSubscriptionTier
+            ? (labels[a.qboSubscriptionTier] ?? a.qboSubscriptionTier)
+            : 'Recommended at quote'
+        }),
       },
     ],
   },

@@ -198,8 +198,15 @@ export interface IntakeFormData {
   /** Explicit unit counts per service key (accounts, classes, filings, ...). */
   serviceQuantities?: Record<string, number>;
   /** Per-service discount capture (C1): flat dollars off per billing cycle,
-   *  keyed by service key; the quote engine clamps each line at zero. */
+   *  keyed by service key; the quote engine clamps each line at zero.
+   *  Legacy - J4 (V4) presents direct price editing instead; stored
+   *  discounts on old intakes keep pricing exactly as before. */
   serviceDiscounts?: Record<string, number>;
+  /** J4 (V4, meeting #3 01:01:22-01:02:14): direct per-line price overrides
+   *  (flat dollars per billing cycle), keyed by service key. An override
+   *  replaces the line's standard amount outright and wins over any legacy
+   *  discount on the same line; it can even price an unpriced line. */
+  servicePrices?: Record<string, number>;
   customItems?: IntakeCustomItemInput[];
   owners?: IntakeOwnerInput[];
   contacts?: IntakeContactInput[];

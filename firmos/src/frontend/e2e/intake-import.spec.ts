@@ -113,32 +113,35 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   await expect(page.getByTestId('option-CPA referral')).toHaveAttribute('aria-selected', 'true')
   await pick(page, 'option-CPA referral', 'referral-who')
   await advance(page, 'engagement')
-  await pick(page, 'option-project', 'qbo-status')
+  await pick(page, 'option-project', 'existing-client')
+  await pick(page, 'option-no', 're-yes')
+  // Project engagement: balance sheet, income, and reporting chapters are
+  // hidden. N1: the services + QBO scope block moved to the end - services
+  // comes first (the one scope answer the call never gave; I4: the three
+  // standards are pre-selected), then the QBO block.
+  await pick(page, 'option-no', 'services')
+  await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
+  await advance(page, 'qbo-status')
   await pick(page, 'option-none', 'qbo-setup')
   await pick(page, 'option-yes', 'qbo-users')
   // The edited value survived: 3 QuickBooks users.
   await expect(page.getByLabel('QuickBooks users')).toHaveValue('3')
   await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'services')
-  // Services is the one scope answer the call never gave. I4: the three
-  // standards are pre-selected; Continue commits them with no add-on picks.
-  await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
-  await advance(page, 'existing-client')
-  await pick(page, 'option-no', 're-yes')
-  // Project engagement: balance sheet, income, and reporting chapters are
-  // hidden; the wizard lands on the recurring chapter next.
+  await pick(page, 'option-recommended', 'notes')
   // R7: the retroactive/cleanup question is gone - the books-start date
   // qualifies retroactive work on its own. J3: notes open the chapter; the
   // routine scheduler is bookkeeping-only.
-  await pick(page, 'option-no', 'notes')
   await advance(page, 'rules')
   await page.getByTestId('continue').click()
 
-  // ── Review: the extracted answers render, then submit for review. ──
+  // ── Review: the extracted answers render, then submit for review (J4/V2:
+  // sections are collapsed - expand the ones being asserted). ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByText('Riverbend Coffee Roasters LLC').first()).toBeVisible()
+  await page.getByTestId('section-toggle-engagement').click()
   await expect(page.getByText('One-time project')).toBeVisible()
   // I2: the subclass folds into the tax-structure row...
+  await page.getByTestId('section-toggle-entity').click()
   await expect(page.getByText('LLC · partnership')).toBeVisible()
   // ...and the owners row shows the pair the partnership guard required.
   await expect(page.getByText('Jason Mercado, Dana')).toBeVisible()

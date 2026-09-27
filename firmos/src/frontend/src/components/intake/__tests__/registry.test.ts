@@ -18,6 +18,7 @@ import {
   firstUnansweredScreen,
   flattenScreens,
   isBookkeeping,
+  laterAddonQualified,
   requiresOfficerPayroll,
   statementAccountRefs,
   visibleChapters,
@@ -39,18 +40,18 @@ const base: WizardAnswers = {
 const chapterIds = (a: WizardAnswers) => visibleChapters(a).map((c) => c.id)
 
 describe('intake_order_matches_template (I1, plan §1)', () => {
-  it('runs the dictated chapter sequence: contact -> entity -> engagement -> software -> services -> starting, then scope', () => {
+  it('runs the dictated chapter sequence: contact -> entity -> engagement -> starting, then scope, with services + software at the END (N1)', () => {
     expect(chapterIds(base)).toEqual([
       'contact',
       'entity',
       'engagement',
-      'software',
-      'services',
       'starting',
       'balance',
       'real-estate',
       'income',
       'reporting',
+      'services',
+      'software',
       'recurring',
     ])
   })
@@ -77,13 +78,20 @@ describe('intake_order_matches_template (I1, plan §1)', () => {
     ])
   })
 
-  it('engagement type and accounting software are their own chapters, in that order', () => {
+  it('services_at_end_ordering (N1, 00:12:50): services + software scope sit after reporting, just before the recurring closeout + scheduler', () => {
     const screens = flattenScreens(base)
     const ids = screens.flatMap((s) => (s.kind === 'question' ? [s.questionId] : []))
-    expect(ids.indexOf('engagement')).toBeLessThan(ids.indexOf('qbo-status'))
-    expect(ids.indexOf('qbo-status')).toBeLessThan(ids.indexOf('services'))
-    expect(ids.indexOf('services')).toBeLessThan(ids.indexOf('existing-client'))
-    expect(ids.indexOf('existing-client')).toBeLessThan(ids.indexOf('bk-start'))
+    // The scope chapters are answer-informed: they come AFTER every
+    // qualifying chapter (reporting is the last of them)...
+    expect(ids.indexOf('preliminary-reports')).toBeLessThan(ids.indexOf('services'))
+    expect(ids.indexOf('services')).toBeLessThan(ids.indexOf('qbo-status'))
+    // ...and land just before the recurring closeout and the scheduler,
+    // which stays the final content screen before review.
+    expect(ids.indexOf('qbo-tier')).toBeLessThan(ids.indexOf('notes'))
+    expect(ids.indexOf('notes')).toBeLessThan(ids.indexOf('rules'))
+    expect(ids.indexOf('rules')).toBeLessThan(ids.indexOf('routine-scheduler'))
+    expect(ids.indexOf('routine-scheduler')).toBe(ids.length - 1)
+    expect(screens[screens.length - 1]).toEqual({ kind: 'review' })
   })
 })
 
@@ -1288,14 +1296,14 @@ describe('online_access_checklist_pulls_statement_accounts (I3, plan §1 screen 
       'contact',
       'entity',
       'engagement',
-      'software',
-      'services',
       'starting',
       'balance',
       'real-estate',
       'income',
       'access',
       'reporting',
+      'services',
+      'software',
       'recurring',
     ])
     expect(chapterIds(base)).not.toContain('access')
@@ -1439,6 +1447,41 @@ describe('standard_three_preselected (I4, plan §1 screen 5, §3C)', () => {
         'invoicing',
       ]),
     )
+  })
+})
+
+// ── N1 (meeting #3, 00:12:50): services/scope at the END, answer-informed ──
+
+describe('N1 services screen: answer-qualified badges', () => {
+  it('later-addon rows badge exactly when the earlier answers qualified them', () => {
+    // Nothing answered: nothing qualified.
+    for (const value of ['payroll', 'record_bills', '1099_collection', 'specialty_reports', 'merchant_account_reconciliation']) {
+      expect(laterAddonQualified(value, base)).toBe(false)
+    }
+    const qualified: WizardAnswers = {
+      ...base,
+      serviceKeys: ['bank_feed_management', 'account_reconciliations', 'payroll_quarterly_filings'],
+      recordBills: true,
+      include1099Collection: true,
+      includeMerchantReconciliation: true,
+      reportDefinitions: [{ name: 'KPI pack', frequency: 'monthly' }],
+    }
+    expect(laterAddonQualified('payroll', qualified)).toBe(true)
+    expect(laterAddonQualified('record_bills', qualified)).toBe(true)
+    expect(laterAddonQualified('1099_collection', qualified)).toBe(true)
+    expect(laterAddonQualified('specialty_reports', qualified)).toBe(true)
+    expect(laterAddonQualified('merchant_account_reconciliation', qualified)).toBe(true)
+    // Self-processed payroll still puts payroll in scope (we enter reports).
+    expect(laterAddonQualified('payroll', { ...base, payrollSelfProcessed: true })).toBe(true)
+    // The legacy bill-pay flag keeps qualifying bill entry (J2 fallback).
+    expect(laterAddonQualified('record_bills', { ...base, includeBillPay: true })).toBe(true)
+    // Unknown row values never badge.
+    expect(laterAddonQualified('invoicing', qualified)).toBe(false)
+  })
+
+  it('the services question help names the answer-qualified scope', () => {
+    const services = findQuestion('services', 'services')!
+    expect(String(services.help)).toContain('qualified by your answers')
   })
 })
 

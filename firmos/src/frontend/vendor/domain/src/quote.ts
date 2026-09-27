@@ -16,6 +16,13 @@
  * input and reduce the totals net-of-discount, clamped at zero per line, so
  * the effective monthly rate - and the retroactive per-month rate derived
  * from it - always follows the discounted price and can never go negative.
+ *
+ * J4 (V4, meeting #3 01:01:22-01:02:14): direct per-line price overrides
+ * ride the quote-level `servicePrices` map - the review screen edits PRICES
+ * ("negative = positive makes no sense"), never discounts. An override
+ * replaces its line's standard amount outright (clamped at zero), wins over
+ * any legacy discount on that line, and can even price a line the handoff
+ * leaves unpriced. Lines without an override price exactly as before.
  */
 
 import { FEBRUARY_BILLED_SERVICE_KEYS } from "./billing.ts";
@@ -305,6 +312,15 @@ export interface QuoteInput {
   services?: QuoteServiceInput[];
   customItems?: CustomItemInput[];
   /**
+   * J4 (V4): direct per-line price overrides, keyed by service key - flat
+   * dollars per billing cycle replacing the line's standard amount (never
+   * a discount; the review screen edits the price itself). Applies to every
+   * line the quote builds, including the QBO pass-through, custom items,
+   * and specialty reports; an override on an unpriced line prices it.
+   * Legacy per-line discounts still net out when no override exists.
+   */
+  servicePrices?: Record<string, number>;
+  /**
    * Present when the client has (or is getting) QuickBooks Online: the quote
    * carries the pass-through line for the recommended tier (or the explicit
    * pick) so the estimate reflects the real subscription cost.
@@ -345,6 +361,12 @@ export interface QuoteLine {
   quantity: number;
   /** Flat dollars off per billing cycle; absent/0 for undiscounted lines. */
   discount?: number;
+  /**
+   * J4 (V4): the direct per-cycle price set at review; replaces `amount`
+   * (and any discount) in the totals, clamped at zero. Present only when
+   * the intake carries a servicePrices override for this line.
+   */
+  price_override?: number;
   /** null when the handoff states no price for the service */
   amount: number | null;
   bucket: PricingBucket;
@@ -536,33 +558,52 @@ export function calculateQuote(input: QuoteInput, pricingOverrides?: PricingOver
     totalOneTime: 0,
     effectiveMonthly: 0,
   };
+  // J4 (V4): stamp direct price overrides on every line they name (service,
+  // QBO pass-through, custom item, specialty report - uniform by key).
+  const priceOverrides = input.servicePrices ?? {};
   for (const line of lines) {
-    if (line.amount == null) continue;
-    // Totals are net of the per-line discount, clamped at zero per line: the
-    // effective monthly rate (and therefore the retroactive per-month rate)
-    // always follows the DISCOUNTED price, and a discount can never push a
-    // bucket negative.
-    const amount = Math.max(0, line.amount - (line.discount ?? 0));
+    const override = priceOverrides[line.service_key];
+    if (override != null && Number.isFinite(override) && override >= 0) {
+      line.price_override = override;
+    }
+  }
+  for (const line of lines) {
+    // The retroactive line's one-time contribution is owned by the pricing
+    // block below (it derives - or overrides - the total once the monthly
+    // rate exists); skipping it here keeps the two from double counting.
+    if (line.service_key === "retroactive_bookkeeping" && input.retroactive) continue;
+    // The override replaces the standard amount outright and can price an
+    // unpriced line; without one the legacy per-line discount nets out of
+    // the standard amount exactly as before. Both clamp at zero per line:
+    // the effective monthly rate (and therefore the retroactive per-month
+    // rate) always follows the FINAL price and can never go negative.
+    const net =
+      line.price_override != null
+        ? Math.max(0, line.price_override)
+        : line.amount == null
+          ? null
+          : Math.max(0, line.amount - (line.discount ?? 0));
+    if (net == null) continue;
     switch (line.bucket) {
       case "monthly":
-        totals.totalMonthly += amount;
+        totals.totalMonthly += net;
         break;
       case "quarterly":
-        totals.totalQuarterly += amount;
+        totals.totalQuarterly += net;
         break;
       case "annual":
         // HANDOFF §15: February-billed services are excluded from the annual term
         if (FEBRUARY_BILLED_SERVICE_KEYS.has(line.service_key)) {
-          totals.totalFebruaryBilledAnnual += amount;
+          totals.totalFebruaryBilledAnnual += net;
         } else {
-          totals.annualExcludingFebruaryBilled += amount;
+          totals.annualExcludingFebruaryBilled += net;
         }
         break;
       case "payroll_monthly":
-        totals.totalPayrollMonthly += amount;
+        totals.totalPayrollMonthly += net;
         break;
       case "one_time":
-        totals.totalOneTime += amount;
+        totals.totalOneTime += net;
         break;
     }
   }
@@ -581,8 +622,14 @@ export function calculateQuote(input: QuoteInput, pricingOverrides?: PricingOver
     const startMonth: Month = { year: start.year, month: start.month };
     const months = Math.max(0, diffMonths(startMonth, input.retroactive.currentMonth));
     const perMonthRate = round2(totals.effectiveMonthly);
-    const total = round2(perMonthRate * months);
     const line = lines.find((l) => l.service_key === "retroactive_bookkeeping");
+    // J4 (V4): a direct price override on the retro line prices the whole
+    // cleanup project flat; the months x rate math stays on the line for
+    // display, but the total - and only the total - follows the override.
+    const total =
+      line?.price_override != null
+        ? round2(Math.max(0, line.price_override))
+        : round2(perMonthRate * months);
     if (line) {
       line.unit_price = perMonthRate;
       line.quantity = months;

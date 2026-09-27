@@ -2,153 +2,30 @@ import { db } from "@/db";
 import { accounts } from "@/db/schema";
 
 /**
- * ACCOUNT_TYPE_DEFINITIONS - HANDOFF §15 (accounts_seed.py port).
- *
- * The sixteen seedable account types, each with a required-document mode:
- *  - "statement": a third-party statement exists, so the type defaults to
- *    statement_day 31 and enters the reconciliation and statement queues.
- *  - "owner_documented": no third-party statement exists (equity movements
- *    and related-party loans are documented by the owner), so the type gets
- *    no statement day and is excluded from both queues.
- *
- * AMBIGUITY RESOLVED: the handoff lists the sixteen types and the two modes
- * but never says which type carries which mode. The split below treats the
- * three equity types plus the four related-party loan types (to/from
- * shareholders and to/from others) as owner-documented - no institution
- * issues a statement for those. Institutional liabilities (line of credit,
- * vehicle loan, mortgage, payroll liability, other liability) and asset
- * types keep statements.
+ * accounts-seed - the db-backed half of the §15 accounts seed (inserting the
+ * default accounts for a converted client). The pure account-type tables and
+ * proof/statement-day rules moved to shared/lib/account-types (J4: the
+ * intake review's estimate breakdowns share them client-side); they are
+ * re-exported here so existing server imports keep working.
  */
-export type RequiredDocumentMode = "statement" | "owner_documented";
 
-export interface AccountTypeDefinition {
-  key: string;
-  label: string;
-  requiredDocument: RequiredDocumentMode;
-  /** 31 for statement-requiring types, null for owner-documented (§15). */
-  defaultStatementDay: number | null;
-}
+export {
+  ACCOUNT_TYPE_DEFINITIONS,
+  accountTypeDefinition,
+  DEFAULT_SEED_ACCOUNT_TYPES,
+  defaultStatementDayFor,
+  PROOF_CATEGORIES,
+  proofCategoryFor,
+  statementDayForIntakeAccount,
+  type AccountTypeDefinition,
+  type ProofCategory,
+  type RequiredDocumentMode,
+} from "@/shared/lib/account-types";
 
-const statement = (key: string, label: string): AccountTypeDefinition => ({
-  key,
-  label,
-  requiredDocument: "statement",
-  defaultStatementDay: 31,
-});
-
-const ownerDocumented = (key: string, label: string): AccountTypeDefinition => ({
-  key,
-  label,
-  requiredDocument: "owner_documented",
-  defaultStatementDay: null,
-});
-
-/** HANDOFF §15 - the sixteen seedable types, in the handoff's own order. */
-export const ACCOUNT_TYPE_DEFINITIONS: readonly AccountTypeDefinition[] = [
-  statement("investment", "Investment"),
-  ownerDocumented("loans_to_others", "Loans to Others"),
-  ownerDocumented("loans_to_shareholders", "Loans to Shareholders"),
-  statement("vehicle", "Vehicle"),
-  statement("fixed_assets", "Fixed Assets"),
-  statement("other_asset", "Other Asset"),
-  statement("line_of_credit", "Line of Credit"),
-  statement("payroll_liability", "Payroll Liability"),
-  statement("vehicle_loan", "Vehicle Loan"),
-  ownerDocumented("loans_from_shareholders", "Loans from Shareholders"),
-  ownerDocumented("loans_from_others", "Loans from Others"),
-  statement("mortgage", "Mortgage"),
-  statement("other_liability", "Other Liability"),
-  ownerDocumented("owner_contributions", "Owner Contributions"),
-  ownerDocumented("owner_distributions", "Owner Distributions"),
-  ownerDocumented("other_equity", "Other Equity"),
-];
-
-const BY_KEY = new Map(ACCOUNT_TYPE_DEFINITIONS.map((d) => [d.key, d]));
-
-export function accountTypeDefinition(key: string): AccountTypeDefinition | undefined {
-  return BY_KEY.get(key);
-}
-
-/**
- * Intake balance-sheet types that are not part of the sixteen seedable keys
- * (§10 step 3: checking, savings, credit, loan, and investment accounts).
- * All are institution-documented, so they default to statement day 31.
- */
-const INTAKE_STATEMENT_TYPES: ReadonlySet<string> = new Set([
-  "checking",
-  "savings",
-  "credit_card",
-  "merchant",
-  "investment",
-]);
-
-/**
- * Default statement day for any account type: the type definition wins;
- * intake balance-sheet types get 31; anything unknown gets null (kept out
- * of the queues rather than guessed into them).
- */
-export function defaultStatementDayFor(accountType: string): number | null {
-  const key = accountType.trim().toLowerCase();
-  const definition = BY_KEY.get(key);
-  if (definition) return definition.defaultStatementDay;
-  return INTAKE_STATEMENT_TYPES.has(key) ? 31 : null;
-}
-
-// ── I3 proof categories ───────────────────────────────────────────────────
-
-/**
- * I3 (intake restructure, plan §3): the proof categories an intake account
- * can carry. "statement" accounts enter the recon/statement queues;
- * "owner_declared" and "bill_of_sale" are owner-evidenced and stay out.
- */
-export type ProofCategory = "statement" | "owner_declared" | "bill_of_sale";
-
-export const PROOF_CATEGORIES: readonly ProofCategory[] = [
-  "statement",
-  "owner_declared",
-  "bill_of_sale",
-];
-
-/** The proof category for an intake account: the captured answer wins;
- *  legacy/extraction rows without one derive it from the type's document
- *  mode (statement-producing -> statement, owner-documented -> owner_declared). */
-export function proofCategoryFor(account: {
-  accountType: string;
-  proofCategory?: string | null;
-}): ProofCategory {
-  const captured = account.proofCategory?.trim().toLowerCase();
-  if (captured === "statement" || captured === "owner_declared" || captured === "bill_of_sale") {
-    return captured;
-  }
-  return defaultStatementDayFor(account.accountType) != null ? "statement" : "owner_declared";
-}
-
-/**
- * I3: the statement day for an intake account under the proof-category
- * model - explicit capture (legacy intakes, extraction) wins; statement
- * proof gets the type default (31 for statement-producing types, and for
- * plain "loan" which the seed table leaves untyped); owner-declared and
- * bill-of-sale accounts get no statement day and stay out of the queues.
- */
-export function statementDayForIntakeAccount(account: {
-  accountType: string;
-  statementDay?: number | null;
-  proofCategory?: string | null;
-}): number | null {
-  if (account.statementDay !== undefined) return account.statementDay;
-  if (proofCategoryFor(account) !== "statement") return null;
-  return defaultStatementDayFor(account.accountType) ?? 31;
-}
-
-/**
- * Account types seeded for every converted client (§6.8 "default seeds").
- * The two owner-documented equity accounts every chart of accounts needs;
- * they carry no statement day and stay out of both queues.
- */
-export const DEFAULT_SEED_ACCOUNT_TYPES: readonly string[] = [
-  "owner_contributions",
-  "owner_distributions",
-];
+import {
+  accountTypeDefinition,
+  DEFAULT_SEED_ACCOUNT_TYPES,
+} from "@/shared/lib/account-types";
 
 /** Database handle: the global client or a transaction scope. */
 export type DbOrTx = Pick<typeof db, "select" | "insert" | "update" | "delete" | "execute">;
@@ -166,7 +43,7 @@ export async function seedDefaultAccounts(
   const keys = opts.types ?? DEFAULT_SEED_ACCOUNT_TYPES;
   const values = keys
     .map((key) => {
-      const definition = BY_KEY.get(key);
+      const definition = accountTypeDefinition(key);
       if (!definition) throw new Error(`seedDefaultAccounts: unknown account type: ${key}`);
       return {
         clientId,

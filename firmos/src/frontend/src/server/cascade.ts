@@ -103,6 +103,8 @@ const PRICING_RELEVANT_FORM_KEYS = [
   "serviceKeys",
   "serviceQuantities",
   "serviceDiscounts",
+  // J4 (V4): direct per-line price overrides reprice like discounts do.
+  "servicePrices",
   "customItems",
   "accounts",
   "merchantAccounts",

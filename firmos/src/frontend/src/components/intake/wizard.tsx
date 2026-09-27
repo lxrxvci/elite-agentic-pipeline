@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Check, Info } from 'lucide-react'
+import { ArrowLeft, Check } from 'lucide-react'
 import type { Quote } from '@firmos/domain'
 
 import { getQuote, saveIntake } from '@/server/actions/intake'
@@ -25,6 +25,7 @@ import { cn } from '@/shared/lib/utils'
 
 import type { StaffOption } from './convert-dialog'
 import { BehaviorNoteDialog } from './behavior-note-dialog'
+import { EditQuestionDialog, type EditTarget } from './edit-overlay'
 import { NotesRail } from './notes-rail'
 import { QuoteHiddenCard, QuotePanel } from './quote-panel'
 import {
@@ -43,7 +44,7 @@ import {
   type WizardAnswers,
 } from './registry'
 import { ReviewScreen } from './review-screen'
-import { QuestionScreen } from './screens'
+import { QuestionHero, QuestionScreen } from './screens'
 
 /**
  * The conversational client intake wizard: one question per screen on a
@@ -109,6 +110,10 @@ export function IntakeWizard({
   // mandatory explanation note. Set = the blocking overlay is open; the yes
   // answer is not applied until the note saves.
   const [notePrompt, setNotePrompt] = useState<{ chapterId: string; questionId: string } | null>(null)
+  // J4 (V1): the review screen's edit buttons open this overlay - the
+  // question's hero card in a dialog, editing in place. The wizard behind
+  // never navigates.
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
   // I4: pricing stays hidden until the review screen (the client may be
@@ -236,6 +241,8 @@ export function IntakeWizard({
         m: answers.merchantAccounts ?? [],
         q: answers.serviceQuantities ?? null,
         d: answers.serviceDiscounts ?? null,
+        // J4 (V4): direct per-line price overrides reprice like discounts do.
+        pr: answers.servicePrices ?? null,
         n: answers.estimated1099Count ?? null,
         c: answers.customItems ?? [],
         // Specialty report definitions move the quote when priced (C10).
@@ -393,6 +400,34 @@ export function IntakeWizard({
     [idx, screens],
   )
 
+  // J4 (V1): review edits open the overlay, never the wizard. Closing flushes
+  // the autosave so the edit is durable even if the intake is closed next.
+  const openEditor = useCallback((chapterId: string, questionId: string) => {
+    setEditTarget({ chapterId, questionId })
+  }, [])
+  const closeEditor = useCallback(() => {
+    setEditTarget(null)
+    if (editable) void flushSave()
+  }, [editable, flushSave])
+
+  // J4 (V4): direct per-line price editing (per billing cycle). A number
+  // writes the servicePrices override; null resets to the standard price,
+  // clearing the override AND any legacy discount on that line.
+  const changeServicePrice = useCallback(
+    (serviceKey: string, dollars: number | null) => {
+      const prices = { ...(answersRef.current.servicePrices ?? {}) }
+      const discounts = { ...(answersRef.current.serviceDiscounts ?? {}) }
+      if (dollars == null) {
+        delete prices[serviceKey]
+        delete discounts[serviceKey]
+      } else {
+        prices[serviceKey] = dollars
+      }
+      apply({ servicePrices: prices, serviceDiscounts: discounts })
+    },
+    [apply],
+  )
+
   // ── Progress header ──
   const chapters = useMemo(() => visibleChapters(answers), [answers])
   const position =
@@ -513,37 +548,9 @@ export function IntakeWizard({
                 const q = findQuestion(screen.chapterId, screen.questionId)
                 const chapter = findChapter(screen.chapterId)
                 if (!q || !chapter) return null
-                // I2: helper copy can derive from the answers (EIN note for
-                // sole props, owner-count rules, ...).
-                const help = typeof q.help === 'function' ? q.help(answers) : q.help
-                const callout = q.callout?.(answers) ?? null
-                const badge = q.badge?.(answers) ?? null
                 return (
                   <div className="rounded-xl border border-border bg-card p-6 shadow-card sm:p-8">
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
-                        {q.title}
-                      </h1>
-                      {badge && (
-                        <span
-                          className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent-foreground"
-                          data-testid="recommendation-badge"
-                        >
-                          {badge}
-                        </span>
-                      )}
-                    </div>
-                    {help && <p className="mt-1.5 text-sm text-muted-foreground">{help}</p>}
-                    {callout && (
-                      <p
-                        className="mt-4 flex items-start gap-2.5 rounded-lg border border-firm-brand/40 bg-accent px-3.5 py-2.5 text-sm text-accent-foreground"
-                        role="note"
-                        data-testid="question-callout"
-                      >
-                        <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                        <span>{callout}</span>
-                      </p>
-                    )}
+                    <QuestionHero q={q} answers={answers} />
                     <div className="mt-5">
                       <QuestionScreen
                         key={`${screen.chapterId}.${screen.questionId}`}
@@ -584,7 +591,8 @@ export function IntakeWizard({
                 managers={managers}
                 bookkeepers={bookkeepers}
                 clientId={clientId}
-                onEdit={jumpTo}
+                onEdit={openEditor}
+                onPriceChange={changeServicePrice}
               />
             </div>
           )}
@@ -616,20 +624,23 @@ export function IntakeWizard({
 
         {/* Right rail: the live quote (I4: hidden until the review screen,
             staff-peekable via the rail toggle) above the running-notes rail.
-            The quote panel also captures per-line discounts (C1) - edits
-            apply into answers, so autosave + repricing follow like any
-            other answer. The review screen is the reveal. */}
-        <div className="space-y-4">
+            J4 (V3, meeting #3 01:01:22): the rail is ONE sticky unit on large
+            screens - the notes box scrolls WITH the pricing card instead of
+            being stranded at the top of a long review ("you can't enter
+            notes when scrolled"). Taller-than-viewport rails scroll
+            internally. The quote panel also captures per-line price
+            overrides (J4/V4) - edits apply into answers, so autosave +
+            repricing follow like any other answer. The review screen is the
+            reveal. */}
+        <div
+          className="space-y-4 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto"
+          data-testid="wizard-rail"
+        >
           {quoteVisible ? (
             <QuotePanel
               quote={quote}
               loading={quoteLoading}
-              discounts={answers.serviceDiscounts ?? {}}
-              onDiscountChange={(serviceKey, dollars) =>
-                apply({
-                  serviceDiscounts: { ...(answersRef.current.serviceDiscounts ?? {}), [serviceKey]: dollars },
-                })
-              }
+              onPriceChange={changeServicePrice}
               onHidePricing={
                 isReview ? undefined : () => togglePeekPricing(false)
               }
@@ -656,6 +667,22 @@ export function IntakeWizard({
           onCancel={() => setNotePrompt(null)}
         />
       )}
+
+      {/* J4 (V1): the review screen's edit overlay - the question's hero
+          card in a dialog, writing through the same apply/autosave path. */}
+      <EditQuestionDialog
+        target={editTarget}
+        answers={answers}
+        onApply={apply}
+        onClose={closeEditor}
+        institutions={institutions}
+        onAddInstitution={addInstitution}
+        payrollProviders={payrollProviders}
+        onAddPayrollProvider={addPayrollProvider}
+        merchantProcessors={merchantProcessors}
+        onAddMerchantProcessor={addMerchantProcessor}
+        contactSearch={contactSearch}
+      />
     </div>
   )
 }

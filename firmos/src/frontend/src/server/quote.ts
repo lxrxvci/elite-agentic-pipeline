@@ -227,6 +227,10 @@ function toQuoteInput(answers: IntakeQuoteAnswers, today: LocalDate): QuoteInput
     qbo,
     retroactive,
     specialtyReports,
+    // J4 (V4): direct per-line price overrides ride the quote-level map so
+    // every line - services, QBO pass-through, custom items, specialty
+    // reports - honors the review screen's price edits uniformly.
+    servicePrices: answers.servicePrices ?? undefined,
   };
 }
 
@@ -292,6 +296,14 @@ const BUCKET_FREQUENCY: Record<string, string> = {
  * frequency); everything else follows its pricing bucket. Per-line discounts
  * carry verbatim so the invoice engine bills the discounted rate.
  *
+ * J4 (V4): a direct price override carries as the EQUIVALENT per-cycle
+ * discount (the invoice engine bills unit_price x quantity - discount, so
+ * the discounted rate lands exactly on the overridden price and still
+ * scales with live quantities), plus the raw `price_override` field for
+ * transparency. An override on an unpriced line cannot express as a
+ * discount (no standard amount) - the raw field carries and the line keeps
+ * its priced-at-review note.
+ *
  * Specialty report lines (C10, keys specialty_report_{n}[_retro]): the quote
  * line's quantity is already cycle-normalized (occurrences per intake cycle),
  * which is exactly the quantity semantics the invoice engine's periodic
@@ -306,6 +318,17 @@ export function buildRecurringServicesTemplate(
   specialtyReports: SpecialtyReportInput[] = [],
 ): TemplateLineItem[] {
   return quote.lines.map((line) => {
+    // J4 (V4): the equivalent per-cycle discount for a direct price
+    // override, derived from the line's GROSS (unit price x quantity - the
+    // retro line's amount already IS the override after repricing, so
+    // amount-minus-override would wrongly zero it). Legacy discounts carry
+    // verbatim when no override exists.
+    const discount =
+      line.price_override != null && line.unit_price != null
+        ? round2(Math.max(0, line.unit_price * line.quantity - line.price_override))
+        : (line.discount ?? 0);
+    const overrideField =
+      line.price_override != null ? { price_override: line.price_override } : {};
     const customMatch = line.service_key.startsWith("custom_item_")
       ? customItems[Number(line.service_key.replace("custom_item_", "")) - 1]
       : undefined;
@@ -318,7 +341,8 @@ export function buildRecurringServicesTemplate(
         product_name: line.product_name,
         unit_price: line.unit_price,
         quantity: line.quantity,
-        discount: line.discount ?? 0,
+        discount,
+        ...overrideField,
         frequency: isRetro ? "one_time" : (report?.frequency ?? "monthly"),
         notes: line.unpriced ? "Priced manually: no amount stated in HANDOFF §15." : null,
       };
@@ -328,7 +352,8 @@ export function buildRecurringServicesTemplate(
       product_name: line.product_name,
       unit_price: line.unit_price,
       quantity: line.quantity,
-      discount: line.discount ?? 0,
+      discount,
+      ...overrideField,
       frequency: customMatch?.frequency ?? BUCKET_FREQUENCY[line.bucket] ?? "monthly",
       notes: line.unpriced ? "Priced manually: no amount stated in HANDOFF §15." : null,
     };

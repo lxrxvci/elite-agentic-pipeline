@@ -355,3 +355,91 @@ test("no specialty reports -> no specialty lines (existing quotes unchanged)", (
   const quote = calculateQuote({ services: [{ key: "bank_feed_management" }] });
   assert.equal(quote.lines.some((l) => l.service_key.startsWith("specialty_report_")), false);
 });
+
+// ---- J4 (V4): direct per-line price overrides (servicePrices) ----------------
+test("price_edit_replaces_discount_flow: an override replaces the line amount and wins over a discount", () => {
+  const quote = calculateQuote({
+    services: [
+      { key: "bank_feed_management" }, // $100/mo
+      { key: "account_reconciliations", quantity: 5, discount: 25 }, // 5 x $25 - $25 = $100
+    ],
+    servicePrices: { account_reconciliations: 80 },
+  });
+  const recon = quote.lines.find((l) => l.service_key === "account_reconciliations");
+  assert.equal(recon?.price_override, 80);
+  // The override wins outright - the legacy $25 discount no longer nets.
+  assert.equal(quote.totals.totalMonthly, 100 + 80);
+  assert.equal(quote.totals.effectiveMonthly, 180);
+});
+
+test("an override clamps at zero and follows the line's bucket", () => {
+  const quote = calculateQuote({
+    services: [
+      { key: "bank_feed_management" },
+      { key: "qbo_setup" },
+      { key: "payroll_quarterly_filings" },
+    ],
+    servicePrices: { bank_feed_management: 0, qbo_setup: 99, payroll_quarterly_filings: 60 },
+  });
+  assert.equal(quote.totals.totalMonthly, 0); // clamped, never negative
+  assert.equal(quote.totals.totalOneTime, 99);
+  assert.equal(quote.totals.totalQuarterly, 60);
+  assert.equal(quote.totals.effectiveMonthly, 60 / 3);
+});
+
+test("an override prices even an unpriced line (quoted at review, set at review)", () => {
+  const quote = calculateQuote({
+    services: [{ key: "process_payroll" }], // §15 states no amount
+    servicePrices: { process_payroll: 200 },
+  });
+  const line = quote.lines.find((l) => l.service_key === "process_payroll");
+  assert.equal(line?.unpriced, true); // the STANDARD price is still unstated
+  assert.equal(line?.price_override, 200);
+  assert.equal(quote.totals.totalPayrollMonthly, 200);
+  assert.equal(quote.totals.effectiveMonthly, 200);
+});
+
+test("legacy stored discounts price identically when no override exists (no regression)", () => {
+  const quote = calculateQuote({
+    services: [{ key: "bank_feed_management", discount: 25 }],
+  });
+  const line = quote.lines.find((l) => l.service_key === "bank_feed_management");
+  assert.equal(line?.price_override, undefined);
+  assert.equal(quote.totals.totalMonthly, 75);
+  assert.equal(quote.totals.effectiveMonthly, 75);
+});
+
+test("the override reaches every line kind by key (QBO pass-through, custom, specialty)", () => {
+  const quote = calculateQuote({
+    services: [{ key: "bank_feed_management" }],
+    qbo: { userCount: 2 }, // recommends Essentials ($60/mo pass-through)
+    customItems: [{ key: "custom_item_1", product_name: "Cleanup crew", unit_price: 50, frequency: "weekly" }],
+    specialtyReports: [{ name: "KPI pack", frequency: "monthly", flatPrice: 300 }],
+    servicePrices: { quickbooks_essentials: 55, custom_item_1: 160, specialty_report_1: 250 },
+  });
+  assert.equal(quote.lines.find((l) => l.service_key === "quickbooks_essentials")?.price_override, 55);
+  assert.equal(quote.lines.find((l) => l.service_key === "custom_item_1")?.price_override, 160);
+  assert.equal(quote.lines.find((l) => l.service_key === "specialty_report_1")?.price_override, 250);
+  // Monthly bucket: 100 + 55 + 160 + 250.
+  assert.equal(quote.totals.totalMonthly, 565);
+});
+
+test("a retro-line override prices the whole cleanup flat, never double counted", () => {
+  const base = {
+    reportFrequency: "monthly",
+    services: [{ key: "bank_feed_management" }, { key: "retroactive_bookkeeping" }],
+    retroactive: { startDate: "2026-01-01", currentMonth: { year: 2026, month: 8 } },
+  };
+  const standard = calculateQuote(base);
+  assert.equal(standard.retroactive?.total, 700); // 7 months x $100/mo
+  assert.equal(standard.totals.totalOneTime, 700);
+
+  const overridden = calculateQuote({ ...base, servicePrices: { retroactive_bookkeeping: 500 } });
+  assert.equal(overridden.retroactive?.total, 500); // flat, not 7 x $100
+  assert.equal(overridden.totals.totalOneTime, 500); // once, never twice
+  // The derived months x rate stays on the line for display.
+  const line = overridden.lines.find((l) => l.service_key === "retroactive_bookkeeping");
+  assert.equal(line?.quantity, 7);
+  assert.equal(line?.unit_price, 100);
+  assert.equal(line?.amount, 500);
+});

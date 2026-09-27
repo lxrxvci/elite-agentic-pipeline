@@ -372,13 +372,28 @@ describe('I4 services screen (plan §1 screen 5, §3C)', () => {
     expect(screen.getByTestId('addon-payment_processing')).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('lists the rule-1 add-ons that their own questions quote', () => {
-    render(<Harness q={servicesQ} initial={{}} />)
+  it('lists the rule-1 add-ons, badging the ones the answers already qualified (N1)', () => {
+    render(
+      <Harness
+        q={servicesQ}
+        initial={{
+          recordBills: true,
+          serviceKeys: ['bank_feed_management', 'account_reconciliations', 'payroll_quarterly_filings'],
+        }}
+      />,
+    )
     const later = screen.getByTestId('services-later-addons')
     for (const value of ['payroll', 'record_bills', '1099_collection', 'specialty_reports', 'merchant_account_reconciliation']) {
       expect(screen.getByTestId(`later-${value}`)).toBeInTheDocument()
     }
-    expect(later).toHaveTextContent('Quoted in their own questions')
+    // N1: the section names the answer-qualified scope; the payroll and bill
+    // answers already qualified those two rows, the rest stay unbadged.
+    expect(later).toHaveTextContent('Qualified by your answers')
+    expect(screen.getByTestId('later-badge-payroll')).toHaveTextContent('Added by your answers')
+    expect(screen.getByTestId('later-badge-record_bills')).toHaveTextContent('Added by your answers')
+    expect(screen.queryByTestId('later-badge-1099_collection')).toBeNull()
+    expect(screen.queryByTestId('later-badge-specialty_reports')).toBeNull()
+    expect(screen.queryByTestId('later-badge-merchant_account_reconciliation')).toBeNull()
   })
 })
 

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { Quote } from '@firmos/domain'
 
@@ -6,9 +6,12 @@ import { ReviewScreen } from '../review-screen'
 import type { WizardAnswers } from '../registry'
 
 /**
- * Review-screen quote section: per-line discounts render as a "-$x/cycle"
- * chip with the gross struck through and the net bold (C1 follow-through).
- * Server actions are mocked; the registry supplies the chapters.
+ * J4 review & pricing rebuild (meeting #3, V1-V7, 00:58:28-01:06:58):
+ * collapsible sections (one open at a time), per-section + per-row edit
+ * buttons feeding the overlay (never navigation), the bucketed estimate with
+ * account breakdowns + visible math, direct price editing (no discount
+ * boxes), and one-time fees separated from recurring. Server actions are
+ * mocked; the registry supplies the chapters.
  */
 
 vi.mock('@/server/actions/intake', () => ({
@@ -26,7 +29,12 @@ vi.mock('@/server/actions/correspondence', () => ({
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-const QUOTE: Quote = {
+/** V2: expand a collapsed section (only one is open at a time). */
+function expandSection(id: string) {
+  fireEvent.click(screen.getByTestId(`section-toggle-${id}`))
+}
+
+const DISCOUNT_QUOTE: Quote = {
   billingCycle: 1,
   lines: [
     {
@@ -60,48 +68,337 @@ const QUOTE: Quote = {
   },
 }
 
-const ANSWERS: WizardAnswers = {
-  legalName: 'Discount Review Co',
-  engagementType: 'bookkeeping',
+/** The rich estimate fixture: per-account math, all bucket kinds, one-time money. */
+const ESTIMATE_QUOTE: Quote = {
+  billingCycle: 1,
+  lines: [
+    { service_key: 'bank_feed_management', product_name: 'Bank Feed Management', unit_price: 100, quantity: 1, amount: 100, bucket: 'monthly', unpriced: false },
+    { service_key: 'account_reconciliations', product_name: 'Account Reconciliations', unit_price: 25, quantity: 5, amount: 125, bucket: 'monthly', unpriced: false },
+    { service_key: 'monthly_reporting_10', product_name: 'Monthly Reporting (close by the 10th)', unit_price: 50, quantity: 1, amount: 50, bucket: 'monthly', unpriced: false },
+    { service_key: 'record_bills', product_name: 'Record Bills', unit_price: 25, quantity: 1, amount: 25, bucket: 'monthly', unpriced: false },
+    { service_key: 'payroll_quarterly_filings', product_name: 'Payroll Quarterly Filings', unit_price: 45, quantity: 1, amount: 45, bucket: 'quarterly', unpriced: false },
+    { service_key: '1099_collection', product_name: '1099 Collection', unit_price: 50, quantity: 1, amount: 50, bucket: 'annual', unpriced: false },
+    { service_key: 'qbo_setup', product_name: 'QBO Setup', unit_price: 150, quantity: 1, amount: 150, bucket: 'one_time', unpriced: false },
+    { service_key: 'specialty_report_1_retro', product_name: 'Missed past filings: Oregon Special Report', unit_price: 200, quantity: 18, amount: 3600, bucket: 'one_time', unpriced: false },
+    { service_key: 'retroactive_bookkeeping', product_name: 'Retroactive Bookkeeping', unit_price: 350, quantity: 7, amount: 2450, bucket: 'one_time', unpriced: false },
+  ],
+  totals: {
+    totalMonthly: 300,
+    totalQuarterly: 45,
+    annualExcludingFebruaryBilled: 0,
+    totalPayrollMonthly: 0,
+    totalFebruaryBilledAnnual: 50,
+    totalOneTime: 6200,
+    effectiveMonthly: 315,
+  },
+  retroactive: { months: 7, startMonth: { year: 2025, month: 12 }, perMonthRate: 350, total: 2450 },
 }
 
-function renderReview(quote: Quote | null = QUOTE) {
+/** Five statement-proof money accounts -> the recon breakdown's count math. */
+const FIVE_ACCOUNTS: WizardAnswers = {
+  legalName: 'Estimate Co',
+  engagementType: 'bookkeeping',
+  checkingAccounts: [
+    { name: 'Chase Checking · 4411', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '4411' },
+    { name: 'Chase Checking · 2200', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '2200' },
+  ],
+  savingsAccounts: [
+    { name: 'Chase Savings · 1005', accountType: 'savings', proofCategory: 'statement', institution: 'Chase', last4: '1005' },
+    { name: 'Columbia Savings · 3310', accountType: 'savings', proofCategory: 'statement', institution: 'Columbia', last4: '3310' },
+  ],
+  creditCardAccounts: [
+    { name: 'Amex Credit card · 7007', accountType: 'credit_card', proofCategory: 'statement', institution: 'Amex', last4: '7007' },
+  ],
+}
+
+function renderReview({
+  answers = { legalName: 'Estimate Co', engagementType: 'bookkeeping' } as WizardAnswers,
+  quote = DISCOUNT_QUOTE as Quote | null,
+  status = 'draft' as const,
+  canConvert = false,
+  onEdit = () => {},
+  onPriceChange,
+}: {
+  answers?: WizardAnswers
+  quote?: Quote | null
+  status?: 'draft' | 'pending_review' | 'completed' | 'archived'
+  canConvert?: boolean
+  onEdit?: (chapterId: string, questionId: string) => void
+  onPriceChange?: (serviceKey: string, dollars: number | null) => void
+} = {}) {
   return render(
     <ReviewScreen
       intakeId={1}
-      answers={ANSWERS}
+      answers={answers}
       quote={quote}
-      status="draft"
-      canConvert={false}
+      status={status}
+      canConvert={canConvert}
       managers={[]}
       bookkeepers={[]}
       clientId={null}
-      onEdit={() => {}}
+      onEdit={onEdit}
+      onPriceChange={onPriceChange}
     />,
   )
 }
 
-describe('ReviewScreen quote discounts (C1)', () => {
-  it('shows the per-line discount chip and the net amount', () => {
-    renderReview()
-    const quote = screen.getByTestId('review-quote')
-    const chip = screen.getByTestId('review-discount-bank_feed_management')
-    expect(chip).toHaveTextContent('−$25/cycle')
-    const row = chip.closest('li')!
-    // Gross struck through, net rendered.
-    expect(row).toHaveTextContent('$100')
-    expect(row).toHaveTextContent('$75')
-    // The effective monthly header is the discounted rate.
-    expect(quote).toHaveTextContent('$75')
-    // C10 retro line: full one-time amount, no discount chip.
-    expect(quote).toHaveTextContent('Missed past filings: Oregon Special Report')
-    expect(quote).toHaveTextContent('$3,600')
+describe('sections_expand_one_at_a_time (V2)', () => {
+  const answers: WizardAnswers = {
+    legalName: 'Accordion Co',
+    engagementType: 'bookkeeping',
+    contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true }],
+    taxStructure: 'LLC',
+    llcSubclass: 'llc_sml',
+    hasCpa: false,
+  }
+
+  it('the first section starts expanded; every other is a collapsed summary', () => {
+    renderReview({ answers, quote: null })
+    // Contact (first) is open: its rows render.
+    expect(screen.getByText('Wren Okafor')).toBeInTheDocument()
+    // Entity is collapsed: its rows are out of the DOM, its summary shows.
+    expect(screen.queryByText('LLC · single-member')).toBeNull()
+    expect(screen.getByTestId('section-summary-entity')).toBeInTheDocument()
+    // Disclosure buttons are keyboard-accessible buttons with aria-expanded.
+    expect(screen.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('renders plain amounts when no line is discounted', () => {
-    renderReview({ ...QUOTE, lines: QUOTE.lines.map((l) => ({ ...l, discount: 0 })) })
+  it('expanding one section collapses the previous; toggling the open one closes all', () => {
+    renderReview({ answers, quote: null })
+    expandSection('entity')
+    expect(screen.getByText('LLC · single-member')).toBeInTheDocument()
+    expect(screen.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'true')
+    // The previous section collapsed: its rows left the DOM, summary back.
+    expect(screen.queryByText('Wren Okafor')).toBeNull()
+    expect(screen.getByTestId('section-summary-contact')).toBeInTheDocument()
+    expect(screen.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'false')
+
+    // Opening a third section keeps the one-open rule.
+    expandSection('contact')
+    expect(screen.getByText('Wren Okafor')).toBeInTheDocument()
+    expect(screen.queryByText('LLC · single-member')).toBeNull()
+
+    // Toggling the open section collapses everything.
+    expandSection('contact')
+    expect(screen.queryByText('Wren Okafor')).toBeNull()
+    expect(screen.queryByText('LLC · single-member')).toBeNull()
+    expect(screen.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'false')
+  })
+})
+
+describe('V1 edit affordances feed the overlay (never navigation)', () => {
+  it('every section and every row reports its own edit target', () => {
+    const onEdit = vi.fn()
+    renderReview({
+      answers: {
+        legalName: 'Edit Co',
+        engagementType: 'bookkeeping',
+        contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true }],
+        taxStructure: 'LLC',
+        llcSubclass: 'llc_sml',
+        hasCpa: false,
+        checkingAccounts: [
+          { name: 'Chase Checking · 4411', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '4411' },
+        ],
+      },
+      quote: null,
+      onEdit,
+    })
+    // Section-level edit: the chapter's first question.
+    fireEvent.click(screen.getByTestId('edit-contact'))
+    expect(onEdit).toHaveBeenCalledWith('contact', 'legal-name')
+    // Row-level edit: the exact question behind the row.
+    fireEvent.click(screen.getByTestId('edit-row-main-contact'))
+    expect(onEdit).toHaveBeenCalledWith('contact', 'main-contact')
+    expect(onEdit).toHaveBeenCalledTimes(2)
+
+    // Account rows edit their type's count card.
+    expandSection('balance')
+    fireEvent.click(screen.getByTestId('edit-account-row-checking-0'))
+    expect(onEdit).toHaveBeenCalledWith('balance', 'checking-accounts')
+    expect(onEdit).toHaveBeenCalledTimes(3)
+  })
+
+  it('no edit affordances for read-only reviewers', () => {
+    renderReview({
+      answers: { legalName: 'Read Only Co', engagementType: 'bookkeeping', contacts: [{ firstName: 'Wren', isPrimary: true }], taxStructure: 'LLC', llcSubclass: 'llc_sml', hasCpa: false },
+      quote: null,
+      status: 'pending_review',
+    })
+    expect(screen.queryByTestId('edit-contact')).toBeNull()
+    expect(screen.queryByTestId('edit-row-main-contact')).toBeNull()
+  })
+})
+
+describe('price_edit_replaces_discount_flow (V4)', () => {
+  it('legacy discounted lines show the standard struck through and the net - never a negative number', () => {
+    renderReview({ onPriceChange: () => {} })
+    expandSection('quote')
+    const row = screen.getByText('Bank Feed Management').closest('li')!
+    expect(row).toHaveTextContent('$100') // standard struck
+    expect(row).toHaveTextContent('$75') // discounted net
+    // No discount input, no "-$x/cycle" chip, no negative numbers.
     expect(screen.queryByTestId('review-discount-bank_feed_management')).toBeNull()
+    expect(screen.queryByTestId('discount-bank_feed_management')).toBeNull()
+    expect(row.textContent).not.toMatch(/−\$|-\$/)
+  })
+
+  it('editing a price reports the override; reset clears it', () => {
+    const onPriceChange = vi.fn()
+    renderReview({ onPriceChange })
+    expandSection('quote')
+    fireEvent.click(screen.getByTestId('price-edit-bank_feed_management'))
+    const input = screen.getByTestId('price-input-bank_feed_management')
+    expect(input).toHaveValue(75) // the effective (discounted) price prefills
+    fireEvent.change(input, { target: { value: '90' } })
+    fireEvent.click(screen.getByTestId('price-save-bank_feed_management'))
+    expect(onPriceChange).toHaveBeenCalledWith('bank_feed_management', 90)
+  })
+
+  it('an overridden line shows the override over the struck standard', () => {
+    const quote: Quote = {
+      ...DISCOUNT_QUOTE,
+      lines: DISCOUNT_QUOTE.lines.map((l) =>
+        l.service_key === 'bank_feed_management' ? { ...l, discount: 25, price_override: 60 } : l,
+      ),
+    }
+    renderReview({ quote, onPriceChange: () => {} })
+    expandSection('quote')
+    const row = screen.getByText('Bank Feed Management').closest('li')!
+    expect(row).toHaveTextContent('$100')
+    expect(screen.getByTestId('price-value-bank_feed_management')).toHaveTextContent('$60')
+    // The reset affordance clears override + legacy discount in one call.
+    fireEvent.click(screen.getByTestId('price-reset-bank_feed_management'))
+  })
+})
+
+describe('breakdown_shows_accounts_with_count_math (V5)', () => {
+  it('the reconciliation breakdown lists the actual accounts with 5 x $25 = $125 math', () => {
+    renderReview({ answers: FIVE_ACCOUNTS, quote: ESTIMATE_QUOTE })
+    expandSection('quote')
+    // The count x rate math is visible on the line.
+    expect(screen.getByTestId('estimate-math-account_reconciliations')).toHaveTextContent(
+      '5 accounts × $25 = $125/mo',
+    )
+    // The breakdown is collapsed by default; expanding lists the accounts
+    // with the bank -> type -> last4 standard labels.
+    expect(screen.queryByTestId('breakdown-account_reconciliations')).toBeNull()
+    const toggle = screen.getByTestId('breakdown-toggle-account_reconciliations')
+    expect(toggle).toHaveTextContent('5 accounts')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    const breakdown = screen.getByTestId('breakdown-account_reconciliations')
+    expect(breakdown.querySelectorAll('[data-testid="breakdown-account"]')).toHaveLength(5)
+    expect(breakdown).toHaveTextContent('Chase Checking · 4411')
+    expect(breakdown).toHaveTextContent('Amex Credit card · 7007')
+  })
+
+  it('bank feed management gets its own account breakdown (flat rate, no count math)', () => {
+    renderReview({ answers: FIVE_ACCOUNTS, quote: ESTIMATE_QUOTE })
+    expandSection('quote')
+    expect(screen.queryByTestId('estimate-math-bank_feed_management')).toBeNull()
+    fireEvent.click(screen.getByTestId('breakdown-toggle-bank_feed_management'))
+    const breakdown = screen.getByTestId('breakdown-bank_feed_management')
+    expect(breakdown.querySelectorAll('[data-testid="breakdown-account"]')).toHaveLength(5)
+  })
+})
+
+describe('estimate_buckets_match_schedule (V6)', () => {
+  const schedule: NonNullable<WizardAnswers['routineSchedule']> = {
+    categorize_transactions: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
+    reconcile_accounts: { bucket: 'weekly', order: 1, weekdays: [5], everyNWeeks: 1 },
+    send_reports: { bucket: 'quarterly', order: 0, daysAfterPeriodEnd: 10 },
+    'record-bills': { bucket: 'daily', order: 0, weekdays: [1, 2, 3, 4, 5] },
+  }
+
+  it('recurring lines group into the routine buckets from the committed schedule', () => {
+    renderReview({
+      answers: { ...FIVE_ACCOUNTS, routineSchedule: schedule },
+      quote: ESTIMATE_QUOTE,
+    })
+    expandSection('quote')
+    // Schedule-driven buckets: bills daily, feed + recon weekly, reporting quarterly.
+    expect(screen.getByTestId('estimate-bucket-daily')).toHaveTextContent('Record Bills')
+    const weekly = screen.getByTestId('estimate-bucket-weekly')
+    expect(weekly).toHaveTextContent('Bank Feed Management')
+    expect(weekly).toHaveTextContent('Account Reconciliations')
+    expect(screen.getByTestId('estimate-bucket-total-weekly')).toHaveTextContent('$225/mo')
+    const quarterly = screen.getByTestId('estimate-bucket-quarterly')
+    expect(quarterly).toHaveTextContent('Monthly Reporting (close by the 10th)')
+    // No schedule entry for payroll-handling: the filings fall back to their
+    // engine bucket (quarterly), with the ÷ 3 math visible.
+    expect(quarterly).toHaveTextContent('Payroll Quarterly Filings')
+    expect(screen.getByTestId('estimate-math-payroll_quarterly_filings')).toHaveTextContent(
+      '$45/quarter ÷ 3 = $15/mo',
+    )
+    // 1099 collection is February-billed: annual bucket, off the monthly rate.
+    expect(screen.getByTestId('estimate-bucket-annual')).toHaveTextContent('billed each February')
+    expect(screen.getByTestId('estimate-math-1099_collection')).toHaveTextContent('$50/year · billed each February')
+    // Nothing lands in the monthly bucket under this schedule.
+    expect(screen.queryByTestId('estimate-bucket-monthly')).toBeNull()
+  })
+
+  it('without a committed schedule the engine buckets drive the grouping', () => {
+    renderReview({ answers: FIVE_ACCOUNTS, quote: ESTIMATE_QUOTE })
+    expandSection('quote')
+    const monthly = screen.getByTestId('estimate-bucket-monthly')
+    expect(monthly).toHaveTextContent('Bank Feed Management')
+    expect(monthly).toHaveTextContent('Account Reconciliations')
+    expect(monthly).toHaveTextContent('Monthly Reporting (close by the 10th)')
+    expect(monthly).toHaveTextContent('Record Bills')
+    expect(screen.getByTestId('estimate-bucket-total-monthly')).toHaveTextContent('$300/mo')
+  })
+})
+
+describe('one_time_fees_separate_from_recurring (V7)', () => {
+  it('QBO setup, missed filings, and the retro cleanup list separately, split by period', () => {
+    renderReview({ answers: FIVE_ACCOUNTS, quote: ESTIMATE_QUOTE })
+    expandSection('quote')
+    const oneTime = screen.getByTestId('estimate-one-time')
+    expect(oneTime).toHaveTextContent('One-time fees')
+    expect(screen.getByTestId('one-time-total')).toHaveTextContent('$6,200')
+    expect(screen.getByTestId('one-time-qbo_setup')).toHaveTextContent('$150')
+    expect(screen.getByTestId('one-time-specialty_report_1_retro')).toHaveTextContent('$3,600')
+    // The retro project: months x rate math plus the per-period split.
+    const retro = screen.getByTestId('one-time-retroactive_bookkeeping')
+    expect(retro).toHaveTextContent('$2,450')
+    expect(screen.getByTestId('one-time-math-retroactive_bookkeeping')).toHaveTextContent('7 months × $350/mo')
+    expect(screen.getByTestId('retro-periods')).toHaveTextContent('2025: 1 month · 2026: 6 months')
+    // No double counting: the priced retro line never appears in recurring,
+    // and no recurring bucket names one-time money.
+    expect(screen.getByTestId('estimate-recurring')).not.toHaveTextContent('Retroactive')
+    expect(screen.getByTestId('estimate-recurring')).not.toHaveTextContent('QBO Setup')
+    // The effective monthly header excludes one-time money.
+    expect(screen.getByTestId('quote-total')).toHaveTextContent('$315')
+  })
+
+  it('an unpriced one-time service stays flagged, not guessed', () => {
+    const quote: Quote = {
+      ...DISCOUNT_QUOTE,
+      lines: [
+        ...DISCOUNT_QUOTE.lines,
+        { service_key: 'retroactive_bookkeeping', product_name: 'Retroactive Bookkeeping', unit_price: null, quantity: 1, amount: null, bucket: 'one_time', unpriced: true },
+      ],
+    }
+    renderReview({ quote })
+    expandSection('quote')
+    const row = screen.getByTestId('one-time-retroactive_bookkeeping')
+    expect(row).toHaveTextContent('quoted at review')
+  })
+})
+
+describe('ReviewScreen quote email + plain amounts', () => {
+  it('renders plain amounts when no line is discounted', () => {
+    renderReview({
+      quote: { ...DISCOUNT_QUOTE, lines: DISCOUNT_QUOTE.lines.map((l) => ({ ...l, discount: 0 })) },
+    })
+    expandSection('quote')
     expect(screen.getByTestId('review-quote')).toHaveTextContent('Bank Feed Management')
+    const row = screen.getByText('Bank Feed Management').closest('li')!
+    expect(row.querySelector('.line-through')).toBeNull()
   })
 
   it('offers Email proposal to manager+ and sends through the action', async () => {
@@ -110,8 +407,8 @@ describe('ReviewScreen quote discounts (C1)', () => {
     render(
       <ReviewScreen
         intakeId={7}
-        answers={ANSWERS}
-        quote={QUOTE}
+        answers={{ legalName: 'Mail Co', engagementType: 'bookkeeping' }}
+        quote={DISCOUNT_QUOTE}
         status="pending_review"
         canConvert
         managers={[]}
@@ -130,7 +427,9 @@ describe('ReviewScreen quote discounts (C1)', () => {
   })
 })
 
-describe('ReviewScreen I1 answer rendering', () => {  it('shows custom Other text verbatim, the CPA card, the referral who, and no catch-up row', () => {    render(
+describe('ReviewScreen I1 answer rendering', () => {
+  it('shows custom Other text verbatim, the CPA card, the referral who, and no catch-up row', () => {
+    render(
       <ReviewScreen
         intakeId={1}
         answers={{
@@ -155,12 +454,14 @@ describe('ReviewScreen I1 answer rendering', () => {  it('shows custom Other tex
       />,
     )
     // The typed custom text renders verbatim, never the bare "Other".
+    expandSection('entity')
     expect(screen.getByText('Series LLC taxed as a trust')).toBeInTheDocument()
     // The CPA card folds name into the yes/no row (J1/C4: linked-vs-new state).
     expect(screen.getByText('Yes · Cascade Tax Group · new record')).toBeInTheDocument()
     // Referral folds in who to thank.
     expect(screen.getByText('CPA referral · Carlos at Cascade')).toBeInTheDocument()
     // The text-entry date renders as a real date label…
+    expandSection('starting')
     expect(screen.getByText('Jan 5, 2026')).toBeInTheDocument()
     // …and the removed catch-up screen has no row anywhere.
     expect(screen.queryByText(/catch-up date/i)).toBeNull()
@@ -199,12 +500,14 @@ describe('ReviewScreen closeout rows (N2 + A45 + A41/E1-E3)', () => {
       />,
     )
     // N2 (meeting #3): the row's label is the renamed start question.
+    expandSection('starting')
     expect(screen.getByText('When would you like your bookkeeping to start?')).toBeInTheDocument()
     expect(screen.getByText('Jan 5, 2026')).toBeInTheDocument()
     // A45: the established date is its own row beside it.
     expect(screen.getByText('When was the business established?')).toBeInTheDocument()
     expect(screen.getByText('Mar 1, 2019')).toBeInTheDocument()
     // A41: both money-behavior cards carry review rows.
+    expandSection('income')
     expect(screen.getByText("Do they ever deposit anything that isn't business income?")).toBeInTheDocument()
     expect(screen.getByText('Do they ever pay for non-business things on business accounts?')).toBeInTheDocument()
     // The personal-card row (B18) still renders its own answer.
@@ -236,11 +539,11 @@ describe('ReviewScreen closeout rows (N2 + A45 + A41/E1-E3)', () => {
         onEdit={() => {}}
       />,
     )
+    expandSection('starting')
     expect(screen.queryByText('When was the business established?')).toBeNull()
     expect(screen.getByText('When would you like your bookkeeping to start?')).toBeInTheDocument()
   })
 })
-
 
 describe('ReviewScreen I2 entity rendering', () => {
   it('shows the LLC subclass on the tax-structure row and the payroll auto-flag row', () => {
@@ -267,8 +570,10 @@ describe('ReviewScreen I2 entity rendering', () => {
       />,
     )
     // "LLC · taxed as S Corp" - the subclass folds into the one row.
+    expandSection('entity')
     expect(screen.getByText('LLC · taxed as S Corp')).toBeInTheDocument()
     // The payroll row shows the derived auto-flag even with no stored answer.
+    expandSection('income')
     expect(screen.getByText('Yes · officers must be on payroll')).toBeInTheDocument()
     expect(screen.getByText('Gusto')).toBeInTheDocument()
     expect(screen.getByText('Every two weeks')).toBeInTheDocument()
@@ -281,7 +586,7 @@ describe('ReviewScreen I2 entity rendering', () => {
         answers={{
           legalName: 'SMLLC Co',
           engagementType: 'bookkeeping',
-          contacts: [{ firstName: 'Wren', isPrimary: true }],
+          contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true }],
           taxStructure: 'LLC',
           llcSubclass: 'llc_sml',
           hasCpa: false,
@@ -296,8 +601,10 @@ describe('ReviewScreen I2 entity rendering', () => {
         onEdit={() => {}}
       />,
     )
+    expandSection('entity')
     expect(screen.getByText('LLC · single-member')).toBeInTheDocument()
     // No auto-flag: the payroll row is a plain No.
+    expandSection('income')
     expect(screen.queryByText(/officers must be on payroll/)).toBeNull()
   })
 })
@@ -344,6 +651,7 @@ describe('I3 review: accounts grouped by type with institution + proof badges', 
 
   it('groups the accounts under the balance chapter - J1 (D4): assets before loans; D2: the bank-type-last4 label', () => {
     renderAccounts(accountsAnswers)
+    expandSection('balance')
     const section = screen.getByTestId('review-accounts')
     const groups = section.querySelectorAll('[data-testid="review-account-group"]')
     expect([...groups].map((g) => g.getAttribute('data-type'))).toEqual([
@@ -390,6 +698,7 @@ describe('I3 review: accounts grouped by type with institution + proof badges', 
 
   it('the online-access row counts the checked accounts', () => {
     renderAccounts(accountsAnswers)
+    expandSection('access')
     // 3 statement-proof accounts (checking, card, the vehicle loan); 1 checked.
     expect(screen.getByText('1 of 3 with online access')).toBeInTheDocument()
   })
