@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -51,7 +51,7 @@ import { logEvent, type DbOrTx } from "./audit";
 // §16 notification fan-out goes through the notifications workstream's
 // emitter (working-hours-aware push deferral included). emitToMany fans the
 // per-user emitter out to a recipient set.
-import { emitNotification } from "./notifications";
+import { emitNotification, type WorkingHoursSchedule } from "./notifications";
 
 interface Notice {
   userIds: number[];
@@ -838,6 +838,82 @@ export async function reviewWorkingHours(
     entityId: requestId,
   });
   return updated;
+}
+
+/** The account-page working-hours card: the user's latest row per status,
+ *  with reviewer names resolved (ISO strings for the RSC boundary). */
+export interface WorkingHoursStatus {
+  approved: {
+    id: number;
+    schedule: WorkingHoursSchedule;
+    reviewedAt: string | null;
+    reviewerName: string | null;
+  } | null;
+  pending: { id: number; schedule: WorkingHoursSchedule; submittedAt: string | null } | null;
+  rejected: {
+    id: number;
+    schedule: WorkingHoursSchedule;
+    reviewedAt: string | null;
+    reviewerName: string | null;
+  } | null;
+}
+
+export async function getWorkingHoursStatus(userId: number): Promise<WorkingHoursStatus> {
+  const rows = await db
+    .select()
+    .from(userWorkingHours)
+    .where(eq(userWorkingHours.userId, userId))
+    .orderBy(desc(userWorkingHours.updatedAt));
+
+  const latest = new Map<string, WorkingHoursRow>();
+  for (const row of rows) {
+    if (!latest.has(row.status)) latest.set(row.status, row);
+  }
+
+  const reviewerIds = [...latest.values()]
+    .map((r) => r.reviewedById)
+    .filter((id): id is number => id != null);
+  const reviewers =
+    reviewerIds.length > 0
+      ? await db
+          .select({ id: users.id, firstName: users.firstName, lastName: users.lastName })
+          .from(users)
+          .where(inArray(users.id, reviewerIds))
+      : [];
+  const reviewerNameById = new Map(
+    reviewers.map((u) => [u.id, `${u.firstName} ${u.lastName}`.trim()]),
+  );
+  const reviewerName = (row: WorkingHoursRow | undefined) =>
+    row?.reviewedById != null ? (reviewerNameById.get(row.reviewedById) ?? null) : null;
+
+  const approved = latest.get("approved");
+  const pending = latest.get("pending");
+  const rejected = latest.get("rejected");
+  return {
+    approved: approved
+      ? {
+          id: approved.id,
+          schedule: approved.schedule as WorkingHoursSchedule,
+          reviewedAt: approved.reviewedAt?.toISOString() ?? null,
+          reviewerName: reviewerName(approved),
+        }
+      : null,
+    pending: pending
+      ? {
+          id: pending.id,
+          schedule: pending.schedule as WorkingHoursSchedule,
+          submittedAt: pending.submittedAt?.toISOString() ?? null,
+        }
+      : null,
+    rejected: rejected
+      ? {
+          id: rejected.id,
+          schedule: rejected.schedule as WorkingHoursSchedule,
+          reviewedAt: rejected.reviewedAt?.toISOString() ?? null,
+          reviewerName: reviewerName(rejected),
+        }
+      : null,
+  };
 }
 
 // ── Portal change requests (§12/§22) ──────────────────────────────────────

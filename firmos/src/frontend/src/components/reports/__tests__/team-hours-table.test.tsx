@@ -28,6 +28,7 @@ function user(partial: Partial<UserHoursReport> & Pick<UserHoursReport, 'userId'
     unbillableMinutes: 510,
     byActivityType: {},
     byClient: [],
+    byProject: [],
     ...partial,
   }
 }

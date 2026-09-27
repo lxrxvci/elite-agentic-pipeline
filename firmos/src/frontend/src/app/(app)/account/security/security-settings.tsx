@@ -16,6 +16,8 @@ const PASSWORD_POLICY = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,128}$/
 
 interface Props {
   user: { email: string; firstName: string; lastName: string; mfaEnabled: boolean }
+  /** Extra settings cards (Clock-C3 working hours) render after MFA. */
+  children?: React.ReactNode
 }
 
 /**
@@ -23,7 +25,7 @@ interface Props {
  * revoke every other session on success) and TOTP MFA enrollment with QR +
  * 10 backup codes.
  */
-export function SecuritySettings({ user }: Props) {
+export function SecuritySettings({ user, children }: Props) {
   const router = useRouter()
   const [mfaEnabled, setMfaEnabled] = React.useState(user.mfaEnabled)
 
@@ -332,6 +334,8 @@ export function SecuritySettings({ user }: Props) {
           )}
         </CardContent>
       </Card>
+
+      {children}
     </div>
   )
 }

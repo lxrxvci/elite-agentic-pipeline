@@ -146,6 +146,15 @@ test('admin hub has no serious/critical axe violations', async ({ page }) => {
   await expectAccessible(page, 'admin hub')
 })
 
+test('account security (working-hours editor) has no serious/critical axe violations', async ({ page }) => {
+  await page.goto('/account/security')
+  await expect(page.getByRole('heading', { name: 'Security settings' })).toBeVisible()
+  // Clock-C3: the working-hours card renders in one of its three states
+  // (editor / pending review / approved); every state must scan clean.
+  await expect(page.getByTestId('working-hours-card')).toBeVisible()
+  await expectAccessible(page, 'account security + working-hours editor')
+})
+
 test('idle forgiveness dialog has no serious/critical axe violations', async ({ page }) => {
   // Plant a sweep-shaped auto-closed session for the owner (waiting out the
   // real 25-minute idle + grace window is not gate-able), so the widget's

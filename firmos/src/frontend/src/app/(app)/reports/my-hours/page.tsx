@@ -84,7 +84,7 @@ export default async function MyHoursPage({
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">By activity</CardTitle>
@@ -147,6 +147,51 @@ export default async function MyHoursPage({
                   <TableRow>
                     <TableCell colSpan={2} className="pl-6 text-xs text-muted-foreground">
                       No client-attributed time in this range.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="by-project-card">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">By project</CardTitle>
+          </CardHeader>
+          <CardContent className="px-0 pb-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">Project</TableHead>
+                  <TableHead className="text-right">Hours</TableHead>
+                  <TableHead className="pr-6 text-right">Share</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {mine && mine.byProject.length > 0 ? (
+                  mine.byProject.map((p) => (
+                    <TableRow key={p.projectId} data-testid="by-project-row">
+                      <TableCell className="pl-6 text-sm">
+                        {p.projectName}
+                        {p.clientName && (
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            · {p.clientName}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="tnum text-right text-sm">
+                        {formatHours(p.minutes)}
+                      </TableCell>
+                      <TableCell className="tnum pr-6 text-right text-sm text-muted-foreground">
+                        {Math.round(p.share * 100)}%
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={3} className="pl-6 text-xs text-muted-foreground">
+                      No project-attributed time in this range.
                     </TableCell>
                   </TableRow>
                 )}

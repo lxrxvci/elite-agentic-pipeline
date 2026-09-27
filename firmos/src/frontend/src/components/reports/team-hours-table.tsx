@@ -225,6 +225,28 @@ export function TeamHoursTable({ users, fromIso, toIso }: TeamHoursTableProps) {
                           </div>
                           <div>
                             <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                              By project
+                            </p>
+                            {u.byProject.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">No project-attributed time.</p>
+                            ) : (
+                              u.byProject.map((p) => (
+                                <p key={p.projectId} className="flex justify-between text-xs">
+                                  <span className="truncate pr-2">
+                                    {p.projectName}
+                                    <span className="ml-1 text-muted-foreground">
+                                      {Math.round(p.share * 100)}%
+                                    </span>
+                                  </span>
+                                  <span className="tnum text-muted-foreground">
+                                    {formatHours(p.minutes)} h
+                                  </span>
+                                </p>
+                              ))
+                            )}
+                          </div>
+                          <div>
+                            <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                               By day
                             </p>
                             <DailyHoursPanel userId={u.userId} fromIso={fromIso} toIso={toIso} />

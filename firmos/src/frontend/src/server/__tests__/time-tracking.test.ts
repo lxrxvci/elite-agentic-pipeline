@@ -7,6 +7,8 @@ import {
   auditEvents,
   clients,
   notifications,
+  projects,
+  projectTasks,
   taskTimeEntries,
   tasks,
   users,
@@ -156,6 +158,110 @@ describe.skipIf(!reachable)("time tracking engine (HANDOFF §6.6, §17, §29)", 
     expect(row.unbillableMinutes).toBe(450);
     expect(row.byActivityType.bank_feeds).toBe(90);
     expect(row.byClient).toEqual([{ clientId: c.id, clientName: c.legalName, minutes: 90 }]);
+  });
+
+  it("hours report: byProject unions project-stamped activities + linked task timers (Clock-C3)", async () => {
+    const u = await makeUser("bookkeeper");
+    const c = await makeClient({ bookkeeperId: u.id });
+    const [catchUp] = await db
+      .insert(projects)
+      .values({ clientId: c.id, name: "2025 Catch-up" })
+      .returning();
+    const [cleanup] = await db
+      .insert(projects)
+      .values({ clientId: c.id, name: "QBO cleanup" })
+      .returning();
+    const linkedTask = await makeTask({ clientId: c.id, assigneeId: u.id });
+    const plainTask = await makeTask({ clientId: c.id, assigneeId: u.id });
+    await db
+      .insert(projectTasks)
+      .values({ projectId: catchUp.id, taskId: linkedTask.id, title: "linked row" });
+
+    // Day umbrella 9-17. Catch-up: project-stamped activity 9:30-11:00 plus
+    // the linked task's timer 10:00-10:30 INSIDE it - the union is 90, never
+    // the 120 a raw sum would report. Cleanup: 15:00-16:00. The unlinked
+    // task's timer (14:00-15:00) reaches no project.
+    await db.insert(workstationTimeEntries).values([
+      {
+        userId: u.id,
+        activityType: "day",
+        startedAt: d(10, 9),
+        endedAt: d(10, 17),
+        durationMinutes: 480,
+      },
+      {
+        userId: u.id,
+        activityType: "projects",
+        clientId: c.id,
+        referenceType: "project",
+        referenceId: catchUp.id,
+        startedAt: d(10, 9, 30),
+        endedAt: d(10, 11),
+        durationMinutes: 90,
+      },
+      {
+        userId: u.id,
+        activityType: "projects",
+        clientId: c.id,
+        referenceType: "project",
+        referenceId: cleanup.id,
+        startedAt: d(10, 15),
+        endedAt: d(10, 16),
+        durationMinutes: 60,
+      },
+    ]);
+    await db.insert(taskTimeEntries).values([
+      {
+        taskId: linkedTask.id,
+        userId: u.id,
+        startedAt: d(10, 10),
+        endedAt: d(10, 10, 30),
+        durationMinutes: 30,
+      },
+      {
+        taskId: plainTask.id,
+        userId: u.id,
+        startedAt: d(10, 14),
+        endedAt: d(10, 15),
+        durationMinutes: 60,
+      },
+    ]);
+
+    const report = await getHoursReport({
+      requesterId: u.id,
+      requesterRole: "bookkeeper",
+      userId: u.id,
+      from: d(10, 0),
+      to: d(11, 0),
+    });
+    const row = report.users.find((r) => r.userId === u.id)!;
+
+    expect(row.totalMinutes).toBe(480);
+    expect(row.byProject).toEqual([
+      {
+        projectId: catchUp.id,
+        projectName: "2025 Catch-up",
+        clientId: c.id,
+        clientName: c.legalName,
+        minutes: 90, // union, not 90 + 30
+        share: 90 / 480,
+      },
+      {
+        projectId: cleanup.id,
+        projectName: "QBO cleanup",
+        clientId: c.id,
+        clientName: c.legalName,
+        minutes: 60,
+        share: 60 / 480,
+      },
+    ]);
+
+    // Cross-check against byClient: project time is a subset of the client
+    // union (client also carries the unlinked task's 14:00-15:00).
+    expect(row.byClient).toEqual([{ clientId: c.id, clientName: c.legalName, minutes: 210 }]);
+    const projectTotal = row.byProject.reduce((sum, p) => sum + p.minutes, 0);
+    expect(projectTotal).toBe(150);
+    expect(projectTotal).toBeLessThanOrEqual(row.byClient[0].minutes);
   });
 
   it("clock-out cascade closes the activity entry and every open task timer (§17)", async () => {

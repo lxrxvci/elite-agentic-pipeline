@@ -15,6 +15,8 @@ import {
   auditEvents,
   clients,
   notifications,
+  projects,
+  projectTasks,
   taskTimeEntries,
   tasks,
   users,
@@ -1356,8 +1358,15 @@ export async function resolveIdleTime(
 
 export interface CollectedIntervals {
   day: Interval[];
-  activities: { interval: Interval; activityType: string; clientId: number | null }[];
-  taskTimers: { interval: Interval; clientId: number | null; billable: boolean }[];
+  activities: {
+    interval: Interval;
+    activityType: string;
+    clientId: number | null;
+    /** Clock-C1 stamp (Clock-C3: feeds the by-project breakdown). */
+    referenceType: string | null;
+    referenceId: number | null;
+  }[];
+  taskTimers: { interval: Interval; taskId: number; clientId: number | null; billable: boolean }[];
   /**
    * F2: unpaid break/lunch intervals (activity kinds break_unpaid,
    * lunch_unpaid), kept separate so payroll can subtract them from the
@@ -1425,6 +1434,8 @@ export async function collectUserIntervals(
         interval,
         activityType: row.activityType,
         clientId: row.clientId,
+        referenceType: row.referenceType,
+        referenceId: row.referenceId,
       });
       // F2: unpaid breaks ride the activity stream AND feed the payroll
       // subtraction set (domain isUnpaidActivityType owns the kinds).
@@ -1438,6 +1449,7 @@ export async function collectUserIntervals(
     if (!interval) continue;
     collected.taskTimers.push({
       interval,
+      taskId: row.entry.taskId,
       clientId: row.clientId,
       billable: row.billableStatus === "billable",
     });
@@ -1460,6 +1472,18 @@ export interface UserHoursReport {
   unbillableMinutes: number;
   byActivityType: Record<string, number>;
   byClient: { clientId: number; clientName: string; minutes: number }[];
+  /** Clock-C3 (original parity): project-attributed minutes, most-worked
+   *  first. Sources: project-stamped activity references plus task timers
+   *  whose task links to the project (project_tasks). `share` is the
+   *  fraction of the user's total wall-clock union. */
+  byProject: {
+    projectId: number;
+    projectName: string;
+    clientId: number | null;
+    clientName: string | null;
+    minutes: number;
+    share: number;
+  }[];
 }
 
 export interface HoursReport {
@@ -1582,6 +1606,66 @@ export async function getHoursReport(opts: {
       // Call notes: client lists are alphabetical everywhere they appear.
       .sort((a, b) => a.clientName.localeCompare(b.clientName));
 
+    // Clock-C3 by-project breakdown. Task timers reach their project through
+    // project_tasks (a task links to at most one project row in practice;
+    // first link wins), activities through the Clock-C1 reference stamp.
+    const projectIds = new Set<number>();
+    const intervalsByProject = new Map<number, Interval[]>();
+    const attribute = (projectId: number, interval: Interval) => {
+      projectIds.add(projectId);
+      const list = intervalsByProject.get(projectId);
+      if (list) list.push(interval);
+      else intervalsByProject.set(projectId, [interval]);
+    };
+    const timerTaskIds = [...new Set(collected.taskTimers.map((t) => t.taskId))];
+    const projectLinks =
+      timerTaskIds.length > 0
+        ? await db
+            .select({ taskId: projectTasks.taskId, projectId: projectTasks.projectId })
+            .from(projectTasks)
+            .where(inArray(projectTasks.taskId, timerTaskIds))
+        : [];
+    const projectIdByTaskId = new Map<number, number>();
+    for (const link of projectLinks) {
+      if (link.taskId != null && !projectIdByTaskId.has(link.taskId)) {
+        projectIdByTaskId.set(link.taskId, link.projectId);
+      }
+    }
+    for (const t of collected.taskTimers) {
+      const projectId = projectIdByTaskId.get(t.taskId);
+      if (projectId != null) attribute(projectId, t.interval);
+    }
+    for (const a of collected.activities) {
+      if (a.referenceType === "project" && a.referenceId != null) {
+        attribute(a.referenceId, a.interval);
+      }
+    }
+
+    const projectRows =
+      projectIds.size > 0
+        ? await db
+            .select({ id: projects.id, name: projects.name, clientId: projects.clientId })
+            .from(projects)
+            .where(inArray(projects.id, [...projectIds]))
+        : [];
+    const projectById = new Map(projectRows.map((p) => [p.id, p]));
+    const byProject = [...intervalsByProject]
+      .map(([projectId, intervals]) => {
+        const minutes = mergedMinutes(intervals);
+        const project = projectById.get(projectId);
+        return {
+          projectId,
+          projectName: project?.name ?? `Project ${projectId}`,
+          clientId: project?.clientId ?? null,
+          clientName:
+            project?.clientId != null ? (clientNameById.get(project.clientId) ?? null) : null,
+          minutes,
+          share: totalMinutes > 0 ? minutes / totalMinutes : 0,
+        };
+      })
+      .filter((p) => p.minutes > 0)
+      .sort((a, b) => b.minutes - a.minutes || a.projectName.localeCompare(b.projectName));
+
     usersReport.push({
       userId: targetId,
       userName: `${user.firstName} ${user.lastName}`,
@@ -1595,6 +1679,7 @@ export async function getHoursReport(opts: {
       unbillableMinutes: Math.max(0, totalMinutes - billableMinutes),
       byActivityType,
       byClient,
+      byProject,
     });
   }
 
