@@ -169,10 +169,12 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   await pick(page, 'option-no', 'ten99-services') // no bill recording (E6 split)
   await advance(page, 'reports') // skip 1099
   await advance(page, 'preliminary-reports') // skip special reports
-  await pick(page, 'option-no', 'default-rules') // reports wait for answers (R6); R7: no retro question
-  await advance(page, 'rules') // keep the standard routines selected
-  await advance(page, 'notes') // skip custom rules
-  await page.getByTestId('continue').click() // skip notes
+  await pick(page, 'option-no', 'notes') // reports wait for answers (R6); R7: no retro question
+  await advance(page, 'rules') // skip internal notes
+  await advance(page, 'routine-scheduler') // skip custom rules
+  // J3: the S-corp auto-flagged payroll derives a payroll card on the scheduler.
+  await expect(page.getByTestId('routine-card-payroll-handling')).toBeVisible()
+  await page.getByTestId('continue').click()
 
   // ── Review: the quote REVEALS here (no peek), standards row reads right ──
   await expect(page.getByTestId('review-screen')).toBeVisible()

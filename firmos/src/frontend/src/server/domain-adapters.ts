@@ -37,6 +37,8 @@ export function toDomainRule(rule: {
   weekday: number | null;
   weekOfMonth: number | null;
   anchorMonth: number | null;
+  /** J3: every-N-weeks interval (weekly rules); null = every week. */
+  weekInterval?: number | null;
   nextRun: string | null;
 }) {
   return {
@@ -46,6 +48,7 @@ export function toDomainRule(rule: {
     weekday: rule.weekday,
     week_of_month: rule.weekOfMonth,
     anchor_month: rule.anchorMonth,
+    week_interval: rule.weekInterval ?? null,
     next_run: rule.nextRun,
   };
 }

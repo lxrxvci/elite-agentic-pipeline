@@ -1,7 +1,24 @@
+import { parseDaysOfWeek } from '@firmos/domain'
+
 import type { IntakeAccountInput, IntakeContactInput, IntakePatch, IntakeProofCategory } from '@/server/intake'
 import type { IntakeFormData, IntakeRow } from '@/server/intake'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
-import { DEFAULT_RECURRING_RULES, DEFAULT_RULE_KEYS } from '@/shared/lib/default-rules'
+import {
+  DEFAULT_RECURRING_RULES,
+  MERCHANT_RECONCILIATION_TITLE,
+  NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
+  OWNER_DRAWS_CONFIRMATION_TITLE,
+  PERSONAL_CARD_REMINDER_TITLE,
+  PRELIMINARY_REPORTS_NOTE,
+} from '@/shared/lib/default-rules'
+import {
+  ROUTINE_BUCKET_LABELS,
+  ROUTINE_BUCKETS,
+  resolveRoutineEntries,
+  routineBucketOrder,
+  type RoutineScheduleEntry,
+  type RoutineTaskDef,
+} from '@/shared/lib/routine-schedule'
 
 import { dateTextLabel } from './date-text'
 import { formatPhone, phoneDigits } from './format'
@@ -121,7 +138,7 @@ export interface RepeatableDef {
   itemsNote?: (items: Array<Record<string, unknown>>, a: WizardAnswers) => string | null
 }
 
-export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist' | 'account-count' | 'yes-no-list'
+export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist' | 'account-count' | 'yes-no-list' | 'routine-scheduler'
 
 /** J2 (meeting #3, E1-E3): a yes answer on the question opens a blocking
  *  note overlay - the explanation is required before the wizard moves on.
@@ -1047,6 +1064,355 @@ export function accountRefLabel(item: IntakeAccountInput): string {
     str(item.name) ??
     'Account'
   )
+}
+
+// ── J3 routine scheduler (meeting #3, R1-R5, 00:39:26-00:54:05) ──────────
+//
+// The final content screen: "Routine order and frequency". Every recurring
+// task the intake produces - the standard four (R2 default order categorize
+// -> reconcile -> client questions -> send reports), the money-behavior
+// seeds, merchant reconciliation, the add-on service tasks (payroll, bills,
+// 1099s), specialty reports, and custom recurring rules - as draggable cards
+// in five buckets (Daily/Weekly/Monthly/Quarterly/Annual). deriveRoutineTasks
+// mirrors convert.ts's seeding rules one for one so the screen shows the
+// truth; the persisted form_data.routineSchedule map drives conversion's
+// scheduler path (intakes without the key convert exactly as pre-J3).
+
+export const ROUTINE_SCHEDULER_QUESTION_ID = 'routine-scheduler'
+
+/** The close tier day as a number; unset or a custom answer falls back to 15
+ *  (the same fallback effectiveServiceKeys and convert.ts use). */
+export function closeTierDay(a: WizardAnswers): number {
+  return a.monthlyCloseTier === '5' || a.monthlyCloseTier === '10' ? Number(a.monthlyCloseTier) : 15
+}
+
+/** The bookkeeping start month anchors quarterly-and-longer cadences (§6.4). */
+function schedulerAnchorMonth(a: WizardAnswers): number {
+  const m = typeof a.bookkeepingStartDate === 'string'
+    ? /^\d{4}-(\d{2})-\d{2}$/.exec(a.bookkeepingStartDate)
+    : null
+  return m ? Number(m[1]) : 1
+}
+
+/** The J2 (E1-E3) explanation note baked into a seeded task's description. */
+function behaviorNoteFor(a: WizardAnswers, questionId: string): string | null {
+  const n = a.behaviorNotes?.[questionId]
+  return typeof n === 'string' && n.trim() !== '' ? `Client context from intake: ${n.trim()}` : null
+}
+
+/**
+ * Default bucket placement for close-cadence work (the standard four +
+ * merchant reconciliation), by the client's reporting frequency. Semi-annual
+ * has no bucket (R4 names five): the card sits in Annual and conversion keeps
+ * the exact pre-J3 semi-annual cadence via keepSourceSchedule.
+ */
+function closeCadencePlacement(
+  a: WizardAnswers,
+  day: number,
+): Pick<RoutineTaskDef, 'defaultEntry' | 'sourceSchedule'> {
+  const { bookkeepingFrequency: freq = 'monthly' } = a
+  switch (freq) {
+    case 'quarterly':
+      return { defaultEntry: { bucket: 'quarterly', order: 0, daysAfterPeriodEnd: day } }
+    case 'annual':
+      return { defaultEntry: { bucket: 'annual', order: 0, daysAfterPeriodEnd: day, fiscalYearEnd: null } }
+    case 'semi_annual':
+      return {
+        defaultEntry: {
+          bucket: 'annual',
+          order: 0,
+          daysAfterPeriodEnd: day,
+          fiscalYearEnd: null,
+          keepSourceSchedule: true,
+        },
+        sourceSchedule: { scheduleType: 'semi_annual', anchorMonth: schedulerAnchorMonth(a), dayOfMonth: day },
+      }
+    default:
+      return { defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: day } }
+  }
+}
+
+/**
+ * The cards the scheduler screen shows, in derivation order, each with its
+ * default placement. Conversion's scheduler path consumes the same list via
+ * planRoutineSeeds, so what Jason sees is exactly what seeds.
+ */
+export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
+  if (!isBookkeeping(a)) return []
+  const tasks: RoutineTaskDef[] = []
+  const tierDay = closeTierDay(a)
+  const orders: Record<string, number> = { daily: 0, weekly: 0, monthly: 0, quarterly: 0, annual: 0 }
+  const push = (def: RoutineTaskDef) => {
+    const bucket = def.defaultEntry.bucket
+    tasks.push({ ...def, defaultEntry: { ...def.defaultEntry, order: orders[bucket] ?? 0 } })
+    orders[bucket] = (orders[bucket] ?? 0) + 1
+  }
+
+  // R2: the standard four, in Jason's dictated working order. Pre-J3
+  // exclusions (B21) keep their meaning: excluded routines never derive.
+  const excluded = new Set(a.excludedDefaultRules ?? [])
+  const standardsOrder = ['categorize_transactions', 'reconcile_accounts', 'client_questions', 'send_reports']
+  for (const k of standardsOrder) {
+    const rule = DEFAULT_RECURRING_RULES.find((r) => r.key === k)
+    if (!rule || excluded.has(k)) continue
+    const day = rule.dueDay === 'tier' ? tierDay : rule.dueDay
+    push({
+      key: rule.key,
+      title: rule.title,
+      detail: rule.help,
+      assignee: rule.assignee,
+      description:
+        rule.key === 'send_reports' && a.sendPreliminaryReports === true ? PRELIMINARY_REPORTS_NOTE : null,
+      ...closeCadencePlacement(a, day),
+    })
+  }
+
+  // I6: merchant reconciliation rides the close cadence next to the four.
+  if (a.includeMerchantReconciliation === true) {
+    const names = (a.merchantAccounts ?? []).map((m) => str(m.name)).filter((n): n is string => n != null)
+    push({
+      key: 'merchant-reconciliation',
+      title: MERCHANT_RECONCILIATION_TITLE,
+      detail: names.length > 0 ? names.join(', ') : 'Processor accounts reconcile here',
+      assignee: 'bookkeeper',
+      ...closeCadencePlacement(a, tierDay),
+    })
+  }
+
+  // A41/B18: the money-behavior seeds - monthly regardless of cadence today.
+  if (a.depositsNonBusiness === true) {
+    push({
+      key: 'deposits-non-business',
+      title: NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
+      detail: 'Booked as owner contributions, never income',
+      assignee: 'bookkeeper',
+      description: behaviorNoteFor(a, 'deposits-non-business'),
+      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: tierDay },
+    })
+  }
+  if (a.personalOnBusiness === true) {
+    push({
+      key: 'personal-on-business',
+      title: OWNER_DRAWS_CONFIRMATION_TITLE,
+      detail: 'Confirmed with the client every month',
+      assignee: 'bookkeeper',
+      description: behaviorNoteFor(a, 'personal-on-business'),
+      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: tierDay },
+    })
+  }
+  if (a.personalCardForBusiness === true) {
+    push({
+      key: 'personal-card',
+      title: PERSONAL_CARD_REMINDER_TITLE,
+      detail: 'Asks for the prior month\u2019s breakdown',
+      assignee: 'bookkeeper',
+      description: behaviorNoteFor(a, 'personal-card'),
+      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: 1 },
+    })
+  }
+
+  // P1/P2: payroll handling follows the payroll cadence (biweekly rides the
+  // J3 every-N-weeks engine support; twice-a-month flattens to a monthly card
+  // with a note - the bucket model has no semi-monthly home).
+  if (hasPayroll(a)) {
+    const selfProcessed = a.payrollSelfProcessed === true
+    const freq = a.payrollFrequency
+    const entry: RoutineScheduleEntry =
+      freq === 'weekly'
+        ? { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 }
+        : freq === 'biweekly'
+          ? { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 2 }
+          : freq === 'semi_monthly'
+            ? { bucket: 'monthly', order: 0, dayOfMonth: 15 }
+            : { bucket: 'monthly', order: 0, dayOfMonth: tierDay }
+    push({
+      key: 'payroll-handling',
+      title: selfProcessed ? 'Download and enter payroll reports' : 'Payroll handling',
+      detail: join(
+        str(a.payrollProvider),
+        freq ? (FREQUENCY_LABELS[freq] ?? null) : null,
+        freq === 'semi_monthly' ? 'twice a month - adjust the day to fit' : null,
+        selfProcessed ? 'they process their own' : null,
+      ),
+      assignee: 'bookkeeper',
+      defaultEntry: entry,
+    })
+  }
+
+  // E6: the bills split - record and pay are separate routines.
+  if ((a.recordBills ?? a.includeBillPay) === true) {
+    push({
+      key: 'record-bills',
+      title: 'Record bills',
+      detail: 'Bills tracked as they come in',
+      assignee: 'bookkeeper',
+      defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
+    })
+  }
+  if (a.payBills === true) {
+    const locations = (a.billPayLocations ?? []).filter((l) => str(l))
+    push({
+      key: 'pay-bills',
+      title: 'Pay bills',
+      detail: locations.length > 0 ? `Pays at: ${locations.join(', ')}` : 'Paying runs on top of recording',
+      assignee: 'bookkeeper',
+      defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
+    })
+  }
+
+  // J2: 1099 work is year-end work - due January 31st (31 days after the
+  // calendar year ends) by default.
+  const keys = a.serviceKeys ?? []
+  if (a.include1099Collection === true || keys.includes('1099_collection')) {
+    push({
+      key: '1099-collection',
+      title: serviceLabel('1099_collection'),
+      detail: a.estimated1099Count != null ? `~${a.estimated1099Count} filings a year` : 'W-9s gathered',
+      assignee: 'bookkeeper',
+      defaultEntry: { bucket: 'annual', order: 0, daysAfterPeriodEnd: 31, fiscalYearEnd: null },
+    })
+  }
+  if (a.include1099FullManagement === true || keys.includes('1099_full_management') || keys.includes('1099_per_filing')) {
+    push({
+      key: '1099-management',
+      title: serviceLabel('1099_full_management'),
+      detail: a.estimated1099Count != null ? `~${a.estimated1099Count} filings a year` : null,
+      assignee: 'bookkeeper',
+      defaultEntry: { bucket: 'annual', order: 0, daysAfterPeriodEnd: 31, fiscalYearEnd: null },
+    })
+  }
+
+  // C10: specialty reports recur on the report's own cadence.
+  for (const def of a.reportDefinitions ?? []) {
+    const name = str(def.name)
+    if (!name) continue
+    const detail = join(FREQUENCY_LABELS[String(def.frequency)] ?? null, str(def.dataSource))
+    const base = {
+      key: `specialty:${name}`,
+      title: name,
+      detail,
+      assignee: 'bookkeeper' as const,
+      description: str(def.dataSource),
+      isCustom: true,
+    }
+    switch (String(def.frequency)) {
+      case 'quarterly':
+        push({ ...base, defaultEntry: { bucket: 'quarterly', order: 0, daysAfterPeriodEnd: tierDay } })
+        break
+      case 'annual':
+        push({ ...base, defaultEntry: { bucket: 'annual', order: 0, daysAfterPeriodEnd: tierDay, fiscalYearEnd: null } })
+        break
+      case 'semi_annual':
+        push({
+          ...base,
+          defaultEntry: {
+            bucket: 'annual',
+            order: 0,
+            daysAfterPeriodEnd: tierDay,
+            fiscalYearEnd: null,
+            keepSourceSchedule: true,
+          },
+          // Pre-J3: no day_of_month - the cadence falls back to the start day.
+          sourceSchedule: { scheduleType: 'semi_annual', anchorMonth: schedulerAnchorMonth(a), dayOfMonth: null },
+        })
+        break
+      default:
+        push({ ...base, defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: tierDay } })
+    }
+  }
+
+  // B21: custom recurring rules, each on its own cadence. Schedules the
+  // bucket model can't express (nth-weekday, anchored quarterly/annual,
+  // semi-annual) keep their source fields verbatim until moved.
+  for (const r of a.customRecurringRules ?? []) {
+    const title = str(r.title)
+    if (!title) continue
+    const sourceSchedule: RoutineTaskDef['sourceSchedule'] = {
+      scheduleType: r.scheduleType,
+      daysOfWeek: r.daysOfWeek ?? null,
+      dayOfMonth: r.dayOfMonth ?? null,
+      weekday: r.weekday ?? null,
+      weekOfMonth: r.weekOfMonth ?? null,
+      anchorMonth: r.anchorMonth ?? null,
+    }
+    const base = {
+      key: `custom:${title}`,
+      title,
+      detail: FREQUENCY_LABELS[String(r.scheduleType)] ?? null,
+      assignee: 'bookkeeper' as const,
+      description: str(r.description),
+      isCustom: true,
+      subtasks: r.subtasks ?? [],
+      isBillable: r.isBillable === true,
+      unitPrice: r.unitPrice ?? null,
+      sourceSchedule,
+    }
+    const keep = (defaultEntry: RoutineScheduleEntry): RoutineTaskDef => ({
+      ...base,
+      defaultEntry: { ...defaultEntry, keepSourceSchedule: true },
+    })
+    switch (r.scheduleType) {
+      case 'daily':
+        push({ ...base, defaultEntry: { bucket: 'daily', order: 0, weekdays: [0, 1, 2, 3, 4, 5, 6] } })
+        break
+      case 'weekly': {
+        const days = parseDaysOfWeek(r.daysOfWeek)
+        if (days.length > 1) {
+          // A multi-day "weekly" custom is the daily bucket's weekday set -
+          // the engine mapping lands on identical rule fields.
+          push({ ...base, defaultEntry: { bucket: 'daily', order: 0, weekdays: days } })
+        } else if (days.length === 1) {
+          push({ ...base, defaultEntry: { bucket: 'weekly', order: 0, weekdays: days, everyNWeeks: r.weekInterval ?? 1 } })
+        } else {
+          push({ ...base, defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: r.weekInterval ?? 1 } })
+        }
+        break
+      }
+      case 'monthly':
+        if (r.weekday != null && r.weekOfMonth != null) {
+          push(keep({ bucket: 'monthly', order: 0, dayOfMonth: r.dayOfMonth ?? tierDay }))
+        } else {
+          push({ ...base, defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: r.dayOfMonth ?? tierDay } })
+        }
+        break
+      case 'quarterly':
+        if (r.anchorMonth != null) {
+          push(keep({ bucket: 'quarterly', order: 0, daysAfterPeriodEnd: r.dayOfMonth ?? tierDay }))
+        } else {
+          push({ ...base, defaultEntry: { bucket: 'quarterly', order: 0, daysAfterPeriodEnd: r.dayOfMonth ?? tierDay } })
+        }
+        break
+      case 'semi_annual':
+        push(keep({ bucket: 'annual', order: 0, daysAfterPeriodEnd: r.dayOfMonth ?? tierDay, fiscalYearEnd: null }))
+        break
+      case 'annual':
+        if (r.anchorMonth != null) {
+          push(keep({ bucket: 'annual', order: 0, daysAfterPeriodEnd: r.dayOfMonth ?? tierDay, fiscalYearEnd: null }))
+        } else {
+          push({
+            ...base,
+            defaultEntry: { bucket: 'annual', order: 0, daysAfterPeriodEnd: r.dayOfMonth ?? tierDay, fiscalYearEnd: null },
+          })
+        }
+        break
+    }
+  }
+
+  return tasks
+}
+
+/** The review-screen one-liner for the scheduler screen. */
+export function routineScheduleSummary(a: WizardAnswers): string | null {
+  if (!isBookkeeping(a)) return null
+  const schedule = a.routineSchedule
+  if (schedule == null || Object.keys(schedule).length === 0) return null
+  const tasks = deriveRoutineTasks(a)
+  if (tasks.length === 0) return null
+  const order = routineBucketOrder(tasks, resolveRoutineEntries(tasks, schedule))
+  const counts = ROUTINE_BUCKETS.filter((b) => order[b].length > 0).map(
+    (b) => `${ROUTINE_BUCKET_LABELS[b]} ${order[b].length}`,
+  )
+  return `${tasks.length} routine${tasks.length === 1 ? '' : 's'} · ${counts.join(' · ')}`
 }
 
 // ── Chapters ──────────────────────────────────────────────────────────────
@@ -2360,39 +2726,25 @@ export const CHAPTERS: ChapterDef[] = [
       // J2 (R7, 00:39:26): the retroactive/cleanup question is removed - the
       // books-start date already qualifies retroactive work (the pricing
       // derivation from that date is untouched; see effectiveServiceKeys).
+      // J3 (R1, 00:43:07): the B21 "which standard routines should we seed"
+      // checklist is gone too - the "Routine order and frequency" scheduler
+      // (the final content screen before review) subsumes it, and the custom
+      // recurring-work question stays just before it so customs appear there.
       {
-        // B21 (01:13:35): the §19 defaults are a select-all-by-default
-        // checklist - unselect per client before conversion, which seeds
-        // only the selected ones. Exclusions (not selections) persist so
-        // untouched intakes keep every default.
-        id: 'default-rules',
-        title: 'Which standard routines should we seed?',
-        help: 'On for every client by default - uncheck anything this engagement skips. Each one becomes a recurring task at conversion.',
-        type: 'checklist',
+        id: 'notes',
+        title: 'Anything else the team should know?',
+        help: 'Internal only. Becomes the first note on the client record.',
+        type: 'fields',
         required: false,
-        when: isBookkeeping,
-        options: DEFAULT_RECURRING_RULES.map((r) => ({
-          value: r.key,
-          label: r.title,
-          sub: `${r.help} · ${r.assignee === 'manager' ? 'Manager' : 'Bookkeeper'}`,
-        })),
-        get: (a) => DEFAULT_RULE_KEYS.filter((k) => !(a.excludedDefaultRules ?? []).includes(k)),
-        apply: (_a, v) => ({
-          excludedDefaultRules: DEFAULT_RULE_KEYS.filter((k) => !(v as string[]).includes(k)),
-        }),
-        summarize: (a) => {
-          if (!isBookkeeping(a)) return null
-          const excluded = a.excludedDefaultRules ?? []
-          if (excluded.length === 0) return `All ${DEFAULT_RULE_KEYS.length} standard routines`
-          const kept = DEFAULT_RECURRING_RULES.filter((r) => !excluded.includes(r.key))
-          if (kept.length === 0) return 'None of the standard routines'
-          return `${kept.length} of ${DEFAULT_RULE_KEYS.length}: ${kept.map((r) => r.title).join(', ')}`
-        },
+        fields: [{ key: 'internalNotes', label: 'Internal notes (optional)', kind: 'textarea', placeholder: 'Referred by Cascade Tax Group. Wants close by the 10th.' }],
+        get: (a) => a.internalNotes,
+        apply: (_a, v) => v as Partial<WizardAnswers>,
+        summarize: (a) => (str(a.internalNotes) ? 'Notes on file' : null),
       },
       {
         id: 'rules',
         title: 'Any custom recurring work?',
-        help: 'Firm-specific routines beyond the standard close, with their own checklist.',
+        help: 'Firm-specific routines beyond the standard close, with their own checklist. They land on the Routine order and frequency screen next.',
         type: 'repeatable',
         required: false,
         repeatable: {
@@ -2432,15 +2784,22 @@ export const CHAPTERS: ChapterDef[] = [
         },
       },
       {
-        id: 'notes',
-        title: 'Anything else the team should know?',
-        help: 'Internal only. Becomes the first note on the client record.',
-        type: 'fields',
+        // J3 (R1-R5): the master scheduler. Every routine the engagement
+        // seeds - the standard four, the answer-derived add-ons, specialty
+        // reports, and the custom rules from the card above - as draggable
+        // cards in the five cadence buckets, with per-bucket schedule
+        // controls that settle the due dates during intake (no post-quote
+        // back-and-forth). The map persists to form_data.routineSchedule;
+        // conversion seeds exactly what the screen shows.
+        id: ROUTINE_SCHEDULER_QUESTION_ID,
+        title: 'Routine order and frequency',
+        help: 'Every recurring task this engagement seeds, in the order the work happens. Drag a card to reorder it or move it to another bucket; the schedule controls set exactly when it runs.',
+        type: 'routine-scheduler',
         required: false,
-        fields: [{ key: 'internalNotes', label: 'Internal notes (optional)', kind: 'textarea', placeholder: 'Referred by Cascade Tax Group. Wants close by the 10th.' }],
-        get: (a) => a.internalNotes,
-        apply: (_a, v) => v as Partial<WizardAnswers>,
-        summarize: (a) => (str(a.internalNotes) ? 'Notes on file' : null),
+        when: isBookkeeping,
+        get: (a) => a.routineSchedule,
+        apply: (_a, v) => ({ routineSchedule: v as WizardAnswers['routineSchedule'] }),
+        summarize: routineScheduleSummary,
       },
     ],
   },

@@ -1,8 +1,12 @@
 /**
  * The four default recurring rules (HANDOFF §19) seeded at conversion.
  * Canonical list shared by the server (convert.ts seeds them) and the intake
- * wizard (registry.ts renders them as the pre-selected checklist, B21) -
- * the wizard unselects by `key`, and form_data carries the excluded keys.
+ * wizard. B21 rendered them as a pre-selected checklist writing
+ * form_data.excludedDefaultRules (still honored for intakes that never carry
+ * a routine schedule); J3 (meeting #3, R1-R2) replaces that checklist with
+ * the "Routine order and frequency" scheduler screen, which derives these
+ * four as cards in the client's cadence bucket - default order categorize ->
+ * reconcile -> client questions -> send reports (00:39:26-00:40:23).
  */
 export interface DefaultRuleDefinition {
   key: string;
@@ -47,3 +51,16 @@ export const DEFAULT_RECURRING_RULES: readonly DefaultRuleDefinition[] = [
 ] as const;
 
 export const DEFAULT_RULE_KEYS: readonly string[] = DEFAULT_RECURRING_RULES.map((r) => r.key);
+
+/**
+ * Answer-derived recurring seeds (B18/A41/I6) - the titles live here (not in
+ * convert.ts) because the J3 routine scheduler renders the same cards in the
+ * intake wizard, and the registry is client-side (convert.ts imports the db).
+ * J2 (R6): the preliminary-reports note stamped on the Send Reports rule.
+ */
+export const PERSONAL_CARD_REMINDER_TITLE = "Ask client for personal-card business-expense breakdown";
+export const NON_BUSINESS_DEPOSITS_REVIEW_TITLE = "Review non-business deposits - record as owner contribution";
+export const OWNER_DRAWS_CONFIRMATION_TITLE = "Confirm owner draws with the client";
+export const MERCHANT_RECONCILIATION_TITLE = "Merchant reconciliation";
+export const PRELIMINARY_REPORTS_NOTE =
+  "Send the package even when client questions are still open, marked preliminary (intake choice).";

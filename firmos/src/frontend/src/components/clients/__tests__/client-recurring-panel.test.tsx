@@ -46,6 +46,7 @@ function makeRule(partial: Partial<ClientRuleListItem> = {}): ClientRuleListItem
     weekday: null,
     weekOfMonth: null,
     anchorMonth: null,
+    weekInterval: null,
     nextRun: '2026-09-15',
     isActive: true,
     assigneeId: 5,

@@ -46,6 +46,9 @@ export const recurringTasks = pgTable(
     weekday: smallint("weekday"), // 0 = Sunday
     weekOfMonth: smallint("week_of_month"), // 1-4, or -1 for last
     anchorMonth: smallint("anchor_month"), // 1-12, for quarterly and longer
+    // J3 (meeting #3, R4): every-N-weeks interval for weekly rules
+    // (2 = every other week); null = every week.
+    weekInterval: smallint("week_interval"),
     nextRun: date("next_run", { mode: "string" }),
     isActive: boolean("is_active").notNull().default(true),
     assigneeId: integer("assignee_id").references((): AnyPgColumn => users.id),

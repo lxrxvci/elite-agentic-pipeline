@@ -23,6 +23,9 @@
     "sync:domain": "../../scripts/sync-domain.sh"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@firmos/domain": "file:./vendor/domain",
     "@google/genai": "^2.22.0",
     "@radix-ui/react-avatar": "^1.2.6",

@@ -22,6 +22,9 @@ import {
 } from "@/db/schema";
 import { cascadeIntakeToClient } from "@/server/cascade";
 import { ConversionError, convertIntakeToClient, PERSONAL_CARD_REMINDER_TITLE } from "@/server/convert";
+import { deriveRoutineTasks } from "@/components/intake/registry";
+import { runRecurringOnce } from "@/server/recurring";
+import { resolveRoutineEntries } from "@/shared/lib/routine-schedule";
 import {
   createIntake,
   getIntake,
@@ -1643,5 +1646,262 @@ describe.skipIf(!reachable)("J1 conversion: contact dedup + account identifiers"
     expect(byName.get("Stripe")?.institution).toBe("Stripe");
     // The id-only row resolved its processor name from the database.
     expect(byName.get("Toast")?.institution).toBe("Toast");
+  });
+});
+
+describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)", () => {
+  beforeAll(async () => {
+    await seedDatabase(TEST_TODAY);
+    managerDana = await userIdByEmail("dana@blueledgerbooks.com");
+    bookkeeperSofia = await userIdByEmail("sofia@blueledgerbooks.com");
+  });
+
+  type RuleRow = typeof recurringTasks.$inferSelect;
+  async function rulesFor(clientId: number): Promise<Map<string, RuleRow>> {
+    const rows = await db.select().from(recurringTasks).where(eq(recurringTasks.clientId, clientId));
+    return new Map(rows.map((r) => [r.title, r]));
+  }
+  /** The rule fields the schedule drives - the comparison surface. */
+  const shapeOf = (r: RuleRow) => ({
+    scheduleType: r.scheduleType,
+    daysOfWeek: r.daysOfWeek,
+    dayOfMonth: r.dayOfMonth,
+    weekday: r.weekday,
+    weekOfMonth: r.weekOfMonth,
+    anchorMonth: r.anchorMonth,
+    weekInterval: r.weekInterval,
+    nextRun: r.nextRun,
+    isCustom: r.isCustom,
+  });
+
+  const SCHEDULE_BASE: IntakePatch = {
+    legalName: "Scheduled Co",
+    bookkeepingFrequency: "monthly",
+    monthlyCloseTier: "10",
+    accountingMethod: "cash",
+    bookkeepingStartDate: "2026-08-03", // a Monday
+    formData: {
+      serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_10"],
+    },
+  };
+
+  it("untouched and default-committed schedules convert identically to the legacy path", async () => {
+    const legacyId = await reviewableIntake({ ...SCHEDULE_BASE, legalName: "Legacy Path Co" });
+    // The same intake after the wizard's final screen committed the derived
+    // defaults untouched (what Continue on an unmodified screen persists).
+    const answers = {
+      engagementType: "bookkeeping" as const,
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-08-03",
+      serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_10"],
+    };
+    const derived = deriveRoutineTasks(answers);
+    const schedule = resolveRoutineEntries(derived, null);
+    const scheduledId = await reviewableIntake({
+      ...SCHEDULE_BASE,
+      legalName: "Scheduled Defaults Co",
+      formData: { ...(SCHEDULE_BASE.formData ?? {}), routineSchedule: schedule },
+    });
+
+    const legacy = await convertIntakeToClient(legacyId, { bookkeeperId: bookkeeperSofia }, managerDana, TEST_TODAY);
+    const scheduled = await convertIntakeToClient(
+      scheduledId,
+      { bookkeeperId: bookkeeperSofia },
+      managerDana,
+      TEST_TODAY,
+    );
+    expect(scheduled.recurringRulesCreated).toBe(legacy.recurringRulesCreated);
+
+    const legacyRules = await rulesFor(legacy.clientId);
+    const scheduledRules = await rulesFor(scheduled.clientId);
+    expect([...scheduledRules.keys()].sort()).toEqual([...legacyRules.keys()].sort());
+    for (const [title, row] of legacyRules) {
+      expect(shapeOf(scheduledRules.get(title)!), title).toEqual(shapeOf(row));
+    }
+    // Sanity: the four defaults, tier-day due dates (client questions = 25th).
+    expect(legacyRules.get("Categorize Transactions")?.dayOfMonth).toBe(10);
+    expect(legacyRules.get("Client Questions")?.dayOfMonth).toBe(25);
+  });
+
+  it("monthly_defaults_to_close_tier_day", async () => {
+    // Entries with no explicit day (field defaults fill from the tier).
+    const schedule = Object.fromEntries(
+      ["categorize_transactions", "reconcile_accounts", "client_questions", "send_reports"].map((k, i) => [
+        k,
+        { bucket: "monthly" as const, order: i },
+      ]),
+    );
+    const intakeId = await reviewableIntake({
+      ...SCHEDULE_BASE,
+      legalName: "Tier Default Co",
+      formData: { ...(SCHEDULE_BASE.formData ?? {}), routineSchedule: schedule },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const rules = await rulesFor(result.clientId);
+    expect(rules.get("Categorize Transactions")?.dayOfMonth).toBe(10);
+    expect(rules.get("Reconcile Accounts")?.dayOfMonth).toBe(10);
+    expect(rules.get("Send Reports")?.dayOfMonth).toBe(10);
+    expect(rules.get("Client Questions")?.dayOfMonth).toBe(25);
+  });
+
+  it("weekly_every_2_weeks_on_friday_materializes_correctly", async () => {
+    const intakeId = await reviewableIntake({
+      ...SCHEDULE_BASE,
+      legalName: "Biweekly Friday Co",
+      customRecurringRules: [{ title: "Friday deposit sync", scheduleType: "weekly" }],
+      formData: {
+        ...(SCHEDULE_BASE.formData ?? {}),
+        routineSchedule: {
+          categorize_transactions: { bucket: "monthly", order: 0 },
+          reconcile_accounts: { bucket: "monthly", order: 1 },
+          client_questions: { bucket: "monthly", order: 2 },
+          send_reports: { bucket: "monthly", order: 3 },
+          "custom:Friday deposit sync": { bucket: "weekly", order: 0, weekdays: [5], everyNWeeks: 2 },
+        },
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const rules = await rulesFor(result.clientId);
+    const rule = rules.get("Friday deposit sync")!;
+    expect(rule.scheduleType).toBe("weekly");
+    expect(rule.daysOfWeek).toBe("5");
+    expect(rule.weekInterval).toBe(2);
+    // First Friday on the cadence anchored at the Aug 3 (Mon) start week.
+    expect(rule.nextRun).toBe("2026-08-21"); // advanced past Aug 7 by generation
+
+    // The post-commit generation materialized exactly the Aug 7 occurrence.
+    const generated = await db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.recurringTaskId, rule.id), eq(tasks.clientId, result.clientId)));
+    expect(generated).toHaveLength(1);
+    expect(generated[0].dueDate).toBe("2026-08-07");
+
+    // The engine walks it forward two weeks at a time (never the off week).
+    const again = await runRecurringOnce({ year: 2026, month: 9, day: 4 });
+    void again;
+    const after = await db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.recurringTaskId, rule.id), eq(tasks.clientId, result.clientId)));
+    expect(after.map((t) => t.dueDate).sort()).toEqual(["2026-08-07", "2026-08-21"]);
+  });
+
+  it("annual_fiscal_yearend_plus_45_days", async () => {
+    const intakeId = await reviewableIntake({
+      ...SCHEDULE_BASE,
+      legalName: "Fiscal Year End Co",
+      formData: {
+        ...(SCHEDULE_BASE.formData ?? {}),
+        routineSchedule: {
+          categorize_transactions: { bucket: "monthly", order: 0 },
+          reconcile_accounts: { bucket: "monthly", order: 1 },
+          client_questions: { bucket: "monthly", order: 2 },
+          send_reports: { bucket: "annual", order: 0, fiscalYearEnd: "06-30", daysAfterPeriodEnd: 45 },
+        },
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const rules = await rulesFor(result.clientId);
+    const rule = rules.get("Send Reports")!;
+    // Fiscal June 30 + 45 days = August 14 - an annual rule anchored on August.
+    expect(rule.scheduleType).toBe("annual");
+    expect(rule.anchorMonth).toBe(8);
+    expect(rule.dayOfMonth).toBe(14);
+    expect(rule.nextRun).toBe("2027-08-14"); // 2026-08-14 materialized already
+    const generated = await db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.recurringTaskId, rule.id), eq(tasks.clientId, result.clientId)));
+    expect(generated.map((t) => t.dueDate)).toEqual(["2026-08-14"]);
+  });
+
+  it("add-on tasks seed only through the scheduler (payroll on -> payroll card -> payroll rule)", async () => {
+    const payrollForm = {
+      serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_10", "process_payroll"],
+      hasPayroll: true,
+      payrollFrequency: "biweekly" as const,
+      payrollProvider: "Gusto",
+    };
+    const untouchedId = await reviewableIntake({
+      ...SCHEDULE_BASE,
+      legalName: "Payroll Untouched Co",
+      payrollProvider: "Gusto",
+      formData: payrollForm,
+    });
+    const scheduledId = await reviewableIntake({
+      ...SCHEDULE_BASE,
+      legalName: "Payroll Scheduled Co",
+      payrollProvider: "Gusto",
+      formData: {
+        ...payrollForm,
+        routineSchedule: resolveRoutineEntries(deriveRoutineTasks({
+          engagementType: "bookkeeping",
+          bookkeepingFrequency: "monthly",
+          monthlyCloseTier: "10",
+          bookkeepingStartDate: "2026-08-03",
+          ...payrollForm,
+        }), null),
+      },
+    });
+    const untouched = await convertIntakeToClient(untouchedId, {}, managerDana, TEST_TODAY);
+    const scheduled = await convertIntakeToClient(scheduledId, {}, managerDana, TEST_TODAY);
+    expect((await rulesFor(untouched.clientId)).get("Payroll handling")).toBeUndefined();
+    const rules = await rulesFor(scheduled.clientId);
+    // The biweekly payroll cadence maps onto the J3 every-N-weeks support.
+    expect(rules.get("Payroll handling")).toMatchObject({
+      scheduleType: "weekly",
+      daysOfWeek: "5",
+      weekInterval: 2,
+    });
+    expect(scheduled.recurringRulesCreated).toBe(untouched.recurringRulesCreated + 1);
+  });
+
+  it("a standard routine removed on the screen never seeds (exclusions ride along)", async () => {
+    const answers = {
+      engagementType: "bookkeeping" as const,
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-08-03",
+      serviceKeys: ["bank_feed_management"],
+      excludedDefaultRules: ["client_questions"],
+    };
+    const schedule = resolveRoutineEntries(deriveRoutineTasks(answers), null);
+    expect(schedule.client_questions).toBeUndefined();
+    const intakeId = await reviewableIntake({
+      ...SCHEDULE_BASE,
+      legalName: "Excluded Routine Co",
+      formData: { serviceKeys: ["bank_feed_management"], excludedDefaultRules: ["client_questions"], routineSchedule: schedule },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const rules = await rulesFor(result.clientId);
+    expect(rules.get("Client Questions")).toBeUndefined();
+    expect(result.recurringRulesCreated).toBe(3);
+  });
+
+  it("extraction-created intakes (no routineSchedule key) convert on the legacy path", async () => {
+    // The call-notes extraction shape: flat form_data, custom rules on the
+    // structured column, and never a routineSchedule key.
+    const intakeId = await reviewableIntake({
+      legalName: "Extraction Shaped Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "15",
+      bookkeepingStartDate: "2026-01-05",
+      customRecurringRules: [{ title: "Weekly deposit review", scheduleType: "weekly", dayOfMonth: null }],
+      formData: {
+        serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_15"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    expect(result.recurringRulesCreated).toBe(5); // 4 defaults + 1 custom
+    const rules = await rulesFor(result.clientId);
+    expect(rules.get("Categorize Transactions")).toMatchObject({ scheduleType: "monthly", dayOfMonth: 15 });
+    expect(rules.get("Weekly deposit review")).toMatchObject({
+      scheduleType: "weekly",
+      weekInterval: null,
+      isCustom: true,
+    });
   });
 });

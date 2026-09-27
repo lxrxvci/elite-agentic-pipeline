@@ -12,6 +12,7 @@ import {
   CHAPTERS,
   customAllowed,
   customText,
+  deriveRoutineTasks,
   effectiveServiceKeys,
   findQuestion,
   firstUnansweredScreen,
@@ -727,29 +728,181 @@ describe('C10 specialty report capture', () => {
   })
 })
 
-describe('B21 default-rules checklist', () => {
+describe('J3 routine scheduler (meeting #3, R1-R5, 00:39:26-00:54:05)', () => {
   const recurring = CHAPTERS.find((c) => c.id === 'recurring')!
-  const q = recurring.questions.find((q) => q.id === 'default-rules')!
+  const q = recurring.questions.find((q) => q.id === 'routine-scheduler')!
 
-  it('is pre-selected with all four defaults and hidden for project engagements', () => {
-    expect(q.when?.({ ...base, engagementType: 'project' })).toBe(false)
-    expect(q.when?.({ ...base, engagementType: 'consulting' })).toBe(false)
-    // Untouched answers read as fully selected.
-    expect(q.get(base)).toEqual(['reconcile_accounts', 'categorize_transactions', 'client_questions', 'send_reports'])
-    expect(q.summarize(base)).toBe('All 4 standard routines')
+  it('default_routine_order_is_categorize_first', () => {
+    // R2: the four standard routines in Jason's dictated working order.
+    const tasks = deriveRoutineTasks({ ...base, monthlyCloseTier: '10' })
+    const keys = tasks.map((t) => t.key)
+    expect(keys.slice(0, 4)).toEqual([
+      'categorize_transactions',
+      'reconcile_accounts',
+      'client_questions',
+      'send_reports',
+    ])
+    // R5: monthly clients default to the close tier day (client questions
+    // keep their 25th-of-the-month touchpoint), in bucket order 0..3.
+    expect(
+      tasks.slice(0, 4).map((t) => [t.defaultEntry.bucket, t.defaultEntry.dayOfMonth, t.defaultEntry.order]),
+    ).toEqual([
+      ['monthly', 10, 0],
+      ['monthly', 10, 1],
+      ['monthly', 25, 2],
+      ['monthly', 10, 3],
+    ])
   })
 
-  it('unselecting persists exclusions (never selections)', () => {
-    const selected = ['reconcile_accounts', 'categorize_transactions']
-    const patch = q.apply(base, selected)
-    expect(patch).toEqual({ excludedDefaultRules: ['client_questions', 'send_reports'] })
-    // The exclusions round-trip back into the selected set.
-    expect(q.get({ ...base, ...patch })).toEqual(selected)
-    expect(q.summarize({ ...base, ...patch })).toBe('2 of 4: Reconcile Accounts, Categorize Transactions')
-    // Unselecting everything is a valid answer.
-    expect(q.apply(base, [])).toEqual({
-      excludedDefaultRules: ['reconcile_accounts', 'categorize_transactions', 'client_questions', 'send_reports'],
+  it('is the final content screen before review, right after custom recurring work', () => {
+    // R1: notes moved up so custom recurring sits just before the scheduler.
+    expect(visibleQuestions(recurring, base).map((q) => q.id)).toEqual(['notes', 'rules', 'routine-scheduler'])
+    const screens = flattenScreens(base)
+    expect(screens[screens.length - 2]).toEqual({
+      kind: 'question',
+      chapterId: 'recurring',
+      questionId: 'routine-scheduler',
     })
+    expect(screens[screens.length - 1]).toEqual({ kind: 'review' })
+    // Bookkeeping only - project/consulting tracks never seed routines.
+    expect(q.when?.({ ...base, engagementType: 'project' })).toBe(false)
+    expect(q.when?.({ ...base, engagementType: 'consulting' })).toBe(false)
+    expect(deriveRoutineTasks({ ...base, engagementType: 'consulting' })).toEqual([])
+  })
+
+  it('the cards derive from the answers: payroll on -> payroll card present', () => {
+    expect(deriveRoutineTasks(base).map((t) => t.key)).not.toContain('payroll-handling')
+    const tasks = deriveRoutineTasks({
+      ...base,
+      hasPayroll: true,
+      payrollFrequency: 'biweekly',
+      payrollProvider: 'Gusto',
+    })
+    const payroll = tasks.find((t) => t.key === 'payroll-handling')!
+    expect(payroll.title).toBe('Payroll handling')
+    expect(payroll.detail).toContain('Gusto')
+    expect(payroll.detail).toContain('Every two weeks')
+    // Biweekly payroll rides the J3 every-N-weeks support, Fridays by default.
+    expect(payroll.defaultEntry).toMatchObject({ bucket: 'weekly', weekdays: [5], everyNWeeks: 2 })
+    // Self-processed payroll is reports-entry work, not processing.
+    const self = deriveRoutineTasks({ ...base, hasPayroll: true, payrollSelfProcessed: true, payrollFrequency: 'weekly' })
+    expect(self.find((t) => t.key === 'payroll-handling')!.title).toBe('Download and enter payroll reports')
+  })
+
+  it('answer-derived add-ons appear in their buckets with tier defaults', () => {
+    const tasks = deriveRoutineTasks({
+      ...base,
+      monthlyCloseTier: '5',
+      paymentMethods: ['card'],
+      merchantAccounts: [{ name: 'Stripe', processor: 'Stripe' }],
+      includeMerchantReconciliation: true,
+      depositsNonBusiness: true,
+      personalOnBusiness: true,
+      personalCardForBusiness: true,
+      behaviorNotes: { 'personal-card': 'The owner Amex picks up supplies' },
+      recordBills: true,
+      payBills: true,
+      billPayLocations: ['Vendor websites'],
+      serviceKeys: ['1099_collection', '1099_per_filing'],
+      estimated1099Count: 12,
+    })
+    const byKey = new Map(tasks.map((t) => [t.key, t]))
+    // Merchant reconciliation rides the close cadence (monthly on the tier).
+    expect(byKey.get('merchant-reconciliation')).toMatchObject({
+      title: 'Merchant reconciliation',
+      detail: 'Stripe',
+      defaultEntry: { bucket: 'monthly', dayOfMonth: 5 },
+    })
+    // The money-behavior seeds stay monthly; the note rides the card.
+    expect(byKey.get('deposits-non-business')!.defaultEntry).toMatchObject({ bucket: 'monthly', dayOfMonth: 5 })
+    expect(byKey.get('personal-on-business')!.defaultEntry).toMatchObject({ bucket: 'monthly', dayOfMonth: 5 })
+    expect(byKey.get('personal-card')).toMatchObject({
+      defaultEntry: { bucket: 'monthly', dayOfMonth: 1 },
+      description: 'Client context from intake: The owner Amex picks up supplies',
+    })
+    // The bills split seeds two weekly routines; pay carries its locations.
+    expect(byKey.get('record-bills')!.defaultEntry).toMatchObject({ bucket: 'weekly', weekdays: [5] })
+    expect(byKey.get('pay-bills')).toMatchObject({
+      detail: 'Pays at: Vendor websites',
+      defaultEntry: { bucket: 'weekly', weekdays: [5] },
+    })
+    // 1099 work is annual, due 31 days after the calendar year ends (Jan 31).
+    expect(byKey.get('1099-collection')!.defaultEntry).toMatchObject({ bucket: 'annual', daysAfterPeriodEnd: 31 })
+    expect(byKey.get('1099-management')).toMatchObject({
+      detail: '~12 filings a year',
+      defaultEntry: { bucket: 'annual', daysAfterPeriodEnd: 31 },
+    })
+  })
+
+  it('specialty reports and custom recurring rules pull through on their own cadence', () => {
+    const tasks = deriveRoutineTasks({
+      ...base,
+      monthlyCloseTier: '15',
+      reportDefinitions: [{ name: 'Oregon Special Report', frequency: 'quarterly', dataSource: 'Client portal' }],
+      customRecurringRules: [
+        { title: 'Weekly deposit review', scheduleType: 'weekly', subtasks: ['Pull deposit report'] },
+        { title: 'Franchise tax', scheduleType: 'semi_annual' },
+      ],
+    })
+    const byKey = new Map(tasks.map((t) => [t.key, t]))
+    const specialty = byKey.get('specialty:Oregon Special Report')!
+    expect(specialty).toMatchObject({
+      title: 'Oregon Special Report',
+      isCustom: true,
+      defaultEntry: { bucket: 'quarterly', daysAfterPeriodEnd: 15 },
+    })
+    expect(specialty.detail).toBe('Quarterly · Client portal')
+    const custom = byKey.get('custom:Weekly deposit review')!
+    expect(custom).toMatchObject({
+      isCustom: true,
+      subtasks: ['Pull deposit report'],
+      defaultEntry: { bucket: 'weekly', weekdays: [5], everyNWeeks: 1 },
+    })
+    // Semi-annual customs keep their source cadence (no bucket home, R4).
+    expect(byKey.get('custom:Franchise tax')).toMatchObject({
+      defaultEntry: { bucket: 'annual', keepSourceSchedule: true },
+      sourceSchedule: { scheduleType: 'semi_annual' },
+    })
+  })
+
+  it('B21 exclusions still hide default routines (legacy intakes)', () => {
+    const tasks = deriveRoutineTasks({ ...base, excludedDefaultRules: ['send_reports'] })
+    expect(tasks.map((t) => t.key)).not.toContain('send_reports')
+    expect(tasks.map((t) => t.key).slice(0, 3)).toEqual([
+      'categorize_transactions',
+      'reconcile_accounts',
+      'client_questions',
+    ])
+  })
+
+  it('quarterly and semi-annual engagements place the four by the R4 rules', () => {
+    const quarterly = deriveRoutineTasks({ ...base, bookkeepingFrequency: 'quarterly', monthlyCloseTier: '10' })
+    expect(quarterly.find((t) => t.key === 'categorize_transactions')!.defaultEntry).toMatchObject({
+      bucket: 'quarterly',
+      daysAfterPeriodEnd: 10,
+    })
+    // Semi-annual has no bucket: the cards sit in Annual and keep the exact
+    // pre-J3 cadence at conversion (anchor = the books-start month).
+    const semi = deriveRoutineTasks({
+      ...base,
+      bookkeepingFrequency: 'semi_annual',
+      bookkeepingStartDate: '2026-03-01',
+    })
+    const cat = semi.find((t) => t.key === 'categorize_transactions')!
+    expect(cat.defaultEntry).toMatchObject({ bucket: 'annual', keepSourceSchedule: true })
+    expect(cat.sourceSchedule).toEqual({ scheduleType: 'semi_annual', anchorMonth: 3, dayOfMonth: 15 })
+  })
+
+  it('persists to form_data.routineSchedule and summarizes per bucket', () => {
+    expect(q.summarize(base)).toBeNull() // untouched - no review row, convert as pre-J3
+    const schedule = { categorize_transactions: { bucket: 'monthly', order: 0, dayOfMonth: 10 } }
+    expect(q.apply(base, schedule)).toEqual({ routineSchedule: schedule })
+    const patch = buildPatch({ ...base, routineSchedule: schedule as never })
+    expect(patch.formData?.routineSchedule).toEqual(schedule)
+    // The committed map drives the review one-liner.
+    const tasks = deriveRoutineTasks(base)
+    const full = Object.fromEntries(tasks.map((t) => [t.key, t.defaultEntry]))
+    expect(q.summarize({ ...base, routineSchedule: full })).toBe('4 routines · Monthly 4')
   })
 })
 
@@ -1625,7 +1778,9 @@ describe('J2 retroactive question removal (R7)', () => {
     // No chapter carries the retroactive/cleanup question anymore...
     expect(findQuestion('recurring', 'retroactive')).toBeUndefined()
     const recurring = CHAPTERS.find((c) => c.id === 'recurring')!
-    expect(visibleQuestions(recurring, base).map((q) => q.id)).toEqual(['default-rules', 'rules', 'notes'])
+    // J3: the B21 default-rules checklist is gone too - the scheduler screen
+    // closes the chapter (notes first, custom work just before it, R1).
+    expect(visibleQuestions(recurring, base).map((q) => q.id)).toEqual(['notes', 'rules', 'routine-scheduler'])
     // ...and the review has no row for it (no summarize survives it).
     const ids = flattenScreens(base).flatMap((s) => (s.kind === 'question' ? [s.questionId] : []))
     expect(ids).not.toContain('retroactive')

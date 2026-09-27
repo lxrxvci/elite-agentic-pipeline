@@ -9,6 +9,7 @@ import {
   addMonths,
   addMonthsClamped,
   dayOfWeek,
+  diffDays,
   monthKey,
 } from "../src/dates.ts";
 
@@ -59,6 +60,12 @@ test("dayOfWeek is 0=Sunday (HANDOFF §6.4 days_of_week convention)", () => {
   assert.equal(dayOfWeek({ year: 2026, month: 8, day: 23 }), 0); // Sunday
   assert.equal(dayOfWeek({ year: 2026, month: 8, day: 21 }), 5); // Friday
   assert.equal(dayOfWeek({ year: 2026, month: 8, day: 22 }), 6); // Saturday
+});
+test("diffDays counts whole days forward and back (J3 week-offset math)", () => {
+  assert.equal(diffDays({ year: 2026, month: 8, day: 2 }, { year: 2026, month: 8, day: 16 }), 14);
+  assert.equal(diffDays({ year: 2026, month: 12, day: 31 }, { year: 2027, month: 1, day: 14 }), 14);
+  assert.equal(diffDays({ year: 2026, month: 8, day: 16 }, { year: 2026, month: 8, day: 2 }), -14);
+  assert.equal(diffDays({ year: 2026, month: 8, day: 7 }, { year: 2026, month: 8, day: 7 }), 0);
 });
 test("monthKey sorts chronologically as a string", () => {
   assert.equal(monthKey({ year: 2026, month: 1 }), "2026-01");

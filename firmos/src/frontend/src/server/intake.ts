@@ -2,6 +2,7 @@ import { and, eq, or, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { clientIntakes, clients, intakeOwners } from "@/db/schema";
+import type { RoutineSchedule } from "@/shared/lib/routine-schedule";
 
 /**
  * Intake CRUD + lifecycle (HANDOFF §6.8, routes_intake.py).
@@ -159,6 +160,8 @@ export interface IntakeCustomRuleInput {
   weekday?: number | null;
   weekOfMonth?: number | null;
   anchorMonth?: number | null;
+  /** J3 (R4): every-N-weeks interval for weekly rules (null/1 = every week). */
+  weekInterval?: number | null;
   isBillable?: boolean;
   unitPrice?: string | number | null;
   subtasks?: string[];
@@ -315,8 +318,15 @@ export interface IntakeFormData {
   customRecurringRules?: IntakeCustomRuleInput[];
   internalNotes?: string | null;
   /** B21: keys of the §19 default recurring rules the user UNSELECTED in the
-   *  intake checklist (all four are pre-selected; absent = all selected). */
+   *  intake checklist (all four are pre-selected; absent = all selected).
+   *  Legacy pre-J3 intakes only - the J3 scheduler screen supersedes this. */
   excludedDefaultRules?: string[];
+  /** J3 (meeting #3, R1-R5): the "Routine order and frequency" schedule map,
+   *  keyed by task key (the standard four, answer-derived add-ons, specialty
+   *  reports, custom rules). Present once the final intake screen commits;
+   *  absent = the intake never touched the scheduler and converts exactly as
+   *  pre-J3. */
+  routineSchedule?: RoutineSchedule;
   /** Running-notes rail entries; ride form_data so autosave preserves them. */
   runningNotes?: IntakeRunningNote[];
   // Billing modifiers carried through conversion (§6.5)

@@ -12,7 +12,7 @@ import {
   type Month,
 } from "@firmos/domain";
 
-import { requiresOfficerPayroll } from "@/components/intake/registry";
+import { requiresOfficerPayroll, deriveRoutineTasks, type WizardAnswers } from "@/components/intake/registry";
 import { db } from "@/db";
 import {
   accounts,
@@ -35,8 +35,19 @@ import {
   tasks,
 } from "@/db/schema";
 import { accountLabel, normalizeLast4 } from "@/shared/lib/account-label";
+import {
+  planRoutineSeeds,
+  type RoutineSchedule,
+} from "@/shared/lib/routine-schedule";
 import { DEPRECIATION_FIELDS, type DepreciationBreakdown } from "@/shared/lib/proforma";
-import { DEFAULT_RECURRING_RULES } from "@/shared/lib/default-rules";
+import {
+  DEFAULT_RECURRING_RULES,
+  MERCHANT_RECONCILIATION_TITLE,
+  NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
+  OWNER_DRAWS_CONFIRMATION_TITLE,
+  PERSONAL_CARD_REMINDER_TITLE,
+  PRELIMINARY_REPORTS_NOTE,
+} from "@/shared/lib/default-rules";
 
 import {
   defaultStatementDayFor,
@@ -207,16 +218,17 @@ function defaultRuleSpecs(tierDay: number, excludedKeys: ReadonlySet<string> = n
   }));
 }
 
-/** B18: seeded when the intake flags a personal card used for business. */
-export const PERSONAL_CARD_REMINDER_TITLE = "Ask client for personal-card business-expense breakdown";
+// The B18/A41/I6 seeded-task titles live in shared/lib/default-rules.ts (the
+// J3 scheduler screen renders the same cards client-side); re-exported here
+// for the existing test/server imports.
+export {
+  MERCHANT_RECONCILIATION_TITLE,
+  NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
+  OWNER_DRAWS_CONFIRMATION_TITLE,
+  PERSONAL_CARD_REMINDER_TITLE,
+} from "@/shared/lib/default-rules";
 /** B18: the reminder lands on the 1st, asking for the prior month's breakdown. */
 const PERSONAL_CARD_REMINDER_DAY = 1;
-/** A41: seeded when the intake flags deposits that are not business income. */
-export const NON_BUSINESS_DEPOSITS_REVIEW_TITLE = "Review non-business deposits - record as owner contribution";
-/** A41: seeded when the intake flags personal spend on business accounts. */
-export const OWNER_DRAWS_CONFIRMATION_TITLE = "Confirm owner draws with the client";
-/** I6 (logic map): seeded when the merchant-recon answer is yes. */
-export const MERCHANT_RECONCILIATION_TITLE = "Merchant reconciliation";
 
 function scheduleForCadence(
   frequency: string | null | undefined,
@@ -266,6 +278,7 @@ export async function insertCustomRules(
         weekday: rule.weekday ?? null,
         week_of_month: rule.weekOfMonth ?? null,
         anchor_month: rule.anchorMonth ?? null,
+        week_interval: rule.weekInterval ?? null,
         next_run: bookkeepingStartDate ?? formatLocalDate(today),
       },
       bookkeepingStartDate,
@@ -283,6 +296,7 @@ export async function insertCustomRules(
         weekday: rule.weekday ?? null,
         weekOfMonth: rule.weekOfMonth ?? null,
         anchorMonth: rule.anchorMonth ?? null,
+        weekInterval: rule.weekInterval ?? null,
         nextRun,
         isCustom: true,
         isBillable: rule.isBillable ?? false,
@@ -297,6 +311,87 @@ export async function insertCustomRules(
           title,
           position,
         })),
+      );
+    }
+    created += 1;
+  }
+  return created;
+}
+
+// ── J3 scheduler path (meeting #3, R1-R5, 00:39:26-00:54:05) ─────────────
+
+/**
+ * Every entry in form_data.routineSchedule becomes one recurring rule with
+ * the cadence the "Routine order and frequency" screen showed. The derived
+ * card list (registry.deriveRoutineTasks) mirrors the legacy seeding rules,
+ * so a committed-but-unmodified schedule reproduces today's seeds and adds
+ * the answer-implied add-on tasks (payroll handling, bills, 1099s) that
+ * pre-J3 lived only as quote lines.
+ */
+async function seedFromRoutineSchedule(
+  tx: Tx,
+  clientId: number,
+  intake: IntakeRow,
+  form: IntakeFormData,
+  routineSchedule: RoutineSchedule,
+  staff: { managerId: number | null; bookkeeperId: number | null },
+  today: LocalDate,
+): Promise<number> {
+  const tierRaw = Number(intake.monthlyCloseTier ?? form.monthlyCloseTier);
+  const tierDay = tierRaw === 5 || tierRaw === 10 ? tierRaw : 15;
+  const answers: WizardAnswers = {
+    ...form,
+    taxStructure: intake.taxStructure,
+    bookkeepingFrequency: intake.bookkeepingFrequency ?? form.bookkeepingFrequency ?? null,
+    monthlyCloseTier: intake.monthlyCloseTier ?? form.monthlyCloseTier ?? null,
+    bookkeepingStartDate: intake.bookkeepingStartDate ?? form.bookkeepingStartDate ?? null,
+    // The structured columns win when populated (the wizard writes both;
+    // extraction/API payloads may carry only the column) - same fallback the
+    // legacy path uses below.
+    reportDefinitions: reportDefinitionsOf(intake),
+    customRecurringRules:
+      (intake.customRecurringRules as IntakeCustomRuleInput[] | null) ?? form.customRecurringRules ?? [],
+  };
+  const seeds = planRoutineSeeds(deriveRoutineTasks(answers), routineSchedule, { tierDay });
+  let created = 0;
+  for (const seed of seeds) {
+    const nextRun = initialNextRun(
+      {
+        schedule_type: seed.scheduleType,
+        days_of_week: seed.daysOfWeek,
+        day_of_month: seed.dayOfMonth,
+        weekday: seed.weekday,
+        week_of_month: seed.weekOfMonth,
+        anchor_month: seed.anchorMonth,
+        week_interval: seed.weekInterval,
+        next_run: intake.bookkeepingStartDate ?? formatLocalDate(today),
+      },
+      intake.bookkeepingStartDate,
+      today,
+    );
+    const [inserted] = await tx
+      .insert(recurringTasks)
+      .values({
+        clientId,
+        title: seed.title,
+        description: seed.description,
+        scheduleType: seed.scheduleType,
+        daysOfWeek: seed.daysOfWeek,
+        dayOfMonth: seed.dayOfMonth,
+        weekday: seed.weekday,
+        weekOfMonth: seed.weekOfMonth,
+        anchorMonth: seed.anchorMonth,
+        weekInterval: seed.weekInterval,
+        nextRun,
+        isCustom: seed.isCustom,
+        isBillable: seed.isBillable,
+        unitPrice: seed.unitPrice == null ? null : String(seed.unitPrice),
+        assigneeId: seed.assignee === "manager" ? staff.managerId : staff.bookkeeperId,
+      })
+      .returning();
+    if (seed.subtasks.length > 0) {
+      await tx.insert(recurringTaskSubtasks).values(
+        seed.subtasks.map((title, position) => ({ recurringTaskId: inserted.id, title, position })),
       );
     }
     created += 1;
@@ -820,8 +915,24 @@ export async function convertIntakeToClient(
     // 6. Recurring rules: the four defaults (cadence-aware, §19; B21: minus
     //    the ones unselected in the intake checklist) plus custom intake
     //    rules. Project engagements are skipped entirely (§19).
+    //    J3 (R1-R5): an intake carrying form_data.routineSchedule (the
+    //    wizard's final screen committed) converts through the scheduler
+    //    path instead - every entry becomes a rule with the mapped cadence.
+    //    Intakes that never touched the scheduler convert exactly as pre-J3.
     let recurringRulesCreated = 0;
     if (!isProject) {
+      const routineSchedule = form.routineSchedule;
+      if (routineSchedule != null && Object.keys(routineSchedule).length > 0) {
+        recurringRulesCreated = await seedFromRoutineSchedule(
+          tx,
+          clientId,
+          intake,
+          form,
+          routineSchedule,
+          { managerId, bookkeeperId },
+          today,
+        );
+      } else {
       const tierDay = intake.monthlyCloseTier == null ? 15 : Number(intake.monthlyCloseTier);
       const anchorMonth = intake.bookkeepingStartDate
         ? parseLocalDate(intake.bookkeepingStartDate).month
@@ -856,7 +967,7 @@ export async function convertIntakeToClient(
           // where the work happens.
           description:
             spec.key === "send_reports" && form.sendPreliminaryReports === true
-              ? "Send the package even when client questions are still open, marked preliminary (intake choice)."
+              ? PRELIMINARY_REPORTS_NOTE
               : null,
           scheduleType: schedule.scheduleType,
           dayOfMonth: spec.dayOfMonth,
@@ -995,6 +1106,7 @@ export async function convertIntakeToClient(
         intake.bookkeepingStartDate,
         today,
       );
+      }
     }
 
     // 7. Onboarding tasks from the active template rows (§19): admin-phase

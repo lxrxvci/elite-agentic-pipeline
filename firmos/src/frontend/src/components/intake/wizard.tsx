@@ -441,7 +441,15 @@ export function IntakeWizard({
       `}</style>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="mx-auto w-full max-w-2xl min-w-0">
+        {/* J3: the routine-scheduler board gets more room than a question card. */}
+        <div
+          className={cn(
+            'mx-auto w-full min-w-0',
+            screen?.kind === 'question' && screen.questionId === 'routine-scheduler'
+              ? 'max-w-4xl'
+              : 'max-w-2xl',
+          )}
+        >
           {/* Progress header */}
           <div className="mb-5">
             <div className="flex items-center justify-between gap-4">

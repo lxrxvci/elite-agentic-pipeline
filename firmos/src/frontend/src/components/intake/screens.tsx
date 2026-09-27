@@ -15,6 +15,7 @@ import { AccountCountScreen, inputCls, InstitutionSelect } from './account-scree
 import { ContactPicker, type ContactPickerHit } from './contact-picker'
 import { dateTextDigits, dateTextToIso, isoToDateText, maskDateText } from './date-text'
 import { formatPhone, phoneDigits } from './format'
+import { RoutineSchedulerScreen } from './routine-scheduler'
 import {
   CUSTOM_OTHER_VALUE,
   customAllowed,
@@ -1073,6 +1074,14 @@ export function QuestionScreen({
         onCommit={(items) => onApply(q.apply(answers, items))}
         onAdvance={onAdvance}
       />
+    )
+  }
+
+  // J3 (R1-R5): the "Routine order and frequency" scheduler - the final
+  // content screen before review. Never auto-advances; Continue commits.
+  if (q.type === 'routine-scheduler') {
+    return (
+      <RoutineSchedulerScreen q={q} answers={answers} onApply={onApply} onAdvance={onAdvance} />
     )
   }
 

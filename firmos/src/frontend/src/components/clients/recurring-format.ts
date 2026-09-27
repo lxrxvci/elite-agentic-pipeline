@@ -14,6 +14,8 @@ export interface ScheduleSummaryShape {
   weekday: number | null
   weekOfMonth: number | null
   anchorMonth: number | null
+  /** J3: every-N-weeks interval on weekly rules (null = every week). */
+  weekInterval?: number | null
 }
 
 const MONTH_SHORT = [
@@ -61,8 +63,12 @@ export function scheduleSummary(rule: ScheduleSummaryShape): string {
   switch (rule.scheduleType) {
     case 'daily':
       return 'Every day'
-    case 'weekly':
-      return weeklySummary(rule.daysOfWeek)
+    case 'weekly': {
+      const days = weeklySummary(rule.daysOfWeek)
+      // J3: an every-N-weeks interval prefixes the weekday summary.
+      const interval = rule.weekInterval
+      return interval != null && interval > 1 ? `Every ${interval} weeks · ${days}` : days
+    }
     case 'monthly':
       return dayPart(rule) ? `${dayPart(rule)} monthly` : 'Monthly'
     default: {

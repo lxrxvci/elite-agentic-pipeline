@@ -68,6 +68,14 @@ export function addDays(d: LocalDate, n: number): LocalDate {
   return { year: t.getUTCFullYear(), month: t.getUTCMonth() + 1, day: t.getUTCDate() };
 }
 
+/** Whole days from a to b (b - a); negative when b precedes a. */
+export function diffDays(a: LocalDate, b: LocalDate): number {
+  // Same Date.UTC calendar-arithmetic oracle as addDays - UTC fields only.
+  return Math.round(
+    (Date.UTC(b.year, b.month - 1, b.day) - Date.UTC(a.year, a.month - 1, a.day)) / 86_400_000,
+  );
+}
+
 /** Month arithmetic on a {year, month} pair. */
 export function addMonths(m: Month, n: number): Month {
   const zero = m.year * 12 + (m.month - 1) + n;

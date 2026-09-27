@@ -134,15 +134,17 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
 
   // ── Retroactive cleanup: R7 removed the question - the January 2025
   // start date qualifies it on its own and prices the one-time line ──
-  await pick(page, 'option-no', 'default-rules') // reports wait for answers (R6)
-  await advance(page, 'rules') // keep the four standard routines selected (B21)
+  await pick(page, 'option-no', 'notes') // reports wait for answers (R6)
+  await advance(page, 'rules') // skip internal notes
   const retroSummary = page.getByTestId('retroactive-summary')
   await expect(retroSummary).toBeVisible({ timeout: 15_000 })
   await expect(retroSummary).toContainText('one-time')
   await expect(retroSummary).toContainText(/\$\d/)
 
-  await advance(page, 'notes') // skip custom rules
-  await page.getByTestId('continue').click() // skip notes
+  await advance(page, 'routine-scheduler') // skip custom rules
+  // J3 (R1): the scheduler is the final content screen before review.
+  await expect(page.getByTestId('routine-scheduler')).toBeVisible()
+  await page.getByTestId('continue').click()
 
   // ── Review: full quote + retro block render, then submit ──
   await expect(page.getByTestId('review-screen')).toBeVisible()

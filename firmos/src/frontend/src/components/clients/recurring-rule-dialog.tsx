@@ -88,6 +88,8 @@ interface FormState {
   description: string
   scheduleType: ScheduleType
   daysOfWeek: number[]
+  /** J3: weekly cadence interval ("2" = every other week). */
+  weekInterval: string
   monthMode: 'day' | 'weekday'
   dayOfMonth: string
   weekOfMonth: string
@@ -105,6 +107,7 @@ function emptyForm(defaultAnchorMonth: number): FormState {
     description: '',
     scheduleType: 'monthly',
     daysOfWeek: [1],
+    weekInterval: '1',
     monthMode: 'day',
     dayOfMonth: '15',
     weekOfMonth: '1',
@@ -123,6 +126,7 @@ function formFromRule(rule: ClientRuleListItem): FormState {
     description: rule.description ?? '',
     scheduleType: rule.scheduleType,
     daysOfWeek: rule.daysOfWeek.length > 0 ? rule.daysOfWeek : [1],
+    weekInterval: rule.weekInterval != null ? String(rule.weekInterval) : '1',
     monthMode: rule.weekday != null && rule.weekOfMonth != null ? 'weekday' : 'day',
     dayOfMonth: rule.dayOfMonth != null ? String(rule.dayOfMonth) : '15',
     weekOfMonth: rule.weekOfMonth != null ? String(rule.weekOfMonth) : '1',
@@ -156,6 +160,11 @@ export function buildRuleInput(form: FormState): RecurringRuleInput | { error: s
   if (form.scheduleType === 'weekly') {
     if (form.daysOfWeek.length === 0) return { error: 'Pick at least one day of the week.' }
     input.daysOfWeek = form.daysOfWeek
+    const interval = Number(form.weekInterval)
+    if (!Number.isInteger(interval) || interval < 1 || interval > 52) {
+      return { error: 'The week interval must be between 1 and 52.' }
+    }
+    input.weekInterval = interval
   }
   if (MONTH_BASED.includes(form.scheduleType)) {
     if (form.monthMode === 'day') {
@@ -334,6 +343,25 @@ export function RecurringRuleDialog({
                     </button>
                   )
                 })}
+              </div>
+              {/* J3 (R4): every-N-weeks ("every 2 weeks on Friday"). */}
+              <div className="flex items-center gap-2 pt-1">
+                <Label htmlFor="rule-week-interval" className="text-xs font-normal text-muted-foreground">
+                  Every
+                </Label>
+                <Input
+                  id="rule-week-interval"
+                  data-testid="rule-week-interval"
+                  type="number"
+                  min={1}
+                  max={52}
+                  value={form.weekInterval}
+                  onChange={(e) => patch({ weekInterval: e.target.value })}
+                  className="tnum h-8 w-20"
+                />
+                <span className="text-xs text-muted-foreground">
+                  {Number(form.weekInterval) === 1 ? 'week' : 'weeks'}
+                </span>
               </div>
             </fieldset>
           )}

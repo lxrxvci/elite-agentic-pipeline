@@ -60,6 +60,28 @@ test("weekly walks days_of_week strictly forward", () => {
   // no days_of_week → same weekday next week
   assert.deepEqual(advanceNextRun({ schedule_type: "weekly", next_run: "2026-08-19" }), ld("2026-08-26"));
 });
+test("weekly every-N-weeks (J3/R4): skips the off weeks", () => {
+  // Every 2 weeks on Friday: Aug 7 2026 → Aug 21 → Sep 4 (never Aug 14).
+  assert.deepEqual(
+    advanceNextRun({ schedule_type: "weekly", days_of_week: "5", week_interval: 2, next_run: "2026-08-07" }),
+    ld("2026-08-21"),
+  );
+  assert.deepEqual(
+    advanceNextRun({ schedule_type: "weekly", days_of_week: "5", week_interval: 2, next_run: "2026-08-21" }),
+    ld("2026-09-04"),
+  );
+  // Multi-day with an interval: the first listed weekday in the target week.
+  // From Wednesday Aug 5 with Wed+Fri every 2 weeks → Wednesday Aug 19.
+  assert.deepEqual(
+    advanceNextRun({ schedule_type: "weekly", days_of_week: "3,5", week_interval: 2, next_run: "2026-08-05" }),
+    ld("2026-08-19"),
+  );
+  // Every 3 weeks; no days_of_week → the same weekday N weeks out.
+  assert.deepEqual(
+    advanceNextRun({ schedule_type: "weekly", week_interval: 3, next_run: "2026-08-19" }),
+    ld("2026-09-09"),
+  );
+});
 test("monthly resolves by day_of_month across a short month", () => {
   const rule = { schedule_type: "monthly", day_of_month: 31, next_run: "2026-01-31" };
   assert.deepEqual(advanceNextRun(rule), ld("2026-02-28"));
@@ -114,6 +136,22 @@ test("nextRunFrom finds the first occurrence on or after the anchor", () => {
     nextRunFrom({ schedule_type: "weekly", days_of_week: "5" }, ld("2026-08-23")), // Sunday → Friday
     ld("2026-08-28"),
   );
+  // Every-2-weeks Fridays anchored on the week of the rule's next_run
+  // (Mon Aug 3): the Aug 10 anchor skips the off-week Friday (Aug 14).
+  assert.deepEqual(
+    nextRunFrom(
+      { schedule_type: "weekly", days_of_week: "5", week_interval: 2, next_run: "2026-08-03" },
+      ld("2026-08-03"),
+    ),
+    ld("2026-08-07"),
+  );
+  assert.deepEqual(
+    nextRunFrom(
+      { schedule_type: "weekly", days_of_week: "5", week_interval: 2, next_run: "2026-08-03" },
+      ld("2026-08-10"),
+    ),
+    ld("2026-08-21"),
+  );
   assert.deepEqual(nextRunFrom({ schedule_type: "daily" }, ld("2026-08-23")), ld("2026-08-23"));
   // quarterly anchored to January, anchored mid-quarter → next cadence month
   assert.deepEqual(
@@ -147,6 +185,16 @@ test("billing quantity counts a rule's occurrences inside a month", () => {
     ),
     0,
   );
+  // Every-2-weeks Fridays anchored on Aug 7 2026: Aug 7 + Aug 21 = 2 that
+  // month, and the cadence phase carries into September (Sep 4 + Sep 18).
+  const biweeklyFriday = {
+    schedule_type: "weekly",
+    days_of_week: "5",
+    week_interval: 2,
+    next_run: "2026-08-07",
+  };
+  assert.equal(recurringBillingQuantityForMonth(biweeklyFriday, 2026, 8), 2);
+  assert.equal(recurringBillingQuantityForMonth(biweeklyFriday, 2026, 9), 2);
 });
 
 // ---- earlier_period_incomplete (HANDOFF §6.4 gating) -------------------------

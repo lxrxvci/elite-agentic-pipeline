@@ -11,6 +11,7 @@ import {
   addMonths,
   compareLocalDate,
   dayOfWeek,
+  diffDays,
   formatLocalDate,
   lastDayOfMonth,
   parseLocalDate,
@@ -38,6 +39,9 @@ export interface RecurringRuleShape {
   week_of_month?: number | null;
   /** 1-12, for quarterly and longer */
   anchor_month?: number | null;
+  /** Weekly cadence interval (J3, meeting #3 R4): 2 = every other week.
+   *  Absent/1 = every week. Only meaningful for weekly rules. */
+  week_interval?: number | null;
   next_run?: string | LocalDate | null;
 }
 
@@ -63,6 +67,17 @@ export function parseDaysOfWeek(daysOfWeek: string | null | undefined): number[]
 
 function asLocalDate(d: string | LocalDate): LocalDate {
   return typeof d === "string" ? parseLocalDate(d) : d;
+}
+
+/** Every-N-weeks interval for weekly rules; anything absent/invalid reads as 1. */
+function weekIntervalOf(rule: RecurringRuleShape): number {
+  const n = rule.week_interval;
+  return n != null && Number.isInteger(n) && n > 1 ? n : 1;
+}
+
+/** The Sunday starting the week containing d (0 = Sunday convention). */
+function weekStart(d: LocalDate): LocalDate {
+  return addDays(d, -dayOfWeek(d));
 }
 
 /**
@@ -101,9 +116,11 @@ function isCadenceMonth(rule: RecurringRuleShape, month: number, step: number): 
 
 /**
  * HANDOFF §6.4 - moves next_run forward one period: daily +1 day; weekly the
- * next listed weekday; monthly and longer resolving by day_of_month, or by
- * (weekday, week_of_month), or falling back to the same day-of-month, with
- * anchor_month pinning the cadence months for quarterly and longer.
+ * next listed weekday (J3: every-N-weeks rules take the next listed weekday
+ * in the week N weeks after the current one, weeks starting Sunday); monthly
+ * and longer resolving by day_of_month, or by (weekday, week_of_month), or
+ * falling back to the same day-of-month, with anchor_month pinning the
+ * cadence months for quarterly and longer.
  */
 export function advanceNextRun(rule: RecurringRuleShape): LocalDate {
   if (!rule.next_run) throw new Error("advanceNextRun: rule has no next_run");
@@ -113,7 +130,16 @@ export function advanceNextRun(rule: RecurringRuleShape): LocalDate {
       return addDays(from, 1);
     case "weekly": {
       const days = parseDaysOfWeek(rule.days_of_week);
-      if (days.length === 0) return addDays(from, 7);
+      const interval = weekIntervalOf(rule);
+      if (days.length === 0) return addDays(from, 7 * interval);
+      if (interval > 1) {
+        const targetStart = addDays(weekStart(from), 7 * interval);
+        for (let k = 0; k < 7; k++) {
+          const candidate = addDays(targetStart, k);
+          if (days.includes(dayOfWeek(candidate))) return candidate;
+        }
+        throw new Error("advanceNextRun: unreachable weekly state");
+      }
       for (let k = 1; k <= 7; k++) {
         const candidate = addDays(from, k);
         if (days.includes(dayOfWeek(candidate))) return candidate;
@@ -147,11 +173,26 @@ export function nextRunFrom(rule: RecurringRuleShape, anchor: LocalDate): LocalD
     case "weekly": {
       const days = parseDaysOfWeek(rule.days_of_week);
       if (days.length === 0) return anchor;
-      for (let k = 0; k < 7; k++) {
-        const candidate = addDays(anchor, k);
-        if (days.includes(dayOfWeek(candidate))) return candidate;
+      const interval = weekIntervalOf(rule);
+      if (interval <= 1) {
+        for (let k = 0; k < 7; k++) {
+          const candidate = addDays(anchor, k);
+          if (days.includes(dayOfWeek(candidate))) return candidate;
+        }
+        throw new Error("nextRunFrom: unreachable weekly state");
       }
-      throw new Error("nextRunFrom: unreachable weekly state");
+      // Every-N-weeks: the cadence anchors on the week containing the rule's
+      // current next_run (the anchor's own week when there is none); the
+      // first listed weekday on/after the anchor whose week offset from that
+      // reference is a multiple of N wins.
+      const refWeek = weekStart(rule.next_run ? asLocalDate(rule.next_run) : anchor);
+      for (let k = 0; k < 370; k++) {
+        const candidate = addDays(anchor, k);
+        if (!days.includes(dayOfWeek(candidate))) continue;
+        const weeks = diffDays(refWeek, weekStart(candidate)) / 7;
+        if (weeks >= 0 && weeks % interval === 0) return candidate;
+      }
+      throw new Error("nextRunFrom: no every-N-weeks occurrence within 370 days");
     }
     default: {
       const step = STEP_MONTHS[rule.schedule_type] ?? 1;

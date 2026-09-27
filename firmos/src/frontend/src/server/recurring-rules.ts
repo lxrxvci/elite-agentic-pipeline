@@ -100,6 +100,8 @@ export interface RecurringRuleInput {
   weekOfMonth?: number | null;
   /** 1-12; quarterly and longer. */
   anchorMonth?: number | null;
+  /** J3: weekly cadence interval (2 = every other week); 1/null = weekly. */
+  weekInterval?: number | null;
   assigneeId?: number | null;
   isBillable?: boolean;
   /** Decimal string ("250.00"); required when billable. */
@@ -115,6 +117,7 @@ interface NormalizedSchedule {
   weekday: number | null;
   weekOfMonth: number | null;
   anchorMonth: number | null;
+  weekInterval: number | null;
 }
 
 function isIntInRange(n: unknown, lo: number, hi: number): n is number {
@@ -147,6 +150,10 @@ function validateSchedule(input: RecurringRuleInput): NormalizedSchedule {
   if (anchorMonth != null && !isIntInRange(anchorMonth, 1, 12)) {
     throw new RecurringRuleError(400, "Anchor month must be 1-12.");
   }
+  const weekInterval = input.weekInterval ?? null;
+  if (weekInterval != null && !isIntInRange(weekInterval, 1, 52)) {
+    throw new RecurringRuleError(400, "The week interval must be between 1 and 52.");
+  }
 
   switch (input.scheduleType) {
     case "daily":
@@ -157,6 +164,7 @@ function validateSchedule(input: RecurringRuleInput): NormalizedSchedule {
         weekday: null,
         weekOfMonth: null,
         anchorMonth: null,
+        weekInterval: null,
       };
     case "weekly": {
       const days = [...new Set((input.daysOfWeek ?? []).filter((d) => isIntInRange(d, 0, 6)))].sort(
@@ -172,6 +180,8 @@ function validateSchedule(input: RecurringRuleInput): NormalizedSchedule {
         weekday: null,
         weekOfMonth: null,
         anchorMonth: null,
+        // J3: 1 = every week, stored as null so plain weekly rows stay clean.
+        weekInterval: weekInterval != null && weekInterval > 1 ? weekInterval : null,
       };
     }
     default: {
@@ -192,6 +202,7 @@ function validateSchedule(input: RecurringRuleInput): NormalizedSchedule {
         weekOfMonth,
         // Anchor only means something on quarterly and longer (§6.4).
         anchorMonth: input.scheduleType === "monthly" ? null : anchorMonth,
+        weekInterval: null,
       };
     }
   }
@@ -234,6 +245,7 @@ function toRuleShape(schedule: NormalizedSchedule): RecurringRuleShape {
     weekday: schedule.weekday,
     week_of_month: schedule.weekOfMonth,
     anchor_month: schedule.anchorMonth,
+    week_interval: schedule.weekInterval,
   };
 }
 
@@ -308,6 +320,8 @@ export interface ClientRuleListItem {
   weekday: number | null;
   weekOfMonth: number | null;
   anchorMonth: number | null;
+  /** J3: every-N-weeks interval on weekly rules (null = every week). */
+  weekInterval: number | null;
   nextRun: string | null;
   isActive: boolean;
   assigneeId: number | null;
@@ -360,6 +374,10 @@ export async function listClientRules(
       weekday: rule.weekday,
       week_of_month: rule.weekOfMonth,
       anchor_month: rule.anchorMonth,
+      // J3: the interval and the cadence anchor (next_run) ride along so the
+      // every-N-weeks billing count lands on the rule's real phase.
+      week_interval: rule.weekInterval,
+      next_run: rule.nextRun,
     };
     return {
       id: rule.id,
@@ -371,6 +389,7 @@ export async function listClientRules(
       weekday: rule.weekday,
       weekOfMonth: rule.weekOfMonth,
       anchorMonth: rule.anchorMonth,
+      weekInterval: rule.weekInterval,
       nextRun: rule.nextRun,
       isActive: rule.isActive,
       assigneeId: rule.assigneeId,
@@ -495,6 +514,7 @@ const SCHEDULE_FIELDS = [
   "weekday",
   "weekOfMonth",
   "anchorMonth",
+  "weekInterval",
 ] as const;
 
 export async function updateClientRule(
@@ -600,6 +620,7 @@ export async function setRuleActive(
         weekday: rule.weekday,
         weekOfMonth: rule.weekOfMonth,
         anchorMonth: rule.anchorMonth,
+        weekInterval: rule.weekInterval,
       }), floorAnchor(client, today)),
     );
   }

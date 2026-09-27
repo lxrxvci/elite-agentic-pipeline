@@ -226,10 +226,46 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await advance(page, 'reports') // skip 1099
   await advance(page, 'preliminary-reports') // skip special reports
   // R6: the preliminary-reports toggle; R7: no retroactive question anymore.
-  await pick(page, 'option-no', 'default-rules')
-  await advance(page, 'rules') // keep all four standard routines selected (B21)
-  await advance(page, 'notes') // skip custom rules
-  await page.getByTestId('continue').click() // skip notes
+  await pick(page, 'option-no', 'notes')
+  await advance(page, 'rules') // skip internal notes
+  // J3 (R1): custom recurring work lands on the scheduler next; add one rule.
+  await page.getByLabel('Title').fill('Weekly deposit review')
+  await page.getByLabel('Schedule').selectOption('weekly')
+  await page.getByTestId('add-another').click()
+  await expect(page.getByTestId('entity-chip')).toHaveCount(1)
+  await advance(page, 'routine-scheduler')
+
+  // ── J3 (R1-R5): "Routine order and frequency" - the final content screen ──
+  // Five buckets; the standard four default into Monthly on the tier day
+  // (close by the 10th), categorize first (R2).
+  for (const bucket of ['daily', 'weekly', 'monthly', 'quarterly', 'annual']) {
+    await expect(page.getByTestId(`bucket-${bucket}`)).toBeVisible()
+  }
+  await expect(page.getByTestId('bucket-count-monthly')).toHaveText('5 tasks')
+  const monthlyBucket = page.getByTestId('bucket-monthly')
+  await expect(monthlyBucket.getByTestId('routine-card-categorize_transactions')).toBeVisible()
+  await expect(monthlyBucket.getByTestId('routine-card-reconcile_accounts')).toBeVisible()
+  await expect(monthlyBucket.getByTestId('routine-card-client_questions')).toBeVisible()
+  await expect(monthlyBucket.getByTestId('routine-card-send_reports')).toBeVisible()
+  await expect(page.getByTestId('schedule-summary-categorize_transactions')).toHaveText(/Day 10 of the month/)
+  // Answer-derived cards: the deposits review (E1 yes) is Monthly; the bills
+  // split (E6 yes/yes) lands in Weekly; the custom rule pulled through.
+  await expect(monthlyBucket.getByTestId('routine-card-deposits-non-business')).toBeVisible()
+  await expect(page.getByTestId('bucket-weekly').getByTestId('routine-card-record-bills')).toBeVisible()
+  await expect(page.getByTestId('bucket-weekly').getByTestId('routine-card-pay-bills')).toBeVisible()
+  await expect(page.getByTestId('bucket-weekly').getByTestId('routine-card-custom:Weekly deposit review')).toBeVisible()
+  // Drag-and-drop has a keyboard-accessible twin: the bucket picker moves a
+  // card (persists into form_data.routineSchedule), and the schedule controls
+  // open per card. Move deposit review to Weekly, every 2 weeks on Friday.
+  await page.getByTestId('move-bucket-custom:Weekly deposit review').selectOption('weekly')
+  await expect(page.getByTestId('routine-card-custom:Weekly deposit review')).toHaveAttribute('data-bucket', 'weekly')
+  await page.getByTestId('schedule-toggle-custom:Weekly deposit review').click()
+  await page.getByTestId('weekday-custom:Weekly deposit review-5').click()
+  await page.getByTestId('every-n-weeks-custom:Weekly deposit review').fill('2')
+  await expect(page.getByTestId('schedule-summary-custom:Weekly deposit review')).toContainText(
+    'Every 2 weeks on Friday',
+  )
+  await page.getByTestId('continue').click()
 
   // ── Review: summary renders in the dictated order, quote revealed HERE ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
@@ -355,9 +391,9 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
   await expect(page.getByTestId('quote-hidden')).toBeVisible()
   await advance(page, 'existing-client')
   await pick(page, 'option-no', 're-yes') // consulting: no books-start screen
-  await pick(page, 'option-no', 'rules') // not real estate; R7: no retroactive question anymore
-  await advance(page, 'notes') // skip custom rules; default rules hidden on the consulting track
-  await page.getByTestId('continue').click()
+  await pick(page, 'option-no', 'notes') // not real estate; R7: no retroactive question anymore
+  await advance(page, 'rules') // skip internal notes; J3: notes now open the chapter
+  await page.getByTestId('continue').click() // skip custom rules; the scheduler is bookkeeping-only
 
   // ── Review: consulting label + the verbatim custom text ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
@@ -491,9 +527,12 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await pick(page, 'option-no', 'ten99-services') // no bill recording, so no pay-bills card (E6)
   await advance(page, 'reports')
   await advance(page, 'preliminary-reports')
-  await pick(page, 'option-no', 'default-rules') // R6: preliminary-reports toggle; R7: retro question gone
+  await pick(page, 'option-no', 'notes') // R6: preliminary-reports toggle; R7: retro question gone
   await advance(page, 'rules')
-  await advance(page, 'notes')
+  await advance(page, 'routine-scheduler')
+  // J3: the S-corp payroll auto-flag derives the payroll card - biweekly.
+  await expect(page.getByTestId('routine-card-payroll-handling')).toBeVisible()
+  await expect(page.getByTestId('schedule-summary-payroll-handling')).toContainText('Every 2 weeks on Friday')
   await page.getByTestId('continue').click()
 
   // ── Review: the auto-flag, the provider, and the add-on all show ──
