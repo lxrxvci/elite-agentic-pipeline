@@ -367,12 +367,17 @@ export async function convertIntakeToClient(
     const template = buildRecurringServicesTemplate(
       quote,
       form.customItems ?? [],
-      specialtyReportsFromIntake({
-        reportDefinitions:
-          form.reportDefinitions ??
-          (intake.reportDefinitions as IntakeFormData["reportDefinitions"] | null) ??
-          undefined,
-      }),
+      // J2: the same `today` as the quote, so derived missed-filing counts
+      // match between the quote lines and the template.
+      specialtyReportsFromIntake(
+        {
+          reportDefinitions:
+            form.reportDefinitions ??
+            (intake.reportDefinitions as IntakeFormData["reportDefinitions"] | null) ??
+            undefined,
+        },
+        today,
+      ),
     );
     const stamps = quoteAmountStamps(quote);
 
@@ -450,6 +455,32 @@ export async function convertIntakeToClient(
           body: note.text,
         });
       }
+    }
+    // J2 (E6): the bills split lands as client-record context - the record
+    // side prices via the record_bills service key; the pay side and its
+    // locations are operational context, so they ride the notes channel
+    // (same home as internal/running notes).
+    if ((form.recordBills ?? form.includeBillPay) === true) {
+      const locations = (form.billPayLocations ?? [])
+        .filter((l): l is string => typeof l === "string" && l.trim() !== "")
+        .map((l) => l.trim());
+      const body =
+        form.payBills === true
+          ? `Bills: we record and pay them.${locations.length > 0 ? ` Bills get paid at: ${locations.join(", ")}.` : ""}`
+          : "Bills: we record them; the client pays their own.";
+      await tx.insert(clientNotes).values({ clientId, authorId: userId, body });
+    }
+    // J2 (P1): self-processed payroll is context, not a service - no
+    // payroll-processing work seeds from it (process_payroll stays a quote
+    // line only, and the wizard never pairs the two). The note tells the
+    // team where the reports come from.
+    if (form.payrollSelfProcessed === true) {
+      const provider = intake.payrollProvider ?? form.payrollProvider ?? null;
+      await tx.insert(clientNotes).values({
+        clientId,
+        authorId: userId,
+        body: `Payroll: they process their own payroll${provider ? ` (${provider})` : ""} - we download and enter the reports.`,
+      });
     }
 
     // 3. Contacts and links.
@@ -797,6 +828,15 @@ export async function convertIntakeToClient(
         : 1;
       const schedule = scheduleForCadence(intake.bookkeepingFrequency, anchorMonth);
       const excludedDefaults = new Set((form.excludedDefaultRules ?? []).map((k) => String(k)));
+      // J2 (E1-E3): the mandatory explanation note captured when a
+      // money-behavior card was answered yes rides the seeded task's
+      // description, so the review/confirmation work carries the context.
+      const behaviorNote = (questionId: string): string | null => {
+        const n = form.behaviorNotes?.[questionId];
+        return typeof n === "string" && n.trim() !== ""
+          ? `Client context from intake: ${n.trim()}`
+          : null;
+      };
       for (const spec of defaultRuleSpecs(Number.isNaN(tierDay) ? 15 : tierDay, excludedDefaults)) {
         const nextRun = initialNextRun(
           {
@@ -811,6 +851,13 @@ export async function convertIntakeToClient(
         await tx.insert(recurringTasks).values({
           clientId,
           title: spec.title,
+          // J2 (R6): the preliminary-reports choice notes itself on the
+          // Send Reports rule - the person sending the package sees it
+          // where the work happens.
+          description:
+            spec.key === "send_reports" && form.sendPreliminaryReports === true
+              ? "Send the package even when client questions are still open, marked preliminary (intake choice)."
+              : null,
           scheduleType: schedule.scheduleType,
           dayOfMonth: spec.dayOfMonth,
           anchorMonth: schedule.anchorMonth,
@@ -835,6 +882,7 @@ export async function convertIntakeToClient(
         await tx.insert(recurringTasks).values({
           clientId,
           title: PERSONAL_CARD_REMINDER_TITLE,
+          description: behaviorNote("personal-card"),
           scheduleType: "monthly",
           dayOfMonth: PERSONAL_CARD_REMINDER_DAY,
           nextRun,
@@ -859,6 +907,7 @@ export async function convertIntakeToClient(
         await tx.insert(recurringTasks).values({
           clientId,
           title: NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
+          description: behaviorNote("deposits-non-business"),
           scheduleType: "monthly",
           dayOfMonth: Number.isNaN(tierDay) ? 15 : tierDay,
           nextRun,
@@ -882,6 +931,7 @@ export async function convertIntakeToClient(
         await tx.insert(recurringTasks).values({
           clientId,
           title: OWNER_DRAWS_CONFIRMATION_TITLE,
+          description: behaviorNote("personal-on-business"),
           scheduleType: "monthly",
           dayOfMonth: Number.isNaN(tierDay) ? 15 : tierDay,
           nextRun,

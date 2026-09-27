@@ -167,8 +167,8 @@ describe('ReviewScreen I1 answer rendering', () => {  it('shows custom Other tex
   })
 })
 
-describe('ReviewScreen I7 closeout rows (A44 + A45 + A41)', () => {
-  it('shows the taxes-filed framing as the books-start row, the established date, and both money-behavior answers', () => {
+describe('ReviewScreen closeout rows (N2 + A45 + A41/E1-E3)', () => {
+  it('shows the renamed books-start row, the established date, and both money-behavior answers with their notes', () => {
     render(
       <ReviewScreen
         intakeId={1}
@@ -184,6 +184,10 @@ describe('ReviewScreen I7 closeout rows (A44 + A45 + A41)', () => {
           depositsNonBusiness: true,
           personalOnBusiness: false,
           personalCardForBusiness: true,
+          behaviorNotes: {
+            'deposits-non-business': 'Owner covers a bill from his personal account some months',
+            'personal-card': 'The Amex picks up supplies',
+          },
         }}
         quote={null}
         status="draft"
@@ -194,8 +198,8 @@ describe('ReviewScreen I7 closeout rows (A44 + A45 + A41)', () => {
         onEdit={() => {}}
       />,
     )
-    // A44: the row's label is the conversational opener; the date renders.
-    expect(screen.getByText('When was the last time you filed your taxes?')).toBeInTheDocument()
+    // N2 (meeting #3): the row's label is the renamed start question.
+    expect(screen.getByText('When would you like your bookkeeping to start?')).toBeInTheDocument()
     expect(screen.getByText('Jan 5, 2026')).toBeInTheDocument()
     // A45: the established date is its own row beside it.
     expect(screen.getByText('When was the business established?')).toBeInTheDocument()
@@ -205,6 +209,9 @@ describe('ReviewScreen I7 closeout rows (A44 + A45 + A41)', () => {
     expect(screen.getByText('Do they ever pay for non-business things on business accounts?')).toBeInTheDocument()
     // The personal-card row (B18) still renders its own answer.
     expect(screen.getByText('Do they put business expenses on a personal credit card?')).toBeInTheDocument()
+    // J2 (E1-E3): the mandatory notes render on the yes rows.
+    expect(screen.getByText('Yes · Owner covers a bill from his personal account some months')).toBeInTheDocument()
+    expect(screen.getByText('Yes · The Amex picks up supplies')).toBeInTheDocument()
   })
 
   it('hides the established-date row when the optional answer was skipped', () => {
@@ -230,7 +237,7 @@ describe('ReviewScreen I7 closeout rows (A44 + A45 + A41)', () => {
       />,
     )
     expect(screen.queryByText('When was the business established?')).toBeNull()
-    expect(screen.getByText('When was the last time you filed your taxes?')).toBeInTheDocument()
+    expect(screen.getByText('When would you like your bookkeeping to start?')).toBeInTheDocument()
   })
 })
 

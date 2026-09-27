@@ -361,8 +361,11 @@ describe("StubIntakeExtractor", () => {
     expect(byKey.get("monthlyCloseTier")?.value).toBe("10");
     expect(byKey.get("accountingMethod")?.value).toBe("cash");
     expect(byKey.get("isRealEstateClient")?.value).toBe(false);
-    expect(byKey.get("includeBillPay")?.value).toBe(false);
-    expect(byKey.get("includeRetroactive")?.value).toBe(false);
+    // J2 (E6/R7): "no bill pay" maps to the record-bills answer, and the
+    // retired retroactive/cleanup prompt extracts nothing - the books-start
+    // date qualifies retroactive work on its own.
+    expect(byKey.get("recordBills")?.value).toBe(false);
+    expect(byKey.get("includeRetroactive")).toBeUndefined();
     expect(byKey.get("referralSource")?.value).toBe("CPA referral");
     expect(byKey.get("taxStructure")?.value).toBe("LLC");
     expect(byKey.get("accounts")?.value).toEqual([
@@ -418,8 +421,9 @@ describe("StubIntakeExtractor", () => {
       "monthlyCloseTier",
       "accountingMethod",
       "isRealEstateClient",
-      "includeBillPay",
-      "includeRetroactive",
+      "recordBills",
+      "payBills",
+      "sendPreliminaryReports",
       "serviceKeys",
       "bookkeepingStartDate",
     ]) {
@@ -436,7 +440,10 @@ describe("StubIntakeExtractor", () => {
 describe("describeExtractedValue", () => {
   it("renders human-readable values per kind", () => {
     expect(describeExtractedValue("accountingMethod", "cash")).toBe("Cash basis");
-    expect(describeExtractedValue("includeBillPay", false)).toBe("No");
+    expect(describeExtractedValue("recordBills", false)).toBe("No");
+    expect(describeExtractedValue("billPayLocations", ["Vendor websites", "Bank bill pay"])).toBe(
+      "Vendor websites, Bank bill pay",
+    );
     expect(describeExtractedValue("paymentMethods", ["card", "check"])).toBe(
       "Credit or debit cards, Checks",
     );

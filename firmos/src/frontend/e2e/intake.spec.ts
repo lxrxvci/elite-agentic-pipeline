@@ -54,7 +54,12 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
 
   // ── Contact basics (resumes at the main contact; the name came from the dialog) ──
   await expectQuestion(page, 'main-contact')
-  await page.getByLabel('Full name').fill('Wren Okafor')
+  // J2/B1 (00:04:23): real key events, space included - the space lands and
+  // nothing submits (pre-fix the re-derived value ate the trailing space).
+  await page.getByLabel('Full name').pressSequentially('Wren ')
+  await expect(page.getByLabel('Full name')).toHaveValue('Wren ')
+  await page.getByLabel('Full name').pressSequentially('Okafor')
+  await expect(page.getByLabel('Full name')).toHaveValue('Wren Okafor')
   // Phone auto-formats while typing and stores digits.
   await page.getByLabel('Phone').pressSequentially('5035550182')
   await expect(page.getByLabel('Phone')).toHaveValue('(503) 555-0182')
@@ -107,11 +112,11 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByTestId('addon-invoicing').click()
   await advance(page, 'existing-client')
 
-  // ── Starting point: new client; the taxes-filed framing opens it (A44) ──
+  // ── Starting point: new client; the renamed start question (N2) ──
   await pick(page, 'option-no', 'bk-start')
-  await expect(page.getByText('When was the last time you filed your taxes?')).toBeVisible()
-  await page.getByLabel('So your books should start:').pressSequentially('01012026')
-  await expect(page.getByLabel('So your books should start:')).toHaveValue('01/01/2026')
+  await expect(page.getByText('When would you like your bookkeeping to start?')).toBeVisible()
+  await page.getByLabel('Bookkeeping start date').pressSequentially('01012026')
+  await expect(page.getByLabel('Bookkeeping start date')).toHaveValue('01/01/2026')
   // A45: the established date is the next card (optional date-text).
   await advance(page, 'biz-established')
   await page.getByLabel('Business established date (optional)').pressSequentially('03012019')
@@ -170,7 +175,13 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByTestId('chip-check').click()
   // A41: the two money-behavior cards come first, each its own screen.
   await advance(page, 'deposits-non-business')
-  await pick(page, 'option-yes', 'personal-on-business') // owner money lands in the account sometimes (A41)
+  // J2 (E1): a yes opens the blocking note overlay - empty cannot save.
+  await page.getByTestId('option-yes').click()
+  await expect(page.getByTestId('behavior-note-dialog')).toBeVisible()
+  await expect(page.getByTestId('behavior-note-save')).toBeDisabled()
+  await page.getByTestId('behavior-note-input').fill('Owner covers a bill from his personal account some months')
+  await page.getByTestId('behavior-note-save').click()
+  await expectQuestion(page, 'personal-on-business')
   await pick(page, 'option-no', 'personal-card') // never personal spend on business accounts (A41)
   await pick(page, 'option-no', 'payroll') // no business spend on a personal card (B18)
   await pick(page, 'option-no', 'online-access') // no payroll (I3: access checklist next)
@@ -203,12 +214,18 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByTestId('quote-hide-toggle').click()
   await expect(page.getByTestId('quote-hidden')).toBeVisible()
 
-  await pick(page, 'option-cash', 'bill-pay')
-  await pick(page, 'option-no', 'ten99-services')
+  await pick(page, 'option-cash', 'record-bills')
+  // J2 (E6): record yes -> the pay card with its addable locations list.
+  await pick(page, 'option-yes', 'pay-bills')
+  await page.getByTestId('option-yes').click() // pay yes reveals the editor (no auto-advance)
+  await expect(page.getByTestId('yes-no-list-editor')).toBeVisible()
+  await page.getByTestId('list-input').pressSequentially('Vendor websites')
+  await page.getByTestId('list-add').click()
+  await expect(page.getByTestId('list-chip')).toHaveCount(1)
+  await advance(page, 'ten99-services')
   await advance(page, 'reports') // skip 1099
-  await advance(page, 'retroactive') // skip special reports
-
-  // ── Recurring and notes ──
+  await advance(page, 'preliminary-reports') // skip special reports
+  // R6: the preliminary-reports toggle; R7: no retroactive question anymore.
   await pick(page, 'option-no', 'default-rules')
   await advance(page, 'rules') // keep all four standard routines selected (B21)
   await advance(page, 'notes') // skip custom rules
@@ -248,6 +265,13 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // A41: both money-behavior questions carry review rows.
   await expect(page.getByText("Do they ever deposit anything that isn't business income?")).toBeVisible()
   await expect(page.getByText('Do they ever pay for non-business things on business accounts?')).toBeVisible()
+  // J2 (E1): the mandatory note shows on the yes row.
+  await expect(
+    page.getByText('Yes · Owner covers a bill from his personal account some months'),
+  ).toBeVisible()
+  // J2 (E6): the bills split carries both rows, locations included.
+  await expect(page.getByText('Should we record their bills?')).toBeVisible()
+  await expect(page.getByText('Yes · pays at: Vendor websites')).toBeVisible()
   // The main contact row shows the formatted phone.
   await expect(page.getByText('Wren Okafor · (503) 555-0182 · wren@e2ebloom.example')).toBeVisible()
   // Two QBO users, no tracking: the matrix recommends Essentials.
@@ -331,9 +355,8 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
   await expect(page.getByTestId('quote-hidden')).toBeVisible()
   await advance(page, 'existing-client')
   await pick(page, 'option-no', 're-yes') // consulting: no books-start screen
-  await pick(page, 'option-no', 'retroactive')
-  await pick(page, 'option-no', 'rules') // no cleanup; default rules hidden on the consulting track
-  await advance(page, 'notes')
+  await pick(page, 'option-no', 'rules') // not real estate; R7: no retroactive question anymore
+  await advance(page, 'notes') // skip custom rules; default rules hidden on the consulting track
   await page.getByTestId('continue').click()
 
   // ── Review: consulting label + the verbatim custom text ──
@@ -401,7 +424,7 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
 
   // ── Starting point + scope chapters ──
   await pick(page, 'option-no', 'bk-start')
-  await page.getByLabel('So your books should start:').pressSequentially('01012026')
+  await page.getByLabel('Bookkeeping start date').pressSequentially('01012026')
   await advance(page, 'biz-established') // A45: optional - skipped here
   await advance(page, 'checking-accounts')
   // I3: six count cards, all skipped (no accounts) - the online-access
@@ -454,17 +477,21 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
 
   // ── The payroll add-on is prompted with a recommendation badge ──
   await expect(page.getByTestId('recommendation-badge')).toContainText('Recommended')
+  // J2 (P1): payroll handling is mandatory - Continue with no selection explains itself.
+  await page.getByTestId('continue').click()
+  await expect(page.getByText('Pick at least one before continuing.')).toBeVisible()
+  await expectQuestion(page, 'payroll-services')
   await page.getByTestId('chip-payroll_quarterly_filings').click()
   await advance(page, 'bk-frequency')
 
   // ── Reporting + recurring ──
   await pick(page, 'option-monthly', 'close-tier')
   await pick(page, 'option-10', 'acct-method')
-  await pick(page, 'option-cash', 'bill-pay')
-  await pick(page, 'option-no', 'ten99-services')
+  await pick(page, 'option-cash', 'record-bills')
+  await pick(page, 'option-no', 'ten99-services') // no bill recording, so no pay-bills card (E6)
   await advance(page, 'reports')
-  await advance(page, 'retroactive')
-  await pick(page, 'option-no', 'default-rules')
+  await advance(page, 'preliminary-reports')
+  await pick(page, 'option-no', 'default-rules') // R6: preliminary-reports toggle; R7: retro question gone
   await advance(page, 'rules')
   await advance(page, 'notes')
   await page.getByTestId('continue').click()

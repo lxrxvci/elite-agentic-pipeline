@@ -89,7 +89,7 @@ describe('date-text field (I1, 00:33:00)', () => {
   it('rejects 13/45/2026: nothing commits, the inline alert shows, Continue blocks', () => {
     const onAdvance = vi.fn()
     render(<Harness q={findQuestion('starting', 'bk-start')!} initial={{ engagementType: 'bookkeeping' }} onAdvance={onAdvance} />)
-    const input = screen.getByLabelText('So your books should start:')
+    const input = screen.getByLabelText('Bookkeeping start date')
     fireEvent.change(input, { target: { value: '13/45/2026' } })
     expect(input).toHaveValue('13/45/2026')
     expect(screen.getByRole('alert')).toHaveTextContent("That date isn't real")
@@ -98,13 +98,13 @@ describe('date-text field (I1, 00:33:00)', () => {
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).not.toHaveBeenCalled()
     expect(screen.getByText("That date isn't real - use MM/DD/YYYY.")).toBeInTheDocument()
-    expect(screen.getByText('So your books should start: is required.')).toBeInTheDocument()
+    expect(screen.getByText('Bookkeeping start date is required.')).toBeInTheDocument()
   })
 
   it('commits a valid typed date as ISO on the stable answer key', () => {
     const onAdvance = vi.fn()
     render(<Harness q={findQuestion('starting', 'bk-start')!} initial={{ engagementType: 'bookkeeping' }} onAdvance={onAdvance} />)
-    const input = screen.getByLabelText('So your books should start:')
+    const input = screen.getByLabelText('Bookkeeping start date')
     fireEvent.change(input, { target: { value: '01052026' } })
     expect(input).toHaveValue('01/05/2026')
     expect(answersNow().bookkeepingStartDate).toBe('2026-01-05')
@@ -120,7 +120,7 @@ describe('date-text field (I1, 00:33:00)', () => {
         initial={{ engagementType: 'bookkeeping', bookkeepingStartDate: '2026-01-05' }}
       />,
     )
-    expect(screen.getByLabelText('So your books should start:')).toHaveValue('01/05/2026')
+    expect(screen.getByLabelText('Bookkeeping start date')).toHaveValue('01/05/2026')
   })
 })
 
@@ -941,5 +941,124 @@ describe('financed vehicle routes to the loans card - UI half (J1, D5)', () => {
       accountType: 'vehicle_loan',
       fromVehicle: 'Toyota Tundra',
     })
+  })
+})
+
+describe('J2 missed-filings yes/no + last-filed date (R6)', () => {
+  const reportsQ = findQuestion('reporting', 'reports')!
+
+  it('missed_filings_yes_needs_last_filed_date', () => {
+    render(<Harness q={reportsQ} initial={{}} />)
+    fireEvent.change(screen.getByLabelText('Report name'), { target: { value: 'Oregon Special Report' } })
+    fireEvent.change(screen.getByLabelText('Frequency'), { target: { value: 'quarterly' } })
+    // Toggle the yes: the last-filed date becomes required.
+    fireEvent.click(screen.getByLabelText('There are missed past filings'))
+    fireEvent.click(screen.getByTestId('add-another'))
+    expect(screen.getByRole('alert')).toHaveTextContent('Most recent filing is required.')
+    expect(answersNow().reportDefinitions ?? []).toHaveLength(0)
+
+    // A real date unblocks the add; the committed item carries both keys.
+    fireEvent.change(screen.getByLabelText('Most recent filing'), { target: { value: '03312026' } })
+    fireEvent.click(screen.getByTestId('add-another'))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(answersNow().reportDefinitions?.[0]).toMatchObject({
+      name: 'Oregon Special Report',
+      frequency: 'quarterly',
+      missedFilings: true,
+      lastFiledDate: '2026-03-31',
+    })
+    expect(screen.getByText(/last filed Mar 31, 2026/)).toBeInTheDocument()
+  })
+
+  it('the date is optional while the toggle is off', () => {
+    render(<Harness q={reportsQ} initial={{}} />)
+    fireEvent.change(screen.getByLabelText('Report name'), { target: { value: 'City lodging tax' } })
+    fireEvent.change(screen.getByLabelText('Frequency'), { target: { value: 'monthly' } })
+    fireEvent.click(screen.getByTestId('add-another'))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(answersNow().reportDefinitions?.[0]).toMatchObject({
+      name: 'City lodging tax',
+      missedFilings: null, // untouched toggle = not captured, never a count
+      lastFiledDate: null,
+    })
+  })
+})
+
+describe('J2 payroll handling mandatory + self-processed (P1)', () => {
+  const servicesQ = findQuestion('income', 'payroll-services')!
+
+  it('payroll_handling_is_mandatory', () => {
+    const onAdvance = vi.fn()
+    render(<Harness q={servicesQ} initial={{ hasPayroll: true, serviceKeys: [] }} onAdvance={onAdvance} />)
+    expect(servicesQ.required).toBe(true)
+    // The self-processed option exists.
+    expect(screen.getByTestId('chip-self_processed')).toHaveTextContent('They process their own payroll')
+
+    // No selection -> Continue explains instead of skipping.
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Pick at least one before continuing.')
+
+    // Self-processed is a valid answer and clears the message.
+    fireEvent.click(screen.getByTestId('chip-self_processed'))
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).toHaveBeenCalled()
+  })
+
+  it('self_processed rides payrollSelfProcessed, never serviceKeys, and never mixes with us processing', () => {
+    render(<Harness q={servicesQ} initial={{ hasPayroll: true, serviceKeys: [] }} />)
+    fireEvent.click(screen.getByTestId('chip-self_processed'))
+    expect(answersNow().payrollSelfProcessed).toBe(true)
+    expect(answersNow().serviceKeys ?? []).toHaveLength(0)
+
+    // Picking "Process payroll" after drops the self-processed flag.
+    fireEvent.click(screen.getByTestId('chip-process_payroll'))
+    expect(answersNow().payrollSelfProcessed).toBe(false)
+    expect(answersNow().serviceKeys).toContain('process_payroll')
+
+    // And back: self-processed drops the process_payroll service key.
+    fireEvent.click(screen.getByTestId('chip-self_processed'))
+    expect(answersNow().payrollSelfProcessed).toBe(true)
+    expect(answersNow().serviceKeys ?? []).not.toContain('process_payroll')
+  })
+})
+
+describe('J2 pay-bills screen (E6)', () => {
+  const payBills = findQuestion('reporting', 'pay-bills')!
+
+  it('yes reveals the addable locations list; Continue commits; no clears the list', () => {
+    const onAdvance = vi.fn()
+    render(<Harness q={payBills} initial={{ recordBills: true }} onAdvance={onAdvance} />)
+    // No auto-advance affordance: no Continue until a pick.
+    expect(screen.queryByTestId('continue')).toBeNull()
+    expect(screen.queryByTestId('yes-no-list-editor')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('option-yes'))
+    // The yes forces recordBills on the data path too (the prerequisite).
+    expect(answersNow().recordBills).toBe(true)
+    expect(answersNow().payBills).toBe(true)
+    expect(screen.getByTestId('yes-no-list-editor')).toBeInTheDocument()
+
+    // Addable rows of where bills get paid.
+    fireEvent.change(screen.getByTestId('list-input'), { target: { value: 'Vendor websites' } })
+    fireEvent.click(screen.getByTestId('list-add'))
+    fireEvent.change(screen.getByTestId('list-input'), { target: { value: 'Bank bill pay' } })
+    fireEvent.click(screen.getByTestId('list-add'))
+    expect(screen.getAllByTestId('list-chip')).toHaveLength(2)
+    expect(answersNow().billPayLocations).toEqual(['Vendor websites', 'Bank bill pay'])
+
+    // Rows remove.
+    fireEvent.click(screen.getByLabelText('Remove Vendor websites'))
+    expect(answersNow().billPayLocations).toEqual(['Bank bill pay'])
+
+    // Flipping to no retires the list with the answer (never stale).
+    fireEvent.click(screen.getByTestId('option-no'))
+    expect(answersNow().payBills).toBe(false)
+    expect(answersNow().billPayLocations).toEqual([])
+    expect(screen.queryByTestId('yes-no-list-editor')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('option-yes'))
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).toHaveBeenCalled()
   })
 })

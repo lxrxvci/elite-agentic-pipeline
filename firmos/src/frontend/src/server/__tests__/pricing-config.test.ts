@@ -225,6 +225,32 @@ describe.skipIf(!reachable)("pricing config (admin-editable pricing + commission
     expect(qboLine.unit_price).toBe(35);
   });
 
+  it("the 1099 per-filing rate is admin-configurable and prices count x rate (J2)", async () => {
+    const admin = await makeUser("admin");
+    // Any 1099 service level + the estimated count rides the per-filing line.
+    const answers = {
+      bookkeepingFrequency: "monthly",
+      serviceKeys: ["bank_feed_management", "1099_collection"],
+      estimated1099Count: 12,
+    };
+    const base = await calculateIntakeQuoteWithConfig(answers, TEST_TODAY);
+    const line = base.lines.find((l) => l.service_key === "1099_per_filing")!;
+    expect(line.unit_price).toBe(10); // the default rate
+    expect(line.quantity).toBe(12);
+    expect(line.amount).toBe(120);
+
+    // The admin override reprices the same line - no code change.
+    await setPricingOverride("1099_per_filing", 15, admin.id);
+    const overridden = await calculateIntakeQuoteWithConfig(answers, TEST_TODAY);
+    const oline = overridden.lines.find((l) => l.service_key === "1099_per_filing")!;
+    expect(oline.unit_price).toBe(15);
+    expect(oline.amount).toBe(180);
+
+    // The admin table renders the key (the J2 "rate field" is this row).
+    const effective = await getEffectivePricing();
+    expect(effective.find((r) => r.serviceKey === "1099_per_filing")?.effectivePrice).toBe(15);
+  });
+
   it("commission tiers: set validates ordering and ranges, and is audit-logged", async () => {
     const admin = await makeUser("admin");
 

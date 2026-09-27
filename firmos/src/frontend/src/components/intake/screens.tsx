@@ -540,7 +540,9 @@ function validateFields(fields: FieldDef[], value: Record<string, unknown>): str
   for (const f of fields) {
     const v = value[f.key]
     const empty = v == null || String(v).trim() === ''
-    if (f.required && empty) return `${f.label.replace(' (optional)', '')} is required.`
+    // J2 (R6): a conditionally required field (requiredIf) must be filled
+    // whenever its predicate holds over the current form value.
+    if ((f.required || (f.requiredIf?.(value) ?? false)) && empty) return `${f.label.replace(' (optional)', '')} is required.`
     // date-text commits ISO or null, so a stray non-ISO value means the
     // typed date never resolved to a real one.
     if (!empty && f.kind === 'date-text' && !/^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
@@ -775,6 +777,252 @@ export function RepeatableScreen({
   )
 }
 
+// ── Field forms (one question's field grid + picker) ─────────────────────
+
+/**
+ * `fields` questions. J2/B1 (meeting #3, 00:04:23 - "space bar saves it"):
+ * the form keeps a local typing buffer so the re-derived answer value can
+ * never clobber an in-progress keystroke. The main-contact card round-trips
+ * its name through splitFullName on every change; pre-fix, a trailing space
+ * typed into "Full name" got trimmed by the round trip, the controlled
+ * input snapped back (the space never landed), and the apply still fired
+ * the debounced autosave. The buffer renders exactly what was typed;
+ * normalization happens on commit. Picker writes (a contact pick or
+ * create-new) clear the buffer so programmatic values render immediately.
+ */
+function FieldsScreen({
+  q,
+  answers,
+  onApply,
+  onAdvance,
+  contactSearch = null,
+}: {
+  q: QuestionDef
+  answers: WizardAnswers
+  onApply: (patch: Partial<WizardAnswers>) => void
+  onAdvance: () => void
+  contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
+}) {
+  const [error, setError] = useState<string | null>(null)
+  const [typed, setTyped] = useState<Record<string, unknown>>({})
+  const fields = q.fields ?? []
+  const picker = q.contactPicker
+  const derived: Record<string, unknown> = q.fieldsValue
+    ? q.fieldsValue(answers)
+    : Object.fromEntries(fields.map((f) => [f.key, answers[f.key]]))
+  // J1 (C6/C7): picker-first cards - the link keys ride the form value so
+  // apply() round-trips them into form_data untouched by the fields.
+  const baseValue: Record<string, unknown> = picker
+    ? {
+        ...derived,
+        [picker.linkKey]: answers[picker.linkKey] ?? null,
+        ...(picker.clientLinkKey ? { [picker.clientLinkKey]: answers[picker.clientLinkKey] ?? null } : {}),
+      }
+    : derived
+  const value: Record<string, unknown> = { ...baseValue, ...typed }
+  const hasAny = fields.some((f) => {
+    const v = value[f.key]
+    return v != null && String(v).trim() !== ''
+  })
+  const submit = () => {
+    const err = q.required ? validateFields(fields, value) : validateFields(fields.filter((f) => {
+      const v = value[f.key]
+      return v != null && String(v).trim() !== ''
+    }), value)
+    if (err) {
+      setError(err)
+      return
+    }
+    setError(null)
+    onApply(q.apply(answers, value))
+    onAdvance()
+  }
+  const linkedContactId = picker ? (value[picker.linkKey] as number | null | undefined) : null
+  const linkedClientId = picker?.clientLinkKey ? (value[picker.clientLinkKey] as number | null | undefined) : null
+  const pickerPick = (hit: ContactPickerHit) => {
+    if (!picker) return
+    const patch: Record<string, unknown> = { ...value, [picker.nameKey]: hit.name }
+    if (picker.emailKey) patch[picker.emailKey] = hit.kind === 'contact' ? (hit.email ?? '') : ''
+    patch[picker.linkKey] = hit.kind === 'contact' ? hit.id : null
+    if (picker.clientLinkKey) patch[picker.clientLinkKey] = hit.kind === 'client' ? hit.id : null
+    setTyped({})
+    onApply(q.apply(answers, patch))
+  }
+  return (
+    <form
+      className="space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault()
+        submit()
+      }}
+    >
+      {picker && contactSearch && (
+        <div>
+          <ContactPicker
+            search={contactSearch}
+            includeClients={picker.clientLinkKey != null}
+            ariaLabel={picker.placeholder}
+            placeholder={picker.placeholder}
+            createLabel={(name) => `Add "${name}" as new`}
+            onPick={pickerPick}
+            onCreateNew={(name) => {
+              const patch: Record<string, unknown> = {
+                ...value,
+                [picker.nameKey]: name,
+                [picker.linkKey]: null,
+              }
+              if (picker.clientLinkKey) patch[picker.clientLinkKey] = null
+              setTyped({})
+              onApply(q.apply(answers, patch))
+            }}
+          />
+          {(linkedContactId != null || linkedClientId != null) && (
+            <p
+              className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-firm-brand/40 bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground"
+              data-testid="picker-linked-badge"
+            >
+              <Check className="h-3 w-3" aria-hidden />
+              Linked to the existing record - no duplicate is created.
+            </p>
+          )}
+        </div>
+      )}
+      <FieldGrid
+        fields={fields}
+        value={value}
+        onChange={(k, v) => {
+          // B1: the typed text renders as-is from here on, even when the
+          // question's apply() normalizes it (trimmed whitespace, split
+          // names) - the derived value can never eat a keystroke.
+          setTyped((t) => ({ ...t, [k]: v }))
+          const next = { ...value, [k]: v }
+          // J1: typing over the name drops the link - the picker is the
+          // only path that sets it, manual edits are the create-new path.
+          if (picker && k === picker.nameKey) {
+            next[picker.linkKey] = null
+            if (picker.clientLinkKey) next[picker.clientLinkKey] = null
+          }
+          onApply(q.apply(answers, next))
+        }}
+      />
+      {error && (
+        <p className="text-sm font-medium text-status-overdue" role="alert">
+          {error}
+        </p>
+      )}
+      <Button type="submit" variant="action" data-testid="continue">
+        {q.required || hasAny ? 'Continue' : 'Skip for now'}
+        <ArrowRight className="h-4 w-4" aria-hidden />
+      </Button>
+    </form>
+  )
+}
+
+// ── J2 (E6): yes/no + an addable string list ──────────────────────────────
+
+/**
+ * `yes-no-list` questions (the pay-bills card): yes/no option cards plus,
+ * when yes, an addable-rows editor of free-text entries (where bills get
+ * paid). Picking never auto-advances - the wizard skips its timer for this
+ * type and Continue commits. The list is optional detail on a yes.
+ */
+function YesNoListScreen({
+  q,
+  answers,
+  onApply,
+  onAdvance,
+  onPickOption,
+}: {
+  q: QuestionDef
+  answers: WizardAnswers
+  onApply: (patch: Partial<WizardAnswers>) => void
+  onAdvance: () => void
+  onPickOption: (value: string) => void
+}) {
+  const cfg = q.yesNoList!
+  const current = q.get(answers) as string | undefined
+  const locations = (answers[cfg.listKey] as string[] | undefined) ?? []
+  const [draft, setDraft] = useState('')
+
+  const commitLocations = (next: string[]) => onApply({ [cfg.listKey]: next } as Partial<WizardAnswers>)
+  const addLocation = () => {
+    const text = draft.trim()
+    if (text === '') return
+    commitLocations([...locations, text])
+    setDraft('')
+  }
+
+  return (
+    <div className="space-y-4">
+      <OptionCards options={q.options ?? []} current={current} onPick={onPickOption} />
+      {current === 'yes' && (
+        <div className="rounded-xl border border-border bg-card p-4" data-testid="yes-no-list-editor">
+          <label
+            htmlFor={`${cfg.listKey}-input`}
+            className="mb-1 block text-xs font-medium text-muted-foreground"
+          >
+            {cfg.label}
+          </label>
+          {locations.length > 0 && (
+            <ul className="mb-3 flex flex-wrap gap-2" aria-label="Added places">
+              {locations.map((loc, i) => (
+                <li
+                  key={`${loc}-${i}`}
+                  className="inline-flex items-center gap-2 rounded-full border border-firm-brand/40 bg-accent py-1.5 pl-3.5 pr-1.5 text-sm"
+                  data-testid="list-chip"
+                >
+                  <span className="font-medium text-accent-foreground">{loc}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${loc}`}
+                    onClick={() => commitLocations(locations.filter((_, idx) => idx !== i))}
+                    className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  >
+                    <X className="h-3 w-3" aria-hidden />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex items-center gap-2">
+            <input
+              id={`${cfg.listKey}-input`}
+              data-testid="list-input"
+              className={inputCls}
+              placeholder={cfg.placeholder}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  addLocation()
+                }
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={addLocation}
+              disabled={draft.trim() === ''}
+              data-testid="list-add"
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden />
+              {cfg.addLabel}
+            </Button>
+          </div>
+        </div>
+      )}
+      {current != null && (
+        <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
+          Continue
+          <ArrowRight className="h-4 w-4" aria-hidden />
+        </Button>
+      )}
+    </div>
+  )
+}
+
 // ── The screen dispatcher ─────────────────────────────────────────────────
 
 export function QuestionScreen({
@@ -811,7 +1059,8 @@ export function QuestionScreen({
   /** J1 (C5/C6/C7): the contact+client type-ahead behind picker questions. */
   contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
 }) {
-  const [error, setError] = useState<string | null>(null)
+  // J2 (P1): the required-multi empty-attempt message (payroll handling).
+  const [requiredError, setRequiredError] = useState<string | null>(null)
 
   // I3: the per-type account count card (plan §1 screen 7).
   if (q.type === 'account-count') {
@@ -935,12 +1184,31 @@ export function QuestionScreen({
     const values = (q.get(answers) as string[]) ?? []
     const toggle = (v: string) =>
       onApply(q.apply(answers, values.includes(v) ? values.filter((x) => x !== v) : [...values, v]))
+    // J2 (P1): a required multi never skips silently - Continue stays
+    // clickable and an empty attempt explains itself (payroll handling).
     const canContinue = values.length > 0 || !q.required
     return (
       <div className="space-y-4">
         <MultiChips options={q.options ?? []} values={values} onToggle={toggle} />
-        <Button type="button" variant="action" onClick={onAdvance} disabled={!canContinue} data-testid="continue">
-          {values.length === 0 ? 'Skip for now' : 'Continue'}
+        {requiredError && (
+          <p className="text-sm font-medium text-status-overdue" role="alert">
+            {requiredError}
+          </p>
+        )}
+        <Button
+          type="button"
+          variant="action"
+          onClick={() => {
+            if (!canContinue) {
+              setRequiredError('Pick at least one before continuing.')
+              return
+            }
+            setRequiredError(null)
+            onAdvance()
+          }}
+          data-testid="continue"
+        >
+          {values.length === 0 && !q.required ? 'Skip for now' : 'Continue'}
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
       </div>
@@ -967,109 +1235,28 @@ export function QuestionScreen({
   }
 
   if (q.type === 'fields') {
-    const fields = q.fields ?? []
-    const picker = q.contactPicker
-    const baseValue: Record<string, unknown> = q.fieldsValue
-      ? q.fieldsValue(answers)
-      : Object.fromEntries(fields.map((f) => [f.key, answers[f.key]]))
-    // J1 (C6/C7): picker-first cards - the link keys ride the form value so
-    // apply() round-trips them into form_data untouched by the fields.
-    const value: Record<string, unknown> = picker
-      ? {
-          ...baseValue,
-          [picker.linkKey]: answers[picker.linkKey] ?? null,
-          ...(picker.clientLinkKey ? { [picker.clientLinkKey]: answers[picker.clientLinkKey] ?? null } : {}),
-        }
-      : baseValue
-    const hasAny = fields.some((f) => {
-      const v = value[f.key]
-      return v != null && String(v).trim() !== ''
-    })
-    const submit = () => {
-      const err = q.required ? validateFields(fields, value) : validateFields(fields.filter((f) => {
-        const v = value[f.key]
-        return v != null && String(v).trim() !== ''
-      }), value)
-      if (err) {
-        setError(err)
-        return
-      }
-      setError(null)
-      onApply(q.apply(answers, value))
-      onAdvance()
-    }
-    const linkedContactId = picker ? (value[picker.linkKey] as number | null | undefined) : null
-    const linkedClientId = picker?.clientLinkKey ? (value[picker.clientLinkKey] as number | null | undefined) : null
-    const pickerPick = (hit: ContactPickerHit) => {
-      if (!picker) return
-      const patch: Record<string, unknown> = { ...value, [picker.nameKey]: hit.name }
-      if (picker.emailKey) patch[picker.emailKey] = hit.kind === 'contact' ? (hit.email ?? '') : ''
-      patch[picker.linkKey] = hit.kind === 'contact' ? hit.id : null
-      if (picker.clientLinkKey) patch[picker.clientLinkKey] = hit.kind === 'client' ? hit.id : null
-      onApply(q.apply(answers, patch))
-    }
     return (
-      <form
-        className="space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault()
-          submit()
-        }}
-      >
-        {picker && contactSearch && (
-          <div>
-            <ContactPicker
-              search={contactSearch}
-              includeClients={picker.clientLinkKey != null}
-              ariaLabel={picker.placeholder}
-              placeholder={picker.placeholder}
-              createLabel={(name) => `Add "${name}" as new`}
-              onPick={pickerPick}
-              onCreateNew={(name) => {
-                const patch: Record<string, unknown> = {
-                  ...value,
-                  [picker.nameKey]: name,
-                  [picker.linkKey]: null,
-                }
-                if (picker.clientLinkKey) patch[picker.clientLinkKey] = null
-                onApply(q.apply(answers, patch))
-              }}
-            />
-            {(linkedContactId != null || linkedClientId != null) && (
-              <p
-                className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-firm-brand/40 bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground"
-                data-testid="picker-linked-badge"
-              >
-                <Check className="h-3 w-3" aria-hidden />
-                Linked to the existing record - no duplicate is created.
-              </p>
-            )}
-          </div>
-        )}
-        <FieldGrid
-          fields={fields}
-          value={value}
-          onChange={(k, v) => {
-            const next = { ...value, [k]: v }
-            // J1: typing over the name drops the link - the picker is the
-            // only path that sets it, manual edits are the create-new path.
-            if (picker && k === picker.nameKey) {
-              next[picker.linkKey] = null
-              if (picker.clientLinkKey) next[picker.clientLinkKey] = null
-            }
-            onApply(q.apply(answers, next))
-          }}
-        />
-        {error && (
-          <p className="text-sm font-medium text-status-overdue" role="alert">
-            {error}
-          </p>
-        )}
-        <Button type="submit" variant="action" data-testid="continue">
-          {q.required || hasAny ? 'Continue' : 'Skip for now'}
-          <ArrowRight className="h-4 w-4" aria-hidden />
-        </Button>
-      </form>
+      <FieldsScreen
+        q={q}
+        answers={answers}
+        onApply={onApply}
+        onAdvance={onAdvance}
+        contactSearch={contactSearch}
+      />
+    )
+  }
+
+  // J2 (E6): yes/no + the addable string list (bill-pay locations). Continue
+  // commits; the wizard never auto-advances this type.
+  if (q.type === 'yes-no-list') {
+    return (
+      <YesNoListScreen
+        q={q}
+        answers={answers}
+        onApply={onApply}
+        onAdvance={onAdvance}
+        onPickOption={onPickOption}
+      />
     )
   }
 

@@ -127,7 +127,8 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   await pick(page, 'option-no', 're-yes')
   // Project engagement: balance sheet, income, and reporting chapters are
   // hidden; the wizard lands on the recurring chapter next.
-  await pick(page, 'option-no', 'retroactive')
+  // R7: the retroactive/cleanup question is gone - the books-start date
+  // qualifies retroactive work on its own.
   await pick(page, 'option-no', 'rules')
   await advance(page, 'notes')
   await page.getByTestId('continue').click()

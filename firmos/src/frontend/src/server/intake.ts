@@ -137,8 +137,17 @@ export interface IntakeReportDefinition {
   flatPrice?: number | null;
   /** Hourly rate override; the quote engine's default rate applies otherwise. */
   hourlyRate?: number | null;
-  /** Unfiled past filings; priced one-time at the per-report price. */
-  missedFilings?: number | null;
+  /**
+   * J2 (meeting #3): the wizard captures a yes/no - true means past filings
+   * were missed and lastFiledDate carries the most recent filing; the quote
+   * derives the missed COUNT from that date x the cadence through today
+   * (server/quote.ts). Legacy/extraction rows may still carry a raw count
+   * (number) - honored verbatim. Either way each missed filing prices
+   * one-time at the per-report price.
+   */
+  missedFilings?: number | boolean | null;
+  /** ISO YYYY-MM-DD of the most recent filing (required when missedFilings is true). */
+  lastFiledDate?: string | null;
 }
 
 export interface IntakeCustomRuleInput {
@@ -269,17 +278,37 @@ export interface IntakeFormData {
   /** A41 (00:48:07): "pay for non-business things on business accounts?" -
    *  true seeds the monthly owner-draws confirmation task at conversion. */
   personalOnBusiness?: boolean;
+  /** J2 (meeting #3, E1-E3): the mandatory explanation note captured from the
+   *  blocking overlay when a money-behavior card is answered yes, keyed by
+   *  the registry question id (deposits-non-business / personal-on-business /
+   *  personal-card). Conversion carries the note into the seeded task's
+   *  description. */
+  behaviorNotes?: Record<string, string>;
   // Step 5 - reporting and payroll
   bookkeepingFrequency?: string | null;
   billingFrequency?: string | null;
   monthlyCloseTier?: string | null;
   accountingMethod?: string | null;
   payrollProvider?: string | null;
+  /** J2 (meeting #3, P1): the payroll-services "they process their own
+   *  payroll" pick - we just download and enter the reports. Not a service
+   *  key (nothing to bill); conversion notes it on the client record. */
+  payrollSelfProcessed?: boolean;
   reportDefinitions?: IntakeReportDefinition[];
   estimated1099Count?: number | null;
   include1099Collection?: boolean;
   include1099FullManagement?: boolean;
   includeMerchantReconciliation?: boolean;
+  /** J2 (meeting #3, E6): bills split into record + pay. recordBills drives
+   *  the record_bills service key (legacy intakes may carry the old
+   *  includeBillPay flag - still honored as the fallback); payBills requires
+   *  recordBills and carries the places bills get paid. */
+  recordBills?: boolean;
+  payBills?: boolean;
+  billPayLocations?: string[];
+  /** J2 (meeting #3, R6): send reports before the client's open questions
+   *  are answered; conversion notes it on the seeded Send Reports rule. */
+  sendPreliminaryReports?: boolean;
   qboClassNames?: string[];
   qboLocationNames?: string[];
   // Step 6 - recurring and notes

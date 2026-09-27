@@ -83,6 +83,8 @@ export type ExtractionFieldKind =
   | 'number'
   | 'enum'
   | 'enumList'
+  /** J2 (E6): a free-text string list (bill-pay locations) - no closed enum. */
+  | 'stringList'
   | 'owners'
   | 'contacts'
   | 'accounts'
@@ -169,7 +171,9 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'serviceKeys', label: 'Services in scope', chapter: 'services', kind: 'enumList', options: EXTRACTABLE_SERVICE_KEYS },
   // starting
   { key: 'isExistingClient', label: 'Existing client', chapter: 'starting', kind: 'boolean' },
-  { key: 'bookkeepingStartDate', label: 'Books start date', chapter: 'starting', kind: 'string' },
+  // N2 (meeting #3): the start question is "When would you like your
+  // bookkeeping to start?" everywhere, including this label.
+  { key: 'bookkeepingStartDate', label: 'Bookkeeping start date', chapter: 'starting', kind: 'string' },
   { key: 'bankFeedCatchupDate', label: 'Bank-feed catch-up date', chapter: 'starting', kind: 'string' },
   // A45: the established date rides extraction too (form_data only).
   { key: 'businessEstablishedDate', label: 'Business established date', chapter: 'starting', kind: 'string' },
@@ -198,11 +202,19 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'bookkeepingFrequency', label: 'Close cadence', chapter: 'reporting', kind: 'enum', options: ['monthly', 'quarterly', 'semi_annual', 'annual'] },
   { key: 'monthlyCloseTier', label: 'Close tier', chapter: 'reporting', kind: 'enum', options: ['5', '10', '15'] },
   { key: 'accountingMethod', label: 'Accounting method', chapter: 'reporting', kind: 'enum', options: ['cash', 'accrual'] },
-  { key: 'includeBillPay', label: 'Bill pay', chapter: 'reporting', kind: 'boolean' },
+  // J2 (E6): the bill-pay question split in two - recording (drives the
+  // record_bills service key) and paying (requires recording), with the
+  // free-text list of where bills get paid.
+  { key: 'recordBills', label: 'Record bills', chapter: 'reporting', kind: 'boolean' },
+  { key: 'payBills', label: 'Pay bills', chapter: 'reporting', kind: 'boolean' },
+  { key: 'billPayLocations', label: 'Bill pay locations', chapter: 'reporting', kind: 'stringList' },
   { key: 'estimated1099Count', label: 'Estimated 1099 filings', chapter: 'reporting', kind: 'number', min: 0, max: 999 },
   { key: 'reportDefinitions', label: 'Special reports', chapter: 'reporting', kind: 'reports' },
+  // J2 (R6): the preliminary-reports toggle rides extraction too.
+  { key: 'sendPreliminaryReports', label: 'Send preliminary reports', chapter: 'reporting', kind: 'boolean' },
   // recurring
-  { key: 'includeRetroactive', label: 'Retroactive / cleanup work', chapter: 'recurring', kind: 'boolean' },
+  // J2 (R7): the retroactive/cleanup question is gone - the books-start
+  // date qualifies retroactive work, so nothing here answers for it.
   { key: 'customRecurringRules', label: 'Custom recurring work', chapter: 'recurring', kind: 'rules' },
   { key: 'internalNotes', label: 'Internal notes', chapter: 'recurring', kind: 'string' },
 ]
@@ -492,6 +504,13 @@ function coerceValue(
       if (kept.length === 0) return { ok: false, reason: 'no valid entries' }
       return { ok: true, value: kept }
     }
+    case 'stringList': {
+      const list = asList(raw)
+      if (!list) return { ok: false, reason: 'not a list' }
+      const kept = list.map(asString).filter((s): s is string => s != null)
+      if (kept.length === 0) return { ok: false, reason: 'no valid entries' }
+      return { ok: true, value: kept }
+    }
     case 'owners':
     case 'contacts':
     case 'accounts':
@@ -613,7 +632,7 @@ const MISSING_CHECKS: readonly MissingCheck[] = [
   { key: 'hasPayroll', when: isBk },
   // A41: both money-behavior cards are required wizard questions, so an
   // extraction that never mentions them keeps them on the "still to ask"
-  // list (same treatment as includeBillPay/includeRetroactive).
+  // list (same treatment as the other required yes/no cards).
   { key: 'depositsNonBusiness', when: isBk },
   { key: 'personalOnBusiness', when: isBk },
   // I2: a corporate structure auto-flags payroll, so provider and frequency
@@ -638,8 +657,11 @@ const MISSING_CHECKS: readonly MissingCheck[] = [
   { key: 'bookkeepingFrequency', when: isBk },
   { key: 'monthlyCloseTier', when: (a) => isBk(a) && (a.bookkeepingFrequency ?? 'monthly') === 'monthly' },
   { key: 'accountingMethod', when: isBk },
-  { key: 'includeBillPay', when: isBk },
-  { key: 'includeRetroactive', when: isBk },
+  // J2 (E6): recording bills is a required card; paying is required once
+  // recording is a yes (the wizard's branch does the same).
+  { key: 'recordBills', when: isBk },
+  { key: 'payBills', when: (a) => isBk(a) && a.recordBills === true },
+  { key: 'sendPreliminaryReports', when: isBk },
 ]
 
 function isAnswered(v: unknown): boolean {
@@ -713,7 +735,7 @@ export function describeExtractedValue(key: string, value: unknown): string {
   const spec = SPEC_BY_KEY.get(key)
   if (value == null) return ''
   // Defensive: list kinds expect arrays; anything else renders verbatim.
-  const listKinds: ReadonlySet<string> = new Set(['enumList', 'owners', 'contacts', 'accounts', 'merchants', 'reports', 'rules'])
+  const listKinds: ReadonlySet<string> = new Set(['enumList', 'stringList', 'owners', 'contacts', 'accounts', 'merchants', 'reports', 'rules'])
   if (spec && listKinds.has(spec.kind) && !Array.isArray(value)) return String(value)
   switch (spec?.kind) {
     case 'boolean':
@@ -724,6 +746,8 @@ export function describeExtractedValue(key: string, value: unknown): string {
       return labelFor(key, String(value))
     case 'enumList':
       return (value as string[]).map((v) => labelFor(key, v)).join(', ')
+    case 'stringList':
+      return (value as string[]).join(', ')
     case 'owners':
       return (value as Array<{ name: string; ownershipPercent?: number }>)
         .map((o) => (o.ownershipPercent != null ? `${o.name} (${o.ownershipPercent}%)` : o.name))
@@ -1010,16 +1034,16 @@ const STUB_RULES: readonly StubRule[] = [
     build: () => false,
   },
   {
-    key: 'includeBillPay',
+    key: 'recordBills',
     pattern: /\bno bill pay\b|\bjust the books\b/i,
     confidence: 0.85,
     build: () => false,
   },
   {
-    key: 'includeRetroactive',
-    pattern: /\bno cleanup\b|\bno retroactive\b|\bstarting clean\b/i,
+    key: 'sendPreliminaryReports',
+    pattern: /\bpreliminary reports?\b/i,
     confidence: 0.8,
-    build: () => false,
+    build: () => true,
   },
   {
     key: 'referralSource',

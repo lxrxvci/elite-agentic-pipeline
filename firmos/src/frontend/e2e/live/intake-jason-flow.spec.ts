@@ -102,8 +102,8 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
 
   // ── Starting point: typed date text, no separate catch-up screen (I1) ──
   await pick(page, 'option-no', 'bk-start')
-  await page.getByLabel('So your books should start:').fill('01/01/2026')
-  await expect(page.getByLabel('So your books should start:')).toHaveValue('01/01/2026')
+  await page.getByLabel('Bookkeeping start date').fill('01/01/2026')
+  await expect(page.getByLabel('Bookkeeping start date')).toHaveValue('01/01/2026')
 
   // ── Accounts (I3): count stepper -> mini-form; seeded banks + inline add ──
   await advance(page, 'biz-established') // A45: optional established date - skipped
@@ -153,7 +153,9 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   // ...and the provider is required for corporate entities.
   await pick(page, 'option-Gusto', 'payroll-frequency')
   await pick(page, 'option-monthly', 'payroll-services')
-  await advance(page, 'online-access') // skip payroll services
+  // J2 (P1): payroll handling is mandatory - a selection is required.
+  await page.getByTestId('chip-self_processed').click() // they process their own (Gusto)
+  await advance(page, 'online-access')
 
   // ── Online access (I3): the checklist pulls the statement account ──
   await expect(page.getByTestId('check-checkingAccounts:0')).toContainText('LiveTest Checking')
@@ -163,11 +165,11 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   // ── Reporting: monthly, close by the 10th, cash basis ──
   await pick(page, 'option-monthly', 'close-tier')
   await pick(page, 'option-10', 'acct-method')
-  await pick(page, 'option-cash', 'bill-pay')
-  await pick(page, 'option-no', 'ten99-services')
+  await pick(page, 'option-cash', 'record-bills')
+  await pick(page, 'option-no', 'ten99-services') // no bill recording (E6 split)
   await advance(page, 'reports') // skip 1099
-  await advance(page, 'retroactive') // skip special reports
-  await pick(page, 'option-no', 'default-rules') // no retroactive cleanup
+  await advance(page, 'preliminary-reports') // skip special reports
+  await pick(page, 'option-no', 'default-rules') // reports wait for answers (R6); R7: no retro question
   await advance(page, 'rules') // keep the standard routines selected
   await advance(page, 'notes') // skip custom rules
   await page.getByTestId('continue').click() // skip notes

@@ -24,6 +24,7 @@ import type { PayrollProviderRow } from '@/server/payroll-providers'
 import { cn } from '@/shared/lib/utils'
 
 import type { StaffOption } from './convert-dialog'
+import { BehaviorNoteDialog } from './behavior-note-dialog'
 import { NotesRail } from './notes-rail'
 import { QuoteHiddenCard, QuotePanel } from './quote-panel'
 import {
@@ -104,6 +105,10 @@ export function IntakeWizard({
   )
   const [direction, setDirection] = useState<'fwd' | 'back'>('fwd')
   const [note, setNote] = useState<string | null>(null)
+  // J2 (E1-E3): the money-behavior card whose yes-pick is waiting on its
+  // mandatory explanation note. Set = the blocking overlay is open; the yes
+  // answer is not applied until the note saves.
+  const [notePrompt, setNotePrompt] = useState<{ chapterId: string; questionId: string } | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
   // I4: pricing stays hidden until the review screen (the client may be
@@ -295,7 +300,27 @@ export function IntakeWizard({
     (questionId: string, value: string) => {
       const q = screen?.kind === 'question' ? findQuestion(screen.chapterId, screen.questionId) : undefined
       if (!q || q.id !== questionId) return
+      // J2 (E1-E3): a yes on a money-behavior card opens the blocking note
+      // overlay INSTEAD of applying or advancing - the answer lands only
+      // when the note saves (behavior-note-dialog.tsx).
+      if (q.noteOnYes && value === 'yes') {
+        if (advanceTimer.current) {
+          clearTimeout(advanceTimer.current)
+          advanceTimer.current = null
+        }
+        setNotePrompt(screen!.kind === 'question' ? { chapterId: screen.chapterId, questionId: q.id } : null)
+        return
+      }
       let patch = q.apply(answersRef.current, value)
+      // A no on a note-on-yes card retires the stored note with it.
+      if (q.noteOnYes && value === 'no') {
+        const notes = answersRef.current.behaviorNotes
+        if (notes && notes[q.id] != null) {
+          const rest = { ...notes }
+          delete rest[q.id]
+          patch = { ...patch, behaviorNotes: rest }
+        }
+      }
       // I1 custom "Other": re-picking a listed option drops the typed text.
       if (customAllowed(q) && value !== CUSTOM_OTHER_VALUE) {
         const custom = answersRef.current.customAnswers
@@ -315,6 +340,16 @@ export function IntakeWizard({
         }
         return
       }
+      // J2 (E6): yes-no-list cards (pay-bills) never auto-advance - the yes
+      // reveals the locations editor and Continue commits.
+      if (q.type === 'yes-no-list') {
+        setNote(null)
+        if (advanceTimer.current) {
+          clearTimeout(advanceTimer.current)
+          advanceTimer.current = null
+        }
+        return
+      }
       const optionNote = q.options?.find((o) => o.value === value)?.note ?? null
       setNote(optionNote)
       if (advanceTimer.current) clearTimeout(advanceTimer.current)
@@ -325,6 +360,25 @@ export function IntakeWizard({
     },
     [apply, go, screen],
   )
+
+  // J2 (E1-E3): the note saves the yes answer (plus form_data.behaviorNotes)
+  // and only then moves on; "Go back" discards the pick entirely. The
+  // advance rides the same timer as a normal pick so the apply re-renders
+  // (and is what the flushed autosave sees) before navigation.
+  const saveBehaviorNote = useCallback(
+    (text: string) => {
+      if (!notePrompt) return
+      const q = findQuestion(notePrompt.chapterId, notePrompt.questionId)
+      if (!q) return
+      const patch = q.apply(answersRef.current, 'yes')
+      apply({ ...patch, behaviorNotes: { ...(answersRef.current.behaviorNotes ?? {}), [q.id]: text } })
+      setNotePrompt(null)
+      if (advanceTimer.current) clearTimeout(advanceTimer.current)
+      advanceTimer.current = setTimeout(() => go('fwd'), AUTO_ADVANCE_MS)
+    },
+    [notePrompt, apply, go],
+  )
+  const noteQuestion = notePrompt ? findQuestion(notePrompt.chapterId, notePrompt.questionId) : undefined
 
   const jumpTo = useCallback(
     (chapterId: string, questionId: string) => {
@@ -579,6 +633,21 @@ export function IntakeWizard({
           <NotesRail notes={answers.runningNotes ?? []} onAdd={addRunningNote} />
         </div>
       </div>
+
+      {/* J2 (E1-E3): the blocking explanation overlay behind a
+          money-behavior yes. Rendered at the wizard root so it freezes the
+          whole page; the card underneath stays unanswered until the note
+          saves. */}
+      {noteQuestion?.noteOnYes && (
+        <BehaviorNoteDialog
+          questionId={noteQuestion.id}
+          config={noteQuestion.noteOnYes}
+          initialNote={answers.behaviorNotes?.[noteQuestion.id] ?? null}
+          open
+          onSave={saveBehaviorNote}
+          onCancel={() => setNotePrompt(null)}
+        />
+      )}
     </div>
   )
 }

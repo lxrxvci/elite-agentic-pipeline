@@ -31,7 +31,11 @@ export interface WizardAnswers extends IntakeFormData {
   businessCity?: string | null
   businessState?: string | null
   businessZip?: string | null
-  /** Yes/No question answers that derive services, kept in form_data. */
+  /** Legacy yes/no service flags from pre-J2 intakes. J2 (meeting #3):
+   *  includeBillPay was replaced by the recordBills/payBills split (E6) and
+   *  the retroactive question was removed (R7) - the books-start date
+   *  qualifies retroactive work now. Both keys stay honored as read
+   *  fallbacks so old intakes keep quoting and converting. */
   includeBillPay?: boolean
   includeRetroactive?: boolean
 }
@@ -75,6 +79,10 @@ export interface FieldDef {
   placeholder?: string
   options?: SelectOption[]
   required?: boolean
+  /** J2 (R6): conditionally required - the field must be filled when this
+   *  predicate over the current form value holds (the missed-filings yes/no
+   *  gates the last-filed date). */
+  requiredIf?: (values: Record<string, unknown>) => boolean
   /** number kind only */
   min?: number
   max?: number
@@ -113,7 +121,26 @@ export interface RepeatableDef {
   itemsNote?: (items: Array<Record<string, unknown>>, a: WizardAnswers) => string | null
 }
 
-export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist' | 'account-count'
+export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist' | 'account-count' | 'yes-no-list'
+
+/** J2 (meeting #3, E1-E3): a yes answer on the question opens a blocking
+ *  note overlay - the explanation is required before the wizard moves on.
+ *  The note persists to form_data.behaviorNotes[questionId]. */
+export interface NoteOnYesDef {
+  heading: string
+  body: string
+  placeholder: string
+}
+
+/** J2 (meeting #3, E6): config for `yes-no-list` questions - a yes/no pick
+ *  plus, when yes, an addable string-list editor (bill-pay locations). */
+export interface YesNoListDef {
+  /** form_data key carrying the string list. */
+  listKey: 'billPayLocations'
+  label: string
+  placeholder?: string
+  addLabel: string
+}
 
 /**
  * I3 (plan §1 screen 7): a per-type "how many?" count card that generates
@@ -215,6 +242,12 @@ export interface QuestionDef {
    *  type-ahead sits above the fields; picking an existing record writes
    *  the link key, manual typing stays the create-new path. */
   contactPicker?: ContactPickerDef
+  /** J2 (E1-E3): a yes pick opens the mandatory explanation overlay instead
+   *  of advancing; the note lands in form_data.behaviorNotes[id]. */
+  noteOnYes?: NoteOnYesDef
+  /** J2 (E6): `yes-no-list` questions - the yes/no pick plus the string-list
+   *  editor shown when yes (never auto-advances; Continue commits). */
+  yesNoList?: YesNoListDef
   /** Branch predicate; question renders only when this returns true. */
   when?: (a: WizardAnswers) => boolean
   /** When false and the answer is empty, Continue acts as Skip. */
@@ -651,10 +684,16 @@ const MONTHLY_REPORTING = ['monthly_reporting_5', 'monthly_reporting_10', 'month
 /**
  * The service keys the quote and conversion see: the raw toggles from the
  * services question plus everything later answers imply (close tier,
- * QuickBooks setup, merchant reconciliation, bill pay, retroactive work).
- * Pure and unit-tested; both autosave and the live quote use this.
+ * QuickBooks setup, merchant reconciliation, bill recording, retroactive
+ * work). Pure and unit-tested; both autosave and the live quote use this.
+ *
+ * J2 (meeting #3, R7): the retroactive/cleanup question is gone - a
+ * books-start date BEFORE the current month qualifies retroactive work on
+ * its own ("the books-start date already qualifies it"). `today` is the
+ * current month; the wizard and buildPatch pass nothing and get the real
+ * clock (registry code is client-side), tests pin it explicitly.
  */
-export function effectiveServiceKeys(a: WizardAnswers): string[] {
+export function effectiveServiceKeys(a: WizardAnswers, today?: { year: number; month: number }): string[] {
   const set = new Set(a.serviceKeys ?? [])
   for (const k of MONTHLY_REPORTING) set.delete(k)
   for (const k of Object.values(REPORTING_BY_FREQUENCY)) set.delete(k)
@@ -674,13 +713,29 @@ export function effectiveServiceKeys(a: WizardAnswers): string[] {
   const derived: Array<[boolean | undefined, string]> = [
     [a.needsQuickbooksSetup, 'qbo_setup'],
     [a.includeMerchantReconciliation, 'merchant_account_reconciliation'],
-    [a.includeBillPay, 'record_bills'],
-    [a.includeRetroactive, 'retroactive_bookkeeping'],
+    // J2 (E6): record_bills derives from the record-bills answer; legacy
+    // intakes carrying includeBillPay keep their key.
+    [a.recordBills ?? a.includeBillPay, 'record_bills'],
   ]
   for (const [on, k] of derived) {
     if (on) set.add(k)
     else set.delete(k)
   }
+
+  // R7: retroactive scope derives from the books-start month being before
+  // the current month. Legacy includeRetroactive flags on old intakes no
+  // longer force the key - the start date is the qualifier.
+  const start = typeof a.bookkeepingStartDate === 'string'
+    ? /^(\d{4})-(\d{2})-\d{2}$/.exec(a.bookkeepingStartDate)
+    : null
+  const now = today ?? (() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1 } })()
+  const retroInScope =
+    isBookkeeping(a) &&
+    start != null &&
+    (Number(start[1]) < now.year || (Number(start[1]) === now.year && Number(start[2]) < now.month))
+  if (retroInScope) set.add('retroactive_bookkeeping')
+  else set.delete('retroactive_bookkeeping')
+
   return [...set]
 }
 
@@ -1581,18 +1636,19 @@ export const CHAPTERS: ChapterDef[] = [
         // I1 (00:33:00): dates are typed text (MM/DD/YYYY), no calendar
         // popups. The separate catch-up date screen is gone (00:33:42) -
         // buildPatch derives bankFeedCatchupDate from this date.
-        // A44 (00:22:04): Jason's conversational opener IS the question -
-        // "When was the last time you filed your taxes?" - with the
-        // books-start field beneath it ("So your books should start:"). The
-        // answer key stays bookkeepingStartDate.
+        // N2 (meeting #3, 00:56:09-00:57:43): the card is renamed "When
+        // would you like your bookkeeping to start?" everywhere (card +
+        // review row + extraction label); I7's taxes-filed framing survives
+        // only as Jason's verbal follow-up in the helper copy. The answer
+        // key stays bookkeepingStartDate.
         id: 'bk-start',
-        title: 'When was the last time you filed your taxes?',
-        help: 'The first month we are responsible for. Catch-up work starts from this date automatically.',
+        title: 'When would you like your bookkeeping to start?',
+        help: 'The first month we are responsible for. Catch-up work starts from this date automatically. Jason usually follows up with: when was the last time you filed taxes?',
         type: 'fields',
         required: true,
         when: isBookkeeping,
         fields: [
-          { key: 'bookkeepingStartDate', label: 'So your books should start:', kind: 'date-text', required: true, placeholder: '01/01/2026' },
+          { key: 'bookkeepingStartDate', label: 'Bookkeeping start date', kind: 'date-text', required: true, placeholder: '01/01/2026' },
         ],
         get: (a) => a.bookkeepingStartDate,
         apply: (_a, v) => v as Partial<WizardAnswers>,
@@ -1845,35 +1901,64 @@ export const CHAPTERS: ChapterDef[] = [
         // A41 (00:48:07): each money-behavior question is its own card.
         // Non-business deposits are owner money in - a yes seeds the monthly
         // owner-contribution review task at conversion.
+        // J2 (E1, 00:25:34): a yes opens the mandatory note overlay - no
+        // proceeding without the explanation; conversion carries it into the
+        // seeded task's description.
         id: 'deposits-non-business',
         title: 'Do they ever deposit anything that isn\'t business income?',
         help: 'Personal money put into the business to cover something. Yes means we review those deposits every month and record them as owner contributions - conversion seeds that task automatically.',
         type: 'select',
         required: true,
         ...yesNo('depositsNonBusiness'),
-        summarize: (a) => boolWord(a.depositsNonBusiness),
+        noteOnYes: {
+          heading: 'What deposits are coming through?',
+          body: 'This changes how we track these deposits - tell us what\'s coming through. The note rides the monthly review task this answer seeds.',
+          placeholder: 'Owner covers a bill from his personal account some months; rent refunds land here…',
+        },
+        summarize: (a) =>
+          a.depositsNonBusiness === true
+            ? join('Yes', str(a.behaviorNotes?.['deposits-non-business']))
+            : boolWord(a.depositsNonBusiness),
       },
       {
         // A41 (00:48:07): the flip side - personal spend paid from business
         // accounts. A yes seeds the monthly owner-draws confirmation task.
+        // J2 (E2, 00:26:30-00:27:56): same mandatory note overlay on yes.
         id: 'personal-on-business',
         title: 'Do they ever pay for non-business things on business accounts?',
         help: 'Groceries, personal subscriptions, a family dinner on the business card. Yes means we confirm owner draws with the client every month - conversion seeds that task automatically.',
         type: 'select',
         required: true,
         ...yesNo('personalOnBusiness'),
-        summarize: (a) => boolWord(a.personalOnBusiness),
+        noteOnYes: {
+          heading: 'What lands on the business accounts?',
+          body: 'This changes how we track that spend - tell us what comes through. The note rides the monthly owner-draws confirmation this answer seeds.',
+          placeholder: 'Groceries and the family Netflix hit the business debit card…',
+        },
+        summarize: (a) =>
+          a.personalOnBusiness === true
+            ? join('Yes', str(a.behaviorNotes?.['personal-on-business']))
+            : boolWord(a.personalOnBusiness),
       },
       {
         // B18 (01:04:29): a "sometimes" is a yes - the monthly chase task
         // seeds at conversion either way.
+        // J2 (E3, 00:27:56): same mandatory note overlay on yes.
         id: 'personal-card',
         title: 'Do they put business expenses on a personal credit card?',
         help: 'Yes means we ask for the breakdown every month - conversion seeds that reminder task automatically.',
         type: 'select',
         required: true,
         ...yesNo('personalCardForBusiness', { yes: 'Yes, sometimes or often', no: 'No' }),
-        summarize: (a) => boolWord(a.personalCardForBusiness),
+        noteOnYes: {
+          heading: 'Which personal card, and what lands on it?',
+          body: 'This changes how we track these - tell us what\'s coming through. The note rides the monthly breakdown reminder this answer seeds.',
+          placeholder: 'The owner\'s Amex picks up supplies and job-site lunches…',
+        },
+        summarize: (a) =>
+          a.personalCardForBusiness === true
+            ? join('Yes', str(a.behaviorNotes?.['personal-card']))
+            : boolWord(a.personalCardForBusiness),
       },
       {
         // I2 (00:48:07-00:49:44): corporate structures legally require an
@@ -1943,10 +2028,16 @@ export const CHAPTERS: ChapterDef[] = [
           hasPayroll(a) ? (FREQUENCY_LABELS[String(a.payrollFrequency)] ?? null) : null),
       },
       {
+        // J2 (P1, 00:29:31-00:31:33): payroll handling is MANDATORY when
+        // payroll runs - no skip without a selection - and the choices
+        // include "they process their own" (we just download and enter the
+        // reports). The self-processed pick is context, not a billable
+        // service: it rides form_data.payrollSelfProcessed, never
+        // serviceKeys, and it can never combine with us processing payroll.
         id: 'payroll-services',
         title: 'What should we do for payroll?',
         type: 'multi',
-        required: false,
+        required: true,
         when: hasPayroll,
         // I2: the payroll add-on is prompted for corporate entities.
         badge: (a) => (requiresOfficerPayroll(a) ? 'Recommended - corporate officers must be on payroll' : null),
@@ -1955,17 +2046,32 @@ export const CHAPTERS: ChapterDef[] = [
           { value: 'payroll_quarterly_filings', label: 'Quarterly filings' },
           { value: 'payroll_state_local_payments', label: 'State and local payments' },
           { value: 'payroll_hours_commission_calculations', label: 'Hours and commission calculations' },
+          { value: 'self_processed', label: 'They process their own payroll', sub: 'We just download and enter the reports' },
         ],
-        get: (a) => (a.serviceKeys ?? []).filter((k) => k.startsWith('payroll_') || k === 'process_payroll'),
+        get: (a) => [
+          ...(a.serviceKeys ?? []).filter((k) => k.startsWith('payroll_') || k === 'process_payroll'),
+          ...(a.payrollSelfProcessed === true ? ['self_processed'] : []),
+        ],
         apply: (a, v) => {
           const picked = new Set(v as string[])
+          // Self-processed and us-processing are mutually exclusive. When a
+          // toggle lands both, the NEW pick wins: the previously active one
+          // is the one that drops.
+          if (picked.has('self_processed') && picked.has('process_payroll')) {
+            if (a.payrollSelfProcessed === true) picked.delete('self_processed')
+            else picked.delete('process_payroll')
+          }
+          const selfProcessed = picked.delete('self_processed') // true when it was present
           const rest = (a.serviceKeys ?? []).filter((k) => !(k.startsWith('payroll_') || k === 'process_payroll'))
-          return { serviceKeys: [...rest, ...picked] }
+          return { serviceKeys: [...rest, ...picked], payrollSelfProcessed: selfProcessed }
         },
         summarize: (a) => {
           if (!hasPayroll(a)) return null
-          const ks = (a.serviceKeys ?? []).filter((k) => k.startsWith('payroll_') || k === 'process_payroll')
-          return ks.length > 0 ? ks.map(serviceLabel).join(', ') : null
+          const parts = (a.serviceKeys ?? [])
+            .filter((k) => k.startsWith('payroll_') || k === 'process_payroll')
+            .map(serviceLabel)
+          if (a.payrollSelfProcessed === true) parts.push('They process their own - we enter the reports')
+          return parts.length > 0 ? parts.join(', ') : null
         },
       },
     ],
@@ -2059,12 +2165,63 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: (a) => (str(a.accountingMethod) ? `${a.accountingMethod} basis` : null),
       },
       {
-        id: 'bill-pay',
-        title: 'Should we record and pay their bills?',
+        // J2 (E6, 00:33:11-00:35:53): the old combined bill-pay card split
+        // in two - recording is the prerequisite for paying. Both options
+        // exist on cash AND accrual books; the cash/accrual nuance is the
+        // one-line help.
+        id: 'record-bills',
+        title: 'Should we record their bills?',
+        help: 'Bills tracked as they come in, before anyone pays them. On accrual books, bills are recorded at the bill date.',
         type: 'select',
         required: true,
-        ...yesNo('includeBillPay'),
-        summarize: (a) => boolWord(a.includeBillPay),
+        options: [
+          { value: 'yes', label: 'Yes, record their bills' },
+          { value: 'no', label: 'No' },
+        ],
+        get: (a) => {
+          const v = a.recordBills ?? a.includeBillPay
+          return v === true ? 'yes' : v === false ? 'no' : undefined
+        },
+        // Answering no retires the pay answer and its locations with it
+        // (same never-stale rule as the LLC subclass, I2).
+        apply: (_a, v) =>
+          v === 'yes'
+            ? { recordBills: true }
+            : { recordBills: false, payBills: false, billPayLocations: [] },
+        summarize: (a) => boolWord(a.recordBills ?? a.includeBillPay),
+      },
+      {
+        // J2 (E6): pay requires record - the card only renders once recording
+        // is a yes, and its yes apply force-sets recordBills for data paths
+        // that skip the branch (extraction, legacy edits). The locations
+        // list rides along when paying.
+        id: 'pay-bills',
+        title: 'Will we be paying those bills?',
+        help: 'Paying runs on top of recording - we never pay bills we are not recording.',
+        type: 'yes-no-list',
+        required: true,
+        when: (a) => (a.recordBills ?? a.includeBillPay) === true,
+        options: [
+          { value: 'yes', label: 'Yes, we pay them', sub: 'List where below - every place bills get paid' },
+          { value: 'no', label: 'No, they pay their own' },
+        ],
+        yesNoList: {
+          listKey: 'billPayLocations',
+          label: 'Where do the bills get paid?',
+          placeholder: 'Vendor websites, bank bill pay, checks we mail…',
+          addLabel: 'Add a place',
+        },
+        get: (a) => (a.payBills === true ? 'yes' : a.payBills === false ? 'no' : undefined),
+        apply: (_a, v) =>
+          v === 'yes'
+            ? { payBills: true, recordBills: true }
+            : { payBills: false, billPayLocations: [] },
+        summarize: (a) => {
+          if ((a.recordBills ?? a.includeBillPay) !== true) return null
+          if (a.payBills !== true) return boolWord(a.payBills)
+          const locations = (a.billPayLocations ?? []).filter((l) => str(l))
+          return join('Yes', locations.length > 0 ? `pays at: ${locations.join(', ')}` : null)
+        },
       },
       {
         id: 'ten99-services',
@@ -2092,11 +2249,17 @@ export const CHAPTERS: ChapterDef[] = [
         },
       },
       {
+        // J2 (meeting #3): the estimated count is asked whenever ANY 1099
+        // service level is on - collection or management included - and the
+        // quote prices count x the admin-configurable per-filing rate.
         id: 'ten99-count',
         title: 'About how many 1099 filings per year?',
         type: 'fields',
         required: false,
-        when: (a) => (a.serviceKeys ?? []).includes('1099_per_filing'),
+        when: (a) =>
+          (a.serviceKeys ?? []).some((k) =>
+            k === '1099_collection' || k === '1099_full_management' || k === '1099_per_filing',
+          ),
         fields: [{ key: 'estimated1099Count', label: 'Estimated filings (optional)', kind: 'number', min: 0, max: 999, placeholder: '4' }],
         get: (a) => a.estimated1099Count,
         apply: (_a, v) => {
@@ -2106,7 +2269,8 @@ export const CHAPTERS: ChapterDef[] = [
         },
         summarize: (a) => {
           const n = a.estimated1099Count
-          return (a.serviceKeys ?? []).includes('1099_per_filing') && n != null ? `~${n} filings` : null
+          const any1099 = (a.serviceKeys ?? []).some((k) => k.startsWith('1099_'))
+          return any1099 && n != null ? `~${n} filings` : null
         },
       },
       {
@@ -2126,7 +2290,15 @@ export const CHAPTERS: ChapterDef[] = [
             { key: 'dataSource', label: 'Data source (optional)', kind: 'text', half: true, placeholder: 'Client portal, QBO, …' },
             { key: 'estimatedHours', label: 'Est. hours (optional)', kind: 'number', min: 0, max: 200, half: true, placeholder: '3' },
             { key: 'flatPrice', label: 'Flat price per report (optional)', kind: 'number', min: 0, max: 100000, half: true, placeholder: '450' },
-            { key: 'missedFilings', label: 'Missed past filings (optional)', kind: 'number', min: 0, max: 999, half: true, placeholder: '18' },
+            // J2 (meeting #3): the missed-filings count input became a
+            // yes/no toggle; yes requires the most-recent-filing date (the
+            // I1 date kind). The quote DERIVES the missed count from that
+            // date x the cadence through today.
+            { key: 'missedFilings', label: 'There are missed past filings', kind: 'checkbox' },
+            {
+              key: 'lastFiledDate', label: 'Most recent filing', kind: 'date-text', half: true, placeholder: '06/30/2026',
+              requiredIf: (v) => v.missedFilings === true,
+            },
           ],
           itemValid: (i) => !!str(i.name) && !!str(i.frequency),
           summarize: (i) => String(i.name),
@@ -2134,8 +2306,13 @@ export const CHAPTERS: ChapterDef[] = [
             const parts = [FREQUENCY_LABELS[String(i.frequency)] ?? null]
             const price = specialtyPriceLabel(i)
             if (price) parts.push(price)
-            const missed = Number(i.missedFilings)
-            if (Number.isFinite(missed) && missed > 0) parts.push(`${missed} missed`)
+            // J2: the yes/no + date shape; a legacy numeric count still renders.
+            if (i.missedFilings === true) {
+              parts.push(join('missed filings', i.lastFiledDate ? `last filed ${dateTextLabel(i.lastFiledDate)}` : null) ?? 'missed filings')
+            } else {
+              const missed = Number(i.missedFilings)
+              if (Number.isFinite(missed) && missed > 0) parts.push(`${missed} missed`)
+            }
             return join(...parts)
           },
         },
@@ -2147,7 +2324,13 @@ export const CHAPTERS: ChapterDef[] = [
             dataSource: str(i.dataSource),
             estimatedHours: numOrNull(i.estimatedHours),
             flatPrice: numOrNull(i.flatPrice),
-            missedFilings: numOrNull(i.missedFilings),
+            // J2: boolean toggle + the last-filed date; a legacy numeric
+            // count (extraction/pre-J2 intakes) passes through untouched.
+            missedFilings:
+              i.missedFilings === true || i.missedFilings === false
+                ? i.missedFilings
+                : numOrNull(i.missedFilings),
+            lastFiledDate: i.missedFilings === true ? str(i.lastFiledDate) : null,
           })),
         }),
         summarize: (a) => {
@@ -2155,26 +2338,28 @@ export const CHAPTERS: ChapterDef[] = [
           return rs.length > 0 ? rs.map((r) => r.name).join(', ') : null
         },
       },
+      {
+        // J2 (R6, 00:41:18): some clients want the package before their open
+        // questions are answered. Conversion notes the choice on the seeded
+        // Send Reports rule (the lightest home: the person sending reports
+        // sees it where the work happens).
+        id: 'preliminary-reports',
+        title: 'Send preliminary reports before questions are answered?',
+        help: 'Yes means the monthly package goes out at the close even when client questions are still open, marked preliminary. No means reports wait for answers.',
+        type: 'select',
+        required: true,
+        ...yesNo('sendPreliminaryReports'),
+        summarize: (a) => boolWord(a.sendPreliminaryReports),
+      },
     ],
   },
   {
     id: 'recurring',
     label: 'Recurring and notes',
     questions: [
-      {
-        id: 'retroactive',
-        title: 'Any retroactive or cleanup work?',
-        help: 'Months of back books to rebuild before the regular cadence starts.',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'yes', label: 'Yes, there is cleanup to do', note: 'Priced month by month from the books start date at the quote\'s effective monthly rate, as a one-time amount.' },
-          { value: 'no', label: 'No, starting clean' },
-        ],
-        get: (a) => (a.includeRetroactive === true ? 'yes' : a.includeRetroactive === false ? 'no' : undefined),
-        apply: (_a, v) => ({ includeRetroactive: v === 'yes' }),
-        summarize: (a) => boolWord(a.includeRetroactive),
-      },
+      // J2 (R7, 00:39:26): the retroactive/cleanup question is removed - the
+      // books-start date already qualifies retroactive work (the pricing
+      // derivation from that date is untouched; see effectiveServiceKeys).
       {
         // B21 (01:13:35): the §19 defaults are a select-all-by-default
         // checklist - unselect per client before conversion, which seeds

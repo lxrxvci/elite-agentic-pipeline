@@ -78,8 +78,8 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
 
   // ── Starting point: new client; books start January 1, 2025 typed in ──
   await pick(page, 'option-no', 'bk-start')
-  await page.getByLabel('So your books should start:').fill('01/01/2025')
-  await expect(page.getByLabel('So your books should start:')).toHaveValue('01/01/2025')
+  await page.getByLabel('Bookkeeping start date').fill('01/01/2025')
+  await expect(page.getByLabel('Bookkeeping start date')).toHaveValue('01/01/2025')
   // A45: the established date card follows (optional).
   await advance(page, 'biz-established')
   // ── Balance sheet: one checking account via the I3 count card ──
@@ -127,13 +127,14 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
     timeout: 15_000,
   })
 
-  await pick(page, 'option-cash', 'bill-pay')
-  await pick(page, 'option-no', 'ten99-services')
+  await pick(page, 'option-cash', 'record-bills')
+  await pick(page, 'option-no', 'ten99-services') // no bill recording (E6 split; pay-bills never renders)
   await advance(page, 'reports') // skip 1099
-  await advance(page, 'retroactive') // skip special reports
+  await advance(page, 'preliminary-reports') // skip special reports
 
-  // ── Retroactive cleanup: yes - the 2025 start prices a one-time line ──
-  await pick(page, 'option-yes', 'default-rules')
+  // ── Retroactive cleanup: R7 removed the question - the January 2025
+  // start date qualifies it on its own and prices the one-time line ──
+  await pick(page, 'option-no', 'default-rules') // reports wait for answers (R6)
   await advance(page, 'rules') // keep the four standard routines selected (B21)
   const retroSummary = page.getByTestId('retroactive-summary')
   await expect(retroSummary).toBeVisible({ timeout: 15_000 })

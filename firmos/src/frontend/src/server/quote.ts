@@ -1,7 +1,9 @@
 import {
   calculateQuote,
   isReconciliationBillableAccount,
+  parseLocalDate,
   PRICING,
+  reportMonthsForFrequency,
   type CustomItemInput,
   type LocalDate,
   type PricingOverrides,
@@ -13,7 +15,7 @@ import {
 
 import { statementDayForIntakeAccount } from "./accounts-seed";
 import { localToday } from "./dates";
-import type { IntakeCustomItemInput, IntakeFormData } from "./intake";
+import type { IntakeCustomItemInput, IntakeFormData, IntakeReportDefinition } from "./intake";
 import { getPricingOverrides } from "./pricing-config";
 
 /**
@@ -72,25 +74,74 @@ function defaultQuantityFor(key: string, answers: IntakeQuoteAnswers): number | 
 }
 
 /**
+ * J2 (meeting #3): the wizard captures missed filings as a yes/no plus the
+ * most-recent-filing date; the COUNT derives from that date x the report's
+ * cadence through today. Rule: every cadence period strictly after the
+ * last-filed month and strictly before the current month is missed (the
+ * current period is being worked live, not yet owed - same convention as
+ * retroactive bookkeeping). A legacy/extraction raw count passes through.
+ */
+export function missedFilingsThrough(
+  lastFiledDate: string,
+  frequency: string,
+  today: LocalDate,
+): number {
+  const months = reportMonthsForFrequency(frequency);
+  if (months.length === 0) return 0;
+  const last = parseLocalDate(lastFiledDate);
+  let count = 0;
+  for (let year = last.year; year <= today.year; year++) {
+    for (const month of months) {
+      const afterLast = year > last.year || (year === last.year && month > last.month);
+      const beforeToday = year < today.year || (year === today.year && month < today.month);
+      if (afterLast && beforeToday) count += 1;
+    }
+  }
+  return count;
+}
+
+/** The quote-facing missed count for one intake report definition. */
+function missedCountFor(r: IntakeReportDefinition, today: LocalDate): number | null {
+  if (typeof r.missedFilings === "number") return r.missedFilings;
+  if (r.missedFilings === true && r.lastFiledDate) {
+    // A hand-edited form_data row with an unparseable date derives nothing
+    // (the recurring line still prices; no retro line is guessed).
+    try {
+      return missedFilingsThrough(r.lastFiledDate, r.frequency, today);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
  * C10: specialty report definitions price into the quote at their own
  * cadence. Only definitions carrying pricing data (hours, a flat price, or a
  * missed-filings count) reach the engine; pure tracking definitions stay out
  * of the money (they still materialize report rows at conversion). The quote
  * line keys (specialty_report_{n}) index into THIS filtered array, so every
  * caller of buildRecurringServicesTemplate must pass the same list.
+ *
+ * J2: `today` drives the missed-count derivation from lastFiledDate. It
+ * defaults to the firm-local today; any caller that also computes the quote
+ * with an explicit today (conversion) must pass the SAME today here so the
+ * template's retro line quantities match the quote's.
  */
 export function specialtyReportsFromIntake(
   answers: Pick<IntakeQuoteAnswers, "reportDefinitions">,
+  today: LocalDate = localToday(),
 ): SpecialtyReportInput[] {
   return (answers.reportDefinitions ?? [])
-    .filter((r) => r.estimatedHours != null || r.flatPrice != null || (r.missedFilings ?? 0) > 0)
-    .map((r) => ({
-      name: r.name,
-      frequency: r.frequency,
-      estimatedHours: r.estimatedHours ?? null,
-      flatPrice: r.flatPrice ?? null,
-      hourlyRate: r.hourlyRate ?? null,
-      missedFilings: r.missedFilings ?? null,
+    .map((r) => ({ def: r, missed: missedCountFor(r, today) }))
+    .filter(({ def, missed }) => def.estimatedHours != null || def.flatPrice != null || (missed ?? 0) > 0)
+    .map(({ def, missed }) => ({
+      name: def.name,
+      frequency: def.frequency,
+      estimatedHours: def.estimatedHours ?? null,
+      flatPrice: def.flatPrice ?? null,
+      hourlyRate: def.hourlyRate ?? null,
+      missedFilings: missed,
     }));
 }
 
@@ -109,6 +160,21 @@ function toQuoteInput(answers: IntakeQuoteAnswers, today: LocalDate): QuoteInput
     };
   });
 
+  // J2 (meeting #3): the 1099 estimated count is captured whenever ANY 1099
+  // service level is on, and it always prices count x the per-filing rate
+  // (admin-configurable, $10 default). Collection/management answers ride
+  // the same per-filing line; an explicit per-filing pick already carries
+  // the count via defaultQuantityFor, so it is never duplicated.
+  const estimated1099 = answers.estimated1099Count ?? null;
+  if (
+    estimated1099 != null &&
+    estimated1099 > 0 &&
+    !requestedHas(services, "1099_per_filing") &&
+    (requestedHas(services, "1099_collection") || requestedHas(services, "1099_full_management"))
+  ) {
+    services.push({ key: "1099_per_filing", quantity: estimated1099 });
+  }
+
   const customItems: CustomItemInput[] = (answers.customItems ?? []).map((item, i) => ({
     key: `custom_item_${i + 1}`,
     product_name: item.productName,
@@ -118,8 +184,9 @@ function toQuoteInput(answers: IntakeQuoteAnswers, today: LocalDate): QuoteInput
   }));
 
   // C10 specialty reports: see specialtyReportsFromIntake (only priced
-  // definitions reach the engine).
-  const specialtyReports = specialtyReportsFromIntake(answers);
+  // definitions reach the engine). J2: the same `today` threads into the
+  // missed-count derivation so the quote and the template agree.
+  const specialtyReports = specialtyReportsFromIntake(answers, today);
 
   // QBO pass-through (owner walkthrough): every QuickBooks status ends on
   // QBO, so any answered status prices the tier line - recommended from the
@@ -275,6 +342,9 @@ export interface QuoteAmountStamps {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+const requestedHas = (services: QuoteServiceInput[], key: string): boolean =>
+  services.some((s) => s.key === key);
 
 /**
  * The three amount columns stamped on the client at conversion/resync:

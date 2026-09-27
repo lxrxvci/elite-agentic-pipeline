@@ -450,20 +450,35 @@ describe('effectiveServiceKeys', () => {
     expect(keys).toEqual([])
   })
 
-  it('adds and removes derived services with their yes/no answers', () => {
-    const on = effectiveServiceKeys({
-      ...base,
-      serviceKeys: [],
-      needsQuickbooksSetup: true,
-      includeMerchantReconciliation: true,
-      includeBillPay: true,
-      includeRetroactive: true,
-    })
+  it('adds and removes derived services with their answers (E6/J2: record_bills rides recordBills, retro derives from the start date)', () => {
+    const on = effectiveServiceKeys(
+      {
+        ...base,
+        serviceKeys: [],
+        needsQuickbooksSetup: true,
+        includeMerchantReconciliation: true,
+        recordBills: true,
+        bookkeepingStartDate: '2026-01-01',
+      },
+      { year: 2026, month: 9 },
+    )
     expect(on).toEqual(expect.arrayContaining(['qbo_setup', 'merchant_account_reconciliation', 'record_bills', 'retroactive_bookkeeping']))
 
-    const off = effectiveServiceKeys({ ...base, serviceKeys: ['qbo_setup', 'record_bills'] })
+    const off = effectiveServiceKeys({ ...base, serviceKeys: ['qbo_setup', 'record_bills'] }, { year: 2026, month: 9 })
     expect(off).not.toContain('qbo_setup')
     expect(off).not.toContain('record_bills')
+    // No start date -> no retro scope; a legacy includeRetroactive flag no
+    // longer forces it (R7: the question is gone, the date qualifies).
+    expect(off).not.toContain('retroactive_bookkeeping')
+    expect(
+      effectiveServiceKeys({ ...base, serviceKeys: [], includeRetroactive: true }, { year: 2026, month: 9 }),
+    ).not.toContain('retroactive_bookkeeping')
+    // A start date in the current month is not retro yet (worked live).
+    expect(
+      effectiveServiceKeys({ ...base, serviceKeys: [], bookkeepingStartDate: '2026-09-01' }, { year: 2026, month: 9 }),
+    ).not.toContain('retroactive_bookkeeping')
+    // Legacy bill-pay flag still derives record_bills for old intakes.
+    expect(effectiveServiceKeys({ ...base, serviceKeys: [], includeBillPay: true })).toContain('record_bills')
   })
 })
 
@@ -494,8 +509,8 @@ describe('firstUnansweredScreen (resume)', () => {
       bookkeepingFrequency: 'monthly',
       monthlyCloseTier: '10',
       accountingMethod: 'cash',
-      includeBillPay: false,
-      includeRetroactive: false,
+      recordBills: false,
+      sendPreliminaryReports: false,
     }
     const screens = flattenScreens(full)
     expect(screens[firstUnansweredScreen(full)]).toEqual({ kind: 'review' })
@@ -517,8 +532,8 @@ describe('firstUnansweredScreen (resume)', () => {
       bookkeepingFrequency: 'monthly',
       monthlyCloseTier: '10',
       accountingMethod: 'cash',
-      includeBillPay: false,
-      includeRetroactive: false,
+      recordBills: false,
+      sendPreliminaryReports: false,
     }
     const screens = flattenScreens(nearlyFull)
     expect(screens[firstUnansweredScreen(nearlyFull)]).toMatchObject({ questionId: 're-yes' })
@@ -539,13 +554,14 @@ describe('B18 personal-card question', () => {
 
 // ── I7 closeout wave (A44 + A45 + A41) ─────────────────────────────────────
 
-describe('A44 taxes-filed framing on the books-start question', () => {
+describe('N2 renamed books-start question (meeting #3, supersedes A44)', () => {
   const bkStart = findQuestion('starting', 'bk-start')!
 
-  it('the conversational opener is the question title, with the books-start lead-in on the field', () => {
-    expect(bkStart.title).toBe('When was the last time you filed your taxes?')
+  it('the title is "When would you like your bookkeeping to start?" everywhere, with the taxes-filed framing demoted to helper copy', () => {
+    expect(bkStart.title).toBe('When would you like your bookkeeping to start?')
+    expect(String(bkStart.help)).toContain('Jason usually follows up with: when was the last time you filed taxes?')
     expect(bkStart.fields?.map((f) => [f.key, f.label])).toEqual([
-      ['bookkeepingStartDate', 'So your books should start:'],
+      ['bookkeepingStartDate', 'Bookkeeping start date'],
     ])
     // The answer key never moved (I1 date-text, masked MM/DD/YYYY).
     expect(bkStart.fields?.[0]?.kind).toBe('date-text')
@@ -646,7 +662,7 @@ describe('C10 specialty report capture', () => {
         dataSource: 'Client portal',
         estimatedHours: '',
         flatPrice: '200',
-        missedFilings: '18',
+        missedFilings: '18', // legacy numeric draft shape
       },
     ])
     expect(patch.reportDefinitions?.[0]).toEqual({
@@ -656,12 +672,47 @@ describe('C10 specialty report capture', () => {
       estimatedHours: null,
       flatPrice: 200,
       missedFilings: 18,
+      lastFiledDate: null,
     })
+  })
+
+  it('J2: the missed-filings toggle + last-filed date replace the raw count input', () => {
+    const patch = reportsQ.apply(base, [
+      {
+        name: 'Oregon Special Report',
+        frequency: 'quarterly',
+        dataSource: '',
+        estimatedHours: '2',
+        flatPrice: '',
+        missedFilings: true,
+        lastFiledDate: '2026-03-31',
+      },
+    ])
+    expect(patch.reportDefinitions?.[0]).toEqual({
+      name: 'Oregon Special Report',
+      frequency: 'quarterly',
+      dataSource: null,
+      estimatedHours: 2,
+      flatPrice: null,
+      missedFilings: true,
+      lastFiledDate: '2026-03-31',
+    })
+    // A no toggle drops any stray date.
+    const declined = reportsQ.apply(base, [
+      { name: 'X', frequency: 'annual', missedFilings: false, lastFiledDate: '2026-03-31' },
+    ])
+    expect(declined.reportDefinitions?.[0]?.missedFilings).toBe(false)
+    expect(declined.reportDefinitions?.[0]?.lastFiledDate).toBeNull()
   })
 
   it('summarizes the chip with cadence and a dollar-free pricing note (I4: no money before review)', () => {
     const sub = reportsQ.repeatable!.sub!
     expect(sub({ name: 'X', frequency: 'monthly', estimatedHours: 3 })).toBe('Monthly · 3h estimated')
+    // J2: the yes/no + date renders the last-filed date; the legacy numeric
+    // count still renders for pre-J2 rows.
+    expect(sub({ name: 'X', frequency: 'annual', flatPrice: 200, missedFilings: true, lastFiledDate: '2026-03-31' })).toBe(
+      'Annual · flat price set · missed filings · last filed Mar 31, 2026',
+    )
     expect(sub({ name: 'X', frequency: 'annual', flatPrice: 200, missedFilings: 18 })).toBe(
       'Annual · flat price set · 18 missed',
     )
@@ -669,7 +720,7 @@ describe('C10 specialty report capture', () => {
     // The pricing inputs still capture the numbers - they just never render
     // as text outside the review (the server quote prices the report).
     expect(reportsQ.repeatable!.itemFields.map((f) => f.key)).toEqual(
-      expect.arrayContaining(['estimatedHours', 'flatPrice', 'missedFilings']),
+      expect.arrayContaining(['estimatedHours', 'flatPrice', 'missedFilings', 'lastFiledDate']),
     )
     // No dollar figure anywhere in the question's rendered copy.
     expect(JSON.stringify(reportsQ)).not.toMatch(/\$\d/)
@@ -1524,5 +1575,123 @@ describe('payroll provider is a database dropdown (J1, P2/DB1)', () => {
     expect(q.required).toBe(true)
     expect(q.apply(base, 'Gusto')).toEqual({ payrollProvider: 'Gusto' })
     expect(q.summarize({ ...base, hasPayroll: true, payrollProvider: 'Rippling' })).toBe('Rippling')
+  })
+})
+
+// ── J2 (meeting #3): interaction-fix wave pins ────────────────────────────
+
+describe('J2 bills split (E6)', () => {
+  const reporting = CHAPTERS.find((c) => c.id === 'reporting')!
+  const record = findQuestion('reporting', 'record-bills')!
+  const pay = findQuestion('reporting', 'pay-bills')!
+
+  it('pay_bills_requires_record_bills', () => {
+    // The old combined card is gone; the split sits where it was.
+    const ids = visibleQuestions(reporting, base).map((q) => q.id)
+    expect(ids).not.toContain('bill-pay')
+    expect(ids).toContain('record-bills')
+    expect(ids).not.toContain('pay-bills') // gated until record = yes
+    expect(ids.indexOf('record-bills')).toBeLessThan(ids.indexOf('ten99-services'))
+
+    // Pay renders only once recording is a yes...
+    expect(pay.when?.({ ...base, recordBills: true })).toBe(true)
+    expect(pay.when?.({ ...base, recordBills: false })).toBe(false)
+    expect(pay.when?.(base)).toBe(false)
+    // ...and a pay=yes data path force-sets recordBills (extraction, legacy).
+    expect(pay.apply(base, 'yes')).toEqual({ payBills: true, recordBills: true })
+
+    // Recording flipped to no retires the pay answer and its locations.
+    expect(record.apply(base, 'no')).toEqual({ recordBills: false, payBills: false, billPayLocations: [] })
+    expect(record.apply(base, 'yes')).toEqual({ recordBills: true })
+  })
+
+  it('the cash/accrual nuance is the one-line help copy', () => {
+    expect(String(record.help)).toContain('On accrual books, bills are recorded at the bill date.')
+  })
+
+  it('review rows: record answer, then pay answer with its locations', () => {
+    expect(record.summarize({ ...base, recordBills: true })).toBe('Yes')
+    expect(record.summarize({ ...base, recordBills: false })).toBe('No')
+    expect(pay.summarize({ ...base, recordBills: false, payBills: true })).toBeNull() // hidden with the card
+    expect(pay.summarize({ ...base, recordBills: true, payBills: false })).toBe('No')
+    expect(
+      pay.summarize({ ...base, recordBills: true, payBills: true, billPayLocations: ['Vendor websites', 'Bank bill pay'] }),
+    ).toBe('Yes · pays at: Vendor websites, Bank bill pay')
+  })
+})
+
+describe('J2 retroactive question removal (R7)', () => {
+  it('retro_question_gone', () => {
+    // No chapter carries the retroactive/cleanup question anymore...
+    expect(findQuestion('recurring', 'retroactive')).toBeUndefined()
+    const recurring = CHAPTERS.find((c) => c.id === 'recurring')!
+    expect(visibleQuestions(recurring, base).map((q) => q.id)).toEqual(['default-rules', 'rules', 'notes'])
+    // ...and the review has no row for it (no summarize survives it).
+    const ids = flattenScreens(base).flatMap((s) => (s.kind === 'question' ? [s.questionId] : []))
+    expect(ids).not.toContain('retroactive')
+  })
+
+  it('the start date qualifies retroactive work on its own', () => {
+    // The pricing derivation is untouched - a past start month scopes retro.
+    const keys = effectiveServiceKeys(
+      { ...base, serviceKeys: [], bookkeepingStartDate: '2026-01-01' },
+      { year: 2026, month: 9 },
+    )
+    expect(keys).toContain('retroactive_bookkeeping')
+  })
+})
+
+describe('J2 preliminary reports option (R6)', () => {
+  const prelim = findQuestion('reporting', 'preliminary-reports')!
+
+  it('is a required yes/no at the end of the reporting chapter with helper copy', () => {
+    const reporting = CHAPTERS.find((c) => c.id === 'reporting')!
+    const ids = visibleQuestions(reporting, base).map((q) => q.id)
+    expect(ids[ids.length - 1]).toBe('preliminary-reports')
+    expect(prelim.required).toBe(true)
+    expect(prelim.apply(base, 'yes')).toEqual({ sendPreliminaryReports: true })
+    expect(prelim.summarize({ ...base, sendPreliminaryReports: true })).toBe('Yes')
+    expect(String(prelim.help)).toContain('marked preliminary')
+  })
+})
+
+describe('J2 1099 estimated count (meeting #3)', () => {
+  const count = findQuestion('reporting', 'ten99-count')!
+
+  it('asks whenever any 1099 service level is on - collection, management, or per filing', () => {
+    expect(count.when?.({ ...base, serviceKeys: ['1099_collection'] })).toBe(true)
+    expect(count.when?.({ ...base, serviceKeys: ['1099_full_management'] })).toBe(true)
+    expect(count.when?.({ ...base, serviceKeys: ['1099_per_filing'] })).toBe(true)
+    expect(count.when?.({ ...base, serviceKeys: [] })).toBe(false)
+    expect(count.summarize({ ...base, serviceKeys: ['1099_collection'], estimated1099Count: 12 })).toBe('~12 filings')
+  })
+})
+
+describe('J2 payroll-services mandatory handling (P1, registry half)', () => {
+  const services = findQuestion('income', 'payroll-services')!
+
+  it('is required, offers self-processed, and keeps it out of serviceKeys', () => {
+    expect(services.required).toBe(true)
+    expect(services.options?.map((o) => o.value)).toContain('self_processed')
+    // get() merges the flag into the rendered selection...
+    expect(services.get({ ...base, payrollSelfProcessed: true })).toEqual(['self_processed'])
+    expect(services.get({ ...base, serviceKeys: ['payroll_quarterly_filings'], payrollSelfProcessed: true })).toEqual([
+      'payroll_quarterly_filings',
+      'self_processed',
+    ])
+    // ...and apply() stores it off the service keys.
+    expect(services.apply({ ...base, serviceKeys: [] }, ['self_processed', 'payroll_quarterly_filings'])).toEqual({
+      serviceKeys: ['payroll_quarterly_filings'],
+      payrollSelfProcessed: true,
+    })
+  })
+
+  it('the review row names the self-processed choice', () => {
+    expect(
+      services.summarize({ ...base, hasPayroll: true, payrollSelfProcessed: true, serviceKeys: [] }),
+    ).toBe('They process their own - we enter the reports')
+    expect(
+      services.summarize({ ...base, hasPayroll: true, payrollSelfProcessed: true, serviceKeys: ['payroll_quarterly_filings'] }),
+    ).toBe('Payroll quarterly filings, They process their own - we enter the reports')
   })
 })

@@ -202,7 +202,7 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await expect(question).toHaveAttribute('data-question', 'existing-client')
   await page.getByTestId('option-no').click()
   await expect(question).toHaveAttribute('data-question', 'bk-start')
-  await page.getByLabel('So your books should start:').pressSequentially('01012026')
+  await page.getByLabel('Bookkeeping start date').pressSequentially('01012026')
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'biz-established')
   await page.getByTestId('continue').click()
@@ -221,6 +221,26 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await expect(page.getByTestId('account-label-0')).toHaveText('Chase Checking · 4411')
   await settle()
   await expectAccessible(page, 'wizard - account mini-form with last-4')
+
+  // J2 (E1-E3): the blocking behavior-note overlay scans clean. Walk the
+  // remaining balance cards to the income chapter and answer a yes.
+  for (const id of ['savings-accounts', 'credit-cards', 'vehicles', 'other-assets', 'loans']) {
+    await page.getByTestId('continue').click()
+    await expect(question).toHaveAttribute('data-question', id)
+  }
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 're-yes')
+  await page.getByTestId('option-no').click()
+  await expect(question).toHaveAttribute('data-question', 'payment-methods')
+  await page.getByTestId('continue').click() // skip payment methods
+  await expect(question).toHaveAttribute('data-question', 'deposits-non-business')
+  await page.getByTestId('option-yes').click()
+  await expect(page.getByTestId('behavior-note-dialog')).toBeVisible()
+  await settle()
+  await expectAccessible(page, 'wizard - mandatory behavior-note overlay (E1)')
+  await page.getByTestId('behavior-note-input').fill('Owner covers a bill from his personal account some months')
+  await page.getByTestId('behavior-note-save').click()
+  await expect(question).toHaveAttribute('data-question', 'personal-on-business')
 })
 
 test('calendar has no serious/critical axe violations', async ({ page }) => {

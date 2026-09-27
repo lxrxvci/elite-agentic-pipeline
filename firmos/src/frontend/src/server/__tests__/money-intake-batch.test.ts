@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/db";
 import {
+  clientNotes,
   clients,
   invoiceLineItems,
   invoices,
@@ -692,5 +693,301 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
     // Newest first by id is the timeline's default sort.
     expect(rows[1].id).toBeGreaterThan(rows[0].id);
     expect(rows.map((r) => r.status)).toEqual(["draft", "draft"]);
+  });
+});
+
+// ── J2 (meeting #3) server-layer pins ──────────────────────────────────────
+
+describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
+  let ownerId: number;
+  let bookkeeperId: number;
+
+  beforeAll(async () => {
+    await seedDatabase(TEST_TODAY);
+    ownerId = await userIdByEmail("mara@blueledgerbooks.com");
+    bookkeeperId = await userIdByEmail("sofia@blueledgerbooks.com");
+  });
+
+  // Item 5: the estimated 1099 count prices count x the per-filing rate when
+  // collection OR management is selected (never duplicated when the explicit
+  // per-filing service is already on).
+  it("ten99_estimate_prices_count_times_rate", async () => {
+    const collection = await calculateIntakeQuoteWithConfig(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management", "1099_collection"],
+        estimated1099Count: 12,
+      },
+      TEST_TODAY,
+    );
+    const line = collection.lines.find((l) => l.service_key === "1099_per_filing")!;
+    expect(line.unit_price).toBe(10);
+    expect(line.quantity).toBe(12);
+    expect(line.amount).toBe(120);
+    // February-billed: the per-filing line lands in the annual bucket with
+    // the collection service ($50/yr), off the monthly rate.
+    expect(collection.totals.totalFebruaryBilledAnnual).toBe(170);
+
+    const management = await calculateIntakeQuoteWithConfig(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management", "1099_full_management"],
+        estimated1099Count: 4,
+      },
+      TEST_TODAY,
+    );
+    expect(management.lines.find((l) => l.service_key === "1099_per_filing")?.amount).toBe(40);
+
+    // An explicit per-filing pick already carries the count - one line only.
+    const explicit = await calculateIntakeQuoteWithConfig(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management", "1099_per_filing"],
+        estimated1099Count: 7,
+      },
+      TEST_TODAY,
+    );
+    expect(explicit.lines.filter((l) => l.service_key === "1099_per_filing")).toHaveLength(1);
+    expect(explicit.lines.find((l) => l.service_key === "1099_per_filing")?.amount).toBe(70);
+
+    // No count -> no line (never a guessed filing count).
+    const noCount = await calculateIntakeQuoteWithConfig(
+      { bookkeepingFrequency: "monthly", serviceKeys: ["bank_feed_management", "1099_collection"] },
+      TEST_TODAY,
+    );
+    expect(noCount.lines.some((l) => l.service_key === "1099_per_filing")).toBe(false);
+  });
+
+  // Item 6 (R6): the missed-filings count derives from the last-filed date x
+  // cadence through today; the retro one-time pricing keeps working.
+  it("missed_filings_derive_from_last_filed_date", async () => {
+    // Monthly report last filed 2026-05-20, today 2026-08-15: June and July
+    // periods are owed (the current August period is being worked live).
+    const quote = await calculateIntakeQuoteWithConfig(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management"],
+        reportDefinitions: [
+          { name: "City lodging tax", frequency: "monthly", flatPrice: 200, missedFilings: true, lastFiledDate: "2026-05-20" },
+        ],
+      },
+      TEST_TODAY,
+    );
+    const retro = quote.lines.find((l) => l.service_key === "specialty_report_1_retro")!;
+    expect(retro.quantity).toBe(2);
+    expect(retro.amount).toBe(400);
+    expect(retro.bucket).toBe("one_time");
+    // The recurring line prices too (cadence-normalized).
+    expect(quote.lines.some((l) => l.service_key === "specialty_report_1")).toBe(true);
+
+    // Quarterly: last filed Q1 (2026-03-31) -> only the Q2 period is owed by 2026-08-15.
+    const quarterly = await calculateIntakeQuoteWithConfig(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management"],
+        reportDefinitions: [
+          { name: "OR quarterly", frequency: "quarterly", flatPrice: 100, missedFilings: true, lastFiledDate: "2026-03-31" },
+        ],
+      },
+      TEST_TODAY,
+    );
+    expect(quarterly.lines.find((l) => l.service_key === "specialty_report_1_retro")?.quantity).toBe(1);
+
+    // Legacy raw counts still price verbatim (pre-J2 intakes / extraction).
+    const legacy = await calculateIntakeQuoteWithConfig(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management"],
+        reportDefinitions: [{ name: "Old report", frequency: "annual", flatPrice: 200, missedFilings: 3 }],
+      },
+      TEST_TODAY,
+    );
+    expect(legacy.lines.find((l) => l.service_key === "specialty_report_1_retro")?.quantity).toBe(3);
+
+    // Yes without a date (defensive - the wizard blocks it) prices nothing.
+    const noDate = await calculateIntakeQuoteWithConfig(
+      {
+        bookkeepingFrequency: "monthly",
+        serviceKeys: ["bank_feed_management"],
+        reportDefinitions: [{ name: "Mystery", frequency: "monthly", flatPrice: 200, missedFilings: true }],
+      },
+      TEST_TODAY,
+    );
+    expect(noDate.lines.some((l) => l.service_key.includes("_retro"))).toBe(false);
+  });
+
+  // Items E1-E3: the mandatory notes ride into the seeded tasks' descriptions.
+  it("behavior_notes_ride_into_the_seeded_task_descriptions", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Behavior Notes Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+        depositsNonBusiness: true,
+        personalOnBusiness: true,
+        personalCardForBusiness: true,
+        behaviorNotes: {
+          "deposits-non-business": "Owner covers a bill from his personal account some months",
+          "personal-on-business": "Groceries hit the business debit card",
+          "personal-card": "The Amex picks up supplies",
+        },
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, { bookkeeperId }, ownerId, TEST_TODAY);
+    const rules = await db
+      .select()
+      .from(recurringTasks)
+      .where(eq(recurringTasks.clientId, result.clientId));
+    expect(rules.find((r) => r.title === NON_BUSINESS_DEPOSITS_REVIEW_TITLE)?.description).toBe(
+      "Client context from intake: Owner covers a bill from his personal account some months",
+    );
+    expect(rules.find((r) => r.title === OWNER_DRAWS_CONFIRMATION_TITLE)?.description).toBe(
+      "Client context from intake: Groceries hit the business debit card",
+    );
+    expect(rules.find((r) => r.title === PERSONAL_CARD_REMINDER_TITLE)?.description).toBe(
+      "Client context from intake: The Amex picks up supplies",
+    );
+
+    // A yes with no stored note (legacy intakes) seeds the task with no description.
+    const legacyId = await reviewableIntake({
+      legalName: "Behavior Legacy Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+        personalCardForBusiness: true,
+      },
+    });
+    const legacy = await convertIntakeToClient(legacyId, { bookkeeperId }, ownerId, TEST_TODAY);
+    const legacyRules = await db
+      .select()
+      .from(recurringTasks)
+      .where(eq(recurringTasks.clientId, legacy.clientId));
+    const reminder = legacyRules.find((r) => r.title === PERSONAL_CARD_REMINDER_TITLE);
+    expect(reminder).toBeDefined();
+    expect(reminder!.description).toBeNull();
+  });
+
+  // Item E6: the bills split lands on the client record as a note; the record
+  // side keeps pricing via record_bills (template check).
+  it("bills_split_notes_land_on_the_client_record", async () => {
+    const payId = await reviewableIntake({
+      legalName: "Bill Pay Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "15",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management", "record_bills"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+        recordBills: true,
+        payBills: true,
+        billPayLocations: ["Vendor websites", "Bank bill pay"],
+      },
+    });
+    const payResult = await convertIntakeToClient(payId, {}, ownerId, TEST_TODAY);
+    const payNotes = await db
+      .select()
+      .from(clientNotes)
+      .where(eq(clientNotes.clientId, payResult.clientId));
+    expect(payNotes.map((n) => n.body)).toContain(
+      "Bills: we record and pay them. Bills get paid at: Vendor websites, Bank bill pay.",
+    );
+
+    const recordOnlyId = await reviewableIntake({
+      legalName: "Record Only Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "15",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management", "record_bills"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+        recordBills: true,
+        payBills: false,
+      },
+    });
+    const recordOnly = await convertIntakeToClient(recordOnlyId, {}, ownerId, TEST_TODAY);
+    const recordNotes = await db
+      .select()
+      .from(clientNotes)
+      .where(eq(clientNotes.clientId, recordOnly.clientId));
+    expect(recordNotes.map((n) => n.body)).toContain("Bills: we record them; the client pays their own.");
+  });
+
+  // Item P1: self-processed payroll notes the client record; no
+  // payroll-processing work or quote line seeds from it.
+  it("self_processed_payroll_notes_the_client_and_seeds_no_processing_work", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Self Payroll Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "15",
+      bookkeepingStartDate: "2026-01-01",
+      payrollProvider: "Gusto",
+      formData: {
+        serviceKeys: ["bank_feed_management", "payroll_quarterly_filings"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+        hasPayroll: true,
+        payrollSelfProcessed: true,
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, ownerId, TEST_TODAY);
+    const notes = await db.select().from(clientNotes).where(eq(clientNotes.clientId, result.clientId));
+    expect(notes.map((n) => n.body)).toContain(
+      "Payroll: they process their own payroll (Gusto) - we download and enter the reports.",
+    );
+    // The billing template carries no payroll-processing line.
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    const template = client.recurringServicesTemplate as TemplateLineItem[];
+    expect(template.some((l) => l.service_key === "process_payroll")).toBe(false);
+    expect(template.some((l) => l.service_key === "payroll_quarterly_filings")).toBe(true);
+    // And no payroll-processing recurring task exists for anyone.
+    const rules = await db.select().from(recurringTasks).where(eq(recurringTasks.clientId, result.clientId));
+    expect(rules.some((r) => /process payroll/i.test(r.title))).toBe(false);
+  });
+
+  // Item R6: the preliminary-reports choice notes the seeded Send Reports rule.
+  it("preliminary_reports_note_rides_the_send_reports_rule", async () => {
+    const yesId = await reviewableIntake({
+      legalName: "Prelim Reports Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+        sendPreliminaryReports: true,
+      },
+    });
+    const yesResult = await convertIntakeToClient(yesId, {}, ownerId, TEST_TODAY);
+    const yesRules = await db
+      .select()
+      .from(recurringTasks)
+      .where(eq(recurringTasks.clientId, yesResult.clientId));
+    const sendReports = yesRules.find((r) => r.title === "Send Reports");
+    expect(sendReports?.description).toBe(
+      "Send the package even when client questions are still open, marked preliminary (intake choice).",
+    );
+
+    const noId = await reviewableIntake({
+      legalName: "No Prelim Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+        sendPreliminaryReports: false,
+      },
+    });
+    const noResult = await convertIntakeToClient(noId, {}, ownerId, TEST_TODAY);
+    const noRules = await db
+      .select()
+      .from(recurringTasks)
+      .where(eq(recurringTasks.clientId, noResult.clientId));
+    expect(noRules.find((r) => r.title === "Send Reports")?.description ?? null).toBeNull();
   });
 });

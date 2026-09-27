@@ -180,8 +180,8 @@ const completeAnswers: WizardAnswers = {
   bookkeepingFrequency: 'monthly',
   monthlyCloseTier: '10',
   accountingMethod: 'cash',
-  includeBillPay: false,
-  includeRetroactive: false,
+  recordBills: false,
+  sendPreliminaryReports: false,
 }
 
 beforeEach(() => {
@@ -608,5 +608,123 @@ describe('quote_hidden_until_review (I4, plan §3D, 00:22:46-00:24:22)', () => {
     // …and a whole-screen scan: no $ figure anywhere with the rail hidden.
     expect(container.textContent).not.toMatch(/\$\d/)
     expect(screen.queryByTestId('live-quote')).toBeNull()
+  })
+})
+
+describe('J2/B1 spacebar regression (meeting #3, 00:04:23)', () => {
+  it('spacebar_never_saves_a_text_field', async () => {
+    // Pre-fix, the main-contact name round-tripped through splitFullName on
+    // every keystroke: a trailing space was trimmed by the re-derived value,
+    // the controlled input snapped back, and the apply fired the autosave -
+    // "I can't push space... space bar saves it." The typing buffer keeps the
+    // field's text exactly as typed.
+    vi.useFakeTimers()
+    renderWizard({ legalName: 'Test Co' })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'main-contact')
+
+    const input = screen.getByLabelText('Full name')
+    // The typing path, character by character - the space must land.
+    fireEvent.change(input, { target: { value: 'Wren' } })
+    fireEvent.change(input, { target: { value: 'Wren ' } })
+    expect(input).toHaveValue('Wren ')
+    fireEvent.change(input, { target: { value: 'Wren Okafor' } })
+    expect(input).toHaveValue('Wren Okafor')
+
+    // No submit, no advance: the wizard is still parked on main-contact.
+    expect(submitIntakeForReview).not.toHaveBeenCalled()
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'main-contact')
+
+    // And the committed answer carries the full name (split on commit).
+    await act(async () => {
+      vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
+    })
+    expect(saveIntake).toHaveBeenCalled()
+    const last = saveIntake.mock.calls.at(-1)?.[0] as {
+      patch: { formData?: { contacts?: Array<{ firstName?: string; lastName?: string }> } }
+    }
+    expect(last.patch.formData?.contacts?.[0]).toMatchObject({ firstName: 'Wren', lastName: 'Okafor' })
+  })
+})
+
+describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
+  // Answers complete through the income chapter's payment methods, so the
+  // wizard resumes exactly at the deposits-non-business card.
+  const beforeBehavior: WizardAnswers = {
+    legalName: 'Test Co',
+    contacts: [{ firstName: 'Wren', isPrimary: true }],
+    taxStructure: 'LLC',
+    llcSubclass: 'llc_sml',
+    hasCpa: false,
+    engagementType: 'bookkeeping',
+    quickbooksStatus: 'existing',
+    qboUserCount: 2,
+    serviceKeys: ['bank_feed_management'],
+    isExistingClient: false,
+    bookkeepingStartDate: '2026-01-01',
+    isRealEstateClient: false,
+    paymentMethods: ['check'],
+  }
+
+  it('yes_answer_requires_explanation_note', async () => {
+    renderWizard(beforeBehavior)
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
+
+    // Picking yes opens the blocking overlay instead of advancing.
+    fireEvent.click(screen.getByTestId('option-yes'))
+    expect(screen.getByTestId('behavior-note-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
+
+    // Empty cannot save (the button is disabled) and Escape cannot dismiss.
+    expect(screen.getByTestId('behavior-note-save')).toBeDisabled()
+    fireEvent.keyDown(screen.getByTestId('behavior-note-dialog'), { key: 'Escape' })
+    expect(screen.getByTestId('behavior-note-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
+
+    // Saving the note applies the yes + note and moves on (the advance rides
+    // the standard auto-advance timer, so the save flush sees the applied yes).
+    fireEvent.change(screen.getByTestId('behavior-note-input'), {
+      target: { value: 'Owner covers a bill from his personal account some months' },
+    })
+    fireEvent.click(screen.getByTestId('behavior-note-save'))
+    expect(screen.queryByTestId('behavior-note-dialog')).toBeNull()
+    await waitFor(() =>
+      expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'personal-on-business'),
+    )
+
+    // The note persists into form_data.behaviorNotes with the answer.
+    await waitFor(() => expect(saveIntake).toHaveBeenCalled())
+    const last = saveIntake.mock.calls.at(-1)?.[0] as {
+      patch: { formData?: { depositsNonBusiness?: boolean; behaviorNotes?: Record<string, string> } }
+    }
+    expect(last.patch.formData?.depositsNonBusiness).toBe(true)
+    expect(last.patch.formData?.behaviorNotes?.['deposits-non-business']).toBe(
+      'Owner covers a bill from his personal account some months',
+    )
+  })
+
+  it('go back discards the yes pick entirely; a later no retires a stored note', async () => {
+    vi.useFakeTimers()
+    renderWizard(beforeBehavior)
+    fireEvent.click(screen.getByTestId('option-yes'))
+    fireEvent.click(screen.getByTestId('behavior-note-cancel'))
+    // Nothing applied: still on the card, no selection.
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
+    expect(screen.getByTestId('option-yes')).not.toHaveAttribute('data-selected', 'true')
+
+    // A no advances straight away and clears any prior note.
+    fireEvent.click(screen.getByTestId('option-no'))
+    await act(async () => {
+      vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
+    })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'personal-on-business')
+    await act(async () => {
+      vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
+    })
+    expect(saveIntake).toHaveBeenCalled()
+    const last = saveIntake.mock.calls.at(-1)?.[0] as {
+      patch: { formData?: { depositsNonBusiness?: boolean; behaviorNotes?: Record<string, string> } }
+    }
+    expect(last.patch.formData?.depositsNonBusiness).toBe(false)
+    expect(last.patch.formData?.behaviorNotes?.['deposits-non-business']).toBeUndefined()
   })
 })
