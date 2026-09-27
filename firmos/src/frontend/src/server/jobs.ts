@@ -386,8 +386,9 @@ export async function w9ReminderJob(now: Date = new Date()): Promise<W9ReminderS
 export async function staleCleanupJob(now: Date = new Date()): Promise<StaleCleanupResult> {
   const result = await runStaleCleanup(now);
   // §16 - idle/auto-clock-out warnings push IMMEDIATELY. runStaleCleanup
-  // writes its auto_clock_out rows directly, so stamp their push here (the
-  // rows are fresh by definition; delivery itself is push.ts's seam).
+  // writes its idle_warning/auto_clock_out rows directly, so stamp their
+  // push here (the rows are fresh by definition; delivery itself is
+  // push.ts's seam).
   await db
     .update(notifications)
     .set({ pushSentAt: now })

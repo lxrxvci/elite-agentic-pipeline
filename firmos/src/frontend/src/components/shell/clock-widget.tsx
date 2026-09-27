@@ -16,16 +16,32 @@ import {
   clockInAction,
   clockOutAction,
   getClockStatusAction,
+  getIdleGapAction,
   heartbeatAction,
+  idleAutoClockOutAction,
   listClockClientsAction,
+  resolveIdleTimeAction,
   startActivityAction,
   type TimerStartData,
 } from '@/server/actions/time'
-import type { ClockClientOption, ClockStatus, NonDayActivityType } from '@/server/time-tracking'
+import type {
+  ClockClientOption,
+  ClockStatus,
+  IdleForgivenessChoice,
+  IdleGap,
+  NonDayActivityType,
+} from '@/server/time-tracking'
 import { ACTIVITY_META, ACTIVITY_TYPES, formatClock } from '@/components/reports/format'
 import { toastTimerSwitch } from '@/shared/lib/clock-status'
 import { isBreakActivityType } from '@firmos/domain'
 import { cn } from '@/shared/lib/utils'
+
+import {
+  IdleCountdownModal,
+  IdleExplainerDialog,
+  IdleForgivenessDialog,
+} from './idle-clock-dialogs'
+import { useIdleClock } from './use-idle-clock'
 
 /**
  * Top-bar time clock (HANDOFF §6.6, §17), Clock-C1 client-first: the widget
@@ -45,12 +61,23 @@ import { cn } from '@/shared/lib/utils'
  *
  * Every work start carries a client (server-enforced); a start that
  * auto-stops the previous timer toasts "Stopped X and switched". Poll 30s,
- * heartbeat 60s while clocked in, display tick 1s.
+ * heartbeat 60s while clocked in (paused while idle - the countdown owns the
+ * clock), display tick 1s.
+ *
+ * Clock-C2 idle system (see use-idle-clock + idle-clock-dialogs): idle past
+ * the user's threshold opens a 2-minute countdown modal; expiry closes the
+ * session via the idle auto-close path. Returning from any past-threshold
+ * idle stretch - or loading the app after the server closed the session
+ * while away - opens Toggl's four-choice forgiveness dialog with the gap
+ * pre-computed. Focus/visibility-return fire immediate heartbeats (the
+ * original's fix for "tab switch clocks me out").
  */
 
 const POLL_MS = 30_000
 const HEARTBEAT_MS = 60_000
 const TICK_MS = 1_000
+/** The countdown modal's run length once the user is idle past threshold. */
+const COUNTDOWN_SECONDS = 120
 
 type WidgetState = 'loading' | 'out' | 'in' | 'autoOut'
 
@@ -70,7 +97,17 @@ function fuzzyMatch(name: string, query: string): boolean {
   return q.length === 0
 }
 
-export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
+export function ClockWidget({
+  pollMs = POLL_MS,
+  idleThresholdMs,
+  countdownSeconds = COUNTDOWN_SECONDS,
+}: {
+  pollMs?: number
+  /** Test override for the user's idle threshold (status carries the real one). */
+  idleThresholdMs?: number
+  /** Test override for the countdown modal's run length. */
+  countdownSeconds?: number
+}) {
   const [status, setStatus] = React.useState<ClockStatus | null>(null)
   const [autoOut, setAutoOut] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
@@ -79,6 +116,11 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
   const [clients, setClients] = React.useState<ClockClientOption[] | null>(null)
   const [clientQuery, setClientQuery] = React.useState('')
   const [, setTick] = React.useState(0)
+  // Clock-C2 idle state: the countdown's remaining seconds while it shows,
+  // and the pending return-time forgiveness gap.
+  const [countdown, setCountdown] = React.useState<number | null>(null)
+  const [gap, setGap] = React.useState<IdleGap | null>(null)
+  const [gapBusy, setGapBusy] = React.useState(false)
 
   // True only for a clock-out the user initiated from this widget - any
   // other in -> out transition means the server closed the session (stale).
@@ -87,6 +129,15 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
   // The kind a bare client switch resumes: the running work kind, else the
   // last work kind seen this session, else "tasks".
   const lastWorkKindRef = React.useRef<NonDayActivityType>('tasks')
+  // Clock-C2: the idle stretch's baseline (the server's last_activity_at the
+  // widget saw when idle began - the return heartbeat stamps it before the
+  // server could read the old value, so the baseline must be client-kept).
+  const idleBasisRef = React.useRef<string | null>(null)
+  const wasIdleRef = React.useRef(false)
+  // The closed-while-away gap fetch runs once per clocked-out stretch.
+  const closedGapCheckedRef = React.useRef(false)
+  // A dialog dismissed (Esc/X) without choosing never re-opens on a poll.
+  const dismissedGapRef = React.useRef<number | null>(null)
 
   const applyStatus = React.useCallback((next: ClockStatus) => {
     if (clockedInRef.current && !next.clockedIn && !localClockOutRef.current) {
@@ -121,15 +172,114 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
 
   const clockedIn = status?.clockedIn === true && !autoOut
 
+  // Clock-C2 idle detection: IdleDetector (with the one-time explainer)
+  // where available, in-tab fallback elsewhere. Runs only while clocked in.
+  const idle = useIdleClock({
+    enabled: clockedIn,
+    thresholdMs: idleThresholdMs ?? (status?.idleTimeoutMinutes ?? 15) * 60_000,
+  })
+
+  // Clock-C2: the countdown modal shows while the user sits idle past the
+  // threshold; the tick owns it and the expiry effect closes the clock.
+  React.useEffect(() => {
+    if (!idle.idle || !clockedIn) {
+      setCountdown(null)
+      return
+    }
+    const startedAt = Date.now()
+    setCountdown(countdownSeconds)
+    const timer = setInterval(() => {
+      const remaining = countdownSeconds - Math.floor((Date.now() - startedAt) / 1000)
+      setCountdown(remaining)
+      if (remaining <= 0) clearInterval(timer)
+    }, 250)
+    return () => clearInterval(timer)
+  }, [idle.idle, clockedIn, countdownSeconds])
+
+  // Clock-C2: capture the idle baseline once per stretch, and on any return
+  // from a past-threshold stretch fetch the forgiveness gap (BEFORE any
+  // heartbeat could overwrite the server's baseline - the observed baseline
+  // rides the call) and then heartbeat to hold the session.
+  React.useEffect(() => {
+    if (idle.idle) {
+      if (!wasIdleRef.current) {
+        wasIdleRef.current = true
+        idleBasisRef.current =
+          status?.lastActivityAt ??
+          (idle.idleSince != null ? new Date(idle.idleSince).toISOString() : null)
+      }
+      return
+    }
+    if (!wasIdleRef.current) return
+    wasIdleRef.current = false
+    void (async () => {
+      const result = await getIdleGapAction(idleBasisRef.current)
+      if (result.ok && result.data && dismissedGapRef.current !== result.data.dayEntryId) {
+        setGap(result.data)
+      }
+      if (clockedInRef.current) void heartbeatAction()
+    })()
+    // status is read through the latest render - the effect keys on the flip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idle.idle])
+
+  // Countdown expiry: close via the idle auto-close path (server records
+  // autoClosed); the forgiveness dialog opens with the recorded gap.
+  React.useEffect(() => {
+    if (countdown == null || countdown > 0) return
+    setCountdown(null)
+    void (async () => {
+      const result = await idleAutoClockOutAction()
+      if (result.ok) applyStatus(result.data)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown])
+
+  // Clock-C2 closed-while-away: once per clocked-out stretch, ask whether an
+  // auto-closed session is waiting on a forgiveness decision (page load or
+  // poll after the sweep/countdown closed it).
+  React.useEffect(() => {
+    if (status == null) return
+    if (status.clockedIn) {
+      closedGapCheckedRef.current = false
+      return
+    }
+    if (gap != null || closedGapCheckedRef.current) return
+    closedGapCheckedRef.current = true
+    void (async () => {
+      const result = await getIdleGapAction(null)
+      if (result.ok && result.data && dismissedGapRef.current !== result.data.dayEntryId) {
+        setGap(result.data)
+      }
+    })()
+  }, [status, gap])
+
   React.useEffect(() => {
     if (!clockedIn) return
-    const beat = setInterval(() => void heartbeatAction(), HEARTBEAT_MS)
     const tick = setInterval(() => setTick((t) => t + 1), TICK_MS)
+    return () => clearInterval(tick)
+  }, [clockedIn])
+
+  // Clock-C2 heartbeat contract: the 60s interval runs only while the user
+  // is ACTIVE (while idle the countdown owns the clock - stamping activity
+  // would erase the idle stretch the forgiveness math needs), plus immediate
+  // beats on visibility-return and window focus (the original's fix for
+  // "tab switch clocks me out": a hidden tab's interval can starve).
+  React.useEffect(() => {
+    if (!clockedIn || idle.idle) return
+    const beat = setInterval(() => void heartbeatAction(), HEARTBEAT_MS)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void heartbeatAction()
+    }
+    const onFocus = () => void heartbeatAction()
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('focus', onFocus)
     return () => {
       clearInterval(beat)
-      clearInterval(tick)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('focus', onFocus)
     }
-  }, [clockedIn])
+  }, [clockedIn, idle.idle])
 
   async function run(action: () => Promise<{ ok: true; data: ClockStatus } | { ok: false; error: string }>) {
     setBusy(true)
@@ -168,6 +318,61 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
       setBusy(false)
     }
   }
+
+  // Clock-C2: apply one of the four forgiveness choices. The observed idle
+  // baseline rides the call for the open case (the return heartbeat may have
+  // stamped over the server's baseline); closed gaps are all server truth.
+  async function chooseIdleResolution(choice: IdleForgivenessChoice) {
+    if (gap == null) return
+    setGapBusy(true)
+    try {
+      const result = await resolveIdleTimeAction(
+        choice,
+        gap.alreadyClosed ? null : idleBasisRef.current,
+      )
+      const { toast } = await import('sonner')
+      if (result.ok) {
+        applyStatus(result.data.status)
+        const { outcome, restartedLabel } = result.data.result
+        if (outcome === 'closed_at_idle_start') toast.success('Idle time discarded')
+        else if (outcome === 'restarted') {
+          toast.success(
+            restartedLabel ? `Idle time discarded - back on ${restartedLabel}` : 'Idle time discarded - clocked back in',
+          )
+        } else if (outcome === 'idle_block_added') toast.success('Idle stretch logged as a separate entry')
+        else if (outcome === 'kept') toast.success('Idle time kept')
+        // The resolution is final for this day entry even before the server
+        // audit marker is visible to the next gap fetch.
+        dismissedGapRef.current = gap.dayEntryId
+        setGap(null)
+        setCountdown(null)
+      } else {
+        toast.error(result.error)
+      }
+    } finally {
+      setGapBusy(false)
+    }
+  }
+
+  const idleDialogs = (
+    <>
+      <IdleExplainerDialog
+        open={idle.explainerOpen}
+        onAccept={idle.acceptExplainer}
+        onDecline={idle.declineExplainer}
+      />
+      <IdleCountdownModal open={countdown != null && clockedIn} secondsLeft={countdown ?? 0} />
+      <IdleForgivenessDialog
+        gap={gap}
+        busy={gapBusy}
+        onChoose={(choice) => void chooseIdleResolution(choice)}
+        onDismiss={() => {
+          dismissedGapRef.current = gap?.dayEntryId ?? null
+          setGap(null)
+        }}
+      />
+    </>
+  )
 
   const activity = status?.currentActivity ?? null
   const openTimers = status?.openTaskTimers ?? []
@@ -250,41 +455,47 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
 
   if (state === 'out') {
     return (
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={busy}
-        onClick={() => void run(clockInAction)}
-        className="h-8 gap-1.5 text-muted-foreground"
-        aria-label="Time clock - not clocked in"
-        data-testid="clock-widget"
-        data-state="out"
-      >
-        <Clock aria-hidden className="h-3.5 w-3.5" />
-        <span className="text-xs">Not clocked in</span>
-        <span className="text-xs font-medium text-foreground">Clock in</span>
-      </Button>
+      <>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => void run(clockInAction)}
+          className="h-8 gap-1.5 text-muted-foreground"
+          aria-label="Time clock - not clocked in"
+          data-testid="clock-widget"
+          data-state="out"
+        >
+          <Clock aria-hidden className="h-3.5 w-3.5" />
+          <span className="text-xs">Not clocked in</span>
+          <span className="text-xs font-medium text-foreground">Clock in</span>
+        </Button>
+        {idleDialogs}
+      </>
     )
   }
 
   if (state === 'autoOut') {
     return (
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={busy}
-        onClick={() => void run(clockInAction)}
-        className="h-8 gap-1.5 border-status-due-soon/50 text-status-due-soon"
-        aria-label="Time clock - clocked out automatically, clock back in"
-        data-testid="clock-widget"
-        data-state="auto-out"
-      >
-        <TimerReset aria-hidden className="h-3.5 w-3.5" />
-        <span className="text-xs">Clocked out automatically</span>
-        <span className="text-xs font-medium text-foreground">Clock back in</span>
-      </Button>
+      <>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => void run(clockInAction)}
+          className="h-8 gap-1.5 border-status-due-soon/50 text-status-due-soon"
+          aria-label="Time clock - clocked out automatically, clock back in"
+          data-testid="clock-widget"
+          data-state="auto-out"
+        >
+          <TimerReset aria-hidden className="h-3.5 w-3.5" />
+          <span className="text-xs">Clocked out automatically</span>
+          <span className="text-xs font-medium text-foreground">Clock back in</span>
+        </Button>
+        {idleDialogs}
+      </>
     )
   }
 
@@ -312,11 +523,12 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
       : 'Pick a client to start timing'
 
   return (
-    <div
-      className="flex h-8 items-center overflow-hidden rounded-md border border-border"
-      data-testid="clock-widget"
-      data-state="in"
-    >
+    <>
+      <div
+        className="flex h-8 items-center overflow-hidden rounded-md border border-border"
+        data-testid="clock-widget"
+        data-state="in"
+      >
       <span
         className="flex h-full items-center gap-1.5 border-r border-border bg-status-on-track-bg/40 px-2.5"
         aria-label={`Clocked in for ${formatClock(daySeconds)}`}
@@ -516,6 +728,8 @@ export function ClockWidget({ pollMs = POLL_MS }: { pollMs?: number }) {
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+      </div>
+      {idleDialogs}
+    </>
   )
 }

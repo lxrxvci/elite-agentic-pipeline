@@ -52,10 +52,11 @@ export const workstationTimeEntries = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }).notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
     durationMinutes: integer("duration_minutes"),
-    // Heartbeat target; the stale-cleanup job closes sessions idle beyond
-    // the user's idle_timeout_minutes (§17).
+    // Heartbeat target; the stale-cleanup job warns at idle_timeout - 2 min
+    // and closes sessions at idle_timeout + 10 min paid grace (§17, Clock-C2).
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true, mode: "date" }),
-    // True when closed by the idle/max-session stale-cleanup job.
+    // True when closed by the idle/max-session stale-cleanup job, the client
+    // idle countdown, or stamped on a forgiveness "idle" block (Clock-C2).
     autoClosed: boolean("auto_closed").notNull().default(false),
     createdAt: createdAt(),
   },

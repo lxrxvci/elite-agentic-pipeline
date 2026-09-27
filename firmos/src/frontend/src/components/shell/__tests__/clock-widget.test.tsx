@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,11 +6,14 @@ import {
   clockInAction,
   clockOutAction,
   getClockStatusAction,
+  getIdleGapAction,
   heartbeatAction,
+  idleAutoClockOutAction,
   listClockClientsAction,
+  resolveIdleTimeAction,
   startActivityAction,
 } from '@/server/actions/time'
-import type { ClockClientOption, ClockStatus } from '@/server/time-tracking'
+import type { ClockClientOption, ClockStatus, IdleGap } from '@/server/time-tracking'
 
 import { ClockWidget } from '../clock-widget'
 
@@ -21,6 +24,9 @@ vi.mock('@/server/actions/time', () => ({
   startActivityAction: vi.fn(),
   getClockStatusAction: vi.fn(),
   listClockClientsAction: vi.fn(),
+  getIdleGapAction: vi.fn(),
+  idleAutoClockOutAction: vi.fn(),
+  resolveIdleTimeAction: vi.fn(),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -30,6 +36,10 @@ const mockClockIn = vi.mocked(clockInAction)
 const mockClockOut = vi.mocked(clockOutAction)
 const mockStartActivity = vi.mocked(startActivityAction)
 const mockClients = vi.mocked(listClockClientsAction)
+const mockHeartbeat = vi.mocked(heartbeatAction)
+const mockGetIdleGap = vi.mocked(getIdleGapAction)
+const mockIdleAutoClockOut = vi.mocked(idleAutoClockOutAction)
+const mockResolveIdleTime = vi.mocked(resolveIdleTimeAction)
 vi.mocked(heartbeatAction).mockResolvedValue({ ok: true, data: { touched: 1 } })
 
 const CLIENTS: ClockClientOption[] = [
@@ -45,6 +55,7 @@ function status(partial: Partial<ClockStatus>): ClockStatus {
     currentActivity: null,
     openTaskTimers: [],
     lastActivityAt: null,
+    idleTimeoutMinutes: 15,
     ...partial,
   }
 }
@@ -73,6 +84,16 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(heartbeatAction).mockResolvedValue({ ok: true, data: { touched: 1 } })
   mockClients.mockResolvedValue({ ok: true, data: CLIENTS })
+  // Clock-C2 defaults: no pending forgiveness gap, auto-close + resolve succeed.
+  mockGetIdleGap.mockResolvedValue({ ok: true, data: null })
+  mockIdleAutoClockOut.mockResolvedValue({ ok: true, data: status({}) })
+  mockResolveIdleTime.mockResolvedValue({
+    ok: true,
+    data: {
+      status: status({}),
+      result: { resolved: true, choice: 'keep', outcome: 'kept', restartedLabel: null },
+    },
+  })
 })
 
 describe('ClockWidget', () => {
@@ -281,5 +302,239 @@ describe('ClockWidget', () => {
     await waitFor(() =>
       expect(screen.getByTestId('clock-widget')).toHaveAttribute('data-state', 'in'),
     )
+  })
+})
+
+/** An open-session gap (the entry still runs; the user came back). */
+function openGap(partial: Partial<IdleGap> = {}): IdleGap {
+  return {
+    dayEntryId: 41,
+    idleStartedAt: new Date(Date.now() - 17 * 60_000).toISOString(),
+    gapEndAt: new Date().toISOString(),
+    idleMinutes: 15,
+    alreadyClosed: false,
+    activityType: 'tasks',
+    clientId: 1,
+    clientName: 'Harborline Marine Supply',
+    referenceType: null,
+    referenceId: null,
+    taskId: null,
+    taskTitle: null,
+    ...partial,
+  }
+}
+
+describe('ClockWidget - Clock-C2 idle system', () => {
+  it('idle past threshold shows the countdown modal; any activity cancels it into the 4-choice forgiveness dialog', async () => {
+    mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
+    mockGetIdleGap.mockResolvedValue({ ok: true, data: openGap() })
+
+    // jsdom has no IdleDetector: this is the fallback path (and no explainer).
+    render(<ClockWidget idleThresholdMs={150} countdownSeconds={5} />)
+    await screen.findByTestId('clock-elapsed')
+    expect(screen.queryByTestId('idle-explainer-dialog')).not.toBeInTheDocument()
+
+    const modal = await screen.findByTestId('idle-countdown-modal', {}, { timeout: 3000 })
+    expect(modal).toHaveTextContent(/still there/i)
+    expect(screen.getByTestId('idle-countdown-time').textContent).toMatch(/^00:0[1-5]$/)
+
+    // Any activity cancels the countdown - and the return opens the
+    // forgiveness dialog with the gap pre-computed.
+    fireEvent.keyDown(window, { key: 'a' })
+    const dialog = await screen.findByTestId('idle-forgiveness-dialog')
+    expect(screen.queryByTestId('idle-countdown-modal')).not.toBeInTheDocument()
+    expect(dialog).toHaveTextContent(/welcome back/i)
+    expect(screen.getByTestId('idle-forgiveness-desc')).toHaveTextContent(
+      /away for 15 min while clocked in on Harborline Marine Supply/i,
+    )
+    // Exactly the four Toggl choices.
+    expect(screen.getByTestId('idle-choice-discard')).toHaveTextContent('Discard idle time')
+    expect(screen.getByTestId('idle-choice-discard-continue')).toHaveTextContent('Discard & continue')
+    expect(screen.getByTestId('idle-choice-add-entry')).toHaveTextContent('Add idle as separate entry')
+    expect(screen.getByTestId('idle-choice-keep')).toHaveTextContent('Keep idle time')
+
+    // The observed idle baseline rode the gap call (the return heartbeat may
+    // already have stamped over the server's baseline).
+    expect(mockGetIdleGap).toHaveBeenCalledWith(expect.any(String))
+
+    // The server never re-offers a resolved gap (the audit marker) - the
+    // mock mirrors that once the choice lands.
+    mockGetIdleGap.mockResolvedValue({ ok: true, data: null })
+    await userEvent.click(screen.getByTestId('idle-choice-keep'))
+    expect(mockResolveIdleTime).toHaveBeenCalledWith('keep', expect.any(String))
+    await waitFor(() =>
+      expect(screen.queryByTestId('idle-forgiveness-dialog')).not.toBeInTheDocument(),
+    )
+    // The return also heartbeats to hold the session open.
+    expect(mockHeartbeat).toHaveBeenCalled()
+  })
+
+  it('countdown expiry closes the session through the idle auto-close path', async () => {
+    mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
+    mockIdleAutoClockOut.mockResolvedValue({ ok: true, data: status({}) })
+
+    render(<ClockWidget idleThresholdMs={150} countdownSeconds={1} />)
+    await screen.findByTestId('idle-countdown-modal', {}, { timeout: 3000 })
+
+    await waitFor(() => expect(mockIdleAutoClockOut).toHaveBeenCalledTimes(1), { timeout: 4000 })
+    // The returned status flips the widget to the auto-out re-clock state.
+    await waitFor(() =>
+      expect(screen.getByTestId('clock-widget')).toHaveAttribute('data-state', 'auto-out'),
+    )
+  })
+
+  it('closed while away: the forgiveness dialog opens on load and discard & continue re-clocks', async () => {
+    mockStatus.mockResolvedValue({ ok: true, data: status({}) })
+    mockGetIdleGap.mockResolvedValue({
+      ok: true,
+      data: openGap({ alreadyClosed: true, idleMinutes: 25 }),
+    })
+    mockResolveIdleTime.mockResolvedValue({
+      ok: true,
+      data: {
+        status: clockedInStatus,
+        result: {
+          resolved: true,
+          choice: 'discard_continue',
+          outcome: 'restarted',
+          restartedLabel: 'Harborline Marine Supply',
+        },
+      },
+    })
+
+    render(<ClockWidget />)
+    const dialog = await screen.findByTestId('idle-forgiveness-dialog')
+    expect(screen.getByTestId('idle-forgiveness-desc')).toHaveTextContent(
+      /the clock closed while you were away and kept 25 min of idle time on Harborline Marine Supply/i,
+    )
+
+    await userEvent.click(screen.getByTestId('idle-choice-discard-continue'))
+    // Closed gap: all server truth, no client baseline rides the call.
+    expect(mockResolveIdleTime).toHaveBeenCalledWith('discard_continue', null)
+    const { toast } = await import('sonner')
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('Idle time discarded - back on Harborline Marine Supply'),
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('clock-widget')).toHaveAttribute('data-state', 'in'),
+    )
+    expect(dialog).not.toBeInTheDocument()
+  })
+
+  it('focus and visibility-return fire immediate heartbeats', async () => {
+    mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
+    render(<ClockWidget />)
+    await screen.findByTestId('clock-elapsed')
+    mockHeartbeat.mockClear()
+
+    fireEvent(window, new Event('focus'))
+    expect(mockHeartbeat).toHaveBeenCalledTimes(1)
+    fireEvent(document, new Event('visibilitychange')) // jsdom: visible
+    expect(mockHeartbeat).toHaveBeenCalledTimes(2)
+  })
+
+  it('pauses the 60s heartbeat while idle, resumes (with an immediate beat) on return', async () => {
+    vi.useFakeTimers()
+    try {
+      mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
+      mockGetIdleGap.mockResolvedValue({ ok: true, data: openGap() })
+      render(<ClockWidget pollMs={3_600_000} idleThresholdMs={100} countdownSeconds={600} />)
+      // Flush the initial status fetch (fake timers: no findBy/waitFor).
+      await act(async () => {})
+      expect(screen.getByTestId('clock-elapsed')).toBeInTheDocument()
+      mockHeartbeat.mockClear()
+
+      // Go idle (fallback check interval ~50ms), then sit idle for minutes:
+      // the interval beat must NOT stamp activity over the idle stretch.
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(3 * 60_000)
+      })
+      expect(mockHeartbeat).not.toHaveBeenCalled()
+
+      // Return: one immediate beat (after the gap fetch), then the 60s
+      // interval resumes.
+      await act(async () => {
+        fireEvent.keyDown(window, { key: 'a' })
+      })
+      await act(async () => {})
+      await act(async () => {})
+      expect(mockHeartbeat).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        vi.advanceTimersByTime(60_000)
+      })
+      expect(mockHeartbeat).toHaveBeenCalledTimes(2)
+      // (The countdown modal's close on return is covered with real timers
+      // in the countdown test above; Radix's exit animation needs them.)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('IdleDetector explainer: grant starts the detector, which drives the countdown', async () => {
+    // A minimal IdleDetector stand-in: the hook must explain once, request
+    // the permission in the click gesture, then run the detector.
+    const instances: FakeIdleDetector[] = []
+    class FakeIdleDetector {
+      static requestPermission = vi.fn().mockResolvedValue('granted')
+      userState: 'active' | 'idle' = 'active'
+      private listeners: (() => void)[] = []
+      constructor() {
+        instances.push(this)
+      }
+      addEventListener(_: string, listener: () => void) {
+        this.listeners.push(listener)
+      }
+      removeEventListener() {}
+      start = vi.fn().mockResolvedValue(undefined)
+      fireChange() {
+        for (const listener of this.listeners) listener()
+      }
+    }
+    const win = window as unknown as { IdleDetector?: unknown }
+    const saved = win.IdleDetector
+    win.IdleDetector = FakeIdleDetector
+    const clearExplainer = () => {
+      try {
+        window.localStorage.removeItem('firmos.idle-explainer-v1')
+      } catch {
+        // jsdom storage can be opaque - the hook's own access is guarded too.
+      }
+    }
+    clearExplainer()
+    try {
+      mockStatus.mockResolvedValue({ ok: true, data: clockedInStatus })
+      render(<ClockWidget idleThresholdMs={150} countdownSeconds={5} />)
+      await screen.findByTestId('clock-elapsed')
+
+      // First run: the explainer asks instead of silently prompting.
+      const explainer = await screen.findByTestId('idle-explainer-dialog')
+      expect(explainer).toHaveTextContent(/detect when you step away/i)
+
+      await userEvent.click(screen.getByTestId('idle-explainer-accept'))
+      expect(FakeIdleDetector.requestPermission).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(instances.length).toBe(1))
+      expect(instances[0].start).toHaveBeenCalled()
+
+      // The detector reports active -> idle: the countdown modal shows.
+      await act(async () => {
+        instances[0].userState = 'idle'
+        instances[0].fireChange()
+      })
+      await screen.findByTestId('idle-countdown-modal', {}, { timeout: 3000 })
+
+      // ...and back to active: the return opens the forgiveness flow.
+      mockGetIdleGap.mockResolvedValue({ ok: true, data: openGap() })
+      await act(async () => {
+        instances[0].userState = 'active'
+        instances[0].fireChange()
+      })
+      await screen.findByTestId('idle-forgiveness-dialog')
+    } finally {
+      win.IdleDetector = saved
+      clearExplainer()
+    }
   })
 })

@@ -41,6 +41,7 @@ function status(partial: Partial<ClockStatus>): ClockStatus {
     currentActivity: null,
     openTaskTimers: [],
     lastActivityAt: null,
+    idleTimeoutMinutes: 15,
     ...partial,
   }
 }

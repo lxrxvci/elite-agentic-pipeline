@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { authAccounts, authSessions, authTwoFactors, authVerifications, users } from "@/db/schema";
 
 import { sendEmail } from "../email";
+import { closeAllTimersForSignOut } from "../time-tracking";
 
 /**
  * FirmOS auth (ADR-0005): Better Auth on top of the EXISTING `users` table.
@@ -251,6 +252,36 @@ export const auth = betterAuth({
             message: "Password must be 8-128 characters and include an uppercase letter, a lowercase letter, and a digit.",
             code: "PASSWORD_POLICY",
           });
+        }
+        return;
+      }
+
+      // Clock-C2 logout cascade (original parity): signing out closes the
+      // day session, the open activity, and every open task timer, so a
+      // forgotten timer never runs overnight. The endpoint resolves the
+      // session itself (no session middleware on /sign-out), so resolve the
+      // signed session cookie the same way it does. BEST-EFFORT: the whole
+      // branch is wrapped - a cascade failure must never block or 500 the
+      // sign-out. The cascade only touches open rows, so a double sign-out
+      // is a harmless no-op.
+      if (ctx.path === "/sign-out") {
+        try {
+          const jar = ctx as {
+            getSignedCookie?: (name: string, secret: string) => Promise<string | false | null>;
+          };
+          const token =
+            typeof jar.getSignedCookie === "function"
+              ? await jar.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret)
+              : null;
+          if (typeof token === "string" && token.length > 0) {
+            const found = await ctx.context.internalAdapter.findSession(token);
+            const userId = Number(found?.session?.userId ?? found?.user?.id);
+            if (Number.isFinite(userId) && userId > 0) {
+              await closeAllTimersForSignOut(userId);
+            }
+          }
+        } catch (error) {
+          console.error("[auth] sign-out clock cascade failed - sign-out continues:", error);
         }
       }
     }),

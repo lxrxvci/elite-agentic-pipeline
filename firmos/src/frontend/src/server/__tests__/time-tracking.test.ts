@@ -255,7 +255,7 @@ describe.skipIf(!reachable)("time tracking engine (HANDOFF §6.6, §17, §29)", 
     await clockOut(u.id, d(13, 17));
   });
 
-  it("stale cleanup: idle beyond idle_timeout closes at last activity + notifies; idempotent", async () => {
+  it("stale cleanup: idle closes at last activity + timeout + paid grace, then notifies; idempotent", async () => {
     const u = await makeUser("bookkeeper", { idleTimeoutMinutes: 15 });
     const now = d(14, 12);
     const [entry] = await db
@@ -268,6 +268,9 @@ describe.skipIf(!reachable)("time tracking engine (HANDOFF §6.6, §17, §29)", 
       })
       .returning();
 
+    // 30 min idle > 15 + 10 grace: closes at 11:30 + 25 min = 11:55. The
+    // timeout and grace minutes are PAID (the original's semantics) - the
+    // duration keeps them instead of cutting at the last heartbeat.
     const result = await runStaleCleanup(now);
     expect(result.idleClosedUserIds).toContain(u.id);
     expect(result.notificationsWritten).toBe(1);
@@ -276,8 +279,8 @@ describe.skipIf(!reachable)("time tracking engine (HANDOFF §6.6, §17, §29)", 
       .select()
       .from(workstationTimeEntries)
       .where(eq(workstationTimeEntries.id, entry.id));
-    expect(closed.endedAt).toEqual(d(14, 11, 30)); // ends at last known activity
-    expect(closed.durationMinutes).toBe(30);
+    expect(closed.endedAt).toEqual(d(14, 11, 55)); // 11:30 + 15 timeout + 10 grace
+    expect(closed.durationMinutes).toBe(55);
     expect(closed.autoClosed).toBe(true);
 
     const notices = await db

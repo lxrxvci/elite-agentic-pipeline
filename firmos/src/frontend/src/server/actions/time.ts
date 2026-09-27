@@ -20,13 +20,17 @@ import {
   submitTimeEditRequest,
 } from "@/server/time-edits";
 import {
+  autoClockOutIdle,
   clockIn,
   clockOut,
   getClockStatus,
   getDailyHours,
   getHoursReport,
+  getIdleGap,
   heartbeat,
+  IDLE_FORGIVENESS_CHOICES,
   listClockClients,
+  resolveIdleTime,
   startActivity,
   startTaskTimer,
   stopActivityTimer,
@@ -35,7 +39,10 @@ import {
   type ClockStatus,
   type DailyHours,
   type HoursReport,
+  type IdleForgivenessChoice,
+  type IdleGap,
   type NonDayActivityType,
+  type ResolveIdleTimeResult,
   type TimerSwitch,
 } from "@/server/time-tracking";
 import { parseTimeReference, type TimeReferenceType } from "@/server/time-references";
@@ -180,6 +187,70 @@ export async function listClockClientsAction(): Promise<ActionResult<ClockClient
   try {
     const userId = await getCurrentUserId();
     return { ok: true, data: await listClockClients(userId, new Date().getDay()) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+// ── Clock-C2 idle system (countdown auto-close + return-time forgiveness) ──
+
+/** The widget countdown's expiry: close the session now, autoClosed, with
+ *  the same auto_clock_out notification the sweep writes. */
+export async function idleAutoClockOutAction(): Promise<ActionResult<ClockStatus>> {
+  try {
+    const userId = await getCurrentUserId();
+    await autoClockOutIdle(userId);
+    const status = await getClockStatus(userId);
+    revalidatePath("/workstation");
+    return { ok: true, data: status };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/**
+ * The pending return-time forgiveness gap, or null. `observedIdleStartIso`
+ * is the widget's idle baseline (the last-activity instant it saw when the
+ * idle stretch began) - its return heartbeat stamps last_activity_at before
+ * the server could read the old value, so the pre-idle baseline must ride
+ * the call. Closed-while-away gaps are computed entirely server-side.
+ */
+export async function getIdleGapAction(
+  observedIdleStartIso?: string | null,
+): Promise<ActionResult<IdleGap | null>> {
+  try {
+    const userId = await getCurrentUserId();
+    const observed =
+      typeof observedIdleStartIso === "string" && observedIdleStartIso.length > 0
+        ? new Date(observedIdleStartIso)
+        : null;
+    const observedValid = observed != null && Number.isFinite(observed.getTime()) ? observed : null;
+    return { ok: true, data: await getIdleGap(userId, new Date(), observedValid) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** Apply one of the four forgiveness choices; returns the post-choice
+ *  status so the widget updates in one round trip. */
+export async function resolveIdleTimeAction(
+  choice: IdleForgivenessChoice,
+  observedIdleStartIso?: string | null,
+): Promise<ActionResult<{ status: ClockStatus; result: ResolveIdleTimeResult }>> {
+  try {
+    if (!(IDLE_FORGIVENESS_CHOICES as readonly string[]).includes(choice)) {
+      return { ok: false, error: "Unknown idle-time choice" };
+    }
+    const userId = await getCurrentUserId();
+    const observed =
+      typeof observedIdleStartIso === "string" && observedIdleStartIso.length > 0
+        ? new Date(observedIdleStartIso)
+        : null;
+    const observedValid = observed != null && Number.isFinite(observed.getTime()) ? observed : null;
+    const result = await resolveIdleTime(userId, choice, new Date(), observedValid);
+    const status = await getClockStatus(userId);
+    revalidatePath("/workstation");
+    return { ok: true, data: { status, result } };
   } catch (error) {
     return fail(error);
   }

@@ -12,6 +12,7 @@ import {
 import { db } from "@/db";
 import {
   appSettings,
+  auditEvents,
   clients,
   notifications,
   taskTimeEntries,
@@ -20,6 +21,7 @@ import {
   workstationTimeEntries,
 } from "@/db/schema";
 
+import { logEvent } from "./audit";
 import type { UserRole } from "./auth/guards";
 import {
   parseTimeReference,
@@ -511,6 +513,9 @@ export interface ClockStatus {
     elapsedMinutes: number;
   }[];
   lastActivityAt: string | null;
+  /** Clock-C2: the user's idle threshold - the widget's idle detector and
+   *  the stale-cleanup sweep read the same number (default 15). */
+  idleTimeoutMinutes: number;
 }
 
 export async function getClockStatus(userId: number, now: Date = new Date()): Promise<ClockStatus> {
@@ -529,6 +534,11 @@ export async function getClockStatus(userId: number, now: Date = new Date()): Pr
     .innerJoin(tasks, eq(taskTimeEntries.taskId, tasks.id))
     .leftJoin(clients, eq(tasks.clientId, clients.id))
     .where(and(eq(taskTimeEntries.userId, userId), isNull(taskTimeEntries.endedAt)));
+  const [userRow] = await db
+    .select({ idleTimeoutMinutes: users.idleTimeoutMinutes })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
   const lastActivityCandidates = [day?.lastActivityAt, activity?.lastActivityAt].filter(
     (d): d is Date => d != null,
   );
@@ -571,6 +581,7 @@ export async function getClockStatus(userId: number, now: Date = new Date()): Pr
       elapsedMinutes: minutesBetween(r.entry.startedAt, now),
     })),
     lastActivityAt: lastActivityAt?.toISOString() ?? null,
+    idleTimeoutMinutes: userRow?.idleTimeoutMinutes ?? 15,
   };
 }
 
@@ -672,20 +683,36 @@ export async function maxClockInHours(): Promise<number> {
 
 export interface StaleCleanupResult {
   idleClosedUserIds: number[];
+  /** Clock-C2: users sent an idle_warning this run (once per day timer). */
+  idleWarnedUserIds: number[];
   maxSessionClosedUserIds: number[];
   staleTaskEntryIds: number[];
   notificationsWritten: number;
 }
 
 /**
+ * Clock-C2 idle semantics (the original's rules, restored):
+ *  - The idle_warning push fires at (idle_timeout - IDLE_WARNING_LEAD) minutes
+ *    of silence, once per day timer, and bypasses the working-hours deferral
+ *    (§16 IMMEDIATE_PUSH_TYPES; the job wrapper stamps push_sent_at).
+ *  - The auto-close then waits out a PAID grace: the session ends at
+ *    lastActivity + idle_timeout + IDLE_GRACE_MINUTES, never at the last
+ *    heartbeat - the timeout and grace minutes stay in the record.
+ */
+export const IDLE_WARNING_LEAD_MINUTES = 2;
+export const IDLE_GRACE_MINUTES = 10;
+
+/**
  * §17 five-minute stale-cleanup job. Idempotent: closed rows are never
  * re-selected, so re-runs change nothing and write no duplicate
- * notifications.
+ * notifications; the idle_warning dedup is keyed on the day entry (once per
+ * timer), so it survives re-runs too.
  *
- *  - Idle: last_activity_at older than the user's idle_timeout_minutes
- *    (default 15). The session ends at the last known activity, not at
- *    `now` - idle minutes are not work. Writes an auto_clock_out
- *    notification (§17).
+ *  - Idle: silence past the user's idle_timeout_minutes (default 15) plus the
+ *    10-minute paid grace closes the session at last_activity + timeout +
+ *    grace and writes an auto_clock_out notification (§17).
+ *  - Warning: silence past idle_timeout - 2 minutes writes one idle_warning
+ *    per day timer.
  *  - Max session: started_at older than max_clock_in_hours (default 10).
  *    The session ends at the cap. Applies to orphan task timers too.
  */
@@ -695,6 +722,7 @@ export async function runStaleCleanup(now: Date = new Date()): Promise<StaleClea
 
   const result: StaleCleanupResult = {
     idleClosedUserIds: [],
+    idleWarnedUserIds: [],
     maxSessionClosedUserIds: [],
     staleTaskEntryIds: [],
     notificationsWritten: 0,
@@ -713,14 +741,16 @@ export async function runStaleCleanup(now: Date = new Date()): Promise<StaleClea
     const lastActivity = entry.lastActivityAt ?? entry.startedAt;
     const idleMs = now.getTime() - lastActivity.getTime();
     const overMax = now.getTime() - entry.startedAt.getTime() > maxMs;
-    if (idleMs > idleTimeout * MS_PER_MINUTE) {
-      const endAt = lastActivity; // §17: close at last known activity
+    const closeAfterMs = (idleTimeout + IDLE_GRACE_MINUTES) * MS_PER_MINUTE;
+    if (idleMs > closeAfterMs) {
+      // Clock-C2: close at last activity + timeout + paid grace.
+      const endAt = new Date(lastActivity.getTime() + closeAfterMs);
       await closeDayCascade(entry.userId, entry, endAt, true);
       await db.insert(notifications).values({
         userId: entry.userId,
         notificationType: "auto_clock_out",
         title: "You were clocked out",
-        message: `Your day session was closed after ${idleTimeout} minutes without activity.`,
+        message: `Your day session was closed after ${idleTimeout} minutes without activity (plus a ${IDLE_GRACE_MINUTES}-minute paid grace).`,
         link: "/workstation",
         entityType: "workstation_time_entry",
         entityId: entry.id,
@@ -731,6 +761,36 @@ export async function runStaleCleanup(now: Date = new Date()): Promise<StaleClea
       const endAt = new Date(entry.startedAt.getTime() + maxMs);
       await closeDayCascade(entry.userId, entry, endAt, true);
       result.maxSessionClosedUserIds.push(entry.userId);
+    } else {
+      // Clock-C2: warn ~2 minutes before the idle timeout lands, once per
+      // day timer (entityId is the day entry - re-runs can never duplicate).
+      const warnAfterMs = Math.max(0, idleTimeout - IDLE_WARNING_LEAD_MINUTES) * MS_PER_MINUTE;
+      if (idleMs > warnAfterMs) {
+        const [alreadyWarned] = await db
+          .select({ id: notifications.id })
+          .from(notifications)
+          .where(
+            and(
+              eq(notifications.notificationType, "idle_warning"),
+              eq(notifications.entityType, "workstation_time_entry"),
+              eq(notifications.entityId, entry.id),
+            ),
+          )
+          .limit(1);
+        if (!alreadyWarned) {
+          await db.insert(notifications).values({
+            userId: entry.userId,
+            notificationType: "idle_warning",
+            title: "Still there?",
+            message: `No activity for ${idleTimeout} minutes - your day session will auto-close soon (with a ${IDLE_GRACE_MINUTES}-minute paid grace).`,
+            link: "/workstation",
+            entityType: "workstation_time_entry",
+            entityId: entry.id,
+          });
+          result.idleWarnedUserIds.push(entry.userId);
+          result.notificationsWritten += 1;
+        }
+      }
     }
   }
 
@@ -761,6 +821,535 @@ export async function runStaleCleanup(now: Date = new Date()): Promise<StaleClea
   }
 
   return result;
+}
+
+// ── Clock-C2 idle auto-close + return-time forgiveness (Toggl's 4 choices) ─
+
+/** The client countdown's expiry path: the widget's 2-minute "Still there?"
+ *  modal ran out, so the session closes NOW (autoClosed, with the same
+ *  auto_clock_out notification the sweep writes) instead of waiting for the
+ *  next sweep. The return-time forgiveness flow can still trim it later. */
+export async function autoClockOutIdle(
+  userId: number,
+  now: Date = new Date(),
+): Promise<{ clockedOut: boolean }> {
+  const day = await openDayEntry(userId);
+  if (!day) return { clockedOut: false };
+  await closeDayCascade(userId, day, now, true);
+  await db.insert(notifications).values({
+    userId,
+    notificationType: "auto_clock_out",
+    title: "You were clocked out",
+    message: "Your day session was closed automatically when the idle countdown expired.",
+    link: "/workstation",
+    entityType: "workstation_time_entry",
+    entityId: day.id,
+  });
+  return { clockedOut: true };
+}
+
+/**
+ * Clock-C2 logout cascade (original parity): signing out closes the day
+ * umbrella, the open activity, and every open task timer - including orphan
+ * task timers when the day session is already gone. Idempotent by
+ * construction (only open rows are touched); the auth hook calls it
+ * best-effort so a failure here can never block a sign-out.
+ */
+export async function closeAllTimersForSignOut(
+  userId: number,
+  now: Date = new Date(),
+): Promise<{ closedDay: boolean; closedActivityIds: number[]; closedTaskEntryIds: number[] }> {
+  const day = await openDayEntry(userId);
+  if (day) {
+    const { closedActivityIds, closedTaskEntryIds } = await closeDayCascade(userId, day, now, false);
+    return { closedDay: true, closedActivityIds, closedTaskEntryIds };
+  }
+  const closedTaskTimers = await closeOpenTaskTimers(userId, now);
+  return {
+    closedDay: false,
+    closedActivityIds: [],
+    closedTaskEntryIds: closedTaskTimers.map((t) => t.id),
+  };
+}
+
+export const IDLE_FORGIVENESS_CHOICES = [
+  "discard",
+  "discard_continue",
+  "add_idle_entry",
+  "keep",
+] as const;
+export type IdleForgivenessChoice = (typeof IDLE_FORGIVENESS_CHOICES)[number];
+
+/** Audit action recording a resolved gap; doubles as the "never offer this
+ *  closed session again" marker (audit_events is append-only). */
+export const IDLE_TIME_RESOLVED_ACTION = "idle_time_resolved";
+
+/** Sub-minute idles never open the forgiveness dialog. */
+const IDLE_GAP_MIN_MS = 60_000;
+/** A session closed longer ago than this is history, not a pending decision. */
+const IDLE_GAP_MAX_AGE_MS = 24 * 60 * 60_000;
+
+export interface IdleGap {
+  /** The day entry the gap belongs to (the dialog's dedup key). */
+  dayEntryId: number;
+  /** When activity stopped (the widget's observed idle start when it watched
+   *  the idle stretch live, else the entry's last heartbeat). */
+  idleStartedAt: string;
+  /** `now` while the session is open; the recorded close when the server
+   *  already closed it (the idle stretch that actually landed in the books). */
+  gapEndAt: string;
+  idleMinutes: number;
+  /** True when the sweep (or the countdown auto-close) closed the session
+   *  while the user was away. */
+  alreadyClosed: boolean;
+  /** What ran when the idle stretch began (dialog copy + restart context). */
+  activityType: string | null;
+  clientId: number | null;
+  clientName: string | null;
+  referenceType: string | null;
+  referenceId: number | null;
+  taskId: number | null;
+  taskTitle: string | null;
+}
+
+interface IdleContextRow {
+  activityType: string | null;
+  clientId: number | null;
+  clientName: string | null;
+  referenceType: string | null;
+  referenceId: number | null;
+  taskId: number | null;
+  taskTitle: string | null;
+}
+
+const NO_IDLE_CONTEXT: IdleContextRow = {
+  activityType: null,
+  clientId: null,
+  clientName: null,
+  referenceType: null,
+  referenceId: null,
+  taskId: null,
+  taskTitle: null,
+};
+
+async function resolveContextNames(context: IdleContextRow): Promise<IdleContextRow> {
+  if (context.clientId == null || context.clientName != null) return context;
+  const names = await clientNameById([context.clientId]);
+  return { ...context, clientName: names.get(context.clientId) ?? null };
+}
+
+/**
+ * The return-time forgiveness context. Two shapes:
+ *
+ *  - OPEN: the day session still runs and silence passed the idle threshold.
+ *    The widget supplies the idle start it observed (its return heartbeat
+ *    stamps last_activity_at before the server could read the old value, so
+ *    the pre-idle baseline must come from the client); the gap ends at `now`.
+ *  - CLOSED: the sweep / countdown auto-close ended the session while the
+ *    user was away. Everything is server truth: the gap is the recorded
+ *    stretch (last activity -> close), alreadyClosed = true, and an
+ *    unresolved, recent, auto-closed day is required so the offer can never
+ *    repeat or resurface stale history.
+ */
+export async function getIdleGap(
+  userId: number,
+  now: Date = new Date(),
+  observedIdleStart?: Date | null,
+): Promise<IdleGap | null> {
+  const day = await openDayEntry(userId);
+  if (day) {
+    const [userRow] = await db
+      .select({ idleTimeoutMinutes: users.idleTimeoutMinutes })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const idleTimeoutMs = (userRow?.idleTimeoutMinutes ?? 15) * MS_PER_MINUTE;
+    const storedLastActivity = day.lastActivityAt ?? day.startedAt;
+    const idleStart = observedIdleStart ?? storedLastActivity;
+    // Clamp client-observed baselines into the session's real span.
+    const clampedStart = new Date(
+      Math.min(Math.max(idleStart.getTime(), day.startedAt.getTime()), now.getTime()),
+    );
+    const gapMs = now.getTime() - clampedStart.getTime();
+    // A caller-supplied baseline means the client already applied its idle
+    // threshold (the sub-minute noise floor still stands); a server-derived
+    // one must clear the user's full idle timeout.
+    if (gapMs < (observedIdleStart ? IDLE_GAP_MIN_MS : idleTimeoutMs)) return null;
+
+    const activities = await openActivityEntries(userId);
+    const activity = activities[0];
+    const [openTask] = await db
+      .select({ taskId: tasks.id, taskTitle: tasks.title, clientId: tasks.clientId })
+      .from(taskTimeEntries)
+      .innerJoin(tasks, eq(taskTimeEntries.taskId, tasks.id))
+      .where(and(eq(taskTimeEntries.userId, userId), isNull(taskTimeEntries.endedAt)))
+      .limit(1);
+    const context = await resolveContextNames(
+      activity
+        ? {
+            activityType: activity.activityType,
+            clientId: activity.clientId,
+            clientName: null,
+            referenceType: activity.referenceType,
+            referenceId: activity.referenceId,
+            taskId: null,
+            taskTitle: null,
+          }
+        : openTask
+          ? {
+              activityType: null,
+              clientId: openTask.clientId,
+              clientName: null,
+              referenceType: null,
+              referenceId: null,
+              taskId: openTask.taskId,
+              taskTitle: openTask.taskTitle,
+            }
+          : NO_IDLE_CONTEXT,
+    );
+    return {
+      dayEntryId: day.id,
+      idleStartedAt: clampedStart.toISOString(),
+      gapEndAt: now.toISOString(),
+      idleMinutes: Math.round(gapMs / MS_PER_MINUTE),
+      alreadyClosed: false,
+      ...context,
+    };
+  }
+
+  // Closed case: the most recent auto-closed day, still fresh, unresolved,
+  // and carrying a real recorded idle stretch.
+  const [closedDay] = await db
+    .select()
+    .from(workstationTimeEntries)
+    .where(
+      and(
+        eq(workstationTimeEntries.userId, userId),
+        eq(workstationTimeEntries.activityType, "day"),
+        isNotNull(workstationTimeEntries.endedAt),
+        eq(workstationTimeEntries.autoClosed, true),
+        gt(workstationTimeEntries.endedAt, new Date(now.getTime() - IDLE_GAP_MAX_AGE_MS)),
+      ),
+    )
+    .orderBy(desc(workstationTimeEntries.endedAt))
+    .limit(1);
+  if (!closedDay?.endedAt) return null;
+  const idleStart = closedDay.lastActivityAt ?? closedDay.startedAt;
+  const gapMs = closedDay.endedAt.getTime() - idleStart.getTime();
+  if (gapMs <= 0) return null;
+  const [resolved] = await db
+    .select({ id: auditEvents.id })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.action, IDLE_TIME_RESOLVED_ACTION),
+        eq(auditEvents.entityType, "workstation_time_entry"),
+        eq(auditEvents.entityId, closedDay.id),
+      ),
+    )
+    .limit(1);
+  if (resolved) return null;
+
+  const closeAt = closedDay.endedAt;
+  const [activity] = await db
+    .select()
+    .from(workstationTimeEntries)
+    .where(
+      and(
+        eq(workstationTimeEntries.userId, userId),
+        ne(workstationTimeEntries.activityType, "day"),
+        eq(workstationTimeEntries.endedAt, closeAt),
+      ),
+    )
+    .orderBy(desc(workstationTimeEntries.startedAt))
+    .limit(1);
+  const [closedTask] = await db
+    .select({ taskId: tasks.id, taskTitle: tasks.title, clientId: tasks.clientId })
+    .from(taskTimeEntries)
+    .innerJoin(tasks, eq(taskTimeEntries.taskId, tasks.id))
+    .where(and(eq(taskTimeEntries.userId, userId), eq(taskTimeEntries.endedAt, closeAt)))
+    .orderBy(desc(taskTimeEntries.startedAt))
+    .limit(1);
+  const context = await resolveContextNames(
+    activity
+      ? {
+          activityType: activity.activityType,
+          clientId: activity.clientId,
+          clientName: null,
+          referenceType: activity.referenceType,
+          referenceId: activity.referenceId,
+          taskId: null,
+          taskTitle: null,
+        }
+      : closedTask
+        ? {
+            activityType: null,
+            clientId: closedTask.clientId,
+            clientName: null,
+            referenceType: null,
+            referenceId: null,
+            taskId: closedTask.taskId,
+            taskTitle: closedTask.taskTitle,
+          }
+        : NO_IDLE_CONTEXT,
+  );
+  return {
+    dayEntryId: closedDay.id,
+    idleStartedAt: idleStart.toISOString(),
+    gapEndAt: closeAt.toISOString(),
+    idleMinutes: Math.round(gapMs / MS_PER_MINUTE),
+    alreadyClosed: true,
+    ...context,
+  };
+}
+
+export type IdleResolveOutcome =
+  | "closed_at_idle_start"
+  | "restarted"
+  | "idle_block_added"
+  | "kept"
+  | "nothing_to_resolve";
+
+export interface ResolveIdleTimeResult {
+  resolved: boolean;
+  choice: IdleForgivenessChoice;
+  outcome: IdleResolveOutcome;
+  /** What restarted (discard & continue), for the widget toast. */
+  restartedLabel: string | null;
+}
+
+/** Close one entry at the idle start and record the idle stretch as its own
+ *  autoClosed block; returns nothing - the caller reopens what should keep
+ *  running. Shared by the open and already-closed splits. */
+async function splitOffIdleBlock(
+  entry: WorkstationEntry,
+  idleStart: Date,
+  gapEnd: Date,
+): Promise<void> {
+  const splitAt = new Date(
+    Math.min(Math.max(idleStart.getTime(), entry.startedAt.getTime()), gapEnd.getTime()),
+  );
+  if (splitAt.getTime() >= gapEnd.getTime()) return; // no recorded idle stretch
+  await closeWorkstationEntry(entry.id, entry.startedAt, splitAt, false);
+  await db.insert(workstationTimeEntries).values({
+    userId: entry.userId,
+    activityType: entry.activityType,
+    clientId: entry.clientId,
+    referenceType: entry.referenceType,
+    referenceId: entry.referenceId,
+    startedAt: splitAt,
+    endedAt: gapEnd,
+    durationMinutes: minutesBetween(splitAt, gapEnd),
+    // The "idle" marker: machine-closed, reviewable next to sweep closures.
+    autoClosed: true,
+  });
+}
+
+/** Trim every timer row a cascade closed at `closeAt` back to the idle
+ *  start (the discard choice's interval math). Rows that began inside the
+ *  idle stretch keep their recorded span - they are explicit later starts. */
+async function trimClosedTimersToIdleStart(
+  userId: number,
+  closeAt: Date,
+  idleStart: Date,
+): Promise<void> {
+  const workstationRows = await db
+    .select()
+    .from(workstationTimeEntries)
+    .where(
+      and(eq(workstationTimeEntries.userId, userId), eq(workstationTimeEntries.endedAt, closeAt)),
+    );
+  for (const row of workstationRows) {
+    if (row.startedAt.getTime() >= idleStart.getTime()) continue;
+    await db
+      .update(workstationTimeEntries)
+      .set({ endedAt: idleStart, durationMinutes: minutesBetween(row.startedAt, idleStart) })
+      .where(eq(workstationTimeEntries.id, row.id));
+  }
+  const taskRows = await db
+    .select()
+    .from(taskTimeEntries)
+    .where(and(eq(taskTimeEntries.userId, userId), eq(taskTimeEntries.endedAt, closeAt)));
+  for (const row of taskRows) {
+    if (row.startedAt.getTime() >= idleStart.getTime()) continue;
+    await db
+      .update(taskTimeEntries)
+      .set({ endedAt: idleStart, durationMinutes: minutesBetween(row.startedAt, idleStart) })
+      .where(eq(taskTimeEntries.id, row.id));
+  }
+}
+
+/** The restart half of "discard & continue": a fresh day plus whatever held
+ *  the work clock when the idle stretch began (task timer, or activity kind
+ *  on its client; breaks stay client-agnostic). */
+async function restartFromContext(
+  userId: number,
+  context: IdleContextRow,
+  now: Date,
+): Promise<string | null> {
+  await clockIn(userId, now);
+  if (context.taskId != null) {
+    await startTaskTimer(userId, context.taskId, now);
+    return context.taskTitle;
+  }
+  if (context.activityType != null) {
+    const kind = context.activityType as NonDayActivityType;
+    if (isBreakActivityType(kind)) {
+      await startActivity(userId, kind, undefined, now);
+    } else if (context.clientId != null) {
+      await startActivity(
+        userId,
+        kind,
+        context.clientId,
+        now,
+        parseTimeReference(context.referenceType, context.referenceId),
+      );
+    } else {
+      return null; // legacy client-less work row: the fresh day is the restart
+    }
+    return context.clientName;
+  }
+  return null;
+}
+
+/**
+ * Apply one of Toggl's four return-time choices to the pending idle gap:
+ *
+ *  - discard: close everything at the idle start - the idle minutes vanish.
+ *  - discard_continue: the same cut, then a fresh day and the same
+ *    client/kind (or task timer) starts now.
+ *  - add_idle_entry: the running entry splits - work block ends at the idle
+ *    start, the idle stretch becomes its own autoClosed-flagged block, and
+ *    the timer continues from now (open case only; in the already-closed
+ *    case the split applies to the recorded rows and the day stays closed).
+ *  - keep: nothing moves (an open session just heartbeats, so the sweep
+ *    cannot close it mid-decision).
+ *
+ * The resolution is audited (idle_time_resolved on the day entry) - that
+ * audit row is also what stops an already-closed gap from being offered
+ * twice. Task timers have no autoClosed flag, so add_idle_entry leaves them
+ * running through the stretch (same as keep); the workstation rows carry
+ * the truthful idle block either way.
+ */
+export async function resolveIdleTime(
+  userId: number,
+  choice: IdleForgivenessChoice,
+  now: Date = new Date(),
+  observedIdleStart?: Date | null,
+): Promise<ResolveIdleTimeResult> {
+  const gap = await getIdleGap(userId, now, observedIdleStart);
+  if (!gap) return { resolved: false, choice, outcome: "nothing_to_resolve", restartedLabel: null };
+  const idleStart = new Date(gap.idleStartedAt);
+  const context: IdleContextRow = {
+    activityType: gap.activityType,
+    clientId: gap.clientId,
+    clientName: gap.clientName,
+    referenceType: gap.referenceType,
+    referenceId: gap.referenceId,
+    taskId: gap.taskId,
+    taskTitle: gap.taskTitle,
+  };
+
+  let outcome: IdleResolveOutcome;
+  let restartedLabel: string | null = null;
+
+  if (!gap.alreadyClosed) {
+    const day = (await openDayEntry(userId))!; // getIdleGap just saw it
+    if (choice === "discard") {
+      await closeDayCascade(userId, day, idleStart, false);
+      outcome = "closed_at_idle_start";
+    } else if (choice === "discard_continue") {
+      await closeDayCascade(userId, day, idleStart, false);
+      restartedLabel = await restartFromContext(userId, context, now);
+      outcome = "restarted";
+    } else if (choice === "add_idle_entry") {
+      const activities = await openActivityEntries(userId);
+      const activity = activities[0];
+      if (activity) {
+        await splitOffIdleBlock(activity, idleStart, now);
+        // The work timer continues from the return instant.
+        await db.insert(workstationTimeEntries).values({
+          userId,
+          activityType: activity.activityType,
+          clientId: activity.clientId,
+          referenceType: activity.referenceType,
+          referenceId: activity.referenceId,
+          startedAt: now,
+          lastActivityAt: now,
+        });
+      } else {
+        // Day-only session: the umbrella itself splits so the idle stretch
+        // still lands as its own flagged block.
+        await splitOffIdleBlock(day, idleStart, now);
+        await db.insert(workstationTimeEntries).values({
+          userId,
+          activityType: "day",
+          startedAt: now,
+          lastActivityAt: now,
+        });
+      }
+      await heartbeat(userId, now);
+      outcome = "idle_block_added";
+    } else {
+      // keep: the timer runs uninterrupted - heartbeat so the sweep stands down.
+      await heartbeat(userId, now);
+      outcome = "kept";
+    }
+  } else {
+    const closeAt = new Date(gap.gapEndAt);
+    if (choice === "discard") {
+      await trimClosedTimersToIdleStart(userId, closeAt, idleStart);
+      outcome = "closed_at_idle_start";
+    } else if (choice === "discard_continue") {
+      await trimClosedTimersToIdleStart(userId, closeAt, idleStart);
+      restartedLabel = await restartFromContext(userId, context, now);
+      outcome = "restarted";
+    } else if (choice === "add_idle_entry") {
+      // The recorded stretch is already in the closed rows; split it into
+      // its own flagged block. The day umbrella keeps its span either way -
+      // and a day-only session splits the umbrella itself, like the open case.
+      const activities = await db
+        .select()
+        .from(workstationTimeEntries)
+        .where(
+          and(
+            eq(workstationTimeEntries.userId, userId),
+            ne(workstationTimeEntries.activityType, "day"),
+            eq(workstationTimeEntries.endedAt, closeAt),
+          ),
+        )
+        .orderBy(desc(workstationTimeEntries.startedAt))
+        .limit(1);
+      const activity = activities[0];
+      if (activity) {
+        await splitOffIdleBlock(activity, idleStart, closeAt);
+      } else {
+        const [dayRow] = await db
+          .select()
+          .from(workstationTimeEntries)
+          .where(eq(workstationTimeEntries.id, gap.dayEntryId))
+          .limit(1);
+        if (dayRow) await splitOffIdleBlock(dayRow, idleStart, closeAt);
+      }
+      outcome = "idle_block_added";
+    } else {
+      outcome = "kept"; // the record already includes the stretch
+    }
+  }
+
+  await logEvent({
+    userId,
+    action: IDLE_TIME_RESOLVED_ACTION,
+    entityType: "workstation_time_entry",
+    entityId: gap.dayEntryId,
+    metadata: {
+      choice,
+      outcome,
+      idleMinutes: gap.idleMinutes,
+      alreadyClosed: gap.alreadyClosed,
+    },
+  });
+  return { resolved: true, choice, outcome, restartedLabel };
 }
 
 // ── Interval collection + hours report (§6.6, §21, §29) ───────────────────

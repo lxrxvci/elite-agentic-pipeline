@@ -57,6 +57,7 @@ const EMPTY_CLOCK: ClockStatus = {
   currentActivity: null,
   openTaskTimers: [],
   lastActivityAt: null,
+  idleTimeoutMinutes: 15,
 }
 
 // The saved-views seam talks to /api/saved-views over fetch; stub a minimal

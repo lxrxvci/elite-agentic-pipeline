@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { AxeBuilder } from '@axe-core/playwright'
 import { readFileSync } from 'node:fs'
+import postgres from 'postgres'
 
 import { OWNER_COOKIES_FILE } from './global-setup'
 
@@ -143,6 +144,45 @@ test('admin hub has no serious/critical axe violations', async ({ page }) => {
   await page.goto('/admin')
   await expect(page.getByTestId('admin-hub')).toBeVisible()
   await expectAccessible(page, 'admin hub')
+})
+
+test('idle forgiveness dialog has no serious/critical axe violations', async ({ page }) => {
+  // Plant a sweep-shaped auto-closed session for the owner (waiting out the
+  // real 25-minute idle + grace window is not gate-able), so the widget's
+  // first poll opens the return-time forgiveness dialog.
+  const databaseUrl = process.env.DATABASE_URL ?? 'postgres://lxrxcvi@localhost:5432/firmos'
+  const sql = postgres(databaseUrl, { max: 1 })
+  let fixtureIds: number[] = []
+  try {
+    const [mara] = await sql<{ id: number }[]>`
+      select id from users where email = 'mara@blueledgerbooks.com' limit 1`
+    const now = Date.now()
+    const rows = await sql<{ id: number }[]>`
+      insert into workstation_time_entries
+        (user_id, activity_type, started_at, ended_at, duration_minutes, last_activity_at, auto_closed)
+      values
+        (${mara.id}, 'day', ${new Date(now - 3 * 60 * 60_000)}, ${new Date(now - 30 * 60_000)}, 150, ${new Date(now - 55 * 60_000)}, true)
+      returning id`
+    fixtureIds = rows.map((r) => r.id)
+
+    await page.goto('/workstation')
+    const dialog = page.getByTestId('idle-forgiveness-dialog')
+    await expect(dialog).toBeVisible({ timeout: 15_000 })
+    // Let the enter animation settle so axe measures final colors (same
+    // settle pattern as the meeting dialog).
+    await page.waitForTimeout(400)
+    await expectAccessible(page, 'idle forgiveness dialog')
+
+    // Resolve with "Keep idle time" so the dialog closes for good.
+    await page.getByTestId('idle-choice-keep').click()
+    await expect(dialog).toHaveCount(0)
+    await sql`
+      delete from audit_events
+      where action = 'idle_time_resolved' and entity_id = any(${fixtureIds})`
+  } finally {
+    await sql`delete from workstation_time_entries where id = any(${fixtureIds})`
+    await sql.end()
+  }
 })
 
 test('portal home has no serious/critical axe violations', async ({ page, context }) => {
