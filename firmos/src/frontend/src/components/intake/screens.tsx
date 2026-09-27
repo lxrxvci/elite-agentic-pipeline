@@ -4,11 +4,15 @@ import { useState } from 'react'
 import { ArrowRight, Check, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import type { ContactLookupResults } from '@/server/contact-lookup'
 import type { IntakeAccountInput } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
+import type { MerchantProcessorRow } from '@/server/merchant-processors'
+import type { PayrollProviderRow } from '@/server/payroll-providers'
 import { cn } from '@/shared/lib/utils'
 
-import { AccountCountScreen, inputCls } from './account-screens'
+import { AccountCountScreen, inputCls, InstitutionSelect } from './account-screens'
+import { ContactPicker, type ContactPickerHit } from './contact-picker'
 import { dateTextDigits, dateTextToIso, isoToDateText, maskDateText } from './date-text'
 import { formatPhone, phoneDigits } from './format'
 import {
@@ -24,6 +28,9 @@ import {
  * Question renderers for the conversational intake wizard. One question per
  * screen; each type knows how to collect its value and calls back into the
  * wizard (which owns auto-advance timing, autosave, and the branch walk).
+ * J1: the contact type-ahead (ContactPicker) sits on the contacts/CPA/
+ * referral questions, and the payroll-provider / merchant-processor fields
+ * read their database lists - all data arrives via props from the wizard.
  */
 
 // ── Option cards (single select) ──────────────────────────────────────────
@@ -372,13 +379,56 @@ function FieldInput({
   def,
   value,
   onChange,
+  processors,
+  onAddProcessor,
+  allValues,
 }: {
   def: FieldDef
   value: unknown
-  onChange: (v: unknown) => void
+  onChange: (key: string, v: unknown) => void
+  /** J1 (E4): the merchant_processors list behind `processor` fields. */
+  processors?: MerchantProcessorRow[]
+  onAddProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
+  /** The full draft - the processor picker reads it to pre-fill the name. */
+  allValues?: Record<string, unknown>
 }) {
+  if (def.kind === 'processor') {
+    // J1 (E4/DB1): the processor dropdown reads the merchant_processors
+    // table; add-new persists globally. Two commits per pick: the processor
+    // NAME (stable answer key) and its FK id. The functional-setState
+    // repeatables path composes both (never used on `fields` questions).
+    return (
+      <InstitutionSelect
+        institutions={processors ?? []}
+        selectedId={typeof allValues?.processorId === 'number' ? allValues.processorId : null}
+        selectedName={typeof value === 'string' ? value : null}
+        index={0}
+        ariaLabel={def.label}
+        testidPrefix="processor"
+        listboxLabel="Processors"
+        selectPlaceholder="Pick the processor…"
+        addToggleLabel="Add a new processor…"
+        addSubmitLabel="Add processor"
+        addPlaceholder="Helcim"
+        addErrorLabel="processor"
+        onSelect={(row) => {
+          onChange(def.key, row.name)
+          onChange('processorId', row.id)
+          if (!String(allValues?.name ?? '').trim()) onChange('name', row.name)
+        }}
+        onAdd={async (name) => (onAddProcessor ? onAddProcessor(name) : null)}
+      />
+    )
+  }
   if (def.kind === 'date-text') {
-    return <DateTextInput label={def.label} value={value} onChange={onChange} placeholder={def.placeholder} />
+    return (
+      <DateTextInput
+        label={def.label}
+        value={value}
+        onChange={(iso) => onChange(def.key, iso)}
+        placeholder={def.placeholder}
+      />
+    )
   }
   if (def.kind === 'tel') {
     // I1 (00:30:14): auto-format (###) ###-#### while typing; store digits.
@@ -390,7 +440,7 @@ function FieldInput({
         inputMode="tel"
         placeholder={def.placeholder}
         value={formatPhone(value)}
-        onChange={(e) => onChange(phoneDigits(e.target.value) || null)}
+        onChange={(e) => onChange(def.key, phoneDigits(e.target.value) || null)}
       />
     )
   }
@@ -400,7 +450,7 @@ function FieldInput({
         aria-label={def.label}
         className={cn(inputCls, 'appearance-none')}
         value={String(value ?? '')}
-        onChange={(e) => onChange(e.target.value || undefined)}
+        onChange={(e) => onChange(def.key, e.target.value || undefined)}
       >
         <option value="">Select…</option>
         {(def.options ?? []).map((o) => (
@@ -418,7 +468,7 @@ function FieldInput({
         className={cn(inputCls, 'h-auto min-h-20 py-2')}
         placeholder={def.placeholder}
         value={String(value ?? '')}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(def.key, e.target.value)}
       />
     )
   }
@@ -429,7 +479,7 @@ function FieldInput({
           type="checkbox"
           aria-label={def.label}
           checked={value === true}
-          onChange={(e) => onChange(e.target.checked)}
+          onChange={(e) => onChange(def.key, e.target.checked)}
           className="h-4 w-4 accent-[#007B7F]"
         />
         {def.label}
@@ -446,7 +496,7 @@ function FieldInput({
       max={def.max}
       placeholder={def.placeholder}
       value={value == null ? '' : String(value)}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => onChange(def.key, e.target.value)}
     />
   )
 }
@@ -455,10 +505,15 @@ function FieldGrid({
   fields,
   value,
   onChange,
+  processors,
+  onAddProcessor,
 }: {
   fields: FieldDef[]
   value: Record<string, unknown>
   onChange: (key: string, v: unknown) => void
+  /** J1 (E4): merchant-processor dropdown data for `processor` fields. */
+  processors?: MerchantProcessorRow[]
+  onAddProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -467,7 +522,14 @@ function FieldGrid({
           {f.kind !== 'checkbox' && (
             <label className="mb-1 block text-xs font-medium text-muted-foreground">{f.label}</label>
           )}
-          <FieldInput def={f} value={value[f.key]} onChange={(v) => onChange(f.key, v)} />
+          <FieldInput
+            def={f}
+            value={value[f.key]}
+            onChange={onChange}
+            processors={processors}
+            onAddProcessor={onAddProcessor}
+            allValues={value}
+          />
         </div>
       ))}
     </div>
@@ -502,9 +564,13 @@ export function RepeatableScreen({
   prefills = [],
   maxItems = null,
   capNote = null,
+  itemsNote = null,
   validateItems,
   onCommit,
   onAdvance,
+  contactSearch,
+  processors,
+  onAddProcessor,
 }: {
   q: QuestionDef
   items: Array<Record<string, unknown>>
@@ -514,10 +580,17 @@ export function RepeatableScreen({
   maxItems?: number | null
   /** Note replacing the draft form once the cap is reached. */
   capNote?: string | null
+  /** J1 (C3): non-blocking note under the committed list (ownership % < 100). */
+  itemsNote?: string | null
   /** I2: plain-language Continue blocker over the committed list. */
   validateItems?: (items: Array<Record<string, unknown>>) => string | null
   onCommit: (items: Array<Record<string, unknown>>) => void
   onAdvance: () => void
+  /** J1 (C5): the type-ahead lookup behind `contactPicker` repeatables. */
+  contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
+  /** J1 (E4): the merchant_processors list behind `processor` item fields. */
+  processors?: MerchantProcessorRow[]
+  onAddProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
 }) {
   const rep = q.repeatable!
   const [draft, setDraft] = useState<Record<string, unknown>>({})
@@ -596,6 +669,12 @@ export function RepeatableScreen({
         </ul>
       )}
 
+      {itemsNote && (
+        <p className="text-xs text-muted-foreground" role="note" data-testid="items-note">
+          {itemsNote}
+        </p>
+      )}
+
       <div className="rounded-xl border border-border bg-card p-4">
         {capped ? (
           <p className="text-sm text-muted-foreground" data-testid="cap-note" role="note">
@@ -603,6 +682,41 @@ export function RepeatableScreen({
           </p>
         ) : (
           <>
+            {/* J1 (C5): the type-ahead - picking an existing contact commits
+                a LINKED item straight onto the list (no duplicate record);
+                the draft form below stays as the create-new path. */}
+            {rep.contactPicker && contactSearch && (
+              <div className="mb-3">
+                <ContactPicker
+                  search={contactSearch}
+                  includeClients={false}
+                  excludeContactIds={items
+                    .map((i) => i.contactId)
+                    .filter((id): id is number => typeof id === 'number')}
+                  ariaLabel="Search existing contacts"
+                  placeholder="Search people already on file…"
+                  onPick={(hit: ContactPickerHit) => {
+                    if (hit.kind !== 'contact') return
+                    setError(null)
+                    onCommit([
+                      ...items,
+                      {
+                        contactId: hit.id,
+                        firstName: hit.firstName,
+                        lastName: hit.lastName,
+                        entityName: hit.entityName,
+                        email: hit.email,
+                        phone: hit.phone,
+                        relationshipType: 'related',
+                      },
+                    ])
+                  }}
+                />
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Existing people link - never a second record for the same person.
+                </p>
+              </div>
+            )}
             {prefills.length > 0 && (
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="text-xs text-muted-foreground">Prefill:</span>
@@ -619,7 +733,13 @@ export function RepeatableScreen({
                 ))}
               </div>
             )}
-            <FieldGrid fields={rep.itemFields} value={draft} onChange={(k, v) => setDraft((d) => ({ ...d, [k]: v }))} />
+            <FieldGrid
+              fields={rep.itemFields}
+              value={draft}
+              onChange={(k, v) => setDraft((d) => ({ ...d, [k]: v }))}
+              processors={processors}
+              onAddProcessor={onAddProcessor}
+            />
             <div className="mt-3">
               <Button
                 type="button"
@@ -665,6 +785,11 @@ export function QuestionScreen({
   onPickOption,
   institutions = [],
   onAddInstitution,
+  payrollProviders = [],
+  onAddPayrollProvider,
+  merchantProcessors = [],
+  onAddMerchantProcessor,
+  contactSearch = null,
 }: {
   q: QuestionDef
   answers: WizardAnswers
@@ -677,6 +802,14 @@ export function QuestionScreen({
    *  dropdowns; the add-new handler persists and returns the new row. */
   institutions?: InstitutionRow[]
   onAddInstitution?: (name: string) => Promise<InstitutionRow | null>
+  /** J1 (P2/E4, DB1): the payroll-provider and merchant-processor lists
+   *  behind the provider dropdown and processor item fields. */
+  payrollProviders?: PayrollProviderRow[]
+  onAddPayrollProvider?: (name: string) => Promise<PayrollProviderRow | null>
+  merchantProcessors?: MerchantProcessorRow[]
+  onAddMerchantProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
+  /** J1 (C5/C6/C7): the contact+client type-ahead behind picker questions. */
+  contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
 }) {
   const [error, setError] = useState<string | null>(null)
 
@@ -696,6 +829,42 @@ export function QuestionScreen({
 
   if (q.type === 'select') {
     const current = q.get(answers) as string | undefined
+
+    // J1 (P2/DB1): the payroll-provider question renders the database-backed
+    // dropdown + inline add-new instead of option cards; the stored answer
+    // is the provider's NAME (the answer key stays stable). Dropdowns never
+    // auto-advance - pick, then Continue.
+    if (q.dropdown === 'payrollProviders') {
+      const rows = payrollProviders
+      const selected = rows.find((r) => r.name === current) ?? null
+      return (
+        <div className="space-y-4">
+          <InstitutionSelect
+            institutions={rows}
+            selectedId={selected?.id ?? null}
+            selectedName={current ?? null}
+            index={0}
+            ariaLabel={q.title}
+            testidPrefix="provider"
+            listboxLabel="Payroll providers"
+            selectPlaceholder="Pick the payroll provider…"
+            addToggleLabel="Add a new provider…"
+            addSubmitLabel="Add provider"
+            addPlaceholder="SurePayroll"
+            addErrorLabel="provider"
+            onSelect={(row) => onApply(q.apply(answers, row.name))}
+            onAdd={async (name) => (onAddPayrollProvider ? onAddPayrollProvider(name) : null)}
+          />
+          {current != null && current !== '' && (
+            <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
+              Continue
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </Button>
+          )}
+        </div>
+      )
+    }
+
     const customOn = customAllowed(q)
     // I1: picking "Other - type it" opens the inline text field and waits for
     // Continue instead of auto-advancing (the wizard suppresses the timer).
@@ -799,9 +968,19 @@ export function QuestionScreen({
 
   if (q.type === 'fields') {
     const fields = q.fields ?? []
-    const value: Record<string, unknown> = q.fieldsValue
+    const picker = q.contactPicker
+    const baseValue: Record<string, unknown> = q.fieldsValue
       ? q.fieldsValue(answers)
       : Object.fromEntries(fields.map((f) => [f.key, answers[f.key]]))
+    // J1 (C6/C7): picker-first cards - the link keys ride the form value so
+    // apply() round-trips them into form_data untouched by the fields.
+    const value: Record<string, unknown> = picker
+      ? {
+          ...baseValue,
+          [picker.linkKey]: answers[picker.linkKey] ?? null,
+          ...(picker.clientLinkKey ? { [picker.clientLinkKey]: answers[picker.clientLinkKey] ?? null } : {}),
+        }
+      : baseValue
     const hasAny = fields.some((f) => {
       const v = value[f.key]
       return v != null && String(v).trim() !== ''
@@ -819,6 +998,16 @@ export function QuestionScreen({
       onApply(q.apply(answers, value))
       onAdvance()
     }
+    const linkedContactId = picker ? (value[picker.linkKey] as number | null | undefined) : null
+    const linkedClientId = picker?.clientLinkKey ? (value[picker.clientLinkKey] as number | null | undefined) : null
+    const pickerPick = (hit: ContactPickerHit) => {
+      if (!picker) return
+      const patch: Record<string, unknown> = { ...value, [picker.nameKey]: hit.name }
+      if (picker.emailKey) patch[picker.emailKey] = hit.kind === 'contact' ? (hit.email ?? '') : ''
+      patch[picker.linkKey] = hit.kind === 'contact' ? hit.id : null
+      if (picker.clientLinkKey) patch[picker.clientLinkKey] = hit.kind === 'client' ? hit.id : null
+      onApply(q.apply(answers, patch))
+    }
     return (
       <form
         className="space-y-4"
@@ -827,10 +1016,49 @@ export function QuestionScreen({
           submit()
         }}
       >
+        {picker && contactSearch && (
+          <div>
+            <ContactPicker
+              search={contactSearch}
+              includeClients={picker.clientLinkKey != null}
+              ariaLabel={picker.placeholder}
+              placeholder={picker.placeholder}
+              createLabel={(name) => `Add "${name}" as new`}
+              onPick={pickerPick}
+              onCreateNew={(name) => {
+                const patch: Record<string, unknown> = {
+                  ...value,
+                  [picker.nameKey]: name,
+                  [picker.linkKey]: null,
+                }
+                if (picker.clientLinkKey) patch[picker.clientLinkKey] = null
+                onApply(q.apply(answers, patch))
+              }}
+            />
+            {(linkedContactId != null || linkedClientId != null) && (
+              <p
+                className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-firm-brand/40 bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground"
+                data-testid="picker-linked-badge"
+              >
+                <Check className="h-3 w-3" aria-hidden />
+                Linked to the existing record - no duplicate is created.
+              </p>
+            )}
+          </div>
+        )}
         <FieldGrid
           fields={fields}
           value={value}
-          onChange={(k, v) => onApply(q.apply(answers, { ...value, [k]: v }))}
+          onChange={(k, v) => {
+            const next = { ...value, [k]: v }
+            // J1: typing over the name drops the link - the picker is the
+            // only path that sets it, manual edits are the create-new path.
+            if (picker && k === picker.nameKey) {
+              next[picker.linkKey] = null
+              if (picker.clientLinkKey) next[picker.clientLinkKey] = null
+            }
+            onApply(q.apply(answers, next))
+          }}
         />
         {error && (
           <p className="text-sm font-medium text-status-overdue" role="alert">
@@ -854,9 +1082,13 @@ export function QuestionScreen({
       prefills={q.repeatable?.prefills?.(answers) ?? []}
       maxItems={q.repeatable?.maxItems?.(answers) ?? null}
       capNote={q.repeatable?.capNote?.(answers) ?? null}
+      itemsNote={q.repeatable?.itemsNote?.(items, answers) ?? null}
       validateItems={q.validateItems ? (next) => q.validateItems!(next, answers) : undefined}
       onCommit={(next) => onApply(q.apply(answers, next))}
       onAdvance={onAdvance}
+      contactSearch={contactSearch}
+      processors={merchantProcessors}
+      onAddProcessor={onAddMerchantProcessor}
     />
   )
 }

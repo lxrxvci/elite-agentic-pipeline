@@ -1,5 +1,6 @@
 import type { IntakeAccountInput, IntakeContactInput, IntakePatch, IntakeProofCategory } from '@/server/intake'
 import type { IntakeFormData, IntakeRow } from '@/server/intake'
+import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 import { DEFAULT_RECURRING_RULES, DEFAULT_RULE_KEYS } from '@/shared/lib/default-rules'
 
 import { dateTextLabel } from './date-text'
@@ -66,8 +67,11 @@ export interface FieldDef {
   /**
    * `date-text` (I1): masked MM/DD/YYYY text entry storing ISO YYYY-MM-DD.
    * `tel` fields auto-format as (###) ###-#### and store digits only.
+   * `processor` (J1/E4): dropdown over the merchant_processors table with
+   * inline add-new (repeatable drafts only - the picker writes the
+   * processor name AND processorId in two commits).
    */
-  kind: 'text' | 'email' | 'tel' | 'number' | 'select' | 'textarea' | 'checkbox' | 'date-text'
+  kind: 'text' | 'email' | 'tel' | 'number' | 'select' | 'textarea' | 'checkbox' | 'date-text' | 'processor'
   placeholder?: string
   options?: SelectOption[]
   required?: boolean
@@ -99,6 +103,14 @@ export interface RepeatableDef {
   maxItems?: (a: WizardAnswers) => number | null
   /** Plain-language note that replaces the draft form once the cap is hit. */
   capNote?: (a: WizardAnswers) => string | null
+  /** J1 (C5): a contact type-ahead sits above the draft form; picking an
+   *  existing contact commits a LINKED item (contactId set - conversion
+   *  links the row instead of duplicating the person). The draft form stays
+   *  as the create-new path. */
+  contactPicker?: boolean
+  /** J1 (C3): a non-blocking note over the committed list (the ownership
+   *  %-under-100 soft note). Blocking problems stay on validateItems. */
+  itemsNote?: (items: Array<Record<string, unknown>>, a: WizardAnswers) => string | null
 }
 
 export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist' | 'account-count'
@@ -108,6 +120,14 @@ export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'check
  * that many compact account mini-forms. The committed items live in the
  * form_data per-type array (answerKey); buildPatch flattens all six arrays
  * into the canonical `accounts` list in screen order.
+ *
+ * J1 (meeting #3, D1-D6): the balance chapter order is checking -> savings
+ * -> credit cards -> vehicles -> other assets -> loans (assets BEFORE
+ * loans); money accounts drop the nickname field for a required masked
+ * last-4 (the name derives bank -> type -> last4 via accountLabel); loans
+ * drop the balance and pick the lender from the institutions table when
+ * statement-proof (free-text write-in when owner-declared); vehicles carry
+ * the financed/paid-in-full pick that auto-routes a linked loan entry.
  */
 export interface AccountCountDef {
   /** form_data per-type array key (IntakeFormData). */
@@ -123,18 +143,29 @@ export interface AccountCountDef {
   accountType: string
   /** The count stepper's accessible label: "Number of checking accounts". */
   countLabel: string
-  /** Name-field label on each mini-form ("Account name or nickname"). */
-  nameLabel: string
+  /** Name-field label on each mini-form ("Loan name"). Unused on
+   *  deriveName cards (money accounts have no name field at all). */
+  nameLabel?: string
   namePlaceholder?: string
+  /** J1 (D1): the mini-form asks NO name/nickname - the account's name
+   *  derives as bank + type + last4 ("Chase Checking · 4411") whenever the
+   *  last-4 is captured, and the bank + last-4 inputs are required. */
+  deriveName?: boolean
+  /** J1 (D1): required masked last-4 input (exactly 4 digits). */
+  askLast4?: boolean
   /** Bank dropdown + inline add-new (money accounts). */
   askInstitution?: boolean
   /** "Grant us login access" checkbox (money accounts). */
   askLoginAccess?: boolean
-  /** Loans: lender free text + optional current balance. */
+  /** Loans: the lender - institution dropdown when proof = statement,
+   *  free-text write-in when proof = owner_declared (write-ins NEVER enter
+   *  the institutions table). */
   askLender?: boolean
-  askBalance?: boolean
-  /** Vehicles: model year + value estimate. */
-  askYearValue?: boolean
+  /** Vehicles: the model year. */
+  askYear?: boolean
+  /** J1 (D5) vehicles: required financed / paid-in-full pick; "financed"
+   *  auto-routes a linked loan entry onto the loans card. */
+  askFinanced?: boolean
   /** Other assets: the typed bucket pick (drives the account_type mapping). */
   askAssetType?: boolean
   /** Proof categories offered as a per-item select; absent = locked to
@@ -142,6 +173,19 @@ export interface AccountCountDef {
   proofOptions?: SelectOption[]
   /** The proof category pre-stamped on every new item. */
   defaultProof: IntakeProofCategory
+}
+
+/** J1 (C6/C7): config for picker-first `fields` questions. */
+export interface ContactPickerDef {
+  /** form_data key carrying the picked CONTACT id (null once typed over). */
+  linkKey: 'cpaContactId' | 'referralContactId'
+  /** Referral-who additionally links CLIENT records (C7). */
+  clientLinkKey?: 'referralClientId'
+  /** The name field the picker writes and the typed path edits. */
+  nameKey: 'cpaName' | 'referralWho'
+  /** Optional email field prefilled from a picked contact. */
+  emailKey?: 'cpaEmail'
+  placeholder: string
 }
 
 export interface QuestionDef {
@@ -162,6 +206,15 @@ export interface QuestionDef {
   /** I4: services-screen grouping (type 'multi') - the standards list plus
    *  modular add-ons; presentation only, the answer key is unchanged. */
   services?: ServicesGrouping
+  /** J1 (P2/DB1): `select` questions backed by a database list render a
+   *  dropdown + inline add-new instead of option cards (the payroll
+   *  provider question reads payroll_providers). The stored answer is the
+   *  row's NAME, so the answer key stays stable. */
+  dropdown?: 'payrollProviders'
+  /** J1 (C6/C7): picker-first `fields` questions - a contact/client
+   *  type-ahead sits above the fields; picking an existing record writes
+   *  the link key, manual typing stays the create-new path. */
+  contactPicker?: ContactPickerDef
   /** Branch predicate; question renders only when this returns true. */
   when?: (a: WizardAnswers) => boolean
   /** When false and the answer is empty, Continue acts as Skip. */
@@ -316,6 +369,31 @@ export function ownerCountError(count: number, a: WizardAnswers): string | null 
   const rule = ownerCountRule(a)
   if (!rule || count >= rule.min) return null
   return rule.message
+}
+
+// ── J1 ownership-sum guard (C3, 00:07:40) ─────────────────────────────────
+
+/** The committed owners' cumulative %, rounded to cents for clean copy. */
+export function ownershipSum(items: Array<Record<string, unknown>>): number {
+  const sum = items.reduce((acc, i) => acc + (numOrNull(i.ownershipPercent) ?? 0), 0)
+  return Math.round(sum * 100) / 100
+}
+
+const pctText = (n: number): string => String(Math.round(n * 100) / 100)
+
+/** Hard guard: over 100% blocks Continue in plain language; exactly 100 is fine. */
+export function ownershipSumError(items: Array<Record<string, unknown>>): string | null {
+  const sum = ownershipSum(items)
+  return sum > 100 ? `You're at ${pctText(sum)}% — ownership can't exceed 100%.` : null
+}
+
+/** Soft note: under 100% is allowed, with a nudge once any % is entered. */
+export function ownershipSumNote(items: Array<Record<string, unknown>>): string | null {
+  const anyPercent = items.some((i) => numOrNull(i.ownershipPercent) != null)
+  if (!anyPercent) return null
+  const sum = ownershipSum(items)
+  if (sum >= 100) return null
+  return `You're at ${pctText(sum)}% - the rest can stay unassigned for now.`
 }
 
 // ── Custom "Other" answers (I1, 00:15:53: "what if it's something
@@ -609,21 +687,23 @@ export function effectiveServiceKeys(a: WizardAnswers): string[] {
 // ── I3 accounts: sequential per-type count cards (plan §1 screen 7,
 //    00:34:18-00:45:35) ────────────────────────────────────────────────────
 //
-// One card per account type, in his dictated order: checking, savings,
-// credit cards, loans, vehicles, other assets. Money accounts pick the bank
-// from the institutions table (dropdown + inline add-new) and carry a
-// locked Statement proof; loans, vehicles, and other assets pick a proof
-// category. Statement-day capture leaves intake entirely - a conversion-time
-// concern now.
+// One card per account type. J1 (meeting #3, D4, 00:19:01): his dictated
+// order is now checking, savings, credit cards, VEHICLES, OTHER ASSETS,
+// LOANS - assets before loans, because a financed vehicle feeds the loan
+// list. Money accounts pick the bank from the institutions table (dropdown
+// + inline add-new), carry a locked Statement proof, and - J1/D1 - drop the
+// nickname field for a required masked last-4: the account's name DERIVES
+// as bank + type + last4. Statement-day capture leaves intake entirely - a
+// conversion-time concern.
 
 export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
   {
     answerKey: 'checkingAccounts',
     accountType: 'checking',
     countLabel: 'Number of checking accounts',
-    nameLabel: 'Account name or nickname',
-    namePlaceholder: 'Operating checking',
+    deriveName: true,
     askInstitution: true,
+    askLast4: true,
     askLoginAccess: true,
     defaultProof: 'statement',
   },
@@ -631,9 +711,9 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     answerKey: 'savingsAccounts',
     accountType: 'savings',
     countLabel: 'Number of savings accounts',
-    nameLabel: 'Account name or nickname',
-    namePlaceholder: 'Tax reserve savings',
+    deriveName: true,
     askInstitution: true,
+    askLast4: true,
     askLoginAccess: true,
     defaultProof: 'statement',
   },
@@ -641,33 +721,23 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     answerKey: 'creditCardAccounts',
     accountType: 'credit_card',
     countLabel: 'Number of business credit cards',
-    nameLabel: 'Card name or nickname',
-    namePlaceholder: 'Amex Gold',
+    deriveName: true,
     askInstitution: true,
+    askLast4: true,
     askLoginAccess: true,
     defaultProof: 'statement',
   },
   {
-    answerKey: 'loanAccounts',
-    accountType: 'loan',
-    countLabel: 'Number of loans',
-    nameLabel: 'Loan name',
-    namePlaceholder: 'Delivery van loan',
-    askLender: true,
-    askBalance: true,
-    proofOptions: [
-      { value: 'statement', label: 'Statement', sub: 'The lender issues statements' },
-      { value: 'owner_declared', label: 'Owner declared', sub: 'No statement - the owner confirms the balance' },
-    ],
-    defaultProof: 'statement',
-  },
-  {
+    // J1 (D5): vehicles carry the financed/paid-in-full pick; "financed"
+    // auto-routes a linked loan entry onto the loans card. D3: no value
+    // estimate is asked anymore (researched later, never at intake).
     answerKey: 'vehicleAssets',
     accountType: 'vehicle',
     countLabel: 'Number of vehicles',
     nameLabel: 'Description',
     namePlaceholder: '2022 Ford Transit van',
-    askYearValue: true,
+    askYear: true,
+    askFinanced: true,
     proofOptions: [
       { value: 'bill_of_sale', label: 'Bill of sale', sub: 'The purchase document proves it' },
       { value: 'owner_declared', label: 'Owner declared', sub: 'The owner confirms the details' },
@@ -688,24 +758,123 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     ],
     defaultProof: 'owner_declared',
   },
+  {
+    // J1 (D3/D6): the balance field is gone (never asked in intake) and the
+    // lender is an institution dropdown when the proof is a statement, a
+    // free-text write-in when owner-declared (write-ins NEVER enter the
+    // institutions table).
+    answerKey: 'loanAccounts',
+    accountType: 'loan',
+    countLabel: 'Number of loans',
+    nameLabel: 'Loan name',
+    namePlaceholder: 'Delivery van loan',
+    askLender: true,
+    proofOptions: [
+      { value: 'statement', label: 'Statement', sub: 'The lender issues statements' },
+      { value: 'owner_declared', label: 'Owner declared', sub: 'No statement - the owner confirms it' },
+    ],
+    defaultProof: 'statement',
+  },
 ]
+
+/**
+ * Per-item Continue guard for the count cards (J1): money accounts need the
+ * bank + a 4-digit last-4 (the derived name IS the identifier now); loans
+ * need a lender (picked or written in); vehicles need the financed pick.
+ * Returns the plain-language error for the first failing item, else null.
+ */
+export function accountItemError(
+  def: AccountCountDef,
+  items: IntakeAccountInput[],
+): string | null {
+  // The noun for the unnamed-entry message, per card.
+  const noun =
+    def.answerKey === 'vehicleAssets' ? 'vehicle' : def.answerKey === 'loanAccounts' ? 'loan' : 'asset'
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    const n = i + 1
+    if (def.deriveName) {
+      if (!str(item.institution) && item.institutionId == null) {
+        return `Pick the bank for account #${n}.`
+      }
+      if (normalizeLast4(item.last4) == null) {
+        return `Enter the last 4 digits for account #${n} - exactly 4 numbers.`
+      }
+      continue
+    }
+    if (!str(item.name)) {
+      return `${noun === 'vehicle' ? 'Describe' : 'Name'} ${noun} #${n} or lower the count.`
+    }
+    if (def.askFinanced && item.financed !== 'financed' && item.financed !== 'paid') {
+      return `Is ${str(item.name) ?? `vehicle #${n}`} financed or paid in full?`
+    }
+    if (def.askLender && !str(item.lender)) {
+      const proof = item.proofCategory ?? def.defaultProof
+      return proof === 'statement'
+        ? `Pick the lender for ${str(item.name) ?? `loan #${n}`} from the bank list.`
+        : `Type the lender for ${str(item.name) ?? `loan #${n}`} (a name is fine).`
+    }
+  }
+  return null
+}
 
 const PER_TYPE_ACCOUNT_KEYS = ACCOUNT_COUNT_DEFS.map((d) => d.answerKey)
 
 /** Normalize one committed mini-form item: the account type is stamped
  *  (other-assets items map their assetType pick), the proof falls back to
- *  the card's default, and blank optional strings drop to null. */
+ *  the card's default, and blank optional strings drop to null.
+ *  J1 (D1): money cards derive the name as bank + type + last4 - the
+ *  identifier Jason reads everywhere (shared/lib/account-label). */
 function normalizeAccountItem(def: AccountCountDef, item: IntakeAccountInput): IntakeAccountInput {
   const assetType = str(item.assetType)
   const accountType =
     def.answerKey === 'otherAssets'
       ? (assetType ? ASSET_TYPE_TO_ACCOUNT_TYPE[assetType] : null) ?? def.accountType
       : str(item.accountType) ?? def.accountType
+  const name = def.deriveName
+    ? normalizeLast4(item.last4) != null
+      ? accountLabel({ institution: item.institution, accountType, last4: item.last4 })
+      : (str(item.name) ?? '')
+    : item.name
   return {
     ...item,
+    name,
     accountType,
     proofCategory: item.proofCategory ?? def.defaultProof,
   }
+}
+
+/**
+ * J1 (D5, 00:23:23-00:24:04): a financed vehicle auto-routes onto the loans
+ * card as a pre-filled entry - "<description> (vehicle loan)" with the
+ * lender select ready. Reconciled on every vehicles commit: existing
+ * vehicle-loan entries whose vehicle is still financed SURVIVE (lender
+ * edits kept), entries whose vehicle was un-financed or removed drop, and
+ * missing ones get created. Linked by the vehicle's description.
+ */
+export function reconcileVehicleLoans(
+  vehicles: IntakeAccountInput[],
+  loans: IntakeAccountInput[],
+): IntakeAccountInput[] {
+  const financedNames = new Set(
+    vehicles
+      .filter((v) => v.financed === 'financed')
+      .map((v) => str(v.name))
+      .filter((n): n is string => n != null),
+  )
+  const kept = loans.filter((l) => l.fromVehicle == null || financedNames.has(l.fromVehicle))
+  const linked = new Set(
+    kept.map((l) => l.fromVehicle).filter((n): n is string => n != null),
+  )
+  const added: IntakeAccountInput[] = [...financedNames]
+    .filter((n) => !linked.has(n))
+    .map((n) => ({
+      name: `${n} (vehicle loan)`,
+      accountType: 'vehicle_loan',
+      proofCategory: 'statement' as const,
+      fromVehicle: n,
+    }))
+  return [...kept, ...added]
 }
 
 /** The canonical flattened account list (screen order) - what buildPatch
@@ -814,7 +983,9 @@ export function applyOnlineAccess(a: WizardAnswers, checkedKeys: string[]): Part
   return patch as Partial<WizardAnswers>
 }
 
-/** Short label for a checklist row / review badge: "Checking · Chase". */
+/** Short label for a checklist row / review badge on LEGACY accounts (no
+ *  last4): "Checking · Chase". J1 (D2): accounts with a last-4 render the
+ *  bank -> type -> last4 standard via shared/lib/account-label instead. */
 export function accountRefLabel(item: IntakeAccountInput): string {
   return (
     join(ACCOUNT_TYPE_LABELS[String(item.accountType)] ?? str(item.accountType), str(item.institution)) ??
@@ -1030,6 +1201,22 @@ export const CHAPTERS: ChapterDef[] = [
           // draft form swaps for the cap note once one is listed.
           maxItems: (a) => ownerCountRule(a)?.max ?? null,
           capNote: (a) => ownerCountRule(a)?.capNote ?? null,
+          // J1 (C1, 00:05:37): one tap pulls the screen-1 main contact into
+          // the owner draft - same prefill convention the contacts card uses
+          // for owners. Conversion's name+email dedup links the two roles to
+          // ONE contact record (C4).
+          prefills: (a) => {
+            const p = (a.contacts ?? []).find((c) => c.isPrimary)
+            if (!p) return []
+            const name = str(p.entityName) ?? [p.firstName, p.lastName].filter(Boolean).join(' ')
+            if (!str(name)) return []
+            return [
+              {
+                label: 'Same as the primary contact',
+                patch: { name, email: p.email ?? '', phone: p.phone ?? '' },
+              },
+            ]
+          },
           itemFields: [
             { key: 'name', label: 'Full name', kind: 'text', required: true, placeholder: 'Wren Okafor' },
             { key: 'email', label: 'Email (optional)', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
@@ -1045,10 +1232,13 @@ export const CHAPTERS: ChapterDef[] = [
               i.ownershipPercent != null && i.ownershipPercent !== '' ? `${i.ownershipPercent}% owner` : null,
               i.receivesReports === true ? 'gets reports' : null,
             ),
+          // J1 (C3): under 100% is allowed, with a soft nudge once any % is in.
+          itemsNote: (items) => ownershipSumNote(items),
         },
         // I2: the entity's owner-count guard blocks Continue in plain
-        // language ("A partnership needs at least 2 owners.").
-        validateItems: (items, a) => ownerCountError(items.length, a),
+        // language ("A partnership needs at least 2 owners."). J1 (C3): the
+        // cumulative ownership % can never exceed 100 - same treatment.
+        validateItems: (items, a) => ownerCountError(items.length, a) ?? ownershipSumError(items),
         get: (a) => a.owners ?? [],
         apply: (_a, v) => ({ owners: v as WizardAnswers['owners'] }),
         summarize: (a) => {
@@ -1059,11 +1249,15 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'contacts',
         title: 'Who else do we talk to?',
-        help: 'The main contact is already listed. Add anyone else - an office manager, their bookkeeper. The CPA gets their own card next.',
+        // J1 (C5, 00:10:32): the type-ahead searches the whole contact
+        // database first - an existing person LINKS (never a second record);
+        // the draft form below stays for genuinely new people.
+        help: 'The main contact is already listed. Search for anyone already on file, or add someone new - an office manager, their bookkeeper. The CPA gets their own card next.',
         type: 'repeatable',
         required: false,
         repeatable: {
           addLabel: 'Add contact',
+          contactPicker: true,
           itemFields: [
             { key: 'firstName', label: 'First name', kind: 'text', half: true, placeholder: 'Wren' },
             { key: 'lastName', label: 'Last name', kind: 'text', half: true, placeholder: 'Okafor' },
@@ -1084,7 +1278,7 @@ export const CHAPTERS: ChapterDef[] = [
           summarize: (i) => (str(i.entityName) ?? [i.firstName, i.lastName].filter(Boolean).join(' ')),
           sub: (i) => {
             const role = i.isPrimary ? 'Primary contact' : i.relationshipType === 'cpa' ? 'CPA' : null
-            return role
+            return join(role, i.contactId != null ? 'linked from the existing record' : null)
           },
           // I1 (00:29:05): when the contact is also an owner, one tap copies
           // the owner's name/email/phone into the draft.
@@ -1108,7 +1302,12 @@ export const CHAPTERS: ChapterDef[] = [
         apply: (_a, v) => ({ contacts: v as WizardAnswers['contacts'] }),
         summarize: (a) => {
           const cs = a.contacts ?? []
-          return cs.length > 0 ? `${cs.length} contact${cs.length === 1 ? '' : 's'}` : null
+          if (cs.length === 0) return null
+          const linked = cs.filter((c) => c.contactId != null).length
+          return join(
+            `${cs.length} contact${cs.length === 1 ? '' : 's'}`,
+            linked > 0 ? `${linked} linked to existing record${linked === 1 ? '' : 's'}` : null,
+          )
         },
       },
       {
@@ -1119,15 +1318,35 @@ export const CHAPTERS: ChapterDef[] = [
         type: 'select',
         required: true,
         ...yesNo('hasCpa'),
+        // J1 (C4/C6): the review row carries the linked-vs-new state.
         summarize: (a) =>
-          a.hasCpa === true ? join('Yes', str(a.cpaName)) : a.hasCpa === false ? 'No' : null,
+          a.hasCpa === true
+            ? join(
+                'Yes',
+                str(a.cpaName),
+                a.cpaContactId != null ? 'linked to the existing record' : str(a.cpaName) ? 'new record' : null,
+              )
+            : a.hasCpa === false
+              ? 'No'
+              : null,
       },
       {
+        // J1 (C6, 00:08:36): the CPA card is picker-first - search the
+        // existing contacts and link one (never "two Yes Taxes LLCs"), or
+        // type a new name (the create-new path). The review row carries the
+        // linked-vs-new state.
         id: 'cpa-details',
         title: 'Who is their CPA?',
+        help: 'Search first - a CPA already on file links to the same record. Not there? Type the name and we create it at conversion.',
         type: 'fields',
         required: true,
         when: (a) => a.hasCpa === true,
+        contactPicker: {
+          linkKey: 'cpaContactId',
+          nameKey: 'cpaName',
+          emailKey: 'cpaEmail',
+          placeholder: 'Search CPAs and contacts on file…',
+        },
         fields: [
           { key: 'cpaName', label: 'CPA name or firm', kind: 'text', required: true, placeholder: 'Cascade Tax Group' },
           { key: 'cpaEmail', label: 'CPA email', kind: 'email', half: true, placeholder: 'team@cascadetax.example' },
@@ -1149,15 +1368,30 @@ export const CHAPTERS: ChapterDef[] = [
           { value: 'Other', label: 'Something else' },
         ],
         ...key('referralSource'),
-        summarize: withCustom('referral', (a) => join(str(a.referralSource), str(a.referralWho))),
+        // J1 (C7): the who-to-thank row notes when it links an existing record.
+        summarize: withCustom('referral', (a) =>
+          join(
+            str(a.referralSource),
+            str(a.referralWho),
+            a.referralContactId != null || a.referralClientId != null ? 'on file' : null,
+          ),
+        ),
       },
       {
         // I1 (00:30:14): a client/CPA referral captures who to thank.
+        // J1 (C7, 00:12:14): picker-driven over existing contacts AND
+        // clients, so referral bonuses stay attributable over time.
         id: 'referral-who',
         title: 'Who should we thank?',
         type: 'fields',
         required: false,
         when: (a) => a.referralSource === 'CPA referral' || a.referralSource === 'Existing client',
+        contactPicker: {
+          linkKey: 'referralContactId',
+          clientLinkKey: 'referralClientId',
+          nameKey: 'referralWho',
+          placeholder: 'Search clients and contacts…',
+        },
         fields: [{ key: 'referralWho', label: 'Name (optional)', kind: 'text', placeholder: 'Cascade Tax Group' }],
         get: (a) => a.referralWho,
         apply: (_a, v) => v as Partial<WizardAnswers>,
@@ -1386,12 +1620,14 @@ export const CHAPTERS: ChapterDef[] = [
   },
   {
     // I3 (plan §1 screen 7, 00:34:18-00:45:35): the single grouped accounts
-    // widget is gone - one count card per account type, in his dictated
-    // order. Each count generates that many compact mini-forms. Statement
-    // day is never asked here (conversion-time concern); proof categories
-    // are locked to Statement for money accounts and selectable for loans,
-    // vehicles, and other assets. Every row folds into the review screen's
-    // grouped accounts section, so per-question summaries stay hidden.
+    // widget is gone - one count card per account type. J1 (D4, 00:19:01):
+    // the order is checking, savings, credit cards, vehicles, other assets,
+    // THEN loans - "if they tell me a vehicle, I ask if it's financed - that
+    // helps me with the loan part." Statement day is never asked here
+    // (conversion-time concern); proof categories are locked to Statement
+    // for money accounts and selectable for loans, vehicles, and other
+    // assets. Every row folds into the review screen's grouped accounts
+    // section, so per-question summaries stay hidden.
     id: 'balance',
     label: 'Balance sheet',
     when: isBookkeeping,
@@ -1399,7 +1635,8 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'checking-accounts',
         title: 'How many business checking accounts do you have?',
-        help: 'Every account the business spends or receives money through. Each one is reconciled monthly against its bank statement.',
+        // J1 (D1): no nickname - the identifier is the bank + last 4.
+        help: 'Every account the business spends or receives money through. Each one is reconciled monthly against its bank statement. The bank and the last 4 digits identify it.',
         type: 'account-count',
         required: false,
         accountCount: ACCOUNT_COUNT_DEFS[0],
@@ -1430,25 +1667,22 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: () => null,
       },
       {
-        id: 'loans',
-        title: 'Any loans the business owes on?',
-        help: 'Equipment financing, an SBA loan, a line of credit, money borrowed from the owners. The balance is optional - a ballpark helps the quote.',
+        id: 'vehicles',
+        title: 'Any vehicles the business owns?',
+        // J1 (D5, 00:23:23): financed routes a linked entry onto the loans
+        // card. D3: no value estimate - the year is plenty.
+        help: 'Cars, trucks, vans, trailers titled to or used by the business. If it\'s financed, the loan shows up on the loans card next door - you just pick the lender.',
         type: 'account-count',
         required: false,
         accountCount: ACCOUNT_COUNT_DEFS[3],
-        get: (a) => a.loanAccounts ?? [],
-        apply: (_a, v) => ({ loanAccounts: v as IntakeAccountInput[] }),
-        summarize: () => null,
-      },
-      {
-        id: 'vehicles',
-        title: 'Any vehicles the business owns?',
-        help: 'Cars, trucks, vans, trailers titled to or used by the business. A year and rough value is plenty.',
-        type: 'account-count',
-        required: false,
-        accountCount: ACCOUNT_COUNT_DEFS[4],
         get: (a) => a.vehicleAssets ?? [],
-        apply: (_a, v) => ({ vehicleAssets: v as IntakeAccountInput[] }),
+        apply: (a, v) => {
+          const vehicles = v as IntakeAccountInput[]
+          return {
+            vehicleAssets: vehicles,
+            loanAccounts: reconcileVehicleLoans(vehicles, a.loanAccounts ?? []),
+          }
+        },
         summarize: () => null,
       },
       {
@@ -1457,9 +1691,23 @@ export const CHAPTERS: ChapterDef[] = [
         help: 'Equipment, furniture, money anyone owes the business, goodwill from buying the business, investments. If it matters to the books, list it.',
         type: 'account-count',
         required: false,
-        accountCount: ACCOUNT_COUNT_DEFS[5],
+        accountCount: ACCOUNT_COUNT_DEFS[4],
         get: (a) => a.otherAssets ?? [],
         apply: (_a, v) => ({ otherAssets: v as IntakeAccountInput[] }),
+        summarize: () => null,
+      },
+      {
+        id: 'loans',
+        title: 'Any loans the business owes on?',
+        // J1 (D3): the balance is never asked (researched later). D6: the
+        // lender picks from the bank list when statements exist; an
+        // owner-declared lender is a write-in that stays off the bank list.
+        help: 'Equipment financing, an SBA loan, a line of credit, money borrowed from the owners. Financed vehicles are already listed - just pick their lenders.',
+        type: 'account-count',
+        required: false,
+        accountCount: ACCOUNT_COUNT_DEFS[5],
+        get: (a) => a.loanAccounts ?? [],
+        apply: (_a, v) => ({ loanAccounts: v as IntakeAccountInput[] }),
         summarize: () => null,
       },
     ],
@@ -1553,17 +1801,26 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'merchants',
         title: 'Which merchant processors do they use?',
-        help: 'Stripe, Square, Shopify Payments, and the like. Each gets its own account on the books.',
+        // J1 (E5, 00:24:04): when card or online payments come in, this is
+        // mandatory - online payments need a processor to reconcile. E4/DB1:
+        // the processor picks from the merchant_processors table (dropdown +
+        // inline add-new; every add persists globally).
+        help: (a) =>
+          (a.paymentMethods ?? []).includes('online')
+            ? 'Online payments need a processor to reconcile - list every one they use. Each gets its own account on the books.'
+            : 'Card payments settle through a processor - list every one they use. Each gets its own account on the books.',
         type: 'repeatable',
-        required: false,
+        required: true,
         when: takesCards,
         repeatable: {
           addLabel: 'Add processor',
           itemFields: [
             { key: 'name', label: 'Name', kind: 'text', required: true, placeholder: 'Stripe' },
-            { key: 'processor', label: 'Processor (optional)', kind: 'text', placeholder: 'Stripe' },
+            // J1 (E4): dropdown from the merchant_processors table with
+            // inline add-new; picking one pre-fills the account name.
+            { key: 'processor', label: 'Processor', kind: 'processor', half: true },
           ],
-          itemValid: (i) => !!str(i.name),
+          itemValid: (i) => !!str(i.name) && !!str(i.processor),
           summarize: (i) => String(i.name),
           sub: (i) => str(i.processor) && String(i.processor) !== String(i.name) ? String(i.processor) : null,
         },
@@ -1655,20 +1912,17 @@ export const CHAPTERS: ChapterDef[] = [
         title: 'Which payroll provider?',
         // I2 (00:48:57): required when corporate - "that's where we get the
         // payroll reports".
+        // J1 (P2/DB1, 00:28:42): the provider list is a real database -
+        // dropdown + inline add-new; anything added persists globally for
+        // future intakes. The stored answer is the provider's name.
         help: (a) =>
           requiresOfficerPayroll(a)
             ? 'Required for corporate entities - this is where we get the payroll reports.'
-            : 'Where the payroll reports come from.',
+            : 'Where the payroll reports come from. Not listed? Add it once - it stays for the next intake.',
         type: 'select',
         required: true,
         when: hasPayroll,
-        options: [
-          { value: 'Gusto', label: 'Gusto' },
-          { value: 'ADP', label: 'ADP' },
-          { value: 'QuickBooks Payroll', label: 'QuickBooks Payroll' },
-          { value: 'Paychex', label: 'Paychex' },
-          { value: 'Other', label: 'Other' },
-        ],
+        dropdown: 'payrollProviders',
         ...key('payrollProvider'),
         summarize: withCustom('payroll-provider', (a) => (hasPayroll(a) ? str(a.payrollProvider) : null)),
       },
@@ -1735,8 +1989,10 @@ export const CHAPTERS: ChapterDef[] = [
         dynamicOptions: (a) =>
           statementAccountRefs(a).map((r) => ({
             value: r.key,
-            label: r.item.name,
-            sub: accountRefLabel(r.item),
+            // J1 (D2): the bank -> type -> last4 standard; legacy accounts
+            // without a last-4 keep the name + "Checking · Chase" sub.
+            label: accountLabel(r.item),
+            sub: normalizeLast4(r.item.last4) != null ? undefined : accountRefLabel(r.item),
           })),
         get: (a) =>
           statementAccountRefs(a)

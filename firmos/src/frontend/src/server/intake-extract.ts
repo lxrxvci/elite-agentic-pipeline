@@ -105,7 +105,6 @@ const TAX_STRUCTURES = ['LLC', 'S-corp', 'C-corp', 'Sole proprietorship', 'Partn
 // I2: the LLC tax-classification subclass vocabulary (canonical labels in the registry).
 const LLC_SUBCLASSES = Object.keys(LLC_SUBCLASS_LABELS)
 const REFERRAL_SOURCES = ['CPA referral', 'Existing client', 'Web search', 'Walk-in', 'Other'] as const
-const PAYROLL_PROVIDERS = ['Gusto', 'ADP', 'QuickBooks Payroll', 'Paychex', 'Other'] as const
 const QBO_TIERS = ['simple_start', 'essentials', 'plus', 'advanced'] as const
 const RULE_SCHEDULES = ['daily', 'weekly', 'monthly', 'quarterly', 'semi_annual', 'annual'] as const
 const REPORT_FREQUENCIES = ['monthly', 'quarterly', 'semi_annual', 'annual'] as const
@@ -114,6 +113,8 @@ const RELATIONSHIP_TYPES = ['primary_contact', 'cpa', 'related'] as const
 // and the other-assets type buckets ride extraction too.
 const PROOF_CATEGORIES = ['statement', 'owner_declared', 'bill_of_sale'] as const
 const ASSET_TYPES = Object.keys(ASSET_TYPE_LABELS)
+// J1 (D5): the vehicles card's financed/paid-in-full pick.
+const FINANCED_VALUES = ['financed', 'paid'] as const
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
@@ -188,7 +189,10 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'depositsNonBusiness', label: 'Deposits non-business money', chapter: 'income', kind: 'boolean' },
   { key: 'personalOnBusiness', label: 'Pays for non-business on business accounts', chapter: 'income', kind: 'boolean' },
   { key: 'hasPayroll', label: 'Runs payroll', chapter: 'income', kind: 'boolean' },
-  { key: 'payrollProvider', label: 'Payroll provider', chapter: 'income', kind: 'enum', options: PAYROLL_PROVIDERS },
+  // J1 (P2/DB1): payroll providers are a database with inline add-new, so
+  // extraction accepts any provider NAME (string, not a closed enum) - the
+  // wizard's dropdown resolves it against payroll_providers on review.
+  { key: 'payrollProvider', label: 'Payroll provider', chapter: 'income', kind: 'string' },
   { key: 'payrollFrequency', label: 'Payroll frequency', chapter: 'income', kind: 'enum', options: ['weekly', 'biweekly', 'semi_monthly', 'monthly'] },
   // reporting
   { key: 'bookkeepingFrequency', label: 'Close cadence', chapter: 'reporting', kind: 'enum', options: ['monthly', 'quarterly', 'semi_annual', 'annual'] },
@@ -353,6 +357,20 @@ function coerceAccounts(list: unknown[]): CoercedElement[] {
     if (assetType) out.assetType = assetType
     const lender = asString(o.lender)
     if (lender) out.lender = lender
+    // J1 (D1): the masked last-4 - exactly 4 digits or rejected.
+    if (o.last4 != null) {
+      const last4 = asString(o.last4)
+      if (last4 == null || !/^\d{4}$/.test(last4)) {
+        return { reason: `account "${name}" last4 must be exactly 4 digits` }
+      }
+      out.last4 = last4
+    }
+    // J1 (D5): the vehicles card's financed/paid-in-full pick rides extraction.
+    const financed = asEnum(o.financed, FINANCED_VALUES)
+    if (o.financed != null && financed == null) {
+      return { reason: `account "${name}" financed must be "financed" or "paid"` }
+    }
+    if (financed) out.financed = financed
     for (const k of ['balance', 'year', 'value'] as const) {
       const n = asNumber(o[k])
       if (n != null) out[k] = n
@@ -608,6 +626,14 @@ const MISSING_CHECKS: readonly MissingCheck[] = [
       isBk(a) &&
       (a.paymentMethods ?? []).some((m) => m === 'card' || m === 'online') &&
       (a.merchantAccounts ?? []).length > 0,
+  },
+  // J1 (E5): card/online payment methods make the processors question
+  // mandatory in the wizard, so an extraction that never names one keeps it
+  // on the "still to ask" list.
+  {
+    key: 'merchantAccounts',
+    when: (a) =>
+      isBk(a) && (a.paymentMethods ?? []).some((m) => m === 'card' || m === 'online'),
   },
   { key: 'bookkeepingFrequency', when: isBk },
   { key: 'monthlyCloseTier', when: (a) => isBk(a) && (a.bookkeepingFrequency ?? 'monthly') === 'monthly' },

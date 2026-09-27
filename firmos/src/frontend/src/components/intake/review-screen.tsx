@@ -27,6 +27,7 @@ import {
   type WizardAnswers,
 } from './registry'
 import type { IntakeAccountInput } from '@/server/intake'
+import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 
 /**
  * The review chapter: read-only summary grouped by chapter with edit-jump
@@ -37,17 +38,19 @@ import type { IntakeAccountInput } from '@/server/intake'
 
 // ── I3 grouped accounts (plan §1 screen 7 + §3) ───────────────────────────
 
-/** Display order for the review's account groups - the count-card order,
- *  then anything exotic (legacy/extraction types) last. */
+/** Display order for the review's account groups. J1 (D4): assets before
+ *  loans - the count-card order - then anything exotic (legacy/extraction
+ *  types) last. */
 const REVIEW_ACCOUNT_TYPE_ORDER = [
   'checking',
   'savings',
   'credit_card',
-  'loan',
   'vehicle',
   'fixed_assets',
   'investment',
   'other_asset',
+  'vehicle_loan',
+  'loan',
 ]
 
 function accountDetailLine(a: IntakeAccountInput): string | null {
@@ -55,13 +58,21 @@ function accountDetailLine(a: IntakeAccountInput): string | null {
   if (a.assetType != null && ASSET_TYPE_LABELS[a.assetType]) parts.push(ASSET_TYPE_LABELS[a.assetType])
   if (a.lender) parts.push(a.lender)
   if (a.year != null) parts.push(String(a.year))
+  // J1 (D5): the financed pick shows; "financed" means a linked loan entry
+  // already sits in the loans group.
+  if (a.financed === 'financed') parts.push('Financed')
+  if (a.financed === 'paid') parts.push('Paid in full')
+  // Legacy rows only: J1 (D3) removed balance/value capture from intake.
   if (a.balance != null) parts.push(`balance ${formatMoney(a.balance)}`)
   if (a.value != null) parts.push(`value ${formatMoney(a.value)}`)
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
 /** I3: accounts grouped by type, each row carrying its institution and
- *  proof-category badges plus the online-access flag. */
+ *  proof-category badges plus the online-access flag.
+ *  J1 (D2): the primary text is the bank -> type -> last4 standard
+ *  (accountLabel); legacy rows without a last-4 keep the old name and the
+ *  institution badge. */
 function ReviewAccounts({ answers }: { answers: WizardAnswers }) {
   const accounts = allAccounts(answers)
   if (accounts.length === 0) return null
@@ -88,13 +99,19 @@ function ReviewAccounts({ answers }: { answers: WizardAnswers }) {
           <ul className="mt-1.5 space-y-1.5">
             {list.map((a, i) => {
               const detail = accountDetailLine(a)
+              const hasLast4 = normalizeLast4(a.last4) != null
               return (
                 <li key={`${a.name}-${i}`} className="flex flex-wrap items-baseline gap-x-2 gap-y-1" data-testid="review-account-row">
-                  <span className="text-sm font-medium text-foreground">{a.name}</span>
+                  <span className="text-sm font-medium text-foreground">{accountLabel(a)}</span>
                   {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
-                  {a.institution && (
+                  {a.institution && !hasLast4 && (
                     <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
                       {a.institution}
+                    </span>
+                  )}
+                  {a.fromVehicle != null && (
+                    <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
+                      Vehicle loan
                     </span>
                   )}
                   <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -114,6 +131,9 @@ function ReviewAccounts({ answers }: { answers: WizardAnswers }) {
     </div>
   )
 }
+
+/** J1 (D5): a loan entry auto-routed from a financed vehicle carries the
+ *  fromVehicle marker - rendered as a "Vehicle loan" badge above. */
 
 type Phase = 'review' | 'duplicates' | 'submitted'
 

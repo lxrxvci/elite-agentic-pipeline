@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/table'
 import { assignClientStaffAction, setClientWorkDayAction } from '@/server/actions/clients'
 import type { ClientDetail } from '@/server/clients'
+import { accountLabel } from '@/shared/lib/account-label'
 import { weekdayLabel } from '@/shared/lib/date-display'
 import { WorkStatusBadge } from '@/shared/ui/work'
 
@@ -373,8 +374,10 @@ export function OverviewPanel({
             <TableBody>
               {detail.accounts.map((a) => (
                 <TableRow key={a.id} className="h-11" data-testid="account-row">
+                  {/* J1 (D2): the bank -> type -> last4 standard; legacy rows
+                      without a last-4 render the old name. */}
                   <TableCell className="px-4 py-0 text-sm font-medium text-foreground">
-                    {a.name}
+                    {accountLabel(a)}
                   </TableCell>
                   <TableCell className="px-3 py-0 text-xs text-muted-foreground">
                     {accountTypeLabel(a.accountType)}

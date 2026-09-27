@@ -213,6 +213,63 @@ describe("coerceExtraction", () => {
     expect(result.rejected?.some((r) => r.reason.includes("assetType"))).toBe(true);
   });
 
+  it("J1: account entries round-trip last4 + financed; garbage is rejected with a reason", () => {
+    const result = coerceExtraction({
+      fields: [
+        {
+          key: "accounts",
+          value: [
+            // D1: the masked last-4 rides extraction.
+            { name: "Chase Checking · 4411", accountType: "checking", institution: "Chase", last4: "4411" },
+            // D5: the financed pick rides extraction.
+            { name: "Transit van", accountType: "vehicle", financed: "Financed" }, // folds
+            { name: "Bad last4", accountType: "savings", last4: "441" },
+            { name: "Bad financed", accountType: "vehicle", financed: "leased" },
+          ],
+          confidence: 0.9,
+          evidence: "the Chase account ends 4411; the van is financed",
+        },
+      ],
+    });
+    const accounts = result.fields.find((f) => f.key === "accounts");
+    expect(accounts?.value).toEqual([
+      { name: "Chase Checking · 4411", accountType: "checking", institution: "Chase", last4: "4411" },
+      { name: "Transit van", accountType: "vehicle", financed: "financed" },
+    ]);
+    expect(result.rejected?.some((r) => r.reason.includes("last4"))).toBe(true);
+    expect(result.rejected?.some((r) => r.reason.includes("financed"))).toBe(true);
+  });
+
+  it("J1 (P2/DB1): the payroll provider is a free string now - any provider name coerces", () => {
+    const result = coerceExtraction({
+      fields: [
+        { key: "payrollProvider", value: "SurePayroll", confidence: 0.9, evidence: "payroll is through SurePayroll" },
+      ],
+    });
+    expect(result.fields.find((f) => f.key === "payrollProvider")?.value).toBe("SurePayroll");
+  });
+
+  it("J1 (E5): card/online payment methods with no processors keep merchantAccounts on the missing list", () => {
+    const result = coerceExtraction({
+      fields: [
+        { key: "paymentMethods", value: ["card"], confidence: 0.9, evidence: "they take cards" },
+      ],
+    });
+    expect(result.missing).toContain("merchantAccounts");
+    const answered = coerceExtraction({
+      fields: [
+        { key: "paymentMethods", value: ["card"], confidence: 0.9, evidence: "cards" },
+        { key: "merchantAccounts", value: [{ name: "Stripe", processor: "Stripe" }], confidence: 0.9, evidence: "stripe" },
+      ],
+    });
+    expect(answered.missing).not.toContain("merchantAccounts");
+    // Checks-only shops are never asked.
+    const checks = coerceExtraction({
+      fields: [{ key: "paymentMethods", value: ["check"], confidence: 0.9, evidence: "checks only" }],
+    });
+    expect(checks.missing).not.toContain("merchantAccounts");
+  });
+
   it("drops invalid entries from enum lists and rejects unknown keys", () => {
     const result = coerceExtraction({
       fields: [

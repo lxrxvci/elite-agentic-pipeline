@@ -42,6 +42,39 @@ export const institutions = pgTable(
 );
 
 /**
+ * J1 (meeting #3, DB1/P2): the firm-wide payroll-provider list behind the
+ * intake's payroll-provider dropdown - pick from the list or "add a new
+ * provider" inline (which writes a row here and persists globally). Seeded
+ * with the mainstream providers by migration 0020. Admin management
+ * (rename/merge) is a deliberate later seam, same as institutions.
+ */
+export const payrollProviders = pgTable(
+  "payroll_providers",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("payroll_providers_name_unique").on(t.name)],
+);
+
+/**
+ * J1 (meeting #3, DB1/E4): the firm-wide merchant-processor list behind the
+ * intake's merchant question - pick from the list or add-new inline; every
+ * add persists globally for future intakes. Seeded by migration 0020; admin
+ * management is a deliberate later seam, same as institutions.
+ */
+export const merchantProcessors = pgTable(
+  "merchant_processors",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("merchant_processors_name_unique").on(t.name)],
+);
+
+/**
  * §7/§15 - bank/credit/loan/investment accounts. account_type is one of
  * the ACCOUNT_TYPE_DEFINITIONS keys (investment, loans_to_others,
  * loans_to_shareholders, vehicle, fixed_assets, other_asset,
@@ -73,6 +106,11 @@ export const accounts = pgTable(
     institutionId: integer("institution_id").references(() => institutions.id, {
       onDelete: "set null",
     }),
+    // J1 (meeting #3, D1): the account identifier is bank + type + last 4
+    // (the intake nickname field is gone). Nullable: legacy rows predate the
+    // capture and render the old label; the 4-digit shape is enforced in the
+    // app layer (intake mini-form + conversion), not by a CHECK constraint.
+    last4: text("last4"),
     proofCategory: text("proof_category").notNull().default("statement"),
     // Day of month the statement closes; null/0/≥last-day ⇒ end-of-month (§6.1).
     statementDay: smallint("statement_day"),

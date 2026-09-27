@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import type { IntakeRow } from '@/server/intake'
+import type { IntakeAccountInput, IntakeRow } from '@/server/intake'
+import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 
 import {
   ACCOUNT_COUNT_DEFS,
+  accountItemError,
   allAccounts,
   answersFromIntake,
   buildPatch,
@@ -222,8 +224,9 @@ describe('CPA question card (I1)', () => {
   })
 
   it('summarizes the CPA name on the review row and hides the detail row', () => {
+    // J1 (C4/C6): the row carries the linked-vs-new state.
     expect(hasCpa.summarize({ ...base, hasCpa: true, cpaName: 'Cascade Tax Group' })).toBe(
-      'Yes · Cascade Tax Group',
+      'Yes · Cascade Tax Group · new record',
     )
     expect(hasCpa.summarize({ ...base, hasCpa: false })).toBe('No')
     expect(cpaDetails.summarize({ ...base, hasCpa: true, cpaName: 'Cascade' })).toBeNull()
@@ -918,16 +921,16 @@ describe('I2 entity helper copy', () => {
 // ── I3 accounts rebuild (plan §1 screen 7 + screen 10, §3) ────────────────
 
 describe('I3 sequential account count cards (plan §1 screen 7)', () => {
-  it('the balance chapter runs one count card per type in his dictated order', () => {
+  it('the balance chapter runs one count card per type - J1 (D4): assets BEFORE loans', () => {
     const balance = CHAPTERS.find((c) => c.id === 'balance')!
     const questions = visibleQuestions(balance, base)
     expect(questions.map((q) => q.id)).toEqual([
       'checking-accounts',
       'savings-accounts',
       'credit-cards',
-      'loans',
       'vehicles',
       'other-assets',
+      'loans',
     ])
     expect(questions.every((q) => q.type === 'account-count')).toBe(true)
   })
@@ -938,17 +941,24 @@ describe('I3 sequential account count cards (plan §1 screen 7)', () => {
     expect(JSON.stringify(balance)).not.toContain('Statement day')
   })
 
-  it('money accounts pick a bank and offer login access; vehicles and other assets never ask for an institution', () => {
-    const [checking, savings, cards, loans, vehicles, other] = ACCOUNT_COUNT_DEFS
+  it('money accounts pick a bank + last-4 (the nickname field is gone, D1); loans/assets never ask for an institution', () => {
+    const [checking, savings, cards, vehicles, other, loans] = ACCOUNT_COUNT_DEFS
     for (const def of [checking, savings, cards]) {
       expect(def.askInstitution).toBe(true)
       expect(def.askLoginAccess).toBe(true)
+      // D1: no nickname field - the name derives bank + type + last4.
+      expect(def.deriveName).toBe(true)
+      expect(def.askLast4).toBe(true)
+      expect(def.nameLabel).toBeUndefined()
     }
     expect(loans.askInstitution ?? false).toBe(false)
     expect(loans.askLender).toBe(true)
-    expect(loans.askBalance).toBe(true)
+    // D3: the balance field is gone from loans.
+    expect('askBalance' in loans).toBe(false)
     expect(vehicles.askInstitution ?? false).toBe(false)
-    expect(vehicles.askYearValue).toBe(true)
+    expect(vehicles.askYear).toBe(true)
+    // D5: the financed/paid-in-full pick is required on vehicles.
+    expect(vehicles.askFinanced).toBe(true)
     expect(other.askInstitution ?? false).toBe(false)
     expect(other.askAssetType).toBe(true)
   })
@@ -974,7 +984,7 @@ describe('money_accounts_default_statement_proof (I3, plan §3)', () => {
   })
 
   it('loans default statement but can switch; vehicles default bill of sale', () => {
-    const [, , , loans, vehicles, other] = ACCOUNT_COUNT_DEFS
+    const [, , , vehicles, other, loans] = ACCOUNT_COUNT_DEFS
     expect(loans.defaultProof).toBe('statement')
     expect(loans.proofOptions?.map((o) => o.value)).toEqual(['statement', 'owner_declared'])
     expect(vehicles.defaultProof).toBe('bill_of_sale')
@@ -1036,12 +1046,13 @@ describe('money_accounts_default_statement_proof (I3, plan §3)', () => {
     expect(answers.checkingAccounts?.map((a) => a.name)).toEqual(['Operating'])
     expect(answers.loanAccounts?.map((a) => a.name)).toEqual(['Van loan'])
     expect(answers.otherAssets?.[0]).toMatchObject({ name: 'Brokerage', assetType: 'investments' })
-    // The next autosave flattens them back without losing a row.
+    // The next autosave flattens them back without losing a row - in the J1
+    // (D4) screen order: assets (the investment brokerage) BEFORE loans.
     const repatch = buildPatch(answers)
     expect((repatch.formData?.accounts ?? []).map((a) => a.name)).toEqual([
       'Operating',
-      'Van loan',
       'Brokerage',
+      'Van loan',
     ])
   })
 })
@@ -1224,5 +1235,294 @@ describe('standard_three_preselected (I4, plan §1 screen 5, §3C)', () => {
         'invoicing',
       ]),
     )
+  })
+})
+
+// ── J1 (meeting #3): databases, identifiers, dedup, assets/loans ──────────
+
+describe('ownership_sum_never_exceeds_100 (J1, C3 - 00:07:40)', () => {
+  const ownersQ = findQuestion('entity', 'owners')!
+  const partnership: WizardAnswers = { ...base, taxStructure: 'Partnership' }
+  const at = (items: Array<Record<string, unknown>>) => ownersQ.validateItems!(items, partnership)
+
+  it('over 100% blocks Continue in plain language', () => {
+    const err = at([
+      { name: 'Wren', ownershipPercent: 60 },
+      { name: 'Sal', ownershipPercent: 45 },
+    ])
+    expect(err).toBe("You're at 105% — ownership can't exceed 100%.")
+  })
+
+  it('exactly 100% is fine; under 100% is allowed', () => {
+    expect(
+      at([
+        { name: 'Wren', ownershipPercent: 60 },
+        { name: 'Sal', ownershipPercent: 40 },
+      ]),
+    ).toBeNull()
+    expect(
+      at([
+        { name: 'Wren', ownershipPercent: 60 },
+        { name: 'Sal', ownershipPercent: 20 },
+      ]),
+    ).toBeNull()
+  })
+
+  it('the sum guard composes with the entity count guard (count fires first)', () => {
+    // Partnership needs 2 owners - one owner at 150% reports the count rule.
+    expect(at([{ name: 'Wren', ownershipPercent: 150 }])).toBe('A partnership needs at least 2 owners.')
+  })
+
+  it('under 100% earns a soft note; exactly 100% or no percents stays quiet', () => {
+    const note = ownersQ.repeatable!.itemsNote!
+    expect(note([{ name: 'Wren', ownershipPercent: 80 }], base)).toBe(
+      "You're at 80% - the rest can stay unassigned for now.",
+    )
+    expect(
+      note(
+        [
+          { name: 'Wren', ownershipPercent: 60 },
+          { name: 'Sal', ownershipPercent: 40 },
+        ],
+        base,
+      ),
+    ).toBeNull()
+    expect(note([{ name: 'Wren' }], base)).toBeNull()
+  })
+
+  it('the owners screen offers the "Same as the primary contact" prefill (C1)', () => {
+    const prefills = ownersQ.repeatable!.prefills!
+    expect(prefills(base)).toEqual([])
+    const withPrimary: WizardAnswers = {
+      ...base,
+      contacts: [
+        { firstName: 'Wren', lastName: 'Okafor', email: 'wren@x.example', phone: '5035550182', isPrimary: true },
+      ],
+    }
+    expect(prefills(withPrimary)).toEqual([
+      {
+        label: 'Same as the primary contact',
+        patch: { name: 'Wren Okafor', email: 'wren@x.example', phone: '5035550182' },
+      },
+    ])
+  })
+})
+
+describe('account_label_is_bank_type_last4 (J1, D1/D2)', () => {
+  it('the shared formatter renders "Chase Checking · 4411" and falls back for legacy rows', () => {
+    expect(accountLabel({ institution: 'Chase', accountType: 'checking', last4: '4411' })).toBe(
+      'Chase Checking · 4411',
+    )
+    expect(accountLabel({ institution: 'Amex', accountType: 'credit_card', last4: '1005' })).toBe(
+      'Amex Credit card · 1005',
+    )
+    expect(accountLabel({ accountType: 'savings', last4: '0099' })).toBe('Savings · 0099')
+    // Legacy rows without last4 render the old label (the stored name).
+    expect(accountLabel({ name: 'Operating Checking', accountType: 'checking' })).toBe('Operating Checking')
+    expect(accountLabel({ name: 'Old Loan', institution: 'Columbia', accountType: 'loan' })).toBe('Old Loan')
+    expect(accountLabel({})).toBe('Account')
+  })
+
+  it('normalizeLast4 accepts exactly 4 digits and rejects 3 or 5 (and non-digits)', () => {
+    expect(normalizeLast4('4411')).toBe('4411')
+    expect(normalizeLast4('0017')).toBe('0017')
+    expect(normalizeLast4(4411)).toBe('4411')
+    expect(normalizeLast4('441')).toBeNull()
+    expect(normalizeLast4('44117')).toBeNull()
+    expect(normalizeLast4('44a1')).toBeNull()
+    expect(normalizeLast4('')).toBeNull()
+    expect(normalizeLast4(null)).toBeNull()
+  })
+
+  it('the money mini-form item derives its name from bank + type + last4', () => {
+    const flat = allAccounts({
+      ...base,
+      checkingAccounts: [
+        { name: '', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '4411' },
+      ],
+    })
+    expect(flat[0].name).toBe('Chase Checking · 4411')
+  })
+
+  it('the count-card guard requires the bank and a 4-digit last-4 on money accounts', () => {
+    const [checking] = ACCOUNT_COUNT_DEFS
+    expect(
+      accountItemError(checking, [{ name: '', accountType: 'checking', proofCategory: 'statement' }]),
+    ).toBe('Pick the bank for account #1.')
+    expect(
+      accountItemError(checking, [
+        { name: '', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '441' },
+      ]),
+    ).toBe('Enter the last 4 digits for account #1 - exactly 4 numbers.')
+    expect(
+      accountItemError(checking, [
+        { name: '', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '44117' },
+      ]),
+    ).toBe('Enter the last 4 digits for account #1 - exactly 4 numbers.')
+    expect(
+      accountItemError(checking, [
+        { name: '', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '4411' },
+      ]),
+    ).toBeNull()
+  })
+
+  it('the online-access checklist label follows the standard', () => {
+    const withAccounts: WizardAnswers = {
+      ...base,
+      checkingAccounts: [
+        {
+          name: 'Chase Checking · 4411',
+          accountType: 'checking',
+          proofCategory: 'statement',
+          institution: 'Chase',
+          last4: '4411',
+        },
+      ],
+    }
+    const q = findQuestion('access', 'online-access')!
+    const options = q.dynamicOptions!(withAccounts)
+    expect(options[0].label).toBe('Chase Checking · 4411')
+    // No redundant "type · bank" sub once the label carries it.
+    expect(options[0].sub).toBeUndefined()
+  })
+})
+
+describe('financed_vehicle_routes_to_loans (J1, D5 - 00:23:23)', () => {
+  const vehiclesQ = findQuestion('balance', 'vehicles')!
+
+  it('a financed vehicle adds a pre-filled vehicle-loan entry to the loans card', () => {
+    const vehicles: IntakeAccountInput[] = [
+      { name: 'Toyota Tundra', accountType: 'vehicle', proofCategory: 'bill_of_sale', year: 2023, financed: 'financed' },
+    ]
+    const patch = vehiclesQ.apply({ ...base }, vehicles)
+    expect(patch.loanAccounts).toHaveLength(1)
+    expect(patch.loanAccounts![0]).toMatchObject({
+      name: 'Toyota Tundra (vehicle loan)',
+      accountType: 'vehicle_loan',
+      proofCategory: 'statement',
+      fromVehicle: 'Toyota Tundra',
+    })
+  })
+
+  it('paid-in-full vehicles and un-financing drop the loan entry; lender edits survive re-commits', () => {
+    const financed: IntakeAccountInput[] = [
+      { name: 'Toyota Tundra', accountType: 'vehicle', financed: 'financed' },
+    ]
+    const first = vehiclesQ.apply({ ...base }, financed)
+    // The lender gets picked on the loans card; re-committing vehicles keeps it.
+    const withLender = (first.loanAccounts ?? []).map((l) => ({
+      ...l,
+      lender: 'Columbia',
+      lenderInstitutionId: 3,
+    }))
+    const recommit = vehiclesQ.apply({ ...base, loanAccounts: withLender }, financed)
+    expect(recommit.loanAccounts![0]).toMatchObject({ lender: 'Columbia', fromVehicle: 'Toyota Tundra' })
+
+    const paid: IntakeAccountInput[] = [{ name: 'Toyota Tundra', accountType: 'vehicle', financed: 'paid' }]
+    const dropped = vehiclesQ.apply({ ...base, loanAccounts: withLender }, paid)
+    expect(dropped.loanAccounts).toEqual([])
+    // A hand-entered loan (no fromVehicle marker) is never touched.
+    const manual = [{ name: 'SBA loan', accountType: 'loan', lender: 'Chase' }]
+    const kept = vehiclesQ.apply({ ...base, loanAccounts: manual }, paid)
+    expect(kept.loanAccounts).toEqual(manual)
+  })
+})
+
+describe('merchant_selection_flags_review (J1, E5 - 00:24:04)', () => {
+  const merchantsQ = findQuestion('income', 'merchants')!
+
+  it('card or online payment methods make the processors question required', () => {
+    expect(merchantsQ.required).toBe(true)
+    // Visible only when a card/online method is picked (takesCards gate).
+    expect(merchantsQ.when!(base)).toBe(false)
+    expect(merchantsQ.when!({ ...base, paymentMethods: ['check'] })).toBe(false)
+    expect(merchantsQ.when!({ ...base, paymentMethods: ['card'] })).toBe(true)
+    expect(merchantsQ.when!({ ...base, paymentMethods: ['online'] })).toBe(true)
+  })
+
+  it('the helper copy says online payments need a processor to reconcile', () => {
+    const help = merchantsQ.help as (a: WizardAnswers) => string
+    expect(help({ ...base, paymentMethods: ['online'] })).toContain('need a processor to reconcile')
+    expect(help({ ...base, paymentMethods: ['card'] })).toContain('processor')
+  })
+
+  it('an empty processors list reads as unanswered (resume parks here) and the review row flags nothing', () => {
+    const a: WizardAnswers = { ...base, paymentMethods: ['card'] }
+    expect(merchantsQ.get(a)).toEqual([])
+    expect(merchantsQ.summarize(a)).toBeNull()
+    const withOne: WizardAnswers = {
+      ...a,
+      merchantAccounts: [{ name: 'Stripe', processor: 'Stripe', processorId: 1 }],
+    }
+    expect(merchantsQ.summarize(withOne)).toBe('Stripe')
+    // ...and the merchant-recon follow-up opens once processors exist.
+    const recon = findQuestion('income', 'merchant-recon')!
+    expect(recon.when!(a)).toBe(false)
+    expect(recon.when!(withOne)).toBe(true)
+  })
+
+  it('a processor pick requires the processor (the account name alone is not enough)', () => {
+    expect(merchantsQ.repeatable!.itemValid({ name: 'Stripe' })).toBe(false)
+    expect(merchantsQ.repeatable!.itemValid({ name: 'Stripe', processor: 'Stripe' })).toBe(true)
+  })
+})
+
+describe('contact picker wiring (J1, C5/C6/C7)', () => {
+  it('the contacts repeatable is picker-first with the create-new draft intact', () => {
+    const q = findQuestion('entity', 'contacts')!
+    expect(q.repeatable!.contactPicker).toBe(true)
+    // The owner prefill convention is still there alongside the picker.
+    const withOwner: WizardAnswers = { ...base, owners: [{ name: 'Wren Okafor' }] }
+    expect(q.repeatable!.prefills!(withOwner)[0].label).toBe('Same as Wren Okafor')
+    // Linked entries summarize with their state; the review row counts links.
+    expect(q.repeatable!.sub!({ firstName: 'Alison', contactId: 55 })).toBe('linked from the existing record')
+    expect(
+      q.summarize({
+        ...base,
+        contacts: [
+          { firstName: 'Wren', isPrimary: true },
+          { firstName: 'Alison', contactId: 55 },
+        ],
+      }),
+    ).toBe('2 contacts · 1 linked to existing record')
+  })
+
+  it('the CPA card is picker-first (link key cpaContactId) and the review row shows linked-vs-new', () => {
+    const cpa = findQuestion('entity', 'cpa-details')!
+    expect(cpa.contactPicker).toMatchObject({
+      linkKey: 'cpaContactId',
+      nameKey: 'cpaName',
+      emailKey: 'cpaEmail',
+    })
+    const hasCpa = findQuestion('entity', 'has-cpa')!
+    expect(hasCpa.summarize({ ...base, hasCpa: true, cpaName: 'Cascade Tax Group', cpaContactId: 56 })).toBe(
+      'Yes · Cascade Tax Group · linked to the existing record',
+    )
+    expect(hasCpa.summarize({ ...base, hasCpa: true, cpaName: 'New Firm' })).toBe('Yes · New Firm · new record')
+    expect(hasCpa.summarize({ ...base, hasCpa: false })).toBe('No')
+  })
+
+  it('the referral-who field picks over contacts AND clients', () => {
+    const q = findQuestion('entity', 'referral-who')!
+    expect(q.contactPicker).toMatchObject({
+      linkKey: 'referralContactId',
+      clientLinkKey: 'referralClientId',
+      nameKey: 'referralWho',
+    })
+    const referral = findQuestion('entity', 'referral')!
+    expect(
+      referral.summarize({ ...base, referralSource: 'Existing client', referralWho: 'Harborline', referralClientId: 77 }),
+    ).toBe('Existing client · Harborline · on file')
+  })
+})
+
+describe('payroll provider is a database dropdown (J1, P2/DB1)', () => {
+  it('the provider question renders the dropdown, not option cards, on the stable answer key', () => {
+    const q = findQuestion('income', 'payroll-provider')!
+    expect(q.dropdown).toBe('payrollProviders')
+    expect(q.options).toBeUndefined()
+    expect(q.required).toBe(true)
+    expect(q.apply(base, 'Gusto')).toEqual({ payrollProvider: 'Gusto' })
+    expect(q.summarize({ ...base, hasPayroll: true, payrollProvider: 'Rippling' })).toBe('Rippling')
   })
 })

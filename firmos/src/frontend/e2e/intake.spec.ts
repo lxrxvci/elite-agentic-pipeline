@@ -116,21 +116,25 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await advance(page, 'biz-established')
   await page.getByLabel('Business established date (optional)').pressSequentially('03012019')
   await expect(page.getByLabel('Business established date (optional)')).toHaveValue('03/01/2019')
-  // ── Balance sheet: sequential per-type count cards (I3) ──
+  // ── Balance sheet: sequential per-type count cards (I3) - J1 (D4):
+  // assets BEFORE loans; (D1): money accounts take bank + last-4, no nickname ──
   await advance(page, 'checking-accounts')
-  // Checking: the count generates one mini-form; the bank is a dropdown pick.
+  // Checking: the count generates one mini-form; bank dropdown + last-4.
   await page.getByTestId('count-input').fill('1')
-  await page.getByLabel('Account name or nickname 1').fill('Operating Checking')
+  // D1: the nickname field is gone - the identifier is bank + last 4.
+  await expect(page.getByLabel(/nickname/i)).toHaveCount(0)
   await page.getByTestId('bank-select-0').click()
   await page.getByRole('option', { name: 'Chase' }).click()
   await expect(page.getByTestId('bank-select-0')).toHaveText('Chase')
+  await page.getByTestId('last4-0').fill('4411')
+  // D2: the derived label shows on the mini-form.
+  await expect(page.getByTestId('account-label-0')).toHaveText('Chase Checking · 4411')
   // Money accounts carry the locked statement-proof note (no selector).
   await expect(page.getByTestId('proof-locked-0')).toHaveText('Proof: bank statement')
   await advance(page, 'savings-accounts')
   await advance(page, 'credit-cards') // no savings
   // Credit cards: one card at a bank that is not on the list yet - add it inline.
   await page.getByTestId('count-plus').click()
-  await page.getByLabel('Card name or nickname 1').fill('Corporate Card')
   await page.getByTestId('bank-select-0').click()
   await page.getByTestId('bank-add-toggle-0').click()
   await page.getByTestId('bank-add-input').fill('E2E First Tech')
@@ -141,16 +145,23 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByRole('option', { name: 'E2E First Tech' })).toBeVisible()
   await page.getByTestId('bank-select-0').click() // toggle closed
   await expect(page.getByRole('option', { name: 'E2E First Tech' })).toHaveCount(0)
-  await advance(page, 'loans')
-  await advance(page, 'vehicles') // no loans
-  // Vehicles: quick list - description/year/value, bill-of-sale proof, no bank.
+  await page.getByTestId('last4-0').fill('1005')
+  await advance(page, 'vehicles')
+  // Vehicles: description/year + the financed pick (D5); bill-of-sale proof; no bank.
   await page.getByTestId('count-plus').click()
   await page.getByLabel('Description 1').fill('2022 Ford Transit')
   await page.getByLabel('Vehicle year 1').fill('2022')
+  await page.getByTestId('financed-select-0').selectOption('financed')
   await expect(page.getByTestId('proof-select-0')).toHaveValue('bill_of_sale')
   await expect(page.getByTestId('bank-select-0')).toHaveCount(0)
   await advance(page, 'other-assets')
-  await advance(page, 're-yes') // no other assets
+  await advance(page, 'loans') // no other assets
+  // D5: the financed vehicle pre-filled a linked loan entry - pick its lender.
+  await expect(page.getByLabel('Loan name 1')).toHaveValue('2022 Ford Transit (vehicle loan)')
+  await expect(page.getByTestId('from-vehicle-0')).toHaveText('From the vehicles card')
+  await page.getByTestId('lender-select-0').click()
+  await page.getByRole('option', { name: 'Chase' }).click()
+  await advance(page, 're-yes')
 
   // ── Real estate: not a real-estate client (detail questions stay hidden) ──
   await pick(page, 'option-no', 'payment-methods')
@@ -165,10 +176,12 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await pick(page, 'option-no', 'online-access') // no payroll (I3: access checklist next)
 
   // ── Online access: the checklist pulls the statement-proof accounts (I3) ──
-  await expect(page.getByTestId('check-checkingAccounts:0')).toContainText('Operating Checking')
-  await expect(page.getByTestId('check-creditCardAccounts:0')).toContainText('Corporate Card')
-  // The bill-of-sale vehicle is not an online-access candidate.
-  await expect(page.getByText('2022 Ford Transit')).toHaveCount(0)
+  // D2: labels follow bank -> type -> last4.
+  await expect(page.getByTestId('check-checkingAccounts:0')).toContainText('Chase Checking · 4411')
+  await expect(page.getByTestId('check-creditCardAccounts:0')).toContainText('E2E First Tech Credit card · 1005')
+  // D5: the financed vehicle's linked loan IS a statement account; the
+  // bill-of-sale vehicle asset itself is not an online-access candidate.
+  await expect(page.getByTestId('check-loanAccounts:0')).toContainText('2022 Ford Transit (vehicle loan)')
   await page.getByTestId('check-checkingAccounts:0').click()
   await advance(page, 'bk-frequency')
 
@@ -209,16 +222,18 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByTestId('live-quote')).toHaveAttribute('data-revealed', 'true')
   await expect(page.getByTestId('review-quote')).toBeVisible()
   // I3: accounts render grouped by type with institution + proof badges.
+  // J1 (D2): the bank -> type -> last4 standard everywhere.
   const reviewAccounts = page.getByTestId('review-accounts')
   await expect(reviewAccounts).toBeVisible()
-  await expect(reviewAccounts).toContainText('Operating Checking')
-  await expect(reviewAccounts).toContainText('Chase')
-  await expect(reviewAccounts).toContainText('Corporate Card')
-  await expect(reviewAccounts).toContainText('E2E First Tech')
+  await expect(reviewAccounts).toContainText('Chase Checking · 4411')
+  await expect(reviewAccounts).toContainText('E2E First Tech Credit card · 1005')
   await expect(reviewAccounts).toContainText('2022 Ford Transit')
   await expect(reviewAccounts).toContainText('Bill of sale')
-  // The online-access row counts the checked statement accounts.
-  await expect(page.getByText('1 of 2 with online access')).toBeVisible()
+  // D5: the financed vehicle's linked loan renders in the loans group.
+  await expect(reviewAccounts).toContainText('2022 Ford Transit (vehicle loan)')
+  // The online-access row counts the checked statement accounts (3 now:
+  // checking + card + the vehicle loan).
+  await expect(page.getByText('1 of 3 with online access')).toBeVisible()
   // The CPA card answer shows on the review screen.
   await expect(page.getByText('Yes · Cascade Tax Group')).toBeVisible()
   // I2: the LLC subclass folds into the tax-structure row.
@@ -390,12 +405,13 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await advance(page, 'biz-established') // A45: optional - skipped here
   await advance(page, 'checking-accounts')
   // I3: six count cards, all skipped (no accounts) - the online-access
-  // checklist stays hidden with no statement accounts.
+  // checklist stays hidden with no statement accounts. J1 (D4): assets run
+  // before loans now.
   await advance(page, 'savings-accounts')
   await advance(page, 'credit-cards')
-  await advance(page, 'loans')
   await advance(page, 'vehicles')
   await advance(page, 'other-assets')
+  await advance(page, 'loans')
   await advance(page, 're-yes')
   await pick(page, 'option-no', 'payment-methods')
   await page.getByTestId('chip-check').click()
@@ -418,8 +434,22 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await pick(page, 'option-yes', 'payroll-provider')
 
   // ── Provider is required (it's where the payroll reports come from) ──
+  // J1 (P2/DB1): the provider is a database dropdown + inline add-new.
   await expect(page.getByText('where we get the payroll reports')).toBeVisible()
-  await pick(page, 'option-Gusto', 'payroll-frequency')
+  await page.getByTestId('provider-select-0').click()
+  // The seeded providers list.
+  await expect(page.getByRole('option', { name: 'Gusto' })).toBeVisible()
+  await expect(page.getByRole('option', { name: 'Rippling' })).toBeVisible()
+  // Add a provider that is not on the list - it persists and selects inline.
+  await page.getByTestId('provider-add-toggle-0').click()
+  await page.getByTestId('provider-add-input').fill('E2E SurePayroll')
+  await page.getByTestId('provider-add-submit').click()
+  await expect(page.getByTestId('provider-select-0')).toHaveText('E2E SurePayroll', { timeout: 10_000 })
+  await page.getByTestId('provider-select-0').click()
+  await expect(page.getByRole('option', { name: 'E2E SurePayroll' })).toBeVisible()
+  await page.getByTestId('provider-select-0').click() // toggle closed
+  await page.getByTestId('continue').click()
+  await expectQuestion(page, 'payroll-frequency')
   await pick(page, 'option-biweekly', 'payroll-services')
 
   // ── The payroll add-on is prompted with a recommendation badge ──
@@ -443,7 +473,7 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByText('S-corp')).toBeVisible()
   await expect(page.getByText('Yes · officers must be on payroll')).toBeVisible()
-  await expect(page.getByText('Gusto')).toBeVisible()
+  await expect(page.getByText('E2E SurePayroll')).toBeVisible()
   await expect(page.getByText('Every two weeks')).toBeVisible()
   // (exact: the quote lines render the product name "Payroll Quarterly Filings")
   await expect(page.getByText('Payroll quarterly filings', { exact: true })).toBeVisible()

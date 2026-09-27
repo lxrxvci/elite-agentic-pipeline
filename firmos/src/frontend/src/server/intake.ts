@@ -40,6 +40,10 @@ export interface IntakeContactInput {
   /** Exactly one primary contact becomes the client's primary_contact. */
   isPrimary?: boolean;
   relationshipType?: "owner" | "primary_contact" | "cpa" | "related";
+  /** J1 (C4/C5): set when the contact was picked from the type-ahead lookup
+   *  of existing contacts - conversion LINKS that row with the new role
+   *  instead of creating a duplicate person. */
+  contactId?: number | null;
 }
 
 /**
@@ -74,10 +78,31 @@ export interface IntakeAccountInput {
    * mini-forms or the online-access checklist screen.
    */
   grantLoginAccess?: boolean;
-  /** I3 loans: the lender (free text) and an optional current balance. */
+  /** I3 loans: the lender (free text) and an optional current balance.
+   *  J1 (D3/D6): balance is no longer captured (researched later); the
+   *  lender is an institution dropdown pick when proof = statement
+   *  (lenderInstitutionId carries the FK, lender keeps the name snapshot)
+   *  and a free-text write-in when proof = owner_declared - write-ins NEVER
+   *  enter the institutions table. */
   lender?: string | null;
+  lenderInstitutionId?: number | null;
   balance?: number | null;
-  /** I3 vehicles: model year and an optional value estimate. */
+  /** J1 (D1): the masked last-4 capture on money accounts - exactly 4
+   *  digits, enforced by the mini-form and again at conversion. With the
+   *  nickname field gone, bank + type + last4 IS the account's name
+   *  (derived via shared/lib/account-label). */
+  last4?: string | null;
+  /** J1 (D5) vehicles: "financed" auto-routes a linked loan entry into the
+   *  loans screen ("<description> (vehicle loan)"); "paid" stays an asset
+   *  only. Required on the vehicles card. */
+  financed?: "financed" | "paid" | null;
+  /** J1 (D5): marks an auto-created vehicle-loan entry on the loans card;
+   *  the value is the financed vehicle's description, so re-committing the
+   *  vehicles card reconciles (create missing, drop orphaned, keep edits). */
+  fromVehicle?: string | null;
+  /** I3 vehicles: model year and an optional value estimate.
+   *  J1 (D3): the value estimate is no longer asked in intake; the field
+   *  stays for legacy/extraction rows. */
   year?: number | null;
   value?: number | null;
   /** I3 other assets: the typed bucket (equipment / furniture / goodwill /
@@ -85,10 +110,13 @@ export interface IntakeAccountInput {
   assetType?: string | null;
 }
 
-/** §29 fix: merchant accounts keep every field and never collapse to one. */
+/** §29 fix: merchant accounts keep every field and never collapse to one.
+ *  J1 (E4/DB1): the processor picks from the merchant_processors table
+ *  (processorId carries the FK; processor keeps the name snapshot). */
 export interface IntakeMerchantAccountInput {
   name: string;
   processor?: string | null;
+  processorId?: number | null;
 }
 
 /**
@@ -164,17 +192,25 @@ export interface IntakeFormData {
   owners?: IntakeOwnerInput[];
   contacts?: IntakeContactInput[];
   referralSource?: string | null;
-  /** I1: who to thank, when the referral source is a client or CPA. */
+  /** I1: who to thank, when the referral source is a client or CPA.
+   *  J1 (C7): the answer is picker-driven - referralContactId/referralClientId
+   *  carry the link when an existing contact/client was picked, so referral
+   *  bonuses stay attributable over time; referralWho keeps the name. */
   referralWho?: string | null;
+  referralContactId?: number | null;
+  referralClientId?: number | null;
   /** I2 (00:15:53): the LLC tax classification follow-up - llc_sml /
    *  llc_partnership / llc_scorp / llc_ccorp. Form-data only (the
    *  tax_structure column keeps the stable top-level value). */
   llcSubclass?: string | null;
   /** I1: the dedicated CPA card (00:30:14) - "Do they have a CPA who files
-   *  their taxes?" plus the CPA's name/email when yes. */
+   *  their taxes?" plus the CPA's name/email when yes.
+   *  J1 (C6): the card is picker-first - cpaContactId is set when an
+   *  existing contact was picked (conversion links it; never a duplicate). */
   hasCpa?: boolean;
   cpaName?: string | null;
   cpaEmail?: string | null;
+  cpaContactId?: number | null;
   /** I1 (00:15:53): verbatim custom text behind a select's "Other - type
    *  it" card, keyed by registry question id. The answer key itself keeps
    *  the canonical 'Other' value; conversion treats this as pass-through

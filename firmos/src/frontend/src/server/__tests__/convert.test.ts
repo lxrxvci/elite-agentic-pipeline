@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/db";
 import {
   accounts,
+  clientCredentials,
   clientIntakes,
   clientManualEntries,
   clientReports,
@@ -11,6 +12,7 @@ import {
   contactClientLinks,
   contacts,
   institutions,
+  merchantProcessors,
   properties,
   recurringTasks,
   recurringTaskSopLinks,
@@ -802,13 +804,16 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
   });
 
   it("I1: the dedicated CPA card creates the CPA contact and cpa_contact_id", async () => {
+    // J1 (C4): conversion dedup matches by normalized name+email, so this
+    // test's CPA uses a unique identity - the create path stays pinned here
+    // (the link path is covered by the J1 dedup tests below).
     const intakeId = await reviewableIntake({
       legalName: "CPA Card Co",
       engagementType: "project",
       formData: {
         hasCpa: true,
-        cpaName: "Cascade Tax Group",
-        cpaEmail: "team@cascadetax.example",
+        cpaName: "Rainier Tax Partners",
+        cpaEmail: "team@rainiertax.example",
         contacts: [
           { firstName: "Wren", lastName: "Okafor", email: "wren@x.co", isPrimary: true },
         ],
@@ -826,9 +831,9 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     expect(client.primaryContactId).not.toBeNull();
 
     const [cpa] = await db.select().from(contacts).where(eq(contacts.id, client.cpaContactId!));
-    expect(cpa.firstName).toBe("Cascade");
-    expect(cpa.lastName).toBe("Tax Group");
-    expect(cpa.email).toBe("team@cascadetax.example");
+    expect(cpa.firstName).toBe("Rainier");
+    expect(cpa.lastName).toBe("Tax Partners");
+    expect(cpa.email).toBe("team@rainiertax.example");
     const cpaLinks = await db
       .select()
       .from(contactClientLinks)
@@ -898,17 +903,20 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
   });
 
   it("I1+I6: owner phone reaches the owner contact; receivesReports stamps the link", async () => {
+    // J1 (C4): conversion links an owner whose name+email matches an existing
+    // contact - this test's owners use unique emails so the create path (and
+    // its phone propagation) stays pinned; linking is covered below.
     const intakeId = await reviewableIntake({
       legalName: "Owner Detail Co",
       engagementType: "project",
       owners: [
-        { name: "Wren Okafor", email: "wren@x.co", phone: "5035550182", receivesReports: true },
-        { name: "Sal Vega", email: "sal@x.co" },
+        { name: "Wren Okafor", email: "wren@owner-detail.example", phone: "5035550182", receivesReports: true },
+        { name: "Sal Vega", email: "sal@owner-detail.example" },
       ],
       formData: {
         owners: [
-          { name: "Wren Okafor", email: "wren@x.co", phone: "5035550182", receivesReports: false },
-          { name: "Sal Vega", email: "sal@x.co", receivesReports: true },
+          { name: "Wren Okafor", email: "wren@owner-detail.example", phone: "5035550182", receivesReports: false },
+          { name: "Sal Vega", email: "sal@owner-detail.example", receivesReports: true },
         ],
       },
     });
@@ -1401,5 +1409,239 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       .from(recurringTasks)
       .where(and(eq(recurringTasks.clientId, clientId), eq(recurringTasks.title, "Monthly Financial Package")));
     expect(specialty).toHaveLength(1);
+  });
+});
+
+// ── J1 (meeting #3): dedup, identifiers, lenders, vehicle loans ───────────
+
+describe.skipIf(!reachable)("J1 conversion: contact dedup + account identifiers", () => {
+  beforeAll(async () => {
+    await seedDatabase(TEST_TODAY);
+    managerDana = await userIdByEmail("dana@blueledgerbooks.com");
+  });
+
+  it("contact_picker_never_duplicates_a_person: picker links, name+email matches link, name-only creates new", async () => {
+    // The seed's CPA persona: Carlos Reyes <carlos@riverstonetax.com>.
+    const [carlos] = await db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.email, "carlos@riverstonetax.com"))
+      .limit(1);
+    expect(carlos).toBeDefined();
+    const contactsBefore = await db.select().from(contacts);
+
+    const intakeId = await reviewableIntake({
+      legalName: "Dedup Test Co",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        contacts: [
+          // Brand-new primary contact.
+          { firstName: "Wren", lastName: "Okafor", email: "wren@dedup.example", isPrimary: true },
+          // C5: picker-linked existing contact (the CPA card's record).
+          { contactId: carlos.id, firstName: "Carlos", lastName: "Reyes", email: "carlos@riverstonetax.com", relationshipType: "related" },
+        ],
+        // C4: this owner IS the primary contact (the C1 same-as-primary
+        // shortcut) - one record, two role links.
+        owners: [{ name: "Wren Okafor", email: "wren@dedup.example", ownershipPercent: 100 }],
+        // C6: the CPA card picker-linked Carlos too.
+        hasCpa: true,
+        cpaName: "Carlos Reyes",
+        cpaEmail: "carlos@riverstonetax.com",
+        cpaContactId: carlos.id,
+      },
+      owners: [{ name: "Wren Okafor", email: "wren@dedup.example", ownershipPercent: 100 }],
+    });
+
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    expect(result.contactsCreated).toBe(1); // only Wren is new
+    expect(result.contactsLinked).toBe(3); // Carlos (contacts list + CPA card) + Wren (owner)
+
+    const links = await db
+      .select()
+      .from(contactClientLinks)
+      .where(eq(contactClientLinks.clientId, result.clientId));
+    const byRole = (role: string) => links.filter((l) => l.relationshipType === role);
+    expect(byRole("primary_contact")).toHaveLength(1);
+    expect(byRole("owner")).toHaveLength(1);
+    // Both roles point at the SAME Wren record.
+    expect(byRole("primary_contact")[0].contactId).toBe(byRole("owner")[0].contactId);
+    // Carlos was linked, never re-created: still the only Carlos row.
+    const carlosRows = await db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.email, "carlos@riverstonetax.com"));
+    expect(carlosRows).toHaveLength(1);
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    expect(client.cpaContactId).toBe(carlos.id);
+    expect(client.primaryContactId).not.toBe(carlos.id);
+
+    // Exactly one new contacts row came out of the whole conversion.
+    const contactsAfter = await db.select().from(contacts);
+    expect(contactsAfter).toHaveLength(contactsBefore.length + 1);
+  });
+
+  it("a name-only match creates a NEW contact (safer than fuzzy)", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Name Collision Co",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        // Same NAME as the seeded Carlos Reyes but no email - two different
+        // people may share a name, so this must not merge.
+        contacts: [{ firstName: "Carlos", lastName: "Reyes", relationshipType: "related" }],
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    expect(result.contactsCreated).toBe(1);
+    expect(result.contactsLinked).toBe(0);
+    const rows = await db
+      .select()
+      .from(contacts)
+      .where(and(eq(contacts.firstName, "Carlos"), eq(contacts.lastName, "Reyes")));
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("account_label_is_bank_type_last4: conversion stamps last4 and the vault slot renders the standard", async () => {
+    const [chase] = await db.select().from(institutions).where(eq(institutions.name, "Chase"));
+    const intakeId = await reviewableIntake({
+      legalName: "Identifiers Co",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        accounts: [
+          // The wizard's derived-name payload: name IS the D2 label.
+          {
+            name: "Chase Checking · 4411",
+            accountType: "checking",
+            institution: "Chase",
+            institutionId: chase.id,
+            last4: "4411",
+            proofCategory: "statement",
+            grantLoginAccess: true,
+          },
+          // Garbage last-4 never reaches the column (app-layer check).
+          { name: "Legacy Loan", accountType: "loan", lender: "Wren", proofCategory: "owner_declared", last4: "441" },
+        ],
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
+    const byName = new Map(rows.map((a) => [a.name, a]));
+    expect(byName.get("Chase Checking · 4411")).toMatchObject({ last4: "4411", institutionId: chase.id });
+    expect(byName.get("Legacy Loan")?.last4).toBeNull();
+
+    // The expected-credential vault slot carries the D2 label.
+    const slots = await db
+      .select()
+      .from(clientCredentials)
+      .where(eq(clientCredentials.clientId, result.clientId));
+    expect(slots).toHaveLength(1);
+    expect(slots[0].label).toBe("Chase Checking · 4411");
+    expect(slots[0].institution).toBe("Chase");
+  });
+
+  it("owner_declared_lender_never_touches_institutions (D6)", async () => {
+    const [columbia] = await db.select().from(institutions).where(eq(institutions.name, "Columbia"));
+    const before = (await db.select().from(institutions)).length;
+    const intakeId = await reviewableIntake({
+      legalName: "Lender Routing Co",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        accounts: [
+          // Statement-proof: the lender is a bank-list pick (FK + snapshot).
+          {
+            name: "Van loan",
+            accountType: "loan",
+            lender: "Columbia",
+            lenderInstitutionId: columbia.id,
+            proofCategory: "statement",
+          },
+          // Owner-declared: a family-member write-in. It lands on the
+          // account's text snapshot and NEVER enters the institutions table.
+          { name: "Owner loan", accountType: "loan", lender: "Uncle Bob", proofCategory: "owner_declared" },
+        ],
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
+    const byName = new Map(rows.map((a) => [a.name, a]));
+    expect(byName.get("Van loan")).toMatchObject({
+      institution: "Columbia",
+      institutionId: columbia.id,
+      proofCategory: "statement",
+    });
+    expect(byName.get("Owner loan")).toMatchObject({
+      institution: "Uncle Bob",
+      institutionId: null,
+      proofCategory: "owner_declared",
+    });
+    // The institutions table is exactly as before.
+    const after = await db.select().from(institutions);
+    expect(after).toHaveLength(before);
+    expect(after.some((i) => i.name.toLowerCase().includes("bob"))).toBe(false);
+  });
+
+  it("financed_vehicle_routes_to_loans: the linked entry converts as a vehicle_loan with statement defaults", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Financed Fleet Co",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        // What buildPatch flattens when a financed vehicle was entered: the
+        // asset row AND the linked loan row.
+        accounts: [
+          { name: "Toyota Tundra", accountType: "vehicle", year: 2023, financed: "financed", proofCategory: "bill_of_sale" },
+          {
+            name: "Toyota Tundra (vehicle loan)",
+            accountType: "vehicle_loan",
+            lender: "Columbia",
+            proofCategory: "statement",
+            fromVehicle: "Toyota Tundra",
+          },
+        ],
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
+    const byName = new Map(rows.map((a) => [a.name, a]));
+    expect(byName.get("Toyota Tundra")).toMatchObject({ accountType: "vehicle", proofCategory: "bill_of_sale" });
+    // The vehicle loan is statement-producing: month-end statement day,
+    // in the recon/statement queues.
+    expect(byName.get("Toyota Tundra (vehicle loan)")).toMatchObject({
+      accountType: "vehicle_loan",
+      proofCategory: "statement",
+      statementDay: 31,
+      institution: "Columbia",
+    });
+  });
+
+  it("merchant processors resolve the name snapshot from the picked FK (E4/DB1)", async () => {
+    const [stripe] = await db.select().from(merchantProcessors).where(eq(merchantProcessors.name, "Stripe"));
+    expect(stripe).toBeDefined();
+    const intakeId = await reviewableIntake({
+      legalName: "Processor Link Co",
+      bookkeepingFrequency: "monthly",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        // The wizard writes both; an extraction payload may carry only the id.
+        merchantAccounts: [{ name: "Stripe", processor: "Stripe", processorId: stripe.id }, { name: "Toast", processorId: (await db.select().from(merchantProcessors).where(eq(merchantProcessors.name, "Toast")))[0].id }],
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const merchants = (await db.select().from(accounts).where(eq(accounts.clientId, result.clientId))).filter(
+      (a) => a.accountType === "merchant",
+    );
+    const byName = new Map(merchants.map((a) => [a.name, a]));
+    expect(byName.get("Stripe")?.institution).toBe("Stripe");
+    // The id-only row resolved its processor name from the database.
+    expect(byName.get("Toast")?.institution).toBe("Toast");
   });
 });

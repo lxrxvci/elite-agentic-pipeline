@@ -6,9 +6,21 @@ import { ArrowLeft, Check, Info } from 'lucide-react'
 import type { Quote } from '@firmos/domain'
 
 import { getQuote, saveIntake } from '@/server/actions/intake'
+import { searchContactsAction } from '@/server/actions/contacts'
 import { addInstitutionAction, listInstitutionsAction } from '@/server/actions/institutions'
+import {
+  addMerchantProcessorAction,
+  listMerchantProcessorsAction,
+} from '@/server/actions/merchant-processors'
+import {
+  addPayrollProviderAction,
+  listPayrollProvidersAction,
+} from '@/server/actions/payroll-providers'
+import type { ContactLookupResults } from '@/server/contact-lookup'
 import type { IntakeRunningNote } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
+import type { MerchantProcessorRow } from '@/server/merchant-processors'
+import type { PayrollProviderRow } from '@/server/payroll-providers'
 import { cn } from '@/shared/lib/utils'
 
 import type { StaffOption } from './convert-dialog'
@@ -108,12 +120,21 @@ export function IntakeWizard({
   }, [])
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   // I3: the shared bank list behind the account mini-form dropdowns; an
-  // inline add-new lands here in the same session.
+  // inline add-new lands here in the same session. J1 (DB1): the same
+  // pattern for payroll providers and merchant processors.
   const [institutions, setInstitutions] = useState<InstitutionRow[]>([])
+  const [payrollProviders, setPayrollProviders] = useState<PayrollProviderRow[]>([])
+  const [merchantProcessors, setMerchantProcessors] = useState<MerchantProcessorRow[]>([])
 
   useEffect(() => {
     void listInstitutionsAction().then((res) => {
       if (res.ok) setInstitutions(res.data)
+    })
+    void listPayrollProvidersAction().then((res) => {
+      if (res.ok) setPayrollProviders(res.data)
+    })
+    void listMerchantProcessorsAction().then((res) => {
+      if (res.ok) setMerchantProcessors(res.data)
     })
   }, [])
 
@@ -127,6 +148,37 @@ export function IntakeWizard({
     )
     return res.data
   }, [])
+
+  const addPayrollProvider = useCallback(async (name: string): Promise<PayrollProviderRow | null> => {
+    const res = await addPayrollProviderAction(name)
+    if (!res.ok) return null
+    setPayrollProviders((prev) =>
+      prev.some((p) => p.id === res.data.id)
+        ? prev
+        : [...prev, res.data].sort((a, b) => a.name.localeCompare(b.name)),
+    )
+    return res.data
+  }, [])
+
+  const addMerchantProcessor = useCallback(async (name: string): Promise<MerchantProcessorRow | null> => {
+    const res = await addMerchantProcessorAction(name)
+    if (!res.ok) return null
+    setMerchantProcessors((prev) =>
+      prev.some((p) => p.id === res.data.id)
+        ? prev
+        : [...prev, res.data].sort((a, b) => a.name.localeCompare(b.name)),
+    )
+    return res.data
+  }, [])
+
+  // J1 (C5/C6/C7): the contact pickers' debounced server read.
+  const contactSearch = useCallback(
+    async (query: string): Promise<ContactLookupResults | null> => {
+      const res = await searchContactsAction(query)
+      return res.ok ? res.data : null
+    },
+    [],
+  )
 
   const screens = useMemo(() => flattenScreens(answers), [answers])
   const idx = Math.min(screenIndex, screens.length - 1)
@@ -440,6 +492,11 @@ export function IntakeWizard({
                         onPickOption={(v) => pickOption(q.id, v)}
                         institutions={institutions}
                         onAddInstitution={addInstitution}
+                        payrollProviders={payrollProviders}
+                        onAddPayrollProvider={addPayrollProvider}
+                        merchantProcessors={merchantProcessors}
+                        onAddMerchantProcessor={addMerchantProcessor}
+                        contactSearch={contactSearch}
                       />
                     </div>
                     {note && (

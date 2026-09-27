@@ -37,6 +37,8 @@ import {
 
 import { localToday } from "./dates";
 import { seedInstitutions } from "./institutions";
+import { seedMerchantProcessors } from "./merchant-processors";
+import { seedPayrollProviders } from "./payroll-providers";
 import { materializeOperationalRows } from "./materialize";
 import { runRecurringOnce } from "./recurring";
 import { resyncAllBilling } from "./billing-sync";
@@ -124,7 +126,10 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
   await wipe();
   // I3: the full-wipe drops the institutions table too - restore the firm's
   // known banks so dev/test databases start from the migration's baseline.
+  // J1 (DB1): same rule for the payroll-provider and merchant-processor lists.
   await seedInstitutions();
+  await seedPayrollProviders();
+  await seedMerchantProcessors();
 
   const yearStart = `${today.year}-01-01`;
   const catchup = formatLocalDate({ ...addMonths({ year: today.year, month: today.month }, -2), day: 1 });

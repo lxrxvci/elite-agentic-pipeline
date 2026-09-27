@@ -155,7 +155,7 @@ export function makeDetail(overrides: Partial<ClientDetail> = {}): ClientDetail 
     ],
     owners: [],
     accounts: [
-      { id: 1, name: 'Operating Checking', accountType: 'checking', institution: null, statementDay: 31, isActive: true },
+      { id: 1, name: 'Operating Checking', accountType: 'checking', institution: null, last4: null, statementDay: 31, isActive: true },
     ],
     onboarding: [
       { id: 10, title: 'Collect prior-year books', status: 'completed', assignee: dana, dueDate: '2026-01-05', completedAt: null },

@@ -321,7 +321,8 @@ export function StatementsQueue({ rows: initialRows, txRows, today, canManageSta
                       <TableCell className="px-3 py-0">
                         <div className="flex min-w-0 flex-col justify-center">
                           <span className="truncate text-sm text-foreground">{row.accountName}</span>
-                          {row.institution && (
+                          {/* J1 (D2): the label already carries the bank when a last-4 exists; legacy rows keep the institution line */}
+                          {row.institution && row.last4 == null && (
                             <span className="truncate text-[11px] text-muted-foreground">{row.institution}</span>
                           )}
                         </div>
@@ -500,7 +501,8 @@ function TransactionRow({ row, today }: { row: TransactionDownloadQueueRow; toda
       <TableCell className="px-3 py-0">
         <div className="flex min-w-0 flex-col justify-center">
           <span className="truncate text-sm text-foreground">{row.accountName}</span>
-          {row.institution && (
+          {/* J1 (D2): the label already carries the bank when a last-4 exists; legacy rows keep the institution line */}
+          {row.institution && row.last4 == null && (
             <span className="truncate text-[11px] text-muted-foreground">{row.institution}</span>
           )}
         </div>

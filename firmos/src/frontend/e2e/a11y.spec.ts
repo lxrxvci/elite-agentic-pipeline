@@ -126,6 +126,103 @@ test('intake has no serious/critical axe violations', async ({ page }) => {
   await expectAccessible(page, 'intake')
 })
 
+test('intake wizard J1 surfaces (contact picker, account mini-form, provider dropdown) scan clean', async ({
+  page,
+}) => {
+  // The J1 components render only inside the wizard: the contact type-ahead
+  // (C5/C6), the bank + masked last-4 mini-form (D1), and the database
+  // dropdown + inline add-new (DB1). Walk a fresh intake to them.
+  // NOTE: every scan waits out the wizard's 200ms screen-enter animation
+  // first - axe measures computed colors, and mid-animation opacity reads as
+  // a false contrast failure (same settle pattern as the meeting dialog).
+  const settle = () => page.waitForTimeout(400)
+  await page.goto('/intake')
+  await page.getByTestId('start-new-intake').click()
+  await page.getByTestId('new-intake-name').fill(`A11y J1 Co ${Date.now() % 100000}`)
+  await page.getByTestId('new-intake-create').click()
+  await page.waitForURL((url) => /^\/intake\/\d+$/.test(url.pathname))
+
+  const question = page.getByTestId('question-screen')
+  await expect(question).toHaveAttribute('data-question', 'main-contact')
+  await page.getByLabel('Full name').fill('Wren Okafor')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'address')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'tax-id')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'tax-structure')
+  await page.getByTestId('option-Sole proprietorship').click()
+  await expect(question).toHaveAttribute('data-question', 'dba-industry')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'owners')
+
+  // C1: the same-as-primary prefill chip on the owners card.
+  await expect(page.getByTestId('prefill-0')).toHaveText('Same as the primary contact')
+  await settle()
+  await expectAccessible(page, 'wizard - owners card with the C1 prefill')
+  await page.getByTestId('prefill-0').click()
+  await page.getByTestId('add-another').click()
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'contacts')
+
+  // C5: the contacts picker, open with a hit from the seeded contact list.
+  await page.getByTestId('contact-picker-input').fill('carlos')
+  await expect(page.locator('[data-testid^="contact-picker-option-"]').first()).toBeVisible({
+    timeout: 15_000,
+  })
+  await settle()
+  await expectAccessible(page, 'wizard - contacts picker open')
+  await page.keyboard.press('Escape')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'has-cpa')
+
+  // C6: the picker-first CPA card.
+  await page.getByTestId('option-yes').click()
+  await expect(question).toHaveAttribute('data-question', 'cpa-details')
+  await expect(page.getByTestId('contact-picker-input')).toBeVisible()
+  await settle()
+  await expectAccessible(page, 'wizard - CPA picker card')
+  await page.getByLabel('CPA name or firm').fill('Cascade Tax Group')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'referral')
+
+  // On to the balance chapter for the D1 mini-form.
+  await page.getByTestId('option-Web search').click()
+  await expect(question).toHaveAttribute('data-question', 'engagement')
+  await page.getByTestId('option-bookkeeping').click()
+  await expect(question).toHaveAttribute('data-question', 'qbo-status')
+  await page.getByTestId('option-existing').click()
+  await expect(question).toHaveAttribute('data-question', 'qbo-users')
+  await page.getByLabel('QuickBooks users').fill('2')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'qbo-tier')
+  await page.getByTestId('option-recommended').click()
+  await expect(question).toHaveAttribute('data-question', 'services')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'existing-client')
+  await page.getByTestId('option-no').click()
+  await expect(question).toHaveAttribute('data-question', 'bk-start')
+  await page.getByLabel('So your books should start:').pressSequentially('01012026')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'biz-established')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'checking-accounts')
+
+  // D1: the mini-form with the bank dropdown open (InstitutionSelect +
+  // inline add-new) scans clean...
+  await page.getByTestId('count-plus').click()
+  await page.getByTestId('bank-select-0').click()
+  await expect(page.getByRole('option', { name: 'Chase' })).toBeVisible()
+  await settle()
+  await expectAccessible(page, 'wizard - bank dropdown open')
+  // ...and filled: bank + masked last-4, the derived label in the header.
+  await page.getByRole('option', { name: 'Chase' }).click()
+  await page.getByTestId('last4-0').fill('4411')
+  await expect(page.getByTestId('account-label-0')).toHaveText('Chase Checking · 4411')
+  await settle()
+  await expectAccessible(page, 'wizard - account mini-form with last-4')
+})
+
 test('calendar has no serious/critical axe violations', async ({ page }) => {
   await page.goto('/calendar')
   await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible()

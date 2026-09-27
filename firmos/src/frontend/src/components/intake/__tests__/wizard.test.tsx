@@ -80,6 +80,67 @@ vi.mock('@/server/actions/institutions', () => ({
   addInstitutionAction: (name: unknown) => addInstitutionAction(name as string),
 }))
 
+// J1 (DB1): the payroll-provider and merchant-processor lists behind the
+// provider dropdown / processor item fields - mocked like the bank list.
+vi.mock('@/server/actions/payroll-providers', () => ({
+  listPayrollProvidersAction: vi.fn(async () => ({
+    ok: true as const,
+    data: [
+      { id: 1, name: 'ADP' },
+      { id: 2, name: 'Gusto' },
+    ],
+  })),
+  addPayrollProviderAction: vi.fn(async (name: string) => ({ ok: true as const, data: { id: 98, name } })),
+}))
+vi.mock('@/server/actions/merchant-processors', () => ({
+  listMerchantProcessorsAction: vi.fn(async () => ({
+    ok: true as const,
+    data: [
+      { id: 1, name: 'Square' },
+      { id: 2, name: 'Stripe' },
+    ],
+  })),
+  addMerchantProcessorAction: vi.fn(async (name: string) => ({ ok: true as const, data: { id: 97, name } })),
+}))
+
+// J1 (C5/C6/C7): the contact pickers' server read - mocked with one
+// existing contact and one existing client.
+vi.mock('@/server/actions/contacts', () => ({
+  searchContactsAction: vi.fn(async (query: string) => ({
+    ok: true as const,
+    data: {
+      contacts:
+        query.toLowerCase().includes('wren') || query.toLowerCase().includes('cascade')
+          ? [
+              {
+                kind: 'contact' as const,
+                id: 55,
+                name: 'Wren Okafor',
+                firstName: 'Wren',
+                lastName: 'Okafor',
+                entityName: null,
+                email: 'wren@existing.example',
+                phone: '5035550182',
+              },
+              {
+                kind: 'contact' as const,
+                id: 56,
+                name: 'Cascade Tax Group',
+                firstName: null,
+                lastName: null,
+                entityName: 'Cascade Tax Group',
+                email: 'team@cascadetax.example',
+                phone: null,
+              },
+            ]
+          : [],
+      clients: query.toLowerCase().includes('harbor')
+        ? [{ kind: 'client' as const, id: 77, name: 'Harborline Marine Supply' }]
+        : [],
+    },
+  })),
+}))
+
 import { IntakeWizard, AUTO_ADVANCE_MS, NOTE_DWELL_MS, SAVE_DEBOUNCE_MS, QUOTE_DEBOUNCE_MS } from '../wizard'
 
 const noop = () => {}

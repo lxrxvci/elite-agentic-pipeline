@@ -141,6 +141,13 @@
       "when": 1790400158401,
       "tag": "0019_lucky_norrin_radd",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790488520022,
+      "tag": "0020_lumpy_selene",
+      "breakpoints": true
     }
   ]
 }

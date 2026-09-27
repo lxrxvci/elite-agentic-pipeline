@@ -421,6 +421,9 @@ export interface ClientAccountRow {
   name: string;
   accountType: string;
   institution: string | null;
+  /** J1 (D1): the masked last-4; null on pre-J1 rows (the table renders
+   *  the old name label for those). */
+  last4: string | null;
   statementDay: number | null;
   isActive: boolean;
 }
@@ -555,6 +558,7 @@ export async function getClientDetail(id: number): Promise<ClientDetail | null> 
       name: a.name,
       accountType: a.accountType,
       institution: a.institution,
+      last4: a.last4,
       statementDay: a.statementDay,
       isActive: a.isActive,
     })),

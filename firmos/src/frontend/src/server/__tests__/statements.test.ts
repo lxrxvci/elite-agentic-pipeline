@@ -320,6 +320,40 @@ describe.skipIf(!reachable)("statements engine (DB-backed)", () => {
     expect(restored.status.isOverdue).toBe(true);
   });
 
+  it("J1 (D2): queue and grid labels follow bank -> type -> last4; legacy rows keep the old name", async () => {
+    const harborline = await clientByName("Harborline Marine Supply");
+    // A post-J1 account carries last4; its queue/grid label is derived.
+    const [inserted] = await db
+      .insert(accounts)
+      .values({
+        clientId: harborline.id,
+        name: "Chase Savings · 0099",
+        accountType: "savings",
+        institution: "Chase",
+        last4: "0099",
+        statementDay: 31,
+      })
+      .returning();
+    try {
+      const queue = await getStatementQueue(TEST_TODAY);
+      const row = queue.find((r) => r.accountId === inserted.id)!;
+      expect(row.accountName).toBe("Chase Savings · 0099");
+      expect(row.last4).toBe("0099");
+      // Legacy rows (no last4) keep the stored name.
+      const operating = await accountByName(harborline.id, "Operating Checking");
+      const legacy = queue.find((r) => r.accountId === operating.id)!;
+      expect(legacy.last4).toBeNull();
+      expect(legacy.accountName).toBe("Operating Checking");
+
+      const grid = await getStatementsGrid(harborline.id, TEST_TODAY);
+      expect(grid.accounts.find((a) => a.accountId === inserted.id)?.accountName).toBe(
+        "Chase Savings · 0099",
+      );
+    } finally {
+      await db.delete(accounts).where(eq(accounts.id, inserted.id));
+    }
+  });
+
   it("manual-transactions queue: flagged accounts appear, mark moves the next date", async () => {
     const northwind = await clientByName("Northwind Frame & Door");
     const checking = await accountByName(northwind.id, "Checking");

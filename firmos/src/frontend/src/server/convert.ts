@@ -25,6 +25,7 @@ import {
   correspondence,
   institutions,
   intakeOwners,
+  merchantProcessors,
   onboardingTemplateTasks,
   projects,
   projectTasks,
@@ -33,6 +34,7 @@ import {
   recurringTaskSubtasks,
   tasks,
 } from "@/db/schema";
+import { accountLabel, normalizeLast4 } from "@/shared/lib/account-label";
 import { DEPRECIATION_FIELDS, type DepreciationBreakdown } from "@/shared/lib/proforma";
 import { DEFAULT_RECURRING_RULES } from "@/shared/lib/default-rules";
 
@@ -43,6 +45,7 @@ import {
   statementDayForIntakeAccount,
   type DbOrTx,
 } from "./accounts-seed";
+import { contactIdentityKey } from "./contact-lookup";
 import { autoLinkInstitutionSops } from "./templates";
 import { sendWelcomeEmail } from "./correspondence";
 import { localToday } from "./dates";
@@ -112,6 +115,9 @@ export interface ConversionResult {
   clientId: number;
   isProjectEngagement: boolean;
   contactsCreated: number;
+  /** J1 (C4): existing contacts linked instead of duplicated (picker picks
+   *  and normalized name+email matches). One person = one record. */
+  contactsLinked: number;
   ownerLinksCreated: number;
   accountsCreated: number;
   propertiesCreated: number;
@@ -137,6 +143,44 @@ function formOf(intake: IntakeRow): IntakeFormData {
 function splitName(name: string): { firstName: string; lastName: string | null } {
   const parts = name.trim().split(/\s+/);
   return { firstName: parts[0] ?? name.trim(), lastName: parts.length > 1 ? parts.slice(1).join(" ") : null };
+}
+
+// ── J1 contact dedup (C4, 00:07:40): one person = one record ──────────────
+
+type ContactRow = typeof contacts.$inferSelect;
+
+/**
+ * Find an existing contact by NORMALIZED name+email (both required - a
+ * name-only collision never merges two people). Runs inside the conversion
+ * transaction, so a contact created moments earlier in the same conversion
+ * (the primary contact, say) is visible to the owners loop: the person who
+ * is both primary contact and owner gets ONE record with two role links.
+ */
+async function findContactByNameEmail(
+  tx: Tx,
+  name: string,
+  email: string | null | undefined,
+): Promise<ContactRow | null> {
+  const key = contactIdentityKey(name, email);
+  if (!key) return null;
+  const [n, e] = key.split("|");
+  const [row] = await tx
+    .select()
+    .from(contacts)
+    .where(
+      sql`lower(btrim(${contacts.email})) = ${e} and (
+        lower(btrim(concat_ws(' ', ${contacts.firstName}, ${contacts.lastName}))) = ${n}
+        or lower(btrim(${contacts.entityName})) = ${n}
+      )`,
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+/** J1 (C5): a picker-linked contact id - verified it still exists. */
+async function findContactById(tx: Tx, id: number): Promise<ContactRow | null> {
+  const [row] = await tx.select().from(contacts).where(sql`${contacts.id} = ${id}`).limit(1);
+  return row ?? null;
 }
 
 // ── Recurring rules (§19 defaults, cadence-aware) ─────────────────────────
@@ -409,32 +453,53 @@ export async function convertIntakeToClient(
     }
 
     // 3. Contacts and links.
+    //    J1 (C4/C5): picker-linked entries (contactId) link the existing
+    //    row; otherwise a normalized name+email match links it too (email
+    //    must be present - name-only matches create new, safer than fuzzy).
+    //    Only genuinely new people insert a contacts row.
     let contactsCreated = 0;
+    let contactsLinked = 0;
     // I1: the screen-1 main contact is unshifted first in the contacts array;
     // the FIRST primary_contact wins the client slot, not the last.
     let primaryLinked = false;
     let cpaLinked = false;
     for (const c of form.contacts ?? []) {
-      const [contact] = await tx
-        .insert(contacts)
-        .values({
-          type: c.entityName ? ("entity" as const) : ("individual" as const),
-          firstName: c.firstName ?? null,
-          lastName: c.lastName ?? null,
-          entityName: c.entityName ?? null,
-          email: c.email ?? null,
-          phone: c.phone ?? null,
-        })
-        .returning();
-      contactsCreated += 1;
+      const displayName =
+        (c.entityName?.trim() ?? "") !== ""
+          ? c.entityName!.trim()
+          : [c.firstName, c.lastName].filter(Boolean).join(" ").trim();
+      const linkedRow =
+        c.contactId != null
+          ? await findContactById(tx, c.contactId)
+          : await findContactByNameEmail(tx, displayName, c.email);
+      const contact =
+        linkedRow ??
+        (
+          await tx
+            .insert(contacts)
+            .values({
+              type: c.entityName ? ("entity" as const) : ("individual" as const),
+              firstName: c.firstName ?? null,
+              lastName: c.lastName ?? null,
+              entityName: c.entityName ?? null,
+              email: c.email ?? null,
+              phone: c.phone ?? null,
+            })
+            .returning()
+        )[0];
+      if (linkedRow) contactsLinked += 1;
+      else contactsCreated += 1;
       const relationshipType = c.isPrimary
         ? ("primary_contact" as const)
         : (c.relationshipType ?? ("related" as const));
-      await tx.insert(contactClientLinks).values({
-        contactId: contact.id,
-        clientId,
-        relationshipType,
-      });
+      await tx
+        .insert(contactClientLinks)
+        .values({
+          contactId: contact.id,
+          clientId,
+          relationshipType,
+        })
+        .onConflictDoNothing();
       if (relationshipType === "primary_contact" && !primaryLinked) {
         await tx.update(clients).set({ primaryContactId: contact.id }).where(sql`${clients.id} = ${clientId}`);
         primaryLinked = true;
@@ -446,11 +511,28 @@ export async function convertIntakeToClient(
     }
 
     // 3b. I1 (00:30:14): the dedicated CPA card - "Do they have a CPA who
-    //     files their taxes?" - creates the CPA contact + link when the
-    //     contacts list didn't already carry one.
+    //     files their taxes?" - links or creates the CPA contact + link when
+    //     the contacts list didn't already carry one. J1 (C6): a picker
+    //     selection (cpaContactId) or a name+email match links the existing
+    //     CPA record instead of spawning "two Yes Taxes LLCs".
     if (form.hasCpa === true && !cpaLinked) {
       const cpaName = typeof form.cpaName === "string" ? form.cpaName.trim() : "";
-      if (cpaName !== "") {
+      const cpaEmail =
+        typeof form.cpaEmail === "string" && form.cpaEmail.trim() !== "" ? form.cpaEmail.trim() : null;
+      const linkedRow =
+        form.cpaContactId != null
+          ? await findContactById(tx, form.cpaContactId)
+          : cpaName !== ""
+            ? await findContactByNameEmail(tx, cpaName, cpaEmail)
+            : null;
+      if (linkedRow) {
+        contactsLinked += 1;
+        await tx
+          .insert(contactClientLinks)
+          .values({ contactId: linkedRow.id, clientId, relationshipType: "cpa" })
+          .onConflictDoNothing();
+        await tx.update(clients).set({ cpaContactId: linkedRow.id }).where(sql`${clients.id} = ${clientId}`);
+      } else if (cpaName !== "") {
         const { firstName, lastName } = splitName(cpaName);
         const [contact] = await tx
           .insert(contacts)
@@ -458,7 +540,7 @@ export async function convertIntakeToClient(
             type: "individual",
             firstName,
             lastName,
-            email: typeof form.cpaEmail === "string" && form.cpaEmail.trim() !== "" ? form.cpaEmail.trim() : null,
+            email: cpaEmail,
           })
           .returning();
         contactsCreated += 1;
@@ -504,19 +586,31 @@ export async function convertIntakeToClient(
             receivesReports: o.receivesReports ?? true,
           }));
     for (const owner of owners) {
-      const { firstName, lastName } = splitName(owner.name);
-      const [contact] = await tx
-        .insert(contacts)
-        .values({ type: "individual", firstName, lastName, email: owner.email, phone: owner.phone })
-        .returning();
-      contactsCreated += 1;
-      await tx.insert(contactClientLinks).values({
-        contactId: contact.id,
-        clientId,
-        relationshipType: "owner",
-        ownershipPercent: owner.ownershipPercent,
-        receivesReports: owner.receivesReports,
-      });
+      // J1 (C4): an owner who is already on file - or was just created as
+      // the primary contact in this same conversion (the C1 same-as-primary
+      // shortcut) - LINKS the existing record with the owner role instead
+      // of duplicating the person. Name+email both required to match.
+      const linkedRow = await findContactByNameEmail(tx, owner.name, owner.email);
+      const contact =
+        linkedRow ??
+        (
+          await tx
+            .insert(contacts)
+            .values({ type: "individual", ...splitName(owner.name), email: owner.email, phone: owner.phone })
+            .returning()
+        )[0];
+      if (linkedRow) contactsLinked += 1;
+      else contactsCreated += 1;
+      await tx
+        .insert(contactClientLinks)
+        .values({
+          contactId: contact.id,
+          clientId,
+          relationshipType: "owner",
+          ownershipPercent: owner.ownershipPercent,
+          receivesReports: owner.receivesReports,
+        })
+        .onConflictDoNothing();
       ownerLinksCreated += 1;
       if (owner.id != null) {
         await tx
@@ -533,11 +627,17 @@ export async function convertIntakeToClient(
     //    bill-of-sale -> none, out of the queues), the institution FK links
     //    the dropdown pick, and the text snapshot falls back to the FK's
     //    name so vault slots and SOP linking keep working.
+    //    J1 (D1/D2/D6): accounts.last4 stamps the masked capture (app-layer
+    //    4-digit check via normalizeLast4); loan lenders resolve through the
+    //    same institution fields (lenderInstitutionId FK + lender text
+    //    snapshot - owner-declared write-ins land in the text snapshot only,
+    //    NEVER the institutions table); vault slot labels render the bank ->
+    //    type -> last4 standard via accountLabel.
     const overrides = form.accountOverrides ?? {};
     const institutionIds = [
       ...new Set(
         (form.accounts ?? [])
-          .map((a) => a.institutionId)
+          .flatMap((a) => [a.institutionId, a.lenderInstitutionId])
           .filter((id): id is number => id != null),
       ),
     ];
@@ -549,8 +649,15 @@ export async function convertIntakeToClient(
         .where(inArray(institutions.id, institutionIds));
       for (const r of rows) institutionNames.set(r.id, r.name);
     }
-    const institutionNameOf = (a: IntakeAccountInput): string | null =>
-      a.institution ?? (a.institutionId != null ? (institutionNames.get(a.institutionId) ?? null) : null);
+    // The account's institution text snapshot + FK: bank fields win; a loan's
+    // lender (picked or written in) is the loan row's institution.
+    const institutionTextOf = (a: IntakeAccountInput): string | null =>
+      a.institution ??
+      a.lender ??
+      (a.institutionId != null ? (institutionNames.get(a.institutionId) ?? null) : null) ??
+      (a.lenderInstitutionId != null ? (institutionNames.get(a.lenderInstitutionId) ?? null) : null);
+    const institutionIdOf = (a: IntakeAccountInput): number | null =>
+      a.institutionId ?? a.lenderInstitutionId ?? null;
     let accountsCreated = 0;
     const insertedAccounts: (typeof accounts.$inferSelect)[] = [];
     for (const a of form.accounts ?? []) {
@@ -567,8 +674,11 @@ export async function convertIntakeToClient(
           clientId,
           name: a.name,
           accountType: a.accountType.trim().toLowerCase(),
-          institution: institutionNameOf(a),
-          institutionId: a.institutionId ?? null,
+          institution: institutionTextOf(a),
+          institutionId: institutionIdOf(a),
+          // J1 (D1): the masked last-4 - app-layer checked (exactly 4 digits),
+          // null for legacy/extraction rows that never captured it.
+          last4: normalizeLast4(a.last4),
           proofCategory: proofCategoryFor(a),
           statementDay,
           openDate: a.openDate ?? intake.bookkeepingStartDate,
@@ -581,6 +691,23 @@ export async function convertIntakeToClient(
     }
     // §29 fix: every merchant account becomes its own row with all fields
     // kept; multi-merchant arrays never collapse to a single value.
+    // J1 (E4/DB1): the processor picks from merchant_processors - the name
+    // snapshot rides `processor`; the id resolves the name when absent.
+    const processorIds = [
+      ...new Set(
+        (form.merchantAccounts ?? [])
+          .map((m) => m.processorId)
+          .filter((id): id is number => id != null),
+      ),
+    ];
+    const processorNames = new Map<number, string>();
+    if (processorIds.length > 0) {
+      const rows = await tx
+        .select({ id: merchantProcessors.id, name: merchantProcessors.name })
+        .from(merchantProcessors)
+        .where(inArray(merchantProcessors.id, processorIds));
+      for (const r of rows) processorNames.set(r.id, r.name);
+    }
     for (const m of form.merchantAccounts ?? []) {
       const [merchantAccount] = await tx
         .insert(accounts)
@@ -591,7 +718,7 @@ export async function convertIntakeToClient(
           // SCHEMA GAP: accounts has no merchant_processor column (only
           // properties.merchantProcessor exists); the processor is preserved
           // in institution until the schema grows one.
-          institution: m.processor ?? null,
+          institution: m.processor ?? (m.processorId != null ? (processorNames.get(m.processorId) ?? null) : null),
           statementDay: defaultStatementDayFor("merchant"),
           openDate: intake.bookkeepingStartDate,
         })
@@ -611,8 +738,15 @@ export async function convertIntakeToClient(
       .filter((a) => a.grantLoginAccess === true)
       .map((a) => ({
         accountId: insertedAccounts.find((ia) => ia.name === a.name)?.id ?? null,
-        label: a.name,
-        institution: institutionNameOf(a),
+        // J1 (D2): vault slot labels follow the bank -> type -> last4
+        // standard; legacy accounts without a last-4 keep the old name.
+        label: accountLabel({
+          name: a.name,
+          institution: institutionTextOf(a),
+          accountType: a.accountType,
+          last4: a.last4,
+        }),
+        institution: institutionTextOf(a),
       }));
     const credentialsExpectedCreated = await seedExpectedCredentialSlots(
       tx as DbOrTx,
@@ -950,6 +1084,7 @@ export async function convertIntakeToClient(
       clientId,
       isProject,
       contactsCreated,
+      contactsLinked,
       ownerLinksCreated,
       accountsCreated,
       propertiesCreated,
@@ -998,6 +1133,7 @@ export async function convertIntakeToClient(
     clientId: result.clientId,
     isProjectEngagement: result.isProject,
     contactsCreated: result.contactsCreated,
+    contactsLinked: result.contactsLinked,
     ownerLinksCreated: result.ownerLinksCreated,
     accountsCreated: result.accountsCreated,
     propertiesCreated: result.propertiesCreated,

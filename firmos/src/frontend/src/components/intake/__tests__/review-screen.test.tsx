@@ -156,8 +156,8 @@ describe('ReviewScreen I1 answer rendering', () => {  it('shows custom Other tex
     )
     // The typed custom text renders verbatim, never the bare "Other".
     expect(screen.getByText('Series LLC taxed as a trust')).toBeInTheDocument()
-    // The CPA card folds name into the yes/no row.
-    expect(screen.getByText('Yes · Cascade Tax Group')).toBeInTheDocument()
+    // The CPA card folds name into the yes/no row (J1/C4: linked-vs-new state).
+    expect(screen.getByText('Yes · Cascade Tax Group · new record')).toBeInTheDocument()
     // Referral folds in who to thank.
     expect(screen.getByText('CPA referral · Carlos at Cascade')).toBeInTheDocument()
     // The text-entry date renders as a real date label…
@@ -300,19 +300,22 @@ describe('I3 review: accounts grouped by type with institution + proof badges', 
     legalName: 'Grouped Accounts Co',
     engagementType: 'bookkeeping',
     checkingAccounts: [
-      { name: 'Operating', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', grantLoginAccess: true },
+      // J1 (D1/D2): money accounts carry the last-4 - the label is derived.
+      { name: 'Chase Checking · 4411', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '4411', grantLoginAccess: true },
     ],
     creditCardAccounts: [
       { name: 'Amex Gold', accountType: 'credit_card', proofCategory: 'statement', institution: 'Amex' },
     ],
-    loanAccounts: [
-      { name: 'Owner loan', accountType: 'loan', proofCategory: 'owner_declared', lender: 'Wren', balance: 12000 },
-    ],
     vehicleAssets: [
-      { name: 'Transit van', accountType: 'vehicle', proofCategory: 'bill_of_sale', year: 2022, value: 28000 },
+      { name: 'Transit van', accountType: 'vehicle', proofCategory: 'bill_of_sale', year: 2022, financed: 'financed' },
     ],
     otherAssets: [
       { name: 'Espresso machine', accountType: 'other_asset', assetType: 'equipment', proofCategory: 'owner_declared' },
+    ],
+    loanAccounts: [
+      { name: 'Owner loan', accountType: 'loan', proofCategory: 'owner_declared', lender: 'Wren' },
+      // J1 (D5): the financed vehicle's linked loan entry.
+      { name: 'Transit van (vehicle loan)', accountType: 'vehicle_loan', proofCategory: 'statement', lender: 'Columbia', fromVehicle: 'Transit van' },
     ],
   }
 
@@ -332,34 +335,44 @@ describe('I3 review: accounts grouped by type with institution + proof badges', 
     )
   }
 
-  it('groups the accounts under the balance chapter in type order, with badges', () => {
+  it('groups the accounts under the balance chapter - J1 (D4): assets before loans; D2: the bank-type-last4 label', () => {
     renderAccounts(accountsAnswers)
     const section = screen.getByTestId('review-accounts')
     const groups = section.querySelectorAll('[data-testid="review-account-group"]')
     expect([...groups].map((g) => g.getAttribute('data-type'))).toEqual([
       'checking',
       'credit_card',
-      'loan',
       'vehicle',
       'fixed_assets', // the equipment bucket maps to fixed assets
+      'vehicle_loan',
+      'loan',
     ])
 
-    // Institution + proof + online-access badges on the money account.
+    // D2: the checking account renders the bank -> type -> last4 label; the
+    // institution badge is gone when the label already carries the bank.
     const checking = groups[0]
-    expect(checking).toHaveTextContent('Operating')
-    expect(checking).toHaveTextContent('Chase')
+    expect(checking).toHaveTextContent('Chase Checking · 4411')
+    expect(checking).not.toHaveTextContent('Statement · Chase')
     expect(checking).toHaveTextContent('Statement')
     expect(checking).toHaveTextContent('Online access')
 
-    // The loan carries its lender/balance detail and the owner-declared badge.
-    expect(groups[2]).toHaveTextContent('Owner loan')
-    expect(groups[2]).toHaveTextContent('Wren · balance $12,000')
-    expect(groups[2]).toHaveTextContent('Owner declared')
+    // The vehicle shows year + financed and the bill-of-sale badge.
+    expect(groups[2]).toHaveTextContent('Transit van')
+    expect(groups[2]).toHaveTextContent('2022 · Financed')
+    expect(groups[2]).toHaveTextContent('Bill of sale')
 
-    // The vehicle shows year/value and the bill-of-sale badge.
-    expect(groups[3]).toHaveTextContent('Transit van')
-    expect(groups[3]).toHaveTextContent('2022 · value $28,000')
-    expect(groups[3]).toHaveTextContent('Bill of sale')
+    // Legacy rows (no last-4) keep the old name + institution badge; the
+    // owner-declared loan carries its lender detail and badge.
+    const legacyCard = groups[1]
+    expect(legacyCard).toHaveTextContent('Amex Gold')
+    expect(legacyCard).toHaveTextContent('Amex')
+    const loan = groups[5]
+    expect(loan).toHaveTextContent('Owner loan')
+    expect(loan).toHaveTextContent('Wren')
+    expect(loan).toHaveTextContent('Owner declared')
+    // The linked vehicle-loan entry is badged.
+    expect(groups[4]).toHaveTextContent('Transit van (vehicle loan)')
+    expect(groups[4]).toHaveTextContent('Vehicle loan')
   })
 
   it('hides the balance chapter entirely when no accounts were entered', () => {
@@ -370,6 +383,7 @@ describe('I3 review: accounts grouped by type with institution + proof badges', 
 
   it('the online-access row counts the checked accounts', () => {
     renderAccounts(accountsAnswers)
-    expect(screen.getByText('1 of 2 with online access')).toBeInTheDocument()
+    // 3 statement-proof accounts (checking, card, the vehicle loan); 1 checked.
+    expect(screen.getByText('1 of 3 with online access')).toBeInTheDocument()
   })
 })

@@ -16,6 +16,7 @@ import {
 
 import { db } from "@/db";
 import { accounts, clientIntakes, clients, projects } from "@/db/schema";
+import { accountLabel } from "@/shared/lib/account-label";
 import { localToday } from "@/server/dates";
 import {
   uploadedStatementMonths,
@@ -232,8 +233,12 @@ function toClientInput(client: ClientRow, intakeStart: string | null): Statement
 
 export interface StatementQueueRow {
   accountId: number;
+  /** J1 (D2): the bank -> type -> last4 label (legacy rows keep the name). */
   accountName: string;
   institution: string | null;
+  /** J1 (D1): present on post-J1 accounts; the queue shows the separate
+   *  institution line only for legacy rows whose label lacks it. */
+  last4: string | null;
   statementDay: number | null;
   clientId: number;
   clientName: string;
@@ -277,8 +282,9 @@ export async function getStatementQueue(today: LocalDate = localToday()): Promis
     );
     rows.push({
       accountId: account.id,
-      accountName: account.name,
+      accountName: accountLabel(account),
       institution: account.institution,
+      last4: account.last4,
       statementDay: account.statementDay,
       clientId: entry.client.id,
       clientName: entry.client.dbaName ?? entry.client.legalName,
@@ -425,7 +431,8 @@ export async function getStatementsGrid(
 
     result.push({
       accountId: account.id,
-      accountName: account.name,
+      // J1 (D2): the bank -> type -> last4 label on the statements grid too.
+      accountName: accountLabel(account),
       statementDay: account.statementDay!,
       deferredUntil: account.statementsDeferredUntil,
       closeDate: account.closeDate,
@@ -484,8 +491,10 @@ export async function deferAccountStatements(
 
 export interface TransactionDownloadQueueRow {
   accountId: number;
+  /** J1 (D2): the bank -> type -> last4 label (legacy rows keep the name). */
   accountName: string;
   institution: string | null;
+  last4: string | null;
   clientId: number;
   clientName: string;
   lastTransactionsDownloadedAt: string | null;
@@ -528,8 +537,9 @@ export async function getTransactionDownloadQueue(
       : formatLocalDate(today);
     return {
       accountId: account.id,
-      accountName: account.name,
+      accountName: accountLabel(account),
       institution: account.institution,
+      last4: account.last4,
       clientId: client.id,
       clientName: client.dbaName ?? client.legalName,
       lastTransactionsDownloadedAt: account.lastTransactionsDownloadedAt,
