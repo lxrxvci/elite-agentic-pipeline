@@ -506,3 +506,73 @@ describe("I2 entity logic in extraction", () => {
     expect(describeExtractedValue("llcSubclass", "llc_sml")).toBe("Single-member LLC");
   });
 });
+
+// ── I7: A45 established date + A41 money-behavior extraction ───────────────
+
+describe("I7 closeout extraction (A45 + A41)", () => {
+  it("accepts the established date as YYYY-MM-DD and rejects anything else", () => {
+    const result = coerceExtraction({
+      fields: [
+        { key: "businessEstablishedDate", value: "2019-03-01", confidence: 0.9, evidence: "formed March 2019" },
+      ],
+    });
+    expect(result.fields.find((f) => f.key === "businessEstablishedDate")?.value).toBe("2019-03-01");
+    expect(result.fields.find((f) => f.key === "businessEstablishedDate")?.group).toBe("starting");
+
+    const bad = coerceExtraction({
+      fields: [{ key: "businessEstablishedDate", value: "March 2019", confidence: 0.9, evidence: "…" }],
+    });
+    expect(bad.fields).toHaveLength(0);
+    expect(bad.rejected?.[0].reason).toContain("not YYYY-MM-DD");
+  });
+
+  it("coerces both money-behavior answers as booleans in the income chapter", () => {
+    const result = coerceExtraction({
+      fields: [
+        { key: "depositsNonBusiness", value: true, confidence: 0.9, evidence: "sometimes puts personal money in" },
+        { key: "personalOnBusiness", value: "no", confidence: 0.8, evidence: "never mixes them" },
+      ],
+    });
+    expect(result.fields.find((f) => f.key === "depositsNonBusiness")?.value).toBe(true);
+    expect(result.fields.find((f) => f.key === "depositsNonBusiness")?.group).toBe("income");
+    expect(result.fields.find((f) => f.key === "personalOnBusiness")?.value).toBe(false);
+  });
+
+  it("both money-behavior keys stay on the still-to-ask list until answered (bookkeeping only)", () => {
+    const result = coerceExtraction({
+      fields: [{ key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" }],
+    });
+    expect(result.missing).toContain("depositsNonBusiness");
+    expect(result.missing).toContain("personalOnBusiness");
+
+    const answered = coerceExtraction({
+      fields: [
+        { key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" },
+        { key: "depositsNonBusiness", value: false, confidence: 0.9, evidence: "x" },
+        { key: "personalOnBusiness", value: true, confidence: 0.9, evidence: "x" },
+      ],
+    });
+    expect(answered.missing).not.toContain("depositsNonBusiness");
+    expect(answered.missing).not.toContain("personalOnBusiness");
+
+    // Project engagements never ask the money-behavior questions.
+    const project = coerceExtraction({
+      fields: [{ key: "engagementType", value: "project", confidence: 0.9, evidence: "x" }],
+    });
+    expect(project.missing).not.toContain("depositsNonBusiness");
+    expect(project.missing).not.toContain("personalOnBusiness");
+  });
+
+  it("the established date is informational, never on the still-to-ask list", () => {
+    const result = coerceExtraction({
+      fields: [{ key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" }],
+    });
+    expect(result.missing).not.toContain("businessEstablishedDate");
+  });
+
+  it("renders the review labels for the new keys", () => {
+    expect(describeExtractedValue("depositsNonBusiness", true)).toBe("Yes");
+    expect(describeExtractedValue("personalOnBusiness", false)).toBe("No");
+    expect(describeExtractedValue("businessEstablishedDate", "2019-03-01")).toBe("2019-03-01");
+  });
+});

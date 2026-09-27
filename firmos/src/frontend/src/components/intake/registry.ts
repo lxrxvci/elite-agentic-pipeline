@@ -1347,18 +1347,40 @@ export const CHAPTERS: ChapterDef[] = [
         // I1 (00:33:00): dates are typed text (MM/DD/YYYY), no calendar
         // popups. The separate catch-up date screen is gone (00:33:42) -
         // buildPatch derives bankFeedCatchupDate from this date.
+        // A44 (00:22:04): Jason's conversational opener IS the question -
+        // "When was the last time you filed your taxes?" - with the
+        // books-start field beneath it ("So your books should start:"). The
+        // answer key stays bookkeepingStartDate.
         id: 'bk-start',
-        title: 'When should the books start?',
-        help: 'The first month we are responsible for. A good anchor: when did they last file their taxes? Catch-up work starts from this date automatically.',
+        title: 'When was the last time you filed your taxes?',
+        help: 'The first month we are responsible for. Catch-up work starts from this date automatically.',
         type: 'fields',
         required: true,
         when: isBookkeeping,
         fields: [
-          { key: 'bookkeepingStartDate', label: 'Books start date', kind: 'date-text', required: true, placeholder: '01/01/2026' },
+          { key: 'bookkeepingStartDate', label: 'So your books should start:', kind: 'date-text', required: true, placeholder: '01/01/2026' },
         ],
         get: (a) => a.bookkeepingStartDate,
         apply: (_a, v) => v as Partial<WizardAnswers>,
         summarize: (a) => (isBookkeeping(a) ? dateTextLabel(a.bookkeepingStartDate) : null),
+      },
+      {
+        // A45 (00:34:18): flagged missing during the call itself - distinct
+        // from the books-start date. Optional: it informs nothing downstream,
+        // it just lands on the record (form_data; clients carry no
+        // established-date column, so intake is the store).
+        id: 'biz-established',
+        title: 'When was the business established?',
+        help: 'The date the business officially started - incorporation, formation, or opening day. A ballpark is fine.',
+        type: 'fields',
+        required: false,
+        when: isBookkeeping,
+        fields: [
+          { key: 'businessEstablishedDate', label: 'Business established date (optional)', kind: 'date-text', required: false, placeholder: '01/01/2020' },
+        ],
+        get: (a) => a.businessEstablishedDate,
+        apply: (_a, v) => v as Partial<WizardAnswers>,
+        summarize: (a) => (isBookkeeping(a) ? dateTextLabel(a.businessEstablishedDate) : null),
       },
     ],
   },
@@ -1561,6 +1583,29 @@ export const CHAPTERS: ChapterDef[] = [
         ...yesNo('includeMerchantReconciliation'),
         summarize: (a) =>
           takesCards(a) && (a.merchantAccounts ?? []).length > 0 ? boolWord(a.includeMerchantReconciliation) : null,
+      },
+      {
+        // A41 (00:48:07): each money-behavior question is its own card.
+        // Non-business deposits are owner money in - a yes seeds the monthly
+        // owner-contribution review task at conversion.
+        id: 'deposits-non-business',
+        title: 'Do they ever deposit anything that isn\'t business income?',
+        help: 'Personal money put into the business to cover something. Yes means we review those deposits every month and record them as owner contributions - conversion seeds that task automatically.',
+        type: 'select',
+        required: true,
+        ...yesNo('depositsNonBusiness'),
+        summarize: (a) => boolWord(a.depositsNonBusiness),
+      },
+      {
+        // A41 (00:48:07): the flip side - personal spend paid from business
+        // accounts. A yes seeds the monthly owner-draws confirmation task.
+        id: 'personal-on-business',
+        title: 'Do they ever pay for non-business things on business accounts?',
+        help: 'Groceries, personal subscriptions, a family dinner on the business card. Yes means we confirm owner draws with the client every month - conversion seeds that task automatically.',
+        type: 'select',
+        required: true,
+        ...yesNo('personalOnBusiness'),
+        summarize: (a) => boolWord(a.personalOnBusiness),
       },
       {
         // B18 (01:04:29): a "sometimes" is a yes - the monthly chase task

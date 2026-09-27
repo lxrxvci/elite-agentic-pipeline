@@ -545,7 +545,7 @@ describe('TaskDrawer report gate (the report-task DO surface, 01:39:05)', () => 
     expect(button).toBeDisabled()
     expect(button).toHaveAttribute('title', 'Upload the report file first')
     expect(screen.getByTestId('report-gate-note')).toHaveTextContent(
-      'Upload the report file to complete',
+      "Upload the report file to complete — the file IS the deliverable. Uploading it completes this task and the month's report rows.",
     )
     expect(screen.queryByTestId('subtask-gate-note')).not.toBeInTheDocument()
   })

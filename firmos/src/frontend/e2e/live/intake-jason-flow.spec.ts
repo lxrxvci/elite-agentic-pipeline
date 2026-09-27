@@ -102,10 +102,11 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
 
   // ── Starting point: typed date text, no separate catch-up screen (I1) ──
   await pick(page, 'option-no', 'bk-start')
-  await page.getByLabel('Books start date').fill('01/01/2026')
-  await expect(page.getByLabel('Books start date')).toHaveValue('01/01/2026')
+  await page.getByLabel('So your books should start:').fill('01/01/2026')
+  await expect(page.getByLabel('So your books should start:')).toHaveValue('01/01/2026')
 
   // ── Accounts (I3): count stepper -> mini-form; seeded banks + inline add ──
+  await advance(page, 'biz-established') // A45: optional established date - skipped
   await advance(page, 'checking-accounts')
   await page.getByTestId('count-plus').click()
   await expect(page.getByTestId('count-input')).toHaveValue('1')
@@ -131,7 +132,9 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
 
   // ── Income: checks only; payroll is PRE-ANSWERED for an S Corp (I2) ──
   await page.getByTestId('chip-check').click()
-  await advance(page, 'personal-card')
+  await advance(page, 'deposits-non-business') // A41: the money-behavior cards first
+  await pick(page, 'option-no', 'personal-on-business') // no non-business deposits
+  await pick(page, 'option-no', 'personal-card') // nothing personal on business accounts
   await pick(page, 'option-no', 'payroll') // no personal-card spend
   // The corporate callout explains the pre-answer; "No" is locked.
   await expect(page.getByTestId('question-callout')).toContainText('Corporate officers')

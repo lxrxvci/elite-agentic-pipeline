@@ -114,6 +114,8 @@ const completeAnswers: WizardAnswers = {
   isRealEstateClient: false,
   hasPayroll: false,
   personalCardForBusiness: false,
+  depositsNonBusiness: false,
+  personalOnBusiness: false,
   bookkeepingFrequency: 'monthly',
   monthlyCloseTier: '10',
   accountingMethod: 'cash',

@@ -169,7 +169,7 @@ test('workstation: the Send Reports drawer finishes the task via the report uplo
   await expect(drawer.getByTestId('report-upload-dropzone')).toBeVisible()
   await expect(drawer.getByTestId('drawer-complete-toggle')).toBeDisabled()
   await expect(drawer.getByTestId('report-gate-note')).toHaveText(
-    'Upload the report file to complete',
+    "Upload the report file to complete — the file IS the deliverable. Uploading it completes this task and the month's report rows.",
   )
 
   // Drop the period's report file straight into the drawer (a real PDF - the

@@ -78,8 +78,10 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
 
   // ── Starting point: new client; books start January 1, 2025 typed in ──
   await pick(page, 'option-no', 'bk-start')
-  await page.getByLabel('Books start date').fill('01/01/2025')
-  await expect(page.getByLabel('Books start date')).toHaveValue('01/01/2025')
+  await page.getByLabel('So your books should start:').fill('01/01/2025')
+  await expect(page.getByLabel('So your books should start:')).toHaveValue('01/01/2025')
+  // A45: the established date card follows (optional).
+  await advance(page, 'biz-established')
   // ── Balance sheet: one checking account via the I3 count card ──
   await advance(page, 'checking-accounts')
   await page.getByTestId('count-input').fill('1')
@@ -96,7 +98,9 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   // ── Real estate: no; income: checks only, no payroll ──
   await pick(page, 'option-no', 'payment-methods')
   await page.getByTestId('chip-check').click()
-  await advance(page, 'personal-card')
+  await advance(page, 'deposits-non-business') // A41: the money-behavior cards first
+  await pick(page, 'option-no', 'personal-on-business') // no non-business deposits (A41)
+  await pick(page, 'option-no', 'personal-card') // nothing personal on business accounts (A41)
   await pick(page, 'option-no', 'payroll') // no personal-card business spend (B18)
   await pick(page, 'option-no', 'online-access') // no payroll; I3 access checklist next
 

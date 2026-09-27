@@ -170,6 +170,8 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'isExistingClient', label: 'Existing client', chapter: 'starting', kind: 'boolean' },
   { key: 'bookkeepingStartDate', label: 'Books start date', chapter: 'starting', kind: 'string' },
   { key: 'bankFeedCatchupDate', label: 'Bank-feed catch-up date', chapter: 'starting', kind: 'string' },
+  // A45: the established date rides extraction too (form_data only).
+  { key: 'businessEstablishedDate', label: 'Business established date', chapter: 'starting', kind: 'string' },
   // balance
   { key: 'accounts', label: 'Accounts', chapter: 'balance', kind: 'accounts' },
   // real-estate
@@ -181,6 +183,10 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'paymentMethods', label: 'Payment methods', chapter: 'income', kind: 'enumList', options: Object.keys(PAYMENT_METHOD_LABELS) },
   { key: 'merchantAccounts', label: 'Merchant processors', chapter: 'income', kind: 'merchants' },
   { key: 'includeMerchantReconciliation', label: 'Reconcile merchant accounts', chapter: 'income', kind: 'boolean' },
+  // A41: the two money-behavior cards (non-business deposits; personal
+  // spend on business accounts) extract as booleans.
+  { key: 'depositsNonBusiness', label: 'Deposits non-business money', chapter: 'income', kind: 'boolean' },
+  { key: 'personalOnBusiness', label: 'Pays for non-business on business accounts', chapter: 'income', kind: 'boolean' },
   { key: 'hasPayroll', label: 'Runs payroll', chapter: 'income', kind: 'boolean' },
   { key: 'payrollProvider', label: 'Payroll provider', chapter: 'income', kind: 'enum', options: PAYROLL_PROVIDERS },
   { key: 'payrollFrequency', label: 'Payroll frequency', chapter: 'income', kind: 'enum', options: ['weekly', 'biweekly', 'semi_monthly', 'monthly'] },
@@ -425,7 +431,12 @@ function coerceValue(
       if (spec.key === 'taxId' && s.replace(/\D/g, '').length !== 9) {
         return { ok: false, reason: `EIN "${s}" does not have 9 digits` }
       }
-      if ((spec.key === 'bookkeepingStartDate' || spec.key === 'bankFeedCatchupDate') && !DATE_RE.test(s)) {
+      if (
+        (spec.key === 'bookkeepingStartDate' ||
+          spec.key === 'bankFeedCatchupDate' ||
+          spec.key === 'businessEstablishedDate') &&
+        !DATE_RE.test(s)
+      ) {
         return { ok: false, reason: `date "${s}" is not YYYY-MM-DD` }
       }
       return { ok: true, value: s }
@@ -582,6 +593,11 @@ const MISSING_CHECKS: readonly MissingCheck[] = [
   { key: 'bookkeepingStartDate', when: isBk },
   { key: 'isRealEstateClient', when: () => true },
   { key: 'hasPayroll', when: isBk },
+  // A41: both money-behavior cards are required wizard questions, so an
+  // extraction that never mentions them keeps them on the "still to ask"
+  // list (same treatment as includeBillPay/includeRetroactive).
+  { key: 'depositsNonBusiness', when: isBk },
+  { key: 'personalOnBusiness', when: isBk },
   // I2: a corporate structure auto-flags payroll, so provider and frequency
   // are required even when the payroll answer itself was never extracted.
   { key: 'payrollProvider', when: (a) => isBk(a) && (a.hasPayroll === true || requiresOfficerPayroll(a)) },

@@ -116,11 +116,12 @@ describe('branch map', () => {
     expect(q.summarize({ ...base, engagementType: 'consulting' })).toBe('Consulting')
   })
 
-  it('project and consulting engagements skip the bookkeeping start question', () => {
+  it('project and consulting engagements skip the bookkeeping start questions', () => {
     const starting = CHAPTERS.find((c) => c.id === 'starting')!
     for (const engagementType of ['project', 'consulting'] as const) {
       const ids = visibleQuestions(starting, { ...base, engagementType }).map((q) => q.id)
       expect(ids).not.toContain('bk-start')
+      expect(ids).not.toContain('biz-established')
       expect(ids).toContain('existing-client')
     }
   })
@@ -484,6 +485,8 @@ describe('firstUnansweredScreen (resume)', () => {
       serviceKeys: ['bank_feed_management'],
       isRealEstateClient: false,
       personalCardForBusiness: false,
+      depositsNonBusiness: false,
+      personalOnBusiness: false,
       hasPayroll: false,
       bookkeepingFrequency: 'monthly',
       monthlyCloseTier: '10',
@@ -528,6 +531,104 @@ describe('B18 personal-card question', () => {
     expect(q.apply(base, 'yes')).toEqual({ personalCardForBusiness: true })
     expect(q.apply(base, 'no')).toEqual({ personalCardForBusiness: false })
     expect(q.summarize({ ...base, personalCardForBusiness: true })).toBe('Yes')
+  })
+})
+
+// ── I7 closeout wave (A44 + A45 + A41) ─────────────────────────────────────
+
+describe('A44 taxes-filed framing on the books-start question', () => {
+  const bkStart = findQuestion('starting', 'bk-start')!
+
+  it('the conversational opener is the question title, with the books-start lead-in on the field', () => {
+    expect(bkStart.title).toBe('When was the last time you filed your taxes?')
+    expect(bkStart.fields?.map((f) => [f.key, f.label])).toEqual([
+      ['bookkeepingStartDate', 'So your books should start:'],
+    ])
+    // The answer key never moved (I1 date-text, masked MM/DD/YYYY).
+    expect(bkStart.fields?.[0]?.kind).toBe('date-text')
+    expect(bkStart.required).toBe(true)
+  })
+
+  it('the stable key round-trips through the patch and the review row', () => {
+    expect(bkStart.apply(base, { bookkeepingStartDate: '2026-01-15' })).toEqual({
+      bookkeepingStartDate: '2026-01-15',
+    })
+    expect(bkStart.summarize({ ...base, bookkeepingStartDate: '2026-01-15' })).toBe('Jan 15, 2026')
+    const patch = buildPatch({ ...base, bookkeepingStartDate: '2026-01-15' })
+    expect(patch.bookkeepingStartDate).toBe('2026-01-15')
+    expect(patch.bankFeedCatchupDate).toBe('2026-01-15')
+  })
+})
+
+describe('A45 business-established question', () => {
+  const starting = CHAPTERS.find((c) => c.id === 'starting')!
+  const established = findQuestion('starting', 'biz-established')!
+
+  it('sits right beside books-start in the starting-point chapter, optional date-text', () => {
+    const ids = visibleQuestions(starting, base).map((q) => q.id)
+    expect(ids).toEqual(['existing-client', 'bk-start', 'biz-established'])
+    expect(established.title).toBe('When was the business established?')
+    expect(established.required).toBe(false)
+    expect(established.fields?.map((f) => [f.key, f.kind])).toEqual([
+      ['businessEstablishedDate', 'date-text'],
+    ])
+  })
+
+  it('the key rides form_data through buildPatch and back on resume', () => {
+    expect(established.apply(base, { businessEstablishedDate: '2019-03-01' })).toEqual({
+      businessEstablishedDate: '2019-03-01',
+    })
+    const patch = buildPatch({ ...base, businessEstablishedDate: '2019-03-01' })
+    // Form-data only: no structured column, no downstream effect.
+    expect(patch.formData?.businessEstablishedDate).toBe('2019-03-01')
+    expect('businessEstablishedDate' in patch).toBe(false)
+    const roundTripped = answersFromIntake({
+      formData: patch.formData,
+    } as unknown as IntakeRow)
+    expect(roundTripped.businessEstablishedDate).toBe('2019-03-01')
+  })
+
+  it('the review row renders the typed date and hides when empty', () => {
+    expect(established.summarize({ ...base, businessEstablishedDate: '2019-03-01' })).toBe('Mar 1, 2019')
+    expect(established.summarize(base)).toBeNull()
+    // Project-track engagements never see the question (isBookkeeping gate).
+    expect(established.when?.({ ...base, engagementType: 'project' })).toBe(false)
+  })
+})
+
+describe('A41 money-behavior cards', () => {
+  const income = CHAPTERS.find((c) => c.id === 'income')!
+
+  it('each money-behavior question is its own required yes/no card beside the personal-card one', () => {
+    const ids = visibleQuestions(income, base).map((q) => q.id)
+    // The dictated order: non-business deposits, personal on business, then
+    // the existing business-on-personal-card question.
+    expect(ids.indexOf('deposits-non-business')).toBe(ids.indexOf('personal-on-business') - 1)
+    expect(ids.indexOf('personal-on-business')).toBe(ids.indexOf('personal-card') - 1)
+
+    const deposits = findQuestion('income', 'deposits-non-business')!
+    expect(deposits.title).toBe('Do they ever deposit anything that isn\'t business income?')
+    expect(deposits.required).toBe(true)
+    expect(deposits.apply(base, 'yes')).toEqual({ depositsNonBusiness: true })
+    expect(deposits.apply(base, 'no')).toEqual({ depositsNonBusiness: false })
+    expect(deposits.summarize({ ...base, depositsNonBusiness: true })).toBe('Yes')
+    expect(deposits.summarize({ ...base, depositsNonBusiness: false })).toBe('No')
+
+    const personal = findQuestion('income', 'personal-on-business')!
+    expect(personal.title).toBe('Do they ever pay for non-business things on business accounts?')
+    expect(personal.required).toBe(true)
+    expect(personal.apply(base, 'yes')).toEqual({ personalOnBusiness: true })
+    expect(personal.apply(base, 'no')).toEqual({ personalOnBusiness: false })
+    expect(personal.summarize({ ...base, personalOnBusiness: true })).toBe('Yes')
+    // The help copy names what a yes seeds at conversion.
+    expect(String(deposits.help)).toContain('owner contribution')
+    expect(String(personal.help)).toContain('owner draws')
+  })
+
+  it('both keys ride form_data through the autosave patch', () => {
+    const patch = buildPatch({ ...base, depositsNonBusiness: true, personalOnBusiness: false })
+    expect(patch.formData?.depositsNonBusiness).toBe(true)
+    expect(patch.formData?.personalOnBusiness).toBe(false)
   })
 })
 
@@ -716,6 +817,8 @@ describe('scorp_selection_requires_payroll_provider (I2)', () => {
       serviceKeys: ['bank_feed_management'],
       isRealEstateClient: false,
       personalCardForBusiness: false,
+      depositsNonBusiness: false,
+      personalOnBusiness: false,
     }
     // Payroll itself reads answered (the auto-flag); the provider does not.
     const screens = flattenScreens(a)

@@ -192,6 +192,9 @@ export interface IntakeFormData {
   qboSubscriptionTier?: "simple_start" | "essentials" | "plus" | "advanced" | null;
   bookkeepingStartDate?: string | null;
   bankFeedCatchupDate?: string | null;
+  /** A45 (00:34:18): "When was the business established?" - form_data only
+   *  (clients carry no established-date column); informs nothing downstream. */
+  businessEstablishedDate?: string | null;
   // Step 3 - balance sheet
   /**
    * I3: the canonical flattened account list, written by buildPatch from
@@ -224,6 +227,12 @@ export interface IntakeFormData {
   /** B18: "personal credit card used for business" - yes/sometimes both land
    *  here as true; conversion seeds the monthly breakdown reminder task. */
   personalCardForBusiness?: boolean;
+  /** A41 (00:48:07): "deposit anything that isn't business income?" - true
+   *  seeds the monthly owner-contribution review task at conversion. */
+  depositsNonBusiness?: boolean;
+  /** A41 (00:48:07): "pay for non-business things on business accounts?" -
+   *  true seeds the monthly owner-draws confirmation task at conversion. */
+  personalOnBusiness?: boolean;
   // Step 5 - reporting and payroll
   bookkeepingFrequency?: string | null;
   billingFrequency?: string | null;

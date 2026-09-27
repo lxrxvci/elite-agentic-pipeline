@@ -710,7 +710,8 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
                     )}
                     {reportGated && (
                       <span className="text-[11px] text-muted-foreground" data-testid="report-gate-note">
-                        Upload the report file to complete
+                        Upload the report file to complete — the file IS the deliverable. Uploading it
+                        completes this task and the month&apos;s report rows.
                       </span>
                     )}
                     <Button

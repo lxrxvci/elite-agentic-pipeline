@@ -340,16 +340,18 @@ async function main(): Promise<void> {
     await page.getByTestId("quote-hide-toggle").click(); // hidden again for the rest of the questions
 
     // 5e. Starting point: the books-start date is typed text now (00:33:00),
-    //     and the old catch-up screen is gone (00:33:42).
+    //     and the old catch-up screen is gone (00:33:42). A44: the taxes-filed
+    //     framing opens the card; A45's established date follows it.
     await page.getByTestId("continue").click();
     await expect(page.getByTestId("question-screen")).toHaveAttribute("data-question", "existing-client");
     await wizardPick(page, "option-no", "bk-start");
-    await page.getByLabel("Books start date").pressSequentially("01012026");
+    await page.getByLabel("So your books should start:").pressSequentially("01012026");
     await page.waitForTimeout(300);
     await shot(page, "intake-date-text");
 
     // 5f. I3 accounts: the sequential per-type count cards (plan §1 screen 7).
-    await wizardAdvance(page, "checking-accounts"); // commit the date
+    await wizardAdvance(page, "biz-established"); // commit the date (A45 card next)
+    await wizardAdvance(page, "checking-accounts"); // skip the optional established date
     // The count card itself: two checking accounts -> two mini-forms.
     await page.getByTestId("count-input").fill("2");
     await page.waitForTimeout(300);
@@ -389,7 +391,9 @@ async function main(): Promise<void> {
     await shot(page, "intake-assets-list");
     await wizardAdvance(page, "re-yes");
     await wizardPick(page, "option-no", "payment-methods");
-    await wizardAdvance(page, "personal-card"); // checks only
+    await wizardAdvance(page, "deposits-non-business"); // checks only
+    await wizardPick(page, "option-no", "personal-on-business"); // A41: no non-business deposits
+    await wizardPick(page, "option-no", "personal-card"); // A41: nothing personal on business accounts
     await wizardPick(page, "option-no", "payroll"); // B18: no personal card
     await wizardPick(page, "option-no", "online-access"); // no payroll; the checklist is next
     // I3 screen 10 (00:49:44): the online-access checklist pulls the
@@ -452,7 +456,8 @@ async function main(): Promise<void> {
     await wizardPick(page, "option-recommended", "services");
     await wizardAdvance(page, "existing-client"); // chips already picked
     await wizardPick(page, "option-no", "bk-start");
-    await wizardAdvance(page, "checking-accounts"); // the typed date stands
+    await wizardAdvance(page, "biz-established"); // the typed date stands
+    await wizardAdvance(page, "checking-accounts"); // the established date stands empty
     // I3: the six count cards stand as answered; walk past them.
     await wizardAdvance(page, "savings-accounts");
     await wizardAdvance(page, "credit-cards");
@@ -461,7 +466,9 @@ async function main(): Promise<void> {
     await wizardAdvance(page, "other-assets");
     await wizardAdvance(page, "re-yes");
     await wizardPick(page, "option-no", "payment-methods");
-    await wizardAdvance(page, "personal-card"); // checks only
+    await wizardAdvance(page, "deposits-non-business"); // checks only
+    await wizardPick(page, "option-no", "personal-on-business"); // A41 answer stands
+    await wizardPick(page, "option-no", "personal-card"); // A41 answer stands
     await wizardPick(page, "option-no", "payroll"); // B18 answer stands
     // The payroll card pre-answers itself for a corporate structure.
     await expect(page.getByTestId("question-callout")).toContainText(

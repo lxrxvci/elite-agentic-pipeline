@@ -61,7 +61,7 @@ describe('date-text field (I1, 00:33:00)', () => {
   it('rejects 13/45/2026: nothing commits, the inline alert shows, Continue blocks', () => {
     const onAdvance = vi.fn()
     render(<Harness q={findQuestion('starting', 'bk-start')!} initial={{ engagementType: 'bookkeeping' }} onAdvance={onAdvance} />)
-    const input = screen.getByLabelText('Books start date')
+    const input = screen.getByLabelText('So your books should start:')
     fireEvent.change(input, { target: { value: '13/45/2026' } })
     expect(input).toHaveValue('13/45/2026')
     expect(screen.getByRole('alert')).toHaveTextContent("That date isn't real")
@@ -70,13 +70,13 @@ describe('date-text field (I1, 00:33:00)', () => {
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).not.toHaveBeenCalled()
     expect(screen.getByText("That date isn't real - use MM/DD/YYYY.")).toBeInTheDocument()
-    expect(screen.getByText('Books start date is required.')).toBeInTheDocument()
+    expect(screen.getByText('So your books should start: is required.')).toBeInTheDocument()
   })
 
   it('commits a valid typed date as ISO on the stable answer key', () => {
     const onAdvance = vi.fn()
     render(<Harness q={findQuestion('starting', 'bk-start')!} initial={{ engagementType: 'bookkeeping' }} onAdvance={onAdvance} />)
-    const input = screen.getByLabelText('Books start date')
+    const input = screen.getByLabelText('So your books should start:')
     fireEvent.change(input, { target: { value: '01052026' } })
     expect(input).toHaveValue('01/05/2026')
     expect(answersNow().bookkeepingStartDate).toBe('2026-01-05')
@@ -92,7 +92,7 @@ describe('date-text field (I1, 00:33:00)', () => {
         initial={{ engagementType: 'bookkeeping', bookkeepingStartDate: '2026-01-05' }}
       />,
     )
-    expect(screen.getByLabelText('Books start date')).toHaveValue('01/05/2026')
+    expect(screen.getByLabelText('So your books should start:')).toHaveValue('01/05/2026')
   })
 })
 

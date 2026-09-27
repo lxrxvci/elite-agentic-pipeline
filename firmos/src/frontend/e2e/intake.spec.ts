@@ -107,10 +107,15 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByTestId('addon-invoicing').click()
   await advance(page, 'existing-client')
 
-  // ── Starting point: new client, text-entry books-start date ──
+  // ── Starting point: new client; the taxes-filed framing opens it (A44) ──
   await pick(page, 'option-no', 'bk-start')
-  await page.getByLabel('Books start date').pressSequentially('01012026')
-  await expect(page.getByLabel('Books start date')).toHaveValue('01/01/2026')
+  await expect(page.getByText('When was the last time you filed your taxes?')).toBeVisible()
+  await page.getByLabel('So your books should start:').pressSequentially('01012026')
+  await expect(page.getByLabel('So your books should start:')).toHaveValue('01/01/2026')
+  // A45: the established date is the next card (optional date-text).
+  await advance(page, 'biz-established')
+  await page.getByLabel('Business established date (optional)').pressSequentially('03012019')
+  await expect(page.getByLabel('Business established date (optional)')).toHaveValue('03/01/2019')
   // ── Balance sheet: sequential per-type count cards (I3) ──
   await advance(page, 'checking-accounts')
   // Checking: the count generates one mini-form; the bank is a dropdown pick.
@@ -152,7 +157,10 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
 
   // ── Income and expenses: checks only (merchant questions stay hidden), no payroll ──
   await page.getByTestId('chip-check').click()
-  await advance(page, 'personal-card')
+  // A41: the two money-behavior cards come first, each its own screen.
+  await advance(page, 'deposits-non-business')
+  await pick(page, 'option-yes', 'personal-on-business') // owner money lands in the account sometimes (A41)
+  await pick(page, 'option-no', 'personal-card') // never personal spend on business accounts (A41)
   await pick(page, 'option-no', 'payroll') // no business spend on a personal card (B18)
   await pick(page, 'option-no', 'online-access') // no payroll (I3: access checklist next)
 
@@ -220,6 +228,11 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // The typed date renders as a real date; no catch-up row exists.
   await expect(page.getByText('Jan 1, 2026')).toBeVisible()
   await expect(page.getByText(/catch-up date/i)).toHaveCount(0)
+  // A45: the established date renders as its own row beside the books start.
+  await expect(page.getByText('Mar 1, 2019')).toBeVisible()
+  // A41: both money-behavior questions carry review rows.
+  await expect(page.getByText("Do they ever deposit anything that isn't business income?")).toBeVisible()
+  await expect(page.getByText('Do they ever pay for non-business things on business accounts?')).toBeVisible()
   // The main contact row shows the formatted phone.
   await expect(page.getByText('Wren Okafor · (503) 555-0182 · wren@e2ebloom.example')).toBeVisible()
   // Two QBO users, no tracking: the matrix recommends Essentials.
@@ -373,7 +386,8 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
 
   // ── Starting point + scope chapters ──
   await pick(page, 'option-no', 'bk-start')
-  await page.getByLabel('Books start date').pressSequentially('01012026')
+  await page.getByLabel('So your books should start:').pressSequentially('01012026')
+  await advance(page, 'biz-established') // A45: optional - skipped here
   await advance(page, 'checking-accounts')
   // I3: six count cards, all skipped (no accounts) - the online-access
   // checklist stays hidden with no statement accounts.
@@ -385,7 +399,9 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await advance(page, 're-yes')
   await pick(page, 'option-no', 'payment-methods')
   await page.getByTestId('chip-check').click()
-  await advance(page, 'personal-card')
+  await advance(page, 'deposits-non-business') // A41: the money-behavior cards first
+  await pick(page, 'option-no', 'personal-on-business')
+  await pick(page, 'option-no', 'personal-card')
   await pick(page, 'option-no', 'payroll')
 
   // ── The auto-flag: callout, Yes pre-selected, No locked ──

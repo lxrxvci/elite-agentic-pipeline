@@ -30,7 +30,7 @@ import {
 import { calculateIntakeQuote } from "@/server/quote";
 import { getUnifiedQueue } from "@/server/queue";
 import { seedDatabase } from "@/server/seed";
-import { createSopTemplate } from "@/server/templates";
+import { createSopTemplate, listOnboardingTemplates } from "@/server/templates";
 
 import { dbReachable, TEST_TODAY } from "./helpers";
 
@@ -206,15 +206,20 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     const periods = new Set(clientTasks.map((t) => `${t.attributedYear}-${t.attributedMonth}`));
     expect(periods.size).toBeGreaterThanOrEqual(6);
 
-    // Onboarding tasks: 8 seeded template rows; admin phase starts new,
-    // the rest blocked (§19).
+    // Onboarding tasks: 9 seeded template rows; admin phase starts new,
+    // the rest blocked (§19). A46: the vault-fill task is one of the four
+    // admin-phase rows (3B seeded the expectation slots; this prompts them).
     const onboarding = await db
       .select()
       .from(tasks)
       .where(and(eq(tasks.clientId, client.id), eq(tasks.taskType, "onboarding")));
-    expect(onboarding).toHaveLength(8);
-    expect(onboarding.filter((t) => t.status === "new")).toHaveLength(3);
+    expect(onboarding).toHaveLength(9);
+    expect(onboarding.filter((t) => t.status === "new")).toHaveLength(4);
     expect(onboarding.filter((t) => t.status === "blocked")).toHaveLength(5);
+    const vaultFill = onboarding.find((t) => t.title === "Fill in login credentials in the secure vault");
+    expect(vaultFill).toBeDefined();
+    expect(vaultFill?.status).toBe("new"); // admin phase starts actionable
+    expect(vaultFill?.assigneeId).toBe(managerDana);
 
     // Report tracking rows: 12 monthly + 4 quarterly for the current year.
     const reports = await db
@@ -229,10 +234,24 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     expect(linked.clientId).toBe(client.id);
     expect(linked.convertedAt).not.toBeNull();
 
-    expect(result.onboardingTasksCreated).toBe(8);
+    expect(result.onboardingTasksCreated).toBe(9);
     expect(result.reportRowsCreated).toBe(16);
     expect(result.recurringRulesCreated).toBe(8); // 4 defaults + 1 custom + 1 merchant recon (I6) + 2 specialty report rules (C10)
     expect(result.tasksGenerated).not.toBeNull();
+  });
+
+  it("the seeded onboarding template lists the vault-fill row as admin-phase (A46)", async () => {
+    // A46 (00:57:03): the vault slots seed at conversion (3B); this template
+    // row is what prompts the manager to fill them. The admin template list
+    // (listOnboardingTemplates) is what the template editor renders.
+    const rows = await listOnboardingTemplates();
+    const vault = rows.find((r) => r.title === "Fill in login credentials in the secure vault");
+    expect(vault).toBeDefined();
+    expect(vault?.isAdminPhase).toBe(true);
+    expect(vault?.defaultAssigneeRole).toBe("manager");
+    // Positioned right after "Collect signed engagement letter and W-9".
+    const w9 = rows.find((r) => r.title === "Collect signed engagement letter and W-9");
+    expect(vault!.position).toBe(w9!.position + 1);
   });
 
   it("creates property rows from the real-estate intake answers", async () => {
@@ -524,7 +543,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       .select()
       .from(tasks)
       .where(and(eq(tasks.clientId, client.id), eq(tasks.taskType, "onboarding")));
-    expect(onboarding).toHaveLength(8);
+    expect(onboarding).toHaveLength(9);
     expect(onboarding.every((t) => t.assigneeId === null)).toBe(true);
 
     // Post-commit generation still runs; instances inherit null assignees.

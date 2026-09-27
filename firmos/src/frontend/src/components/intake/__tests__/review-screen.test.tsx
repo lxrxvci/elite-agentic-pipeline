@@ -130,8 +130,7 @@ describe('ReviewScreen quote discounts (C1)', () => {
   })
 })
 
-describe('ReviewScreen I1 answer rendering', () => {  it('shows custom Other text verbatim, the CPA card, the referral who, and no catch-up row', () => {
-    render(
+describe('ReviewScreen I1 answer rendering', () => {  it('shows custom Other text verbatim, the CPA card, the referral who, and no catch-up row', () => {    render(
       <ReviewScreen
         intakeId={1}
         answers={{
@@ -165,6 +164,73 @@ describe('ReviewScreen I1 answer rendering', () => {  it('shows custom Other tex
     expect(screen.getByText('Jan 5, 2026')).toBeInTheDocument()
     // …and the removed catch-up screen has no row anywhere.
     expect(screen.queryByText(/catch-up date/i)).toBeNull()
+  })
+})
+
+describe('ReviewScreen I7 closeout rows (A44 + A45 + A41)', () => {
+  it('shows the taxes-filed framing as the books-start row, the established date, and both money-behavior answers', () => {
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={{
+          legalName: 'Closeout Co',
+          engagementType: 'bookkeeping',
+          contacts: [{ firstName: 'Wren', lastName: 'Okafor', isPrimary: true }],
+          taxStructure: 'LLC',
+          llcSubclass: 'llc_sml',
+          hasCpa: false,
+          bookkeepingStartDate: '2026-01-05',
+          businessEstablishedDate: '2019-03-01',
+          depositsNonBusiness: true,
+          personalOnBusiness: false,
+          personalCardForBusiness: true,
+        }}
+        quote={null}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+      />,
+    )
+    // A44: the row's label is the conversational opener; the date renders.
+    expect(screen.getByText('When was the last time you filed your taxes?')).toBeInTheDocument()
+    expect(screen.getByText('Jan 5, 2026')).toBeInTheDocument()
+    // A45: the established date is its own row beside it.
+    expect(screen.getByText('When was the business established?')).toBeInTheDocument()
+    expect(screen.getByText('Mar 1, 2019')).toBeInTheDocument()
+    // A41: both money-behavior cards carry review rows.
+    expect(screen.getByText("Do they ever deposit anything that isn't business income?")).toBeInTheDocument()
+    expect(screen.getByText('Do they ever pay for non-business things on business accounts?')).toBeInTheDocument()
+    // The personal-card row (B18) still renders its own answer.
+    expect(screen.getByText('Do they put business expenses on a personal credit card?')).toBeInTheDocument()
+  })
+
+  it('hides the established-date row when the optional answer was skipped', () => {
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={{
+          legalName: 'Skipped Co',
+          engagementType: 'bookkeeping',
+          contacts: [{ firstName: 'Wren', isPrimary: true }],
+          taxStructure: 'LLC',
+          llcSubclass: 'llc_sml',
+          hasCpa: false,
+          bookkeepingStartDate: '2026-01-05',
+        }}
+        quote={null}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+      />,
+    )
+    expect(screen.queryByText('When was the business established?')).toBeNull()
+    expect(screen.getByText('When was the last time you filed your taxes?')).toBeInTheDocument()
   })
 })
 

@@ -14,7 +14,7 @@ import {
   users,
   yearEndTaxChecklists,
 } from "@/db/schema";
-import { convertIntakeToClient, PERSONAL_CARD_REMINDER_TITLE } from "@/server/convert";
+import { convertIntakeToClient, NON_BUSINESS_DEPOSITS_REVIEW_TITLE, OWNER_DRAWS_CONFIRMATION_TITLE, PERSONAL_CARD_REMINDER_TITLE } from "@/server/convert";
 import {
   createIntake,
   getIntake,
@@ -282,6 +282,88 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       .from(recurringTasks)
       .where(eq(recurringTasks.clientId, clean.clientId));
     expect(cleanRules.some((r) => r.title === PERSONAL_CARD_REMINDER_TITLE)).toBe(false);
+  });
+
+  // Item 5b (A41, 00:48:07): the two money-behavior yes answers seed their
+  // monthly bookkeeper tasks at conversion - owner-contribution review for
+  // non-business deposits, owner-draws confirmation for personal spend on
+  // business accounts - both on the close cadence (the tier day).
+  it("money_behavior_answers_seed_their_monthly_tasks", async () => {
+    const flagged = await reviewableIntake({
+      legalName: "Money Behavior Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+        depositsNonBusiness: true,
+        personalOnBusiness: true,
+      },
+    });
+    const result = await convertIntakeToClient(flagged, { bookkeeperId }, ownerId, TEST_TODAY);
+    const rules = await db
+      .select()
+      .from(recurringTasks)
+      .where(eq(recurringTasks.clientId, result.clientId));
+
+    const deposits = rules.find((r) => r.title === NON_BUSINESS_DEPOSITS_REVIEW_TITLE);
+    expect(deposits).toBeDefined();
+    expect(deposits).toMatchObject({
+      scheduleType: "monthly",
+      dayOfMonth: 10, // the close cadence: this client's tier day
+      assigneeId: bookkeeperId,
+    });
+    expect((deposits!.nextRun ?? "") >= "2026-08-15").toBe(true); // seeded in the future
+
+    const draws = rules.find((r) => r.title === OWNER_DRAWS_CONFIRMATION_TITLE);
+    expect(draws).toBeDefined();
+    expect(draws).toMatchObject({
+      scheduleType: "monthly",
+      dayOfMonth: 10,
+      assigneeId: bookkeeperId,
+    });
+    expect((draws!.nextRun ?? "") >= "2026-08-15").toBe(true);
+
+    // Controls: an explicit "no" seeds nothing, and an absent answer seeds
+    // nothing (pre-A41 intakes never grew these tasks).
+    const declined = await reviewableIntake({
+      legalName: "No Money Behavior Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+        depositsNonBusiness: false,
+        personalOnBusiness: false,
+      },
+    });
+    const declinedResult = await convertIntakeToClient(declined, {}, ownerId, TEST_TODAY);
+    const declinedRules = await db
+      .select()
+      .from(recurringTasks)
+      .where(eq(recurringTasks.clientId, declinedResult.clientId));
+    expect(declinedRules.some((r) => r.title === NON_BUSINESS_DEPOSITS_REVIEW_TITLE)).toBe(false);
+    expect(declinedRules.some((r) => r.title === OWNER_DRAWS_CONFIRMATION_TITLE)).toBe(false);
+
+    const legacy = await reviewableIntake({
+      legalName: "Legacy No Behavior Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        accounts: [{ name: "Operating", accountType: "checking" }],
+      },
+    });
+    const legacyResult = await convertIntakeToClient(legacy, {}, ownerId, TEST_TODAY);
+    const legacyRules = await db
+      .select()
+      .from(recurringTasks)
+      .where(eq(recurringTasks.clientId, legacyResult.clientId));
+    expect(legacyRules.some((r) => r.title === NON_BUSINESS_DEPOSITS_REVIEW_TITLE)).toBe(false);
+    expect(legacyRules.some((r) => r.title === OWNER_DRAWS_CONFIRMATION_TITLE)).toBe(false);
   });
 
   // Item 6 (B21): the intake checklist unselects default rules; conversion

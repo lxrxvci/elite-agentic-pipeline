@@ -434,7 +434,10 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
       .where(and(eq(tasks.clientId, offline.clientId), eq(tasks.taskType, "onboarding")));
     expect(offlineTasks.some((t) => /bank feed|bank sync|sync status/i.test(t.title))).toBe(false);
     // The rest of the checklist is untouched (only the feed task is gated).
-    expect(offlineTasks.length).toBe(7);
+    // A46: 9 seeded rows - the one online-access-gated row = 8 materialized.
+    expect(offlineTasks.length).toBe(8);
+    // A46: the vault-fill admin-phase row is not feed-gated - it materializes.
+    expect(offlineTasks.some((t) => t.title === "Fill in login credentials in the secure vault")).toBe(true);
     // The accounts themselves keep their manual-download flag.
     const offlineAccounts = await db
       .select()

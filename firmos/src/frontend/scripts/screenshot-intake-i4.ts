@@ -130,7 +130,7 @@ async function main(): Promise<void> {
 
     await advance(page, "existing-client");
     await pick(page, "option-no", "bk-start");
-    await page.getByLabel("Books start date").pressSequentially("01012026");
+    await page.getByLabel("So your books should start:").pressSequentially("01012026");
 
     // 2. I4 quote visibility: mid-wizard the rail collapses to the discreet
     //    "Show pricing" eye toggle - no dollar figures anywhere.
@@ -139,6 +139,7 @@ async function main(): Promise<void> {
     await page.waitForTimeout(300);
     await shot(page, "intake-quote-hidden");
 
+    await advance(page, "biz-established"); // A45: optional established date - skipped
     await advance(page, "checking-accounts");
     await advance(page, "savings-accounts");
     await advance(page, "credit-cards");
@@ -147,7 +148,9 @@ async function main(): Promise<void> {
     await advance(page, "other-assets");
     await advance(page, "re-yes");
     await pick(page, "option-no", "payment-methods");
-    await advance(page, "personal-card");
+    await advance(page, "deposits-non-business"); // A41: the money-behavior cards first
+    await pick(page, "option-no", "personal-on-business");
+    await pick(page, "option-no", "personal-card");
     await pick(page, "option-no", "payroll");
     // No accounts -> the online-access chapter stays hidden; reporting
     // follows directly: monthly close, by the 10th, cash basis.

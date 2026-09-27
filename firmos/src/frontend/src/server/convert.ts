@@ -167,6 +167,10 @@ function defaultRuleSpecs(tierDay: number, excludedKeys: ReadonlySet<string> = n
 export const PERSONAL_CARD_REMINDER_TITLE = "Ask client for personal-card business-expense breakdown";
 /** B18: the reminder lands on the 1st, asking for the prior month's breakdown. */
 const PERSONAL_CARD_REMINDER_DAY = 1;
+/** A41: seeded when the intake flags deposits that are not business income. */
+export const NON_BUSINESS_DEPOSITS_REVIEW_TITLE = "Review non-business deposits - record as owner contribution";
+/** A41: seeded when the intake flags personal spend on business accounts. */
+export const OWNER_DRAWS_CONFIRMATION_TITLE = "Confirm owner draws with the client";
 /** I6 (logic map): seeded when the merchant-recon answer is yes. */
 export const MERCHANT_RECONCILIATION_TITLE = "Merchant reconciliation";
 
@@ -699,6 +703,53 @@ export async function convertIntakeToClient(
           title: PERSONAL_CARD_REMINDER_TITLE,
           scheduleType: "monthly",
           dayOfMonth: PERSONAL_CARD_REMINDER_DAY,
+          nextRun,
+          assigneeId: bookkeeperId,
+        });
+        recurringRulesCreated += 1;
+      }
+
+      // A41 (00:48:07): money behaving like owner money gets its own monthly
+      // review on the close cadence - non-business deposits are booked as
+      // owner contributions, never as income. Seeded like the B18 reminder.
+      if (form.depositsNonBusiness === true) {
+        const nextRun = initialNextRun(
+          {
+            schedule_type: "monthly",
+            day_of_month: Number.isNaN(tierDay) ? 15 : tierDay,
+            next_run: intake.bookkeepingStartDate ?? formatLocalDate(today),
+          },
+          intake.bookkeepingStartDate,
+          today,
+        );
+        await tx.insert(recurringTasks).values({
+          clientId,
+          title: NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
+          scheduleType: "monthly",
+          dayOfMonth: Number.isNaN(tierDay) ? 15 : tierDay,
+          nextRun,
+          assigneeId: bookkeeperId,
+        });
+        recurringRulesCreated += 1;
+      }
+
+      // A41 (00:48:07): personal spend on business accounts needs the owner
+      // draws confirmed with the client every month on the close cadence.
+      if (form.personalOnBusiness === true) {
+        const nextRun = initialNextRun(
+          {
+            schedule_type: "monthly",
+            day_of_month: Number.isNaN(tierDay) ? 15 : tierDay,
+            next_run: intake.bookkeepingStartDate ?? formatLocalDate(today),
+          },
+          intake.bookkeepingStartDate,
+          today,
+        );
+        await tx.insert(recurringTasks).values({
+          clientId,
+          title: OWNER_DRAWS_CONFIRMATION_TITLE,
+          scheduleType: "monthly",
+          dayOfMonth: Number.isNaN(tierDay) ? 15 : tierDay,
           nextRun,
           assigneeId: bookkeeperId,
         });

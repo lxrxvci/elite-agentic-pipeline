@@ -502,12 +502,15 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
   const onboardingTemplateSpecs = [
     { title: "Send welcome packet and engagement letter", isAdminPhase: true, defaultAssigneeRole: "manager", position: 0 },
     { title: "Collect signed engagement letter and W-9", isAdminPhase: true, defaultAssigneeRole: "manager", position: 1 },
-    { title: "Gather prior-year financials and tax returns", isAdminPhase: true, defaultAssigneeRole: "manager", position: 2 },
-    { title: "Set up or verify QuickBooks Online access", isAdminPhase: false, defaultAssigneeRole: "bookkeeper", position: 3 },
-    { title: "Connect bank feeds for all accounts", isAdminPhase: false, requiresOnlineAccounts: true, defaultAssigneeRole: "bookkeeper", position: 4 },
-    { title: "Import and review chart of accounts", isAdminPhase: false, defaultAssigneeRole: "bookkeeper", position: 5 },
-    { title: "Confirm reporting cadence and close tier", isAdminPhase: false, defaultAssigneeRole: "manager", position: 6 },
-    { title: "Walk through the first monthly close with the client", isAdminPhase: false, defaultAssigneeRole: "manager", position: 7 },
+    // A46 (00:57:03): the vault expectation slots seed at conversion (3B) -
+    // this admin-phase task is what prompts the manager to fill them.
+    { title: "Fill in login credentials in the secure vault", isAdminPhase: true, defaultAssigneeRole: "manager", position: 2 },
+    { title: "Gather prior-year financials and tax returns", isAdminPhase: true, defaultAssigneeRole: "manager", position: 3 },
+    { title: "Set up or verify QuickBooks Online access", isAdminPhase: false, defaultAssigneeRole: "bookkeeper", position: 4 },
+    { title: "Connect bank feeds for all accounts", isAdminPhase: false, requiresOnlineAccounts: true, defaultAssigneeRole: "bookkeeper", position: 5 },
+    { title: "Import and review chart of accounts", isAdminPhase: false, defaultAssigneeRole: "bookkeeper", position: 6 },
+    { title: "Confirm reporting cadence and close tier", isAdminPhase: false, defaultAssigneeRole: "manager", position: 7 },
+    { title: "Walk through the first monthly close with the client", isAdminPhase: false, defaultAssigneeRole: "manager", position: 8 },
   ];
   const insertedOnboardingTemplates = await db
     .insert(onboardingTemplateTasks)
