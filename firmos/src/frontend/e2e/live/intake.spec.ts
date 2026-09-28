@@ -3,13 +3,19 @@ import type { Page } from '@playwright/test'
 import { live as test, expect, liveName } from './helpers'
 
 /**
- * Live plan - "Intake to conversion (the money path)":
- * new intake -> conversational answers -> QBO tier matrix spot-check
- * (2 users + class tracking -> Plus recommended in the live quote) ->
- * retroactive pricing from a January 2025 start (priced one-time line) ->
- * review -> submit -> convert WITHOUT staff -> assign manager + bookkeeper
- * on the client record -> work materializes on the workstation and the
- * Work tab year grid.
+ * Live plan - "Intake to conversion (the money path)", J1-J4 current flow:
+ * new intake -> contact basics -> entity & ownership -> engagement ->
+ * starting point (N2's renamed start question) -> balance sheet (D1: bank +
+ * last-4, no nickname; D4: assets BEFORE loans) -> income -> online access
+ * -> reporting -> services -> software (N1: the scope block at the END) ->
+ * custom rules -> the J3 "Routine order and frequency" scheduler -> review
+ * (V2 collapsed sections, V6 bucketed estimate, V1 overlay edit) -> submit
+ * -> convert WITHOUT staff -> assign manager + bookkeeper on the client
+ * record -> work materializes on the workstation and the Work tab year grid.
+ *
+ * Quote spot-checks kept from the original plan: 2 QBO users + class
+ * tracking -> Plus recommended (staff peek mid-wizard), and a January 2025
+ * start prices the retroactive cleanup as a one-time line.
  */
 
 test.use({ persona: 'owner' })
@@ -64,36 +70,36 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await pick(page, 'option-no', 'referral') // no CPA card detail
   await pick(page, 'option-Web search', 'engagement')
 
-  // ── Engagement, then accounting software: QBO existing, 2 users, recommend ──
-  await pick(page, 'option-bookkeeping', 'qbo-status')
-  await pick(page, 'option-existing', 'qbo-users')
-  await page.getByLabel('QuickBooks users').fill('2')
-  await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'services')
-  // I4: bank feeds is a pre-selected standard; class tracking is the add-on
-  // toggle (the matrix input).
-  await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
-  await page.getByTestId('addon-class_tracking').click()
-  await advance(page, 'existing-client')
+  // ── Engagement; N1 (meeting #3): services + the QBO scope block moved to
+  // the END of the flow - starting point comes next now. ──
+  await pick(page, 'option-bookkeeping', 'existing-client')
 
-  // ── Starting point: new client; books start January 1, 2025 typed in ──
+  // ── Starting point: new client; books start January 1, 2025 typed in
+  // (N2's renamed question qualifies the retroactive scope - R7 removed the
+  // separate cleanup question). ──
   await pick(page, 'option-no', 'bk-start')
+  await expect(page.getByText('When would you like your bookkeeping to start?')).toBeVisible()
   await page.getByLabel('Bookkeeping start date').fill('01/01/2025')
   await expect(page.getByLabel('Bookkeeping start date')).toHaveValue('01/01/2025')
   // A45: the established date card follows (optional).
   await advance(page, 'biz-established')
-  // ── Balance sheet: one checking account via the I3 count card ──
+
+  // ── Balance sheet (I3 count cards; J1 D1/D4): the checking mini-form is
+  // bank + masked last-4 (the nickname field is gone; the name derives), and
+  // assets run BEFORE loans. ──
   await advance(page, 'checking-accounts')
   await page.getByTestId('count-input').fill('1')
-  await page.getByLabel('Account name or nickname 1').fill('LIVE-TEST Operating Checking')
+  await expect(page.getByLabel(/nickname/i)).toHaveCount(0)
   await page.getByTestId('bank-select-0').click()
   await page.getByRole('option', { name: 'Chase' }).click()
+  await page.getByTestId('last4-0').fill('4411')
+  await expect(page.getByTestId('account-label-0')).toHaveText('Chase Checking · 4411')
   await advance(page, 'savings-accounts')
   await advance(page, 'credit-cards') // no savings
-  await advance(page, 'loans') // no credit cards
-  await advance(page, 'vehicles') // no loans
+  await advance(page, 'vehicles') // no credit cards
   await advance(page, 'other-assets') // no vehicles
-  await advance(page, 're-yes') // no other assets
+  await advance(page, 'loans') // no other assets
+  await advance(page, 're-yes') // no loans
 
   // ── Real estate: no; income: checks only, no payroll ──
   await pick(page, 'option-no', 'payment-methods')
@@ -104,16 +110,33 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await pick(page, 'option-no', 'payroll') // no personal-card business spend (B18)
   await pick(page, 'option-no', 'online-access') // no payroll; I3 access checklist next
 
-  // ── Online access: grant login on the checking account (drives the vault slot) ──
-  await expect(page.getByTestId('check-checkingAccounts:0')).toContainText(
-    'LIVE-TEST Operating Checking',
-  )
+  // ── Online access: grant login on the checking account (drives the vault
+  // slot). D2: the checklist label is the bank -> type -> last4 standard. ──
+  await expect(page.getByTestId('check-checkingAccounts:0')).toContainText('Chase Checking · 4411')
   await page.getByTestId('check-checkingAccounts:0').click()
   await advance(page, 'bk-frequency')
 
   // ── Reporting: monthly, close by the 10th ──
   await pick(page, 'option-monthly', 'close-tier')
   await pick(page, 'option-10', 'acct-method')
+  await pick(page, 'option-cash', 'record-bills')
+  await pick(page, 'option-no', 'ten99-services') // no bill recording (E6 split; pay-bills never renders)
+  await advance(page, 'reports') // skip 1099
+  await advance(page, 'preliminary-reports') // skip special reports
+
+  // ── Services (I4/N1): the scope block at the END, answer-qualified. Bank
+  // feeds is a pre-selected standard; class tracking is the add-on toggle
+  // (the QBO matrix input). ──
+  await pick(page, 'option-no', 'services') // reports wait for answers (R6)
+  await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
+  await page.getByTestId('addon-class_tracking').click()
+  await advance(page, 'qbo-status')
+
+  // ── Software: QBO existing, 2 users, recommend ──
+  await pick(page, 'option-existing', 'qbo-users')
+  await page.getByLabel('QuickBooks users').fill('2')
+  await advance(page, 'qbo-tier')
+  await pick(page, 'option-recommended', 'notes')
 
   // The live quote is server-priced: non-zero, and 2 QBO users plus class
   // tracking make the matrix recommend Plus. I4: pricing hides until the
@@ -126,32 +149,44 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await expect(page.getByTestId('live-quote').getByText('Plus (recommended)')).toBeVisible({
     timeout: 15_000,
   })
-
-  await pick(page, 'option-cash', 'record-bills')
-  await pick(page, 'option-no', 'ten99-services') // no bill recording (E6 split; pay-bills never renders)
-  await advance(page, 'reports') // skip 1099
-  await advance(page, 'preliminary-reports') // skip special reports
-
-  // ── Retroactive cleanup: R7 removed the question - the January 2025
-  // start date qualifies it on its own and prices the one-time line ──
-  await pick(page, 'option-no', 'notes') // reports wait for answers (R6)
-  await advance(page, 'rules') // skip internal notes
+  // The retroactive scope prices as a one-time line in the rail summary.
   const retroSummary = page.getByTestId('retroactive-summary')
   await expect(retroSummary).toBeVisible({ timeout: 15_000 })
   await expect(retroSummary).toContainText('one-time')
   await expect(retroSummary).toContainText(/\$\d/)
 
+  await advance(page, 'rules') // skip internal notes
   await advance(page, 'routine-scheduler') // skip custom rules
-  // J3 (R1): the scheduler is the final content screen before review.
+
+  // ── J3 (R1-R5): "Routine order and frequency" - the final content screen.
+  // The standard four default into Monthly on the tier day. ──
   await expect(page.getByTestId('routine-scheduler')).toBeVisible()
+  const monthlyBucket = page.getByTestId('bucket-monthly')
+  await expect(monthlyBucket.getByTestId('routine-card-categorize_transactions')).toBeVisible()
+  await expect(monthlyBucket.getByTestId('routine-card-reconcile_accounts')).toBeVisible()
+  await expect(monthlyBucket.getByTestId('routine-card-client_questions')).toBeVisible()
+  await expect(monthlyBucket.getByTestId('routine-card-send_reports')).toBeVisible()
   await page.getByTestId('continue').click()
 
-  // ── Review: full quote + retro block render, then submit ──
+  // ── Review: V2 collapsed sections (the first open), the V6 bucketed
+  // estimate with the one-time retro block, then submit. ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
+  await expect(page.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'false')
+  // V1: a row edit opens the overlay hero card - never a navigation.
+  await page.getByTestId('edit-row-main-contact').click()
+  await expect(page.getByTestId('edit-overlay')).toBeVisible()
+  await expect(page.getByTestId('review-screen')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('edit-overlay')).toHaveCount(0)
+  // The bucketed estimate: recurring in Monthly, retro in one-time fees.
+  await page.getByTestId('section-toggle-quote').click()
+  await expect(page.getByTestId('estimate-bucket-monthly')).toContainText('Bank Feed Management')
   await expect(
     page.getByTestId('review-quote').getByText('QuickBooks Plus (recommended)'),
   ).toBeVisible()
-  await expect(page.getByTestId('review-retroactive')).toContainText('one-time')
+  await expect(page.getByTestId('estimate-one-time')).toContainText('Retroactive bookkeeping')
+  await expect(page.getByTestId('retro-periods')).toContainText('2025')
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 

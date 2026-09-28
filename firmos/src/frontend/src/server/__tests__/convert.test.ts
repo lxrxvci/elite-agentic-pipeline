@@ -7,6 +7,7 @@ import {
   clientCredentials,
   clientIntakes,
   clientManualEntries,
+  clientNotes,
   clientReports,
   clients,
   contactClientLinks,
@@ -21,10 +22,17 @@ import {
   users,
 } from "@/db/schema";
 import { cascadeIntakeToClient } from "@/server/cascade";
-import { ConversionError, convertIntakeToClient, PERSONAL_CARD_REMINDER_TITLE } from "@/server/convert";
+import {
+  ConversionError,
+  convertIntakeToClient,
+  NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
+  OWNER_DRAWS_CONFIRMATION_TITLE,
+  PERSONAL_CARD_REMINDER_TITLE,
+} from "@/server/convert";
 import { deriveRoutineTasks } from "@/components/intake/registry";
 import { runRecurringOnce } from "@/server/recurring";
 import { resolveRoutineEntries } from "@/shared/lib/routine-schedule";
+import { PRELIMINARY_REPORTS_NOTE } from "@/shared/lib/default-rules";
 import {
   createIntake,
   getIntake,
@@ -1903,5 +1911,283 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
       weekInterval: null,
       isCustom: true,
     });
+  });
+});
+
+
+// ── J5 (meeting #3): the full-graph conversion extension for the J1-J4 shapes ─
+
+describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-end", () => {
+  beforeAll(async () => {
+    await seedDatabase(TEST_TODAY);
+    managerDana = await userIdByEmail("dana@blueledgerbooks.com");
+  });
+
+  it("the post-J4 intake shape (scheduler committed) converts into the complete graph", async () => {
+    const [carlos] = await db.select().from(contacts).where(eq(contacts.email, "carlos@riverstonetax.com")).limit(1);
+    const [chase] = await db.select().from(institutions).where(eq(institutions.name, "Chase"));
+    const [columbia] = await db.select().from(institutions).where(eq(institutions.name, "Columbia"));
+    const [stripe] = await db.select().from(merchantProcessors).where(eq(merchantProcessors.name, "Stripe"));
+
+    // What the wizard persists after a full J1-J4 walk: services/software
+    // answered at the END of the flow (the chapter order is presentation -
+    // the form_data keys are unchanged), every new key captured, and the J3
+    // routine schedule committed.
+    const formData = {
+      serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_10", "record_bills", "1099_collection"],
+      contacts: [
+        { firstName: "Wren", lastName: "Okafor", email: "wren@fullgraph.example", isPrimary: true },
+        // J1 (C5): a picker-linked contact entry - linked, never duplicated.
+        { contactId: carlos.id, firstName: "Carlos", lastName: "Reyes", email: "carlos@riverstonetax.com", relationshipType: "related" as const },
+      ],
+      owners: [{ name: "Wren Okafor", email: "wren@fullgraph.example", ownershipPercent: 100, receivesReports: true }],
+      // J1 (C6): the CPA card picker-linked Carlos too.
+      hasCpa: true,
+      cpaName: "Carlos Reyes",
+      cpaEmail: "carlos@riverstonetax.com",
+      cpaContactId: carlos.id,
+      accounts: [
+        // J1 (D1/D2): the derived bank -> type -> last4 money account.
+        {
+          name: "Chase Checking · 4411",
+          accountType: "checking",
+          institution: "Chase",
+          institutionId: chase.id,
+          last4: "4411",
+          proofCategory: "statement" as const,
+          grantLoginAccess: true,
+        },
+        // J1 (D5): the financed vehicle + its auto-routed linked loan.
+        { name: "2022 Ford Transit", accountType: "vehicle", year: 2022, financed: "financed" as const, proofCategory: "bill_of_sale" as const },
+        {
+          name: "2022 Ford Transit (vehicle loan)",
+          accountType: "vehicle_loan",
+          lender: "Columbia",
+          lenderInstitutionId: columbia.id,
+          proofCategory: "statement" as const,
+          fromVehicle: "2022 Ford Transit",
+        },
+        // J1 (D6): an owner-declared lender write-in (never an institution).
+        { name: "Owner loan", accountType: "loan", lender: "Uncle Bob", proofCategory: "owner_declared" as const },
+      ],
+      paymentMethods: ["card"],
+      // J1 (E4/DB1): the processor pick carries the merchant_processors FK.
+      merchantAccounts: [{ name: "Stripe", processorId: stripe.id }],
+      includeMerchantReconciliation: true,
+      // J2 (E1-E3): the three money-behavior yes answers + mandatory notes.
+      depositsNonBusiness: true,
+      personalOnBusiness: true,
+      personalCardForBusiness: true,
+      behaviorNotes: {
+        "deposits-non-business": "Owner covers a bill from his personal account some months",
+        "personal-on-business": "Groceries hit the business debit card",
+        "personal-card": "The Amex picks up supplies",
+      },
+      // J2 (P1/P2/DB1): provider from the payroll_providers DB + self-processed.
+      hasPayroll: true,
+      payrollProvider: "Gusto",
+      payrollFrequency: "monthly" as const,
+      payrollSelfProcessed: true,
+      // J2 (E6): the bills split with its payment locations.
+      recordBills: true,
+      payBills: true,
+      billPayLocations: ["Vendor websites"],
+      // J2: the 1099 estimated count at the per-filing rate.
+      estimated1099Count: 4,
+      include1099Collection: true,
+      // J2 (R6): send reports before the open questions are answered.
+      sendPreliminaryReports: true,
+      servicePrices: { bank_feed_management: 90 },
+      runningNotes: [{ text: "Wants the SOPs for Chase first.", at: "2026-08-01T00:00:00.000Z" }],
+    };
+    // J2 (missed filings): the yes/no + most-recent-filed date shape.
+    const reportDefinitions = [
+      { name: "Oregon Special Report", frequency: "quarterly", flatPrice: 450, missedFilings: true as const, lastFiledDate: "2026-03-31" },
+    ];
+    const customRecurringRules = [{ title: "Weekly deposit review", scheduleType: "weekly" as const }];
+    // The committed J3 schedule, exactly as the untouched scheduler screen
+    // persists it (Continue with no rearrangement).
+    const routineSchedule = resolveRoutineEntries(
+      deriveRoutineTasks({
+        engagementType: "bookkeeping",
+        bookkeepingFrequency: "monthly",
+        monthlyCloseTier: "10",
+        bookkeepingStartDate: "2026-01-01",
+        ...formData,
+        reportDefinitions,
+        customRecurringRules,
+      }),
+      null,
+    );
+
+    const intakeId = await reviewableIntake({
+      legalName: "Full Graph Co",
+      taxStructure: "LLC",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      accountingMethod: "cash",
+      bookkeepingStartDate: "2026-01-01",
+      payrollProvider: "Gusto",
+      // buildPatch maps internalNotes onto the structured column; conversion
+      // reads it from there (same as the wizard's autosave).
+      internalNotes: "Referred by Carlos.",
+      reportDefinitions,
+      customRecurringRules,
+      formData: { ...formData, reportDefinitions, customRecurringRules, routineSchedule },
+    });
+
+    const result = await convertIntakeToClient(intakeId, { bookkeeperId: undefined }, managerDana, TEST_TODAY);
+    const clientId = result.clientId;
+    const [client] = await db.select().from(clients).where(eq(clients.id, clientId));
+
+    // ── Client record + notes channel (J2 P1/E6, running + internal notes) ──
+    expect(client.payrollProvider).toBe("Gusto");
+    expect(client.hasPayroll).toBe(true);
+    const noteBodies = (await db.select().from(clientNotes).where(eq(clientNotes.clientId, clientId))).map((n) => n.body);
+    expect(noteBodies).toContain("Bills: we record and pay them. Bills get paid at: Vendor websites.");
+    expect(noteBodies).toContain("Payroll: they process their own payroll (Gusto) - we download and enter the reports.");
+    expect(noteBodies).toContain("Wants the SOPs for Chase first.");
+    expect(noteBodies).toContain("Referred by Carlos.");
+
+    // ── Contacts: picker links, never duplicates (J1 C4-C6) ──
+    expect(result.contactsCreated).toBe(1); // only Wren is new
+    expect(result.contactsLinked).toBe(3); // Carlos x2 + the owner match
+    expect(client.cpaContactId).toBe(carlos.id);
+    expect(client.primaryContactId).not.toBe(carlos.id);
+    const carlosRows = await db.select().from(contacts).where(eq(contacts.email, "carlos@riverstonetax.com"));
+    expect(carlosRows).toHaveLength(1);
+
+    // ── Accounts: identifiers, vehicle-loan link, lender routing (J1 D1-D6) ──
+    const clientAccounts = await db.select().from(accounts).where(eq(accounts.clientId, clientId));
+    const byName = new Map(clientAccounts.map((a) => [a.name, a]));
+    expect(byName.get("Chase Checking · 4411")).toMatchObject({ last4: "4411", institutionId: chase.id, institution: "Chase" });
+    expect(byName.get("2022 Ford Transit")).toMatchObject({ accountType: "vehicle", proofCategory: "bill_of_sale" });
+    expect(byName.get("2022 Ford Transit (vehicle loan)")).toMatchObject({
+      accountType: "vehicle_loan",
+      institution: "Columbia",
+      institutionId: columbia.id,
+      proofCategory: "statement",
+      statementDay: 31,
+    });
+    expect(byName.get("Owner loan")).toMatchObject({ institution: "Uncle Bob", institutionId: null, proofCategory: "owner_declared" });
+    // E4/DB1: the merchant processor's name snapshot resolved from the FK.
+    expect(byName.get("Stripe")).toMatchObject({ accountType: "merchant", institution: "Stripe" });
+    // 3B + D2: the vault slot opened for the login-access account, labeled the standard.
+    const slots = await db.select().from(clientCredentials).where(eq(clientCredentials.clientId, clientId));
+    expect(slots).toHaveLength(1);
+    expect(slots[0].label).toBe("Chase Checking · 4411");
+
+    // ── Recurring rules through the J3 scheduler path: every J2 note rides ──
+    const rules = await db.select().from(recurringTasks).where(eq(recurringTasks.clientId, clientId));
+    const byTitle = new Map(rules.map((r) => [r.title, r]));
+    expect(rules).toHaveLength(14);
+    expect(byTitle.get("Send Reports")).toMatchObject({ scheduleType: "monthly", dayOfMonth: 10, description: PRELIMINARY_REPORTS_NOTE });
+    expect(byTitle.get(NON_BUSINESS_DEPOSITS_REVIEW_TITLE)?.description).toBe(
+      "Client context from intake: Owner covers a bill from his personal account some months",
+    );
+    expect(byTitle.get(OWNER_DRAWS_CONFIRMATION_TITLE)?.description).toBe(
+      "Client context from intake: Groceries hit the business debit card",
+    );
+    expect(byTitle.get(PERSONAL_CARD_REMINDER_TITLE)).toMatchObject({
+      dayOfMonth: 1,
+      description: "Client context from intake: The Amex picks up supplies",
+    });
+    // P1: the self-processed payroll routine the scheduler derives (no
+    // payroll-processing work seeds).
+    expect(byTitle.get("Download and enter payroll reports")).toMatchObject({ scheduleType: "monthly", dayOfMonth: 10 });
+    expect(rules.some((r) => r.title === "Payroll handling")).toBe(false);
+    // E6: the bills split as weekly routines.
+    expect(byTitle.get("Record bills")).toMatchObject({ scheduleType: "weekly", daysOfWeek: "5" });
+    expect(byTitle.get("Pay bills")).toMatchObject({ scheduleType: "weekly", daysOfWeek: "5" });
+    // 1099s: annual year-end work (31 days after the calendar year ends).
+    expect(byTitle.get("1099 collection")).toMatchObject({ scheduleType: "annual", anchorMonth: 1, dayOfMonth: 31 });
+    // C10 + the custom rule pulled through the scheduler.
+    expect(byTitle.get("Oregon Special Report")).toMatchObject({ scheduleType: "quarterly", isCustom: true });
+    expect(byTitle.get("Weekly deposit review")).toMatchObject({ scheduleType: "weekly", daysOfWeek: "5", isCustom: true });
+
+    // ── Billing template: J4 price overrides + J2 1099 count + missed filings ──
+    const template = client.recurringServicesTemplate as {
+      service_key: string;
+      unit_price: number | null;
+      quantity: number;
+      discount: number;
+      frequency: string;
+      price_override?: number;
+    }[];
+    const line = (key: string) => template.find((l) => l.service_key === key);
+    // V4: the $90 override carries as the equivalent per-cycle discount ($100
+    // standard - $90 = $10) plus the raw field for transparency.
+    expect(line("bank_feed_management")).toMatchObject({ unit_price: 100, discount: 10, price_override: 90 });
+    // J2: the estimated count prices per filing.
+    expect(line("1099_per_filing")?.quantity).toBe(4);
+    // C10: the specialty report rides its own cadence; the missed June
+    // quarter (last filed 2026-03-31, today 2026-08-15) prices one-time.
+    expect(line("specialty_report_1")?.frequency).toBe("quarterly");
+    expect(line("specialty_report_1_retro")).toMatchObject({ frequency: "one_time", quantity: 1 });
+
+    // The stamped amount equals a fresh quote over the same answers.
+    const expectedQuote = calculateIntakeQuote(
+      { ...formData, reportDefinitions, bookkeepingFrequency: "monthly" },
+      TEST_TODAY,
+    );
+    expect(Number(client.monthlyRecurringAmount)).toBeCloseTo(expectedQuote.totals.effectiveMonthly, 2);
+  });
+
+  it("service_prices_survive_conversion_and_the_cascade_billing_resync", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Price Override Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_10"],
+        accounts: [{ name: "Chase Checking · 4411", accountType: "checking", last4: "4411", proofCategory: "statement" }],
+        servicePrices: { bank_feed_management: 90 },
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    const template = client.recurringServicesTemplate as {
+      service_key: string;
+      quantity: number;
+      discount: number;
+      price_override?: number;
+    }[];
+    // Conversion: the override is on the template (bills $90 via the discount).
+    expect(template.find((l) => l.service_key === "bank_feed_management")).toMatchObject({
+      discount: 10,
+      price_override: 90,
+    });
+
+    // A post-conversion edit that reprices (a second account added) resyncs;
+    // the override rides form_data into the rebuild, untouched.
+    const stored = await getIntake(intakeId);
+    const storedForm = (stored.formData ?? {}) as { accounts?: unknown[] };
+    const patch: IntakePatch = {
+      formData: {
+        ...storedForm,
+        accounts: [
+          ...(storedForm.accounts ?? []),
+          { name: "Chase Savings · 1005", accountType: "savings", last4: "1005", proofCategory: "statement" },
+        ],
+      } as IntakePatch["formData"],
+    };
+    await updateIntake(intakeId, patch);
+    const summary = await cascadeIntakeToClient(intakeId, patch, TEST_TODAY);
+    expect(summary.billingResynced).toBe(true);
+
+    const [after] = await db.select().from(clients).where(eq(clients.id, result.clientId));
+    const resynced = after.recurringServicesTemplate as {
+      service_key: string;
+      quantity: number;
+      discount: number;
+      price_override?: number;
+    }[];
+    expect(resynced.find((l) => l.service_key === "bank_feed_management")).toMatchObject({
+      discount: 10,
+      price_override: 90,
+    });
+    // ...and the added account repriced the reconciliation line.
+    expect(resynced.find((l) => l.service_key === "account_reconciliations")?.quantity).toBe(2);
   });
 });

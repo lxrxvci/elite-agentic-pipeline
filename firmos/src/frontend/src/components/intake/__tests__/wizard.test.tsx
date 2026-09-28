@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Quote } from '@firmos/domain'
 
-import { flattenScreens, type WizardAnswers } from '../registry'
+import { flattenScreens, visibleChapters, type WizardAnswers } from '../registry'
 
 /**
  * Wizard mechanics: autosave debounce, option auto-advance timing, the live
@@ -795,5 +795,111 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
     }
     expect(last.patch.formData?.depositsNonBusiness).toBe(false)
     expect(last.patch.formData?.behaviorNotes?.['deposits-non-business']).toBeUndefined()
+  })
+})
+
+
+describe('N3 chapter rail navigation (meeting #3)', () => {
+  // completeAnswers reaches chapter 5 (balance) cleanly: resume pinned at
+  // the balance chapter's first question seeds the rail with chapters 1-5.
+  it('chapter_rail_jumps_without_data_loss', async () => {
+    const balanceAt = flattenScreens(completeAnswers).findIndex(
+      (s) => s.kind === 'question' && s.chapterId === 'balance',
+    )
+    renderWizard(completeAnswers, balanceAt)
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts')
+
+    // The rail is a labeled nav landmark; the resume seed made chapters 1-5
+    // jumpable (current chapter carries aria-current), later chapters stay
+    // disabled until the walk reaches them.
+    screen.getByRole('navigation', { name: 'Intake sections' })
+    for (const id of ['contact', 'entity', 'engagement', 'starting', 'balance']) {
+      expect(screen.getByTestId(`chapter-jump-${id}`)).toBeEnabled()
+    }
+    expect(screen.getByTestId('chapter-jump-balance')).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByTestId('chapter-jump-balance')).toHaveAttribute('aria-label', 'Balance sheet (current)')
+    expect(screen.getByTestId('chapter-jump-contact')).toHaveAttribute('aria-label', 'Contact basics (completed)')
+    expect(screen.getByTestId('chapter-jump-income')).toBeDisabled()
+    expect(screen.getByTestId('chapter-jump-recurring')).toBeDisabled()
+
+    // Jump to chapter 1: lands on its FIRST question, aria-current moves.
+    fireEvent.click(screen.getByTestId('chapter-jump-contact'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'legal-name')
+    expect(screen.getByTestId('chapter-jump-contact')).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByTestId('progress-label')).toHaveTextContent('Contact basics, 1 of 3')
+
+    // Answer on chapter 1 (fields commit on every keystroke - B1)...
+    fireEvent.change(screen.getByLabelText('Legal name'), { target: { value: 'Test Co Renamed' } })
+
+    // ...jump to chapter 5, answer there too (account edits commit at once).
+    fireEvent.click(screen.getByTestId('chapter-jump-balance'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts')
+    fireEvent.change(screen.getByTestId('count-input'), { target: { value: '1' } })
+    fireEvent.click(screen.getByTestId('bank-select-0'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Chase' }))
+    fireEvent.change(screen.getByTestId('last4-0'), { target: { value: '4411' } })
+    expect(screen.getByTestId('account-label-0')).toHaveTextContent('Chase Checking · 4411')
+
+    // Jump back to chapter 1 - the rename persists...
+    fireEvent.click(screen.getByTestId('chapter-jump-contact'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'legal-name')
+    expect(screen.getByLabelText('Legal name')).toHaveValue('Test Co Renamed')
+
+    // ...and back to chapter 5 - the committed account persists too.
+    fireEvent.click(screen.getByTestId('chapter-jump-balance'))
+    expect(screen.getByTestId('last4-0')).toHaveValue('4411')
+    expect(screen.getByTestId('account-label-0')).toHaveTextContent('Chase Checking · 4411')
+
+    // The flushed autosave carried both answers into form_data (the resume
+    // point can never rewind past them).
+    await waitFor(() => expect(saveIntake).toHaveBeenCalled())
+    const last = saveIntake.mock.calls.at(-1)?.[0] as {
+      patch: { legalName?: string; formData?: { checkingAccounts?: Array<{ last4?: string }> } }
+    }
+    expect(last.patch.legalName).toBe('Test Co Renamed')
+    expect(last.patch.formData?.checkingAccounts?.[0]?.last4).toBe('4411')
+  })
+
+  it('a chapter unlocks only once the walk lands on it (resume seed + unlock on landing)', () => {
+    const startAt = flattenScreens(completeAnswers).findIndex(
+      (s) => s.kind === 'question' && s.questionId === 'bk-start',
+    )
+    renderWizard(completeAnswers, startAt)
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'bk-start')
+
+    // Seeded up to the resume point (chapters 1-4); balance is not reached yet.
+    expect(screen.getByTestId('chapter-jump-starting')).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByTestId('chapter-jump-contact')).toBeEnabled()
+    expect(screen.getByTestId('chapter-jump-balance')).toBeDisabled()
+    expect(screen.getByTestId('chapter-jump-income')).toBeDisabled()
+
+    // Walking forward unlocks each chapter as the walk lands on it.
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'biz-established')
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts')
+    expect(screen.getByTestId('chapter-jump-balance')).toBeEnabled()
+    expect(screen.getByTestId('chapter-jump-balance')).toHaveAttribute('aria-label', 'Balance sheet (current)')
+    // And a rail jump back to the seeded chapters still works from here.
+    fireEvent.click(screen.getByTestId('chapter-jump-engagement'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'engagement')
+  })
+
+  it('reaching the review screen unlocks every chapter (the walk passed them all)', () => {
+    const screens = flattenScreens(completeAnswers)
+    renderWizard(completeAnswers, screens.length - 1)
+    expect(screen.getByTestId('review-screen')).toBeInTheDocument()
+
+    // Every chapter reads completed and jumps; nothing is current on review.
+    for (const c of visibleChapters(completeAnswers)) {
+      const btn = screen.getByTestId(`chapter-jump-${c.id}`)
+      expect(btn).toBeEnabled()
+      expect(btn).toHaveAttribute('data-state', 'done')
+    }
+    expect(screen.getByTestId('chapter-rail').querySelector('[aria-current]')).toBeNull()
+
+    // A rail jump from review lands on the chapter's first question.
+    fireEvent.click(screen.getByTestId('chapter-jump-reporting'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'bk-frequency')
   })
 })

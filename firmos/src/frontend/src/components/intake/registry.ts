@@ -26,13 +26,15 @@ import { formatPhone, phoneDigits } from './format'
 /**
  * The conversational intake wizard's declarative question registry.
  * Chapter/question order is Jason's dictated live-conversation flow
- * (intake-restructure I1, plan §1): contact basics -> entity & ownership ->
- * engagement type -> accounting software -> services -> starting point, then
- * the scope chapters. Every chapter and every question is data; branching
- * lives in `when` predicates so the branch map is unit-testable without
- * rendering anything. The wizard walks `flattenScreens`, one question per
- * screen, and the review screen is appended last and never counted in
- * "Question X of Y".
+ * (intake-restructure I1, plan §1; N1 in meeting #3): contact basics ->
+ * entity & ownership -> engagement type -> starting point, then the scope
+ * chapters (balance sheet, real estate, income, online access, reporting),
+ * and the answer-qualified scope block - services, then accounting software -
+ * at the END, just before the recurring/scheduler closeout. Every chapter
+ * and every question is data; branching lives in `when` predicates so the
+ * branch map is unit-testable without rendering anything. The wizard walks
+ * `flattenScreens`, one question per screen, and the review screen is
+ * appended last and never counted in "Question X of Y".
  */
 
 // ── Answers ───────────────────────────────────────────────────────────────

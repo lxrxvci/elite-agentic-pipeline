@@ -85,6 +85,9 @@ export type ExtractionFieldKind =
   | 'enumList'
   /** J2 (E6): a free-text string list (bill-pay locations) - no closed enum. */
   | 'stringList'
+  /** J2 (E1-E3): the money-behavior explanation notes - an object keyed by
+   *  the three money-behavior question ids (form_data.behaviorNotes). */
+  | 'noteMap'
   | 'owners'
   | 'contacts'
   | 'accounts'
@@ -139,8 +142,14 @@ const DERIVED_SERVICE_KEYS: ReadonlySet<string> = new Set([
 
 const EXTRACTABLE_SERVICE_KEYS = Object.keys(SERVICE_LABELS).filter((k) => !DERIVED_SERVICE_KEYS.has(k))
 
-// I1: chapters follow the reordered registry (contact/entity/engagement/
-// software/services/starting/balance/real-estate/income/reporting/recurring).
+// The fields below follow the CURRENT registry chapter order (N1, meeting
+// #3): contact/entity/engagement/starting/balance/real-estate/income/
+// reporting/services/software/recurring - services + the QBO scope block
+// moved to the END of the flow. The review screen groups by the registry's
+// CHAPTERS regardless; this order keeps the vocabulary self-consistent.
+/** J2 (E1-E3): the three money-behavior question ids behaviorNotes maps. */
+const BEHAVIOR_NOTE_KEYS = ['deposits-non-business', 'personal-on-business', 'personal-card'] as const
+
 export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   // contact
   { key: 'businessAddress', label: 'Street address', chapter: 'contact', kind: 'string' },
@@ -162,13 +171,6 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'referralWho', label: 'Referral - who to thank', chapter: 'entity', kind: 'string' },
   // engagement
   { key: 'engagementType', label: 'Engagement type', chapter: 'engagement', kind: 'enum', options: ['bookkeeping', 'project', 'consulting'] },
-  // software
-  { key: 'quickbooksStatus', label: 'QuickBooks status', chapter: 'software', kind: 'enum', options: ['existing', 'desktop', 'none'] },
-  { key: 'needsQuickbooksSetup', label: 'Needs QuickBooks setup', chapter: 'software', kind: 'boolean' },
-  { key: 'qboUserCount', label: 'QuickBooks users', chapter: 'software', kind: 'number', min: 1, max: 25 },
-  { key: 'qboSubscriptionTier', label: 'QuickBooks plan', chapter: 'software', kind: 'enum', options: QBO_TIERS },
-  // services
-  { key: 'serviceKeys', label: 'Services in scope', chapter: 'services', kind: 'enumList', options: EXTRACTABLE_SERVICE_KEYS },
   // starting
   { key: 'isExistingClient', label: 'Existing client', chapter: 'starting', kind: 'boolean' },
   // N2 (meeting #3): the start question is "When would you like your
@@ -188,16 +190,27 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'paymentMethods', label: 'Payment methods', chapter: 'income', kind: 'enumList', options: Object.keys(PAYMENT_METHOD_LABELS) },
   { key: 'merchantAccounts', label: 'Merchant processors', chapter: 'income', kind: 'merchants' },
   { key: 'includeMerchantReconciliation', label: 'Reconcile merchant accounts', chapter: 'income', kind: 'boolean' },
-  // A41: the two money-behavior cards (non-business deposits; personal
-  // spend on business accounts) extract as booleans.
+  // A41 + J2 (E1-E3): all three money-behavior cards extract as booleans;
+  // the mandatory explanation notes extract alongside (behaviorNotes).
   { key: 'depositsNonBusiness', label: 'Deposits non-business money', chapter: 'income', kind: 'boolean' },
   { key: 'personalOnBusiness', label: 'Pays for non-business on business accounts', chapter: 'income', kind: 'boolean' },
+  { key: 'personalCardForBusiness', label: 'Puts business expenses on a personal card', chapter: 'income', kind: 'boolean' },
+  {
+    key: 'behaviorNotes',
+    label: 'Money-behavior explanation notes',
+    chapter: 'income',
+    kind: 'noteMap',
+    options: BEHAVIOR_NOTE_KEYS,
+  },
   { key: 'hasPayroll', label: 'Runs payroll', chapter: 'income', kind: 'boolean' },
   // J1 (P2/DB1): payroll providers are a database with inline add-new, so
   // extraction accepts any provider NAME (string, not a closed enum) - the
   // wizard's dropdown resolves it against payroll_providers on review.
   { key: 'payrollProvider', label: 'Payroll provider', chapter: 'income', kind: 'string' },
   { key: 'payrollFrequency', label: 'Payroll frequency', chapter: 'income', kind: 'enum', options: ['weekly', 'biweekly', 'semi_monthly', 'monthly'] },
+  // J2 (P1): the "they process their own payroll" pick (context, not a
+  // billable service - it never enters serviceKeys).
+  { key: 'payrollSelfProcessed', label: 'They process their own payroll', chapter: 'income', kind: 'boolean' },
   // reporting
   { key: 'bookkeepingFrequency', label: 'Close cadence', chapter: 'reporting', kind: 'enum', options: ['monthly', 'quarterly', 'semi_annual', 'annual'] },
   { key: 'monthlyCloseTier', label: 'Close tier', chapter: 'reporting', kind: 'enum', options: ['5', '10', '15'] },
@@ -212,9 +225,20 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'reportDefinitions', label: 'Special reports', chapter: 'reporting', kind: 'reports' },
   // J2 (R6): the preliminary-reports toggle rides extraction too.
   { key: 'sendPreliminaryReports', label: 'Send preliminary reports', chapter: 'reporting', kind: 'boolean' },
+  // services
+  { key: 'serviceKeys', label: 'Services in scope', chapter: 'services', kind: 'enumList', options: EXTRACTABLE_SERVICE_KEYS },
+  // software
+  { key: 'quickbooksStatus', label: 'QuickBooks status', chapter: 'software', kind: 'enum', options: ['existing', 'desktop', 'none'] },
+  { key: 'needsQuickbooksSetup', label: 'Needs QuickBooks setup', chapter: 'software', kind: 'boolean' },
+  { key: 'qboUserCount', label: 'QuickBooks users', chapter: 'software', kind: 'number', min: 1, max: 25 },
+  { key: 'qboSubscriptionTier', label: 'QuickBooks plan', chapter: 'software', kind: 'enum', options: QBO_TIERS },
   // recurring
   // J2 (R7): the retroactive/cleanup question is gone - the books-start
   // date qualifies retroactive work, so nothing here answers for it.
+  // J3 (R1-R5): routineSchedule is deliberately NOT extractable - the
+  // scheduler derives its defaults from the extracted answers when the
+  // wizard walk reaches the "Routine order and frequency" screen, and the
+  // committed screen (never the transcript) owns the schedule.
   { key: 'customRecurringRules', label: 'Custom recurring work', chapter: 'recurring', kind: 'rules' },
   { key: 'internalNotes', label: 'Internal notes', chapter: 'recurring', kind: 'string' },
 ]
@@ -511,6 +535,22 @@ function coerceValue(
       if (kept.length === 0) return { ok: false, reason: 'no valid entries' }
       return { ok: true, value: kept }
     }
+    case 'noteMap': {
+      const obj = asObject(raw)
+      if (!obj) return { ok: false, reason: 'not an object' }
+      const allowed = (spec.options ?? []) as readonly string[]
+      const out: Record<string, string> = {}
+      for (const [k, v] of Object.entries(obj)) {
+        if (!allowed.includes(k)) {
+          rejected.push({ key: spec.key, reason: `dropped unknown note key ${JSON.stringify(k)}` })
+          continue
+        }
+        const s = asString(v)
+        if (s) out[k] = s
+      }
+      if (Object.keys(out).length === 0) return { ok: false, reason: 'no valid entries' }
+      return { ok: true, value: out }
+    }
     case 'owners':
     case 'contacts':
     case 'accounts':
@@ -630,11 +670,12 @@ const MISSING_CHECKS: readonly MissingCheck[] = [
   { key: 'bookkeepingStartDate', when: isBk },
   { key: 'isRealEstateClient', when: () => true },
   { key: 'hasPayroll', when: isBk },
-  // A41: both money-behavior cards are required wizard questions, so an
-  // extraction that never mentions them keeps them on the "still to ask"
-  // list (same treatment as the other required yes/no cards).
+  // A41 + J2 (E1-E3): all three money-behavior cards are required wizard
+  // questions, so an extraction that never mentions them keeps them on the
+  // "still to ask" list (same treatment as the other required yes/no cards).
   { key: 'depositsNonBusiness', when: isBk },
   { key: 'personalOnBusiness', when: isBk },
+  { key: 'personalCardForBusiness', when: isBk },
   // I2: a corporate structure auto-flags payroll, so provider and frequency
   // are required even when the payroll answer itself was never extracted.
   { key: 'payrollProvider', when: (a) => isBk(a) && (a.hasPayroll === true || requiresOfficerPayroll(a)) },
@@ -748,6 +789,18 @@ export function describeExtractedValue(key: string, value: unknown): string {
       return (value as string[]).map((v) => labelFor(key, v)).join(', ')
     case 'stringList':
       return (value as string[]).join(', ')
+    case 'noteMap': {
+      // The money-behavior notes render as their explanations, keyed by the
+      // question each belongs to.
+      const labels: Record<string, string> = {
+        'deposits-non-business': 'non-business deposits',
+        'personal-on-business': 'personal spend on business accounts',
+        'personal-card': 'personal card',
+      }
+      return Object.entries(value as Record<string, string>)
+        .map(([k, v]) => `${labels[k] ?? k}: ${v}`)
+        .join(' · ')
+    }
     case 'owners':
       return (value as Array<{ name: string; ownershipPercent?: number }>)
         .map((o) => (o.ownershipPercent != null ? `${o.name} (${o.ownershipPercent}%)` : o.name))
@@ -790,7 +843,9 @@ export const DEFAULT_EXTRACT_MODEL = 'gemini-3.5-flash'
 
 function vocabularyForPrompt(): string {
   return EXTRACTION_FIELDS.map((s) => {
-    const opts = s.options ? `; allowed values: ${s.options.join(' | ')}` : ''
+    const opts = s.options
+      ? `; ${s.kind === 'noteMap' ? 'object keys' : 'allowed values'}: ${s.options.join(' | ')}`
+      : ''
     const range = s.min != null || s.max != null ? `; range ${s.min ?? '-inf'}..${s.max ?? '+inf'}` : ''
     return `- "${s.key}" (${s.kind}${opts}${range}): ${s.label}`
   }).join('\n')
@@ -1043,6 +1098,20 @@ const STUB_RULES: readonly StubRule[] = [
     key: 'sendPreliminaryReports',
     pattern: /\bpreliminary reports?\b/i,
     confidence: 0.8,
+    build: () => true,
+  },
+  {
+    // J2 (E3): business spend landing on a personal card.
+    key: 'personalCardForBusiness',
+    pattern: /\bbusiness expenses? on (?:a|the|their) personal (?:credit )?card\b|\bpersonal (?:credit )?card for business\b/i,
+    confidence: 0.85,
+    build: () => true,
+  },
+  {
+    // J2 (P1): "they do their own payroll" - we just enter the reports.
+    key: 'payrollSelfProcessed',
+    pattern: /\b(?:they|the client) (?:do|does|process(?:es)?|runs?|handles?) their own payroll\b/i,
+    confidence: 0.85,
     build: () => true,
   },
   {

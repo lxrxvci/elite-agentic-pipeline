@@ -13,6 +13,11 @@
  * The script mutates the dev DB (one draft intake left behind), as the other
  * design-preview scripts do.
  *
+ * NOTE: wave-frozen at I4. Meeting-3 J1-J4 changed titles, fields, and the
+ * chapter order (the start-date label, services/software at the END); this
+ * walk reflects the I4-era UI and no longer runs as-is. The current walk
+ * lives in e2e/intake.spec.ts.
+ *
  * Usage: npx tsx scripts/screenshot-intake-i4.ts
  *
  * Output: ../../docs/design-preview/*.png

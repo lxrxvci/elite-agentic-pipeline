@@ -80,8 +80,11 @@ async function main(): Promise<void> {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await login(page);
 
-    // Fresh intake, walked in the dictated order (contact -> entity ->
-    // engagement -> software -> services -> starting).
+    // Fresh intake. NOTE: wave-frozen at I7 - the walk below reflects the
+    // I7-era order (contact -> entity -> engagement -> software -> services
+    // -> starting). Meeting-3 J1-J4 changed titles, fields, and the chapter
+    // order (services/software now END the flow); the current walk lives in
+    // e2e/intake.spec.ts.
     await page.goto(`${BASE}/intake`, { waitUntil: "networkidle" });
     await page.getByTestId("start-new-intake").click();
     await page.getByTestId("new-intake-name").fill(`I7 Preview & Co ${Date.now() % 100000}`);

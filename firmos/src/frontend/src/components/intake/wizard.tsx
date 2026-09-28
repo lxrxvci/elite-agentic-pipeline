@@ -53,6 +53,13 @@ import { QuestionHero, QuestionScreen } from './screens'
  * link that never loses answers, debounced autosave through saveIntake, and
  * a persistent live quote priced by the server only. The branch map lives in
  * registry.ts, declarative and tested.
+ *
+ * N3 (meeting #3): the chapter rail under the header is also the section
+ * navigator - a nav landmark where every reached chapter (plus the current
+ * one) jumps straight to that chapter's first question. Jumps never lose
+ * answers (they are already in form_data via autosave) and the resume point
+ * can never rewind past answered questions; unreached chapters stay disabled
+ * until the walk lands on them.
  */
 
 export const AUTO_ADVANCE_MS = 180
@@ -104,6 +111,21 @@ export function IntakeWizard({
   const [screenIndex, setScreenIndex] = useState(() =>
     editable ? (initialScreenIndex ?? firstUnansweredScreen(initialAnswers)) : 0,
   )
+  // N3 (meeting #3): direct section navigation. The chapters the walk has
+  // REACHED - seeded with everything up to the resume point, so a reopened
+  // intake is jumpable everywhere it has already been - plus each chapter as
+  // the walk lands on it. Chapter ids (not indexes) so a branch flip that
+  // hides chapters never marks an unvisited one as reached.
+  const [reachedChapters, setReachedChapters] = useState<ReadonlySet<string>>(() => {
+    const resumeAt = editable ? (initialScreenIndex ?? firstUnansweredScreen(initialAnswers)) : 0
+    const initialScreens = flattenScreens(initialAnswers)
+    const reached = new Set<string>()
+    for (const c of visibleChapters(initialAnswers)) {
+      const firstAt = initialScreens.findIndex((s) => s.kind === 'question' && s.chapterId === c.id)
+      if (firstAt >= 0 && firstAt <= resumeAt) reached.add(c.id)
+    }
+    return reached
+  })
   const [direction, setDirection] = useState<'fwd' | 'back'>('fwd')
   const [note, setNote] = useState<string | null>(null)
   // J2 (E1-E3): the money-behavior card whose yes-pick is waiting on its
@@ -400,6 +422,27 @@ export function IntakeWizard({
     [idx, screens],
   )
 
+  // N3: a chapter-rail jump lands on the chapter's first visible question.
+  // Answers ride form_data either way - the autosave flushes before the move
+  // (the same guarantee Continue/Back make), and the resume point only ever
+  // looks forward for unanswered REQUIRED questions, so jumping can never
+  // rewind it past answered ones.
+  const jumpToChapter = useCallback(
+    (chapterId: string) => {
+      const target = screens.findIndex((s) => s.kind === 'question' && s.chapterId === chapterId)
+      if (target < 0 || target === idx) return
+      if (advanceTimer.current) {
+        clearTimeout(advanceTimer.current)
+        advanceTimer.current = null
+      }
+      setDirection(target < idx ? 'back' : 'fwd')
+      setNote(null)
+      setScreenIndex(target)
+      if (editable) void flushSave()
+    },
+    [editable, flushSave, idx, screens],
+  )
+
   // J4 (V1): review edits open the overlay, never the wizard. Closing flushes
   // the autosave so the edit is durable even if the intake is closed next.
   const openEditor = useCallback((chapterId: string, questionId: string) => {
@@ -434,6 +477,25 @@ export function IntakeWizard({
     screen?.kind === 'question' ? questionPosition(answers, screen) : null
   const currentChapterId = screen?.kind === 'question' ? screen.chapterId : null
   const currentChapterIndex = chapters.findIndex((c) => c.id === currentChapterId)
+
+  // N3: landing on a chapter marks it reached (jumpable from the rail);
+  // reaching the review screen unlocks every visible chapter - the walk
+  // passed them all to get there.
+  useEffect(() => {
+    setReachedChapters((prev) => {
+      if (screen?.kind === 'review') {
+        return chapters.every((c) => prev.has(c.id))
+          ? prev
+          : new Set([...prev, ...chapters.map((c) => c.id)])
+      }
+      if (screen?.kind === 'question' && !prev.has(screen.chapterId)) {
+        const next = new Set(prev)
+        next.add(screen.chapterId)
+        return next
+      }
+      return prev
+    })
+  }, [screen, chapters])
 
   const reviewStatus =
     liveStatus === 'pending_review' ? 'pending_review' : liveStatus === 'completed' ? 'completed' : liveStatus === 'archived' ? 'archived' : 'draft'
@@ -513,21 +575,61 @@ export function IntakeWizard({
               </span>
             </div>
 
-            <div className="mt-3 flex gap-1.5" aria-hidden>
-              {chapters.map((c, i) => (
-                <span
-                  key={c.id}
-                  className={cn(
-                    'h-1.5 flex-1 rounded-full transition-colors duration-300',
+            {/* N3 (meeting #3): the chapter rail doubles as direct section
+                navigation. Reached chapters (and the current one) jump
+                straight to the chapter's first question without losing
+                answers; chapters the walk has not reached stay disabled
+                (Continue is the only way forward). The visual meaning is
+                unchanged: filled = completed, half = current, empty = upcoming. */}
+            <nav aria-label="Intake sections" className="mt-3" data-testid="chapter-rail">
+              <ol className="flex gap-1.5">
+                {chapters.map((c, i) => {
+                  const state =
                     screen?.kind === 'review' || i < currentChapterIndex
-                      ? 'bg-firm-brand'
+                      ? 'done'
                       : i === currentChapterIndex
-                        ? 'bg-firm-brand/50'
-                        : 'bg-border',
-                  )}
-                />
-              ))}
-            </div>
+                        ? 'current'
+                        : 'upcoming'
+                  const jumpable =
+                    screen?.kind === 'review' || reachedChapters.has(c.id) || i === currentChapterIndex
+                  return (
+                    <li key={c.id} className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        disabled={!jumpable}
+                        onClick={() => jumpToChapter(c.id)}
+                        aria-current={i === currentChapterIndex ? 'step' : undefined}
+                        aria-label={
+                          state === 'done'
+                            ? `${c.label} (completed)`
+                            : state === 'current'
+                              ? `${c.label} (current)`
+                              : jumpable
+                                ? c.label
+                                : `${c.label} (not reached yet)`
+                        }
+                        title={jumpable ? `Jump to ${c.label}` : `${c.label} - not reached yet`}
+                        data-testid={`chapter-jump-${c.id}`}
+                        data-state={state}
+                        className="group block w-full rounded-sm py-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed"
+                      >
+                        <span
+                          className={cn(
+                            'block h-1.5 w-full rounded-full transition-colors duration-300',
+                            state === 'done'
+                              ? 'bg-firm-brand'
+                              : state === 'current'
+                                ? 'bg-firm-brand/50'
+                                : 'bg-border',
+                            jumpable && 'group-hover:bg-firm-brand-strong group-focus-visible:bg-firm-brand-strong',
+                          )}
+                        />
+                      </button>
+                    </li>
+                  )
+                })}
+              </ol>
+            </nav>
             {position && (
               <p className="mt-2 text-xs text-muted-foreground" data-testid="progress-label">
                 {position.chapterLabel}, {position.index} of {position.count}

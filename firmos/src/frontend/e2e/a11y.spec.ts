@@ -215,6 +215,21 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await settle()
   await expectAccessible(page, 'wizard - account mini-form with last-4')
 
+  // N3 (meeting #3): the chapter rail is a labeled nav landmark of jump
+  // buttons - reached chapters enabled, unreached disabled. Scan it, then
+  // exercise a jump there and back (answers must survive).
+  await expect(page.getByTestId('chapter-rail')).toBeVisible()
+  await expect(page.getByTestId('chapter-jump-balance')).toHaveAttribute('aria-current', 'step')
+  await expect(page.getByTestId('chapter-jump-contact')).toBeEnabled()
+  await expect(page.getByTestId('chapter-jump-income')).toBeDisabled()
+  await settle()
+  await expectAccessible(page, 'wizard - chapter rail with jumpable chapters (N3)')
+  await page.getByTestId('chapter-jump-entity').click()
+  await expect(question).toHaveAttribute('data-question', 'tax-id')
+  await page.getByTestId('chapter-jump-balance').click()
+  await expect(question).toHaveAttribute('data-question', 'checking-accounts')
+  await expect(page.getByTestId('last4-0')).toHaveValue('4411')
+
   // J2 (E1-E3): the blocking behavior-note overlay scans clean. Walk the
   // remaining balance cards to the income chapter and answer a yes.
   for (const id of ['savings-accounts', 'credit-cards', 'vehicles', 'other-assets', 'loans']) {

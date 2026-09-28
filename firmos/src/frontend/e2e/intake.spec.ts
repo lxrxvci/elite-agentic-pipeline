@@ -1,13 +1,14 @@
 import { expect, test, type Page } from '@playwright/test'
 
 /**
- * G3 - the intake pipeline, end to end, in the I1 dictated order (plan §1):
- * login as mara (owner) -> /intake -> start a new intake -> contact basics ->
- * entity & ownership (with the CPA card + referral-who) -> engagement ->
- * accounting software -> services -> starting point (text-entry date, no
- * catch-up screen) -> scope chapters -> review -> submit -> convert WITHOUT
- * staff -> land on the new client -> assign the team -> the client's work
- * shows up on the workstation.
+ * G3 - the intake pipeline, end to end, in the current dictated order (I1,
+ * plus meeting-3 N1): login as mara (owner) -> /intake -> start a new intake
+ * -> contact basics -> entity & ownership (with the CPA card + referral-who)
+ * -> engagement -> starting point (text-entry date, no catch-up screen) ->
+ * scope chapters -> services -> accounting software (the N1 end block) ->
+ * custom rules -> the J3 routine scheduler -> review -> submit -> convert
+ * WITHOUT staff -> land on the new client -> assign the team -> the client's
+ * work shows up on the workstation.
  */
 
 const BUSINESS = 'E2E Bloom & Co'

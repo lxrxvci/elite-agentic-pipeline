@@ -257,9 +257,11 @@ async function main(): Promise<void> {
     await page.waitForTimeout(300);
     await shot(page, "client-billing-timeline");
 
-    // 5. Intake wizard in the I1 order (contact -> entity -> engagement ->
-    //    software -> services -> starting -> scope chapters): start a fresh
-    //    intake, collect the main contact, capture two tangents on the rail.
+    // 5. Intake wizard. NOTE: wave-frozen at I1 - the walk below reflects
+    //    the I1-era order (contact -> entity -> engagement -> software ->
+    //    services -> starting -> scope chapters). Meeting-3 J1-J4 changed
+    //    titles, fields, and the chapter order (services/software now END
+    //    the flow); the current walk lives in e2e/intake.spec.ts.
     await page.goto(`${BASE}/intake`, { waitUntil: "networkidle" });
     await page.getByTestId("start-new-intake").click();
     await page

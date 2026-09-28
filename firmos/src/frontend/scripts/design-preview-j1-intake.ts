@@ -18,6 +18,10 @@
  * Output: docs/design-preview/ (firmos root). The dev DB is untouched - the
  * walk creates one throwaway draft intake, same as the e2e specs do.
  *
+ * NOTE: wave-frozen at J1. J2 renamed the start-date label and J4 moved the
+ * services/software block to the END of the flow, so this walk no longer
+ * runs as-is. The current walk lives in e2e/intake.spec.ts.
+ *
  * Usage:
  *   npm run build && npx tsx scripts/design-preview-j1-intake.ts
  */

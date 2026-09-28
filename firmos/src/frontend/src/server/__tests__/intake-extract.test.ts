@@ -640,3 +640,125 @@ describe("I7 closeout extraction (A45 + A41)", () => {
     expect(describeExtractedValue("businessEstablishedDate", "2019-03-01")).toBe("2019-03-01");
   });
 });
+
+
+// ── J5 (meeting #3): extraction parity for the J1-J4 keys ─────────────────
+
+describe("J5 extraction parity", () => {
+  it("the third money-behavior card (personalCardForBusiness) extracts and stays on still-to-ask until answered", () => {
+    const result = coerceExtraction({
+      fields: [{ key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" }],
+    });
+    expect(result.missing).toContain("personalCardForBusiness");
+
+    const answered = coerceExtraction({
+      fields: [
+        { key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" },
+        { key: "personalCardForBusiness", value: "yes", confidence: 0.85, evidence: "the Amex picks up supplies" },
+      ],
+    });
+    const field = answered.fields.find((f) => f.key === "personalCardForBusiness");
+    expect(field?.value).toBe(true);
+    expect(field?.group).toBe("income");
+    expect(answered.missing).not.toContain("personalCardForBusiness");
+
+    // Project engagements never ask it.
+    const project = coerceExtraction({
+      fields: [{ key: "engagementType", value: "project", confidence: 0.9, evidence: "x" }],
+    });
+    expect(project.missing).not.toContain("personalCardForBusiness");
+  });
+
+  it("J2 (P1): payrollSelfProcessed extracts as a boolean in the income chapter", () => {
+    const result = coerceExtraction({
+      fields: [
+        { key: "hasPayroll", value: true, confidence: 0.9, evidence: "they run payroll" },
+        { key: "payrollSelfProcessed", value: true, confidence: 0.85, evidence: "they do their own payroll" },
+      ],
+    });
+    const field = result.fields.find((f) => f.key === "payrollSelfProcessed");
+    expect(field?.value).toBe(true);
+    expect(field?.group).toBe("income");
+  });
+
+  it("J2 (E1-E3): behaviorNotes coerce as a fixed-key note map; unknown keys drop with a reason", () => {
+    const result = coerceExtraction({
+      fields: [
+        {
+          key: "behaviorNotes",
+          value: {
+            "deposits-non-business": "Owner covers a bill from his personal account some months",
+            "personal-card": "The Amex picks up supplies",
+            "made-up-question": "never lands",
+          },
+          confidence: 0.8,
+          evidence: "the owner explains both",
+        },
+      ],
+    });
+    expect(result.fields.find((f) => f.key === "behaviorNotes")?.value).toEqual({
+      "deposits-non-business": "Owner covers a bill from his personal account some months",
+      "personal-card": "The Amex picks up supplies",
+    });
+    expect(result.rejected?.some((r) => r.reason.includes("made-up-question"))).toBe(true);
+
+    // Non-objects and empty maps never coerce.
+    const bad = coerceExtraction({
+      fields: [{ key: "behaviorNotes", value: "some free text", confidence: 0.8, evidence: "x" }],
+    });
+    expect(bad.fields).toHaveLength(0);
+    expect(bad.rejected?.[0].reason).toContain("not an object");
+  });
+
+  it("J3: routineSchedule is deliberately NOT extractable - the scheduler screen owns the schedule", () => {
+    const result = coerceExtraction({
+      fields: [
+        {
+          key: "routineSchedule",
+          value: { categorize_transactions: { bucket: "weekly", order: 0 } },
+          confidence: 0.9,
+          evidence: "do that weekly",
+        },
+      ],
+    });
+    expect(result.fields).toHaveLength(0);
+    expect(result.rejected?.some((r) => r.key === "routineSchedule" && r.reason === "unknown field key")).toBe(true);
+  });
+
+  it("answersFromExtraction carries the new keys through to the wizard answers", () => {
+    const answers = answersFromExtraction(
+      [
+        { key: "personalCardForBusiness", value: true },
+        { key: "payrollSelfProcessed", value: true },
+        { key: "behaviorNotes", value: { "personal-card": "The Amex picks up supplies" } },
+      ],
+      "Parity Co",
+    );
+    expect(answers.personalCardForBusiness).toBe(true);
+    expect(answers.payrollSelfProcessed).toBe(true);
+    expect(answers.behaviorNotes?.["personal-card"]).toBe("The Amex picks up supplies");
+    expect(answers.routineSchedule).toBeUndefined();
+  });
+
+  it("renders the review rows for the new kinds", () => {
+    expect(describeExtractedValue("personalCardForBusiness", true)).toBe("Yes");
+    expect(describeExtractedValue("payrollSelfProcessed", false)).toBe("No");
+    expect(
+      describeExtractedValue("behaviorNotes", {
+        "deposits-non-business": "Owner covers a bill some months",
+        "personal-card": "The Amex picks up supplies",
+      }),
+    ).toBe("non-business deposits: Owner covers a bill some months · personal card: The Amex picks up supplies");
+  });
+
+  it("the stub hears the personal-card and self-processed-payroll lines", async () => {
+    const transcript = [
+      "[00:41:12] Jason: Do they put business expenses on a personal credit card?",
+      "[00:41:30] Client: Yes, they put business expenses on a personal card pretty often.",
+      "[00:52:04] Client: They do their own payroll, you just enter the reports.",
+    ].join("\n");
+    const result = await new StubIntakeExtractor().extract({ transcript, notes: null });
+    expect(result.fields.find((f) => f.key === "personalCardForBusiness")?.value).toBe(true);
+    expect(result.fields.find((f) => f.key === "payrollSelfProcessed")?.value).toBe(true);
+  });
+});
