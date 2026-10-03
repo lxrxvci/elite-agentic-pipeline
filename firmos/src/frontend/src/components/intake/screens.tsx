@@ -28,7 +28,9 @@ import {
   CUSTOM_OTHER_VALUE,
   customAllowed,
   laterAddonQualified,
+  mergeListOptions,
   type FieldDef,
+  type OptionListValueLite,
   type QuestionDef,
   type RepeatablePrefill,
   type WizardAnswers,
@@ -467,6 +469,7 @@ function FieldInput({
   processors,
   onAddProcessor,
   allValues,
+  optionLists,
 }: {
   def: FieldDef
   value: unknown
@@ -476,7 +479,32 @@ function FieldInput({
   onAddProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
   /** The full draft - the processor picker reads it to pre-fill the name. */
   allValues?: Record<string, unknown>
+  /** K3: option_list_values rows behind optionsFromList text fields. */
+  optionLists?: Record<string, OptionListValueLite[]>
 }) {
+  // K3 (DB1/J1): a list-backed text field type-aheads the list; its value
+  // persists to the list when the screen commits (FieldsScreen/Repeatable).
+  if (def.kind === 'text' && def.optionsFromList) {
+    const listId = `dl-${def.key}`
+    return (
+      <>
+        <input
+          aria-label={def.label}
+          className={inputCls}
+          type="text"
+          list={listId}
+          placeholder={def.placeholder}
+          value={value == null ? '' : String(value)}
+          onChange={(e) => onChange(def.key, e.target.value)}
+        />
+        <datalist id={listId} data-testid={`datalist-${def.key}`}>
+          {(optionLists?.[def.optionsFromList] ?? []).map((v) => (
+            <option key={v.id} value={v.name} />
+          ))}
+        </datalist>
+      </>
+    )
+  }
   if (def.kind === 'processor') {
     // J1 (E4/DB1): the processor dropdown reads the merchant_processors
     // table; add-new persists globally. Two commits per pick: the processor
@@ -592,6 +620,7 @@ function FieldGrid({
   onChange,
   processors,
   onAddProcessor,
+  optionLists,
 }: {
   fields: FieldDef[]
   value: Record<string, unknown>
@@ -599,6 +628,7 @@ function FieldGrid({
   /** J1 (E4): merchant-processor dropdown data for `processor` fields. */
   processors?: MerchantProcessorRow[]
   onAddProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
+  optionLists?: Record<string, OptionListValueLite[]>
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -616,6 +646,7 @@ function FieldGrid({
             processors={processors}
             onAddProcessor={onAddProcessor}
             allValues={value}
+            optionLists={optionLists}
           />
         </div>
       ))}
@@ -662,6 +693,8 @@ export function RepeatableScreen({
   contactSearch,
   processors,
   onAddProcessor,
+  optionLists,
+  onAddOptionListValue,
 }: {
   q: QuestionDef
   items: Array<Record<string, unknown>>
@@ -682,6 +715,9 @@ export function RepeatableScreen({
   /** J1 (E4): the merchant_processors list behind `processor` item fields. */
   processors?: MerchantProcessorRow[]
   onAddProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
+  /** K3: option_list_values rows + the persist write for list-backed fields. */
+  optionLists?: Record<string, OptionListValueLite[]>
+  onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
 }) {
   const rep = q.repeatable!
   const [draft, setDraft] = useState<Record<string, unknown>>({})
@@ -697,6 +733,17 @@ export function RepeatableScreen({
 
   const removeAt = (idx: number) => onCommit(items.filter((_, i) => i !== idx))
 
+  // K3 (J2): list-backed item fields persist when a draft commits.
+  const persistItemLists = (item: Record<string, unknown>) => {
+    if (!onAddOptionListValue) return
+    for (const f of rep.itemFields) {
+      const v = item[f.key]
+      if (f.optionsFromList && typeof v === 'string' && v.trim() !== '') {
+        void onAddOptionListValue(f.optionsFromList, v.trim())
+      }
+    }
+  }
+
   const addAnother = () => {
     if (capped) return
     const err = validateFields(rep.itemFields, draft)
@@ -705,6 +752,7 @@ export function RepeatableScreen({
       return
     }
     setError(null)
+    persistItemLists(draft)
     onCommit([...items, draft])
     setDraft({})
   }
@@ -743,6 +791,7 @@ export function RepeatableScreen({
 
   const finishWithDraft = (saveDraft: boolean) => {
     setConfirmDraftSave(false)
+    if (saveDraft) persistItemLists(draft)
     proceed(saveDraft ? [...items, draft] : items)
     if (saveDraft) setDraft({})
   }
@@ -845,6 +894,7 @@ export function RepeatableScreen({
               onChange={(k, v) => setDraft((d) => ({ ...d, [k]: v }))}
               processors={processors}
               onAddProcessor={onAddProcessor}
+              optionLists={optionLists}
             />
             <div className="mt-3">
               <Button
@@ -940,12 +990,16 @@ function FieldsScreen({
   onApply,
   onAdvance,
   contactSearch = null,
+  optionLists,
+  onAddOptionListValue,
 }: {
   q: QuestionDef
   answers: WizardAnswers
   onApply: (patch: Partial<WizardAnswers>) => void
   onAdvance: () => void
   contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
+  optionLists?: Record<string, OptionListValueLite[]>
+  onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
 }) {
   const [error, setError] = useState<string | null>(null)
   const [typed, setTyped] = useState<Record<string, unknown>>({})
@@ -968,7 +1022,7 @@ function FieldsScreen({
     const v = value[f.key]
     return v != null && String(v).trim() !== ''
   })
-  const submit = () => {
+  const submit = async () => {
     const err = q.required ? validateFields(fields, value) : validateFields(fields.filter((f) => {
       const v = value[f.key]
       return v != null && String(v).trim() !== ''
@@ -978,6 +1032,16 @@ function FieldsScreen({
       return
     }
     setError(null)
+    // K3 (J2): list-backed text fields persist to their lists on commit -
+    // "once added through an intake, it stays in the database" (DB1).
+    if (onAddOptionListValue) {
+      for (const f of fields) {
+        const v = value[f.key]
+        if (f.optionsFromList && typeof v === 'string' && v.trim() !== '') {
+          await onAddOptionListValue(f.optionsFromList, v.trim())
+        }
+      }
+    }
     onApply(q.apply(answers, value))
     onAdvance()
   }
@@ -997,7 +1061,7 @@ function FieldsScreen({
       className="space-y-4"
       onSubmit={(e) => {
         e.preventDefault()
-        submit()
+        void submit()
       }}
     >
       {picker && contactSearch && (
@@ -1034,6 +1098,7 @@ function FieldsScreen({
       <FieldGrid
         fields={fields}
         value={value}
+        optionLists={optionLists}
         onChange={(k, v) => {
           // B1: the typed text renders as-is from here on, even when the
           // question's apply() normalizes it (trimmed whitespace, split
@@ -1076,12 +1141,16 @@ function YesNoListScreen({
   onApply,
   onAdvance,
   onPickOption,
+  optionLists,
+  onAddOptionListValue,
 }: {
   q: QuestionDef
   answers: WizardAnswers
   onApply: (patch: Partial<WizardAnswers>) => void
   onAdvance: () => void
   onPickOption: (value: string) => void
+  optionLists?: Record<string, OptionListValueLite[]>
+  onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
 }) {
   const cfg = q.yesNoList!
   const current = q.get(answers) as string | undefined
@@ -1089,12 +1158,22 @@ function YesNoListScreen({
   const [draft, setDraft] = useState('')
 
   const commitLocations = (next: string[]) => onApply({ [cfg.listKey]: next } as Partial<WizardAnswers>)
-  const addLocation = () => {
-    const text = draft.trim()
+  const addLocation = (raw?: string) => {
+    const text = (raw ?? draft).trim()
     if (text === '') return
-    commitLocations([...locations, text])
+    // K3 (DB1): every place lands on the reusable bill-pay locations list,
+    // fold-deduped locally and globally.
+    const fold = text.toLowerCase()
+    if (!locations.some((l) => l.toLowerCase() === fold)) {
+      commitLocations([...locations, text])
+    }
+    void onAddOptionListValue?.('bill_pay_locations', text)
     setDraft('')
   }
+  // K3: one-tap re-use of places entered on prior intakes.
+  const quickPlaces = (optionLists?.bill_pay_locations ?? []).filter(
+    (v) => !locations.some((l) => l.toLowerCase() === v.name.toLowerCase()),
+  )
 
   return (
     <div className="space-y-4">
@@ -1128,6 +1207,23 @@ function YesNoListScreen({
               ))}
             </ul>
           )}
+          {quickPlaces.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-1.5" data-testid="quick-places">
+              <span className="text-xs text-muted-foreground">Recent:</span>
+              {quickPlaces.slice(0, 6).map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  data-testid={`quick-place-${v.id}`}
+                  onClick={() => addLocation(v.name)}
+                  className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-firm-brand/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  <Plus className="h-3 w-3" aria-hidden />
+                  {v.name}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <input
               id={`${cfg.listKey}-input`}
@@ -1147,7 +1243,7 @@ function YesNoListScreen({
               type="button"
               variant="outline"
               size="sm"
-              onClick={addLocation}
+              onClick={() => addLocation()}
               disabled={draft.trim() === ''}
               data-testid="list-add"
             >
@@ -1182,6 +1278,8 @@ export function QuestionScreen({
   merchantProcessors = [],
   onAddMerchantProcessor,
   contactSearch = null,
+  optionLists,
+  onAddOptionListValue,
 }: {
   q: QuestionDef
   answers: WizardAnswers
@@ -1202,9 +1300,16 @@ export function QuestionScreen({
   onAddMerchantProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
   /** J1 (C5/C6/C7): the contact+client type-ahead behind picker questions. */
   contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
+  /** K3 (DB1/J1): the option_list_values rows behind optionsFromList
+   *  questions/fields, and the persist write for customs. */
+  optionLists?: Record<string, OptionListValueLite[]>
+  onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
 }) {
   // J2 (P1): the required-multi empty-attempt message (payroll handling).
   const [requiredError, setRequiredError] = useState<string | null>(null)
+  // K3: the add-new affordance on list-backed multi questions.
+  const [listAddOpen, setListAddOpen] = useState(false)
+  const [listAddText, setListAddText] = useState('')
 
   // I3: the per-type account count card (plan §1 screen 7).
   if (q.type === 'account-count') {
@@ -1267,13 +1372,28 @@ export function QuestionScreen({
     }
 
     const customOn = customAllowed(q)
-    // I1: picking "Other - type it" opens the inline text field and waits for
-    // Continue commits once the custom text is in.
+    // I1: picking "Other - type it" opens the inline text field; Continue
+    // commits once the custom text is in.
     const otherOpen = customOn && current === CUSTOM_OTHER_VALUE
     // I2: per-option locks (e.g. corporate payroll's "No").
-    const options = (q.options ?? []).map((o) =>
-      q.optionDisabled?.(o.value, answers) ? { ...o, disabled: true } : o,
+    // K3 (DB1/J2): the list's values join as extra cards - a custom typed on
+    // a prior intake returns first-class instead of stranding.
+    const options = mergeListOptions(
+      (q.options ?? []).map((o) =>
+        q.optionDisabled?.(o.value, answers) ? { ...o, disabled: true } : o,
+      ),
+      q.optionsFromList,
+      optionLists,
     )
+    // K3 (J2): the typed custom persists to the question's list before
+    // moving on, so it is offered on every future intake.
+    const persistCustomThenAdvance = async () => {
+      const customText = (answers.customAnswers?.[q.id] as string | undefined)?.trim()
+      if (q.optionsFromList && customText && onAddOptionListValue) {
+        await onAddOptionListValue(q.optionsFromList, customText)
+      }
+      onAdvance()
+    }
     return (
       <div className="space-y-4">
         <OptionCards
@@ -1309,7 +1429,7 @@ export function QuestionScreen({
             revisited via Back would otherwise dead-end (live-verified
             2026-09: the wizard stalled here with no affordance). */}
         {(otherOpen || current != null) && (
-          <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
+          <Button type="button" variant="action" onClick={() => void persistCustomThenAdvance()} data-testid="continue">
             Continue
             <ArrowRight className="h-4 w-4" aria-hidden />
           </Button>
@@ -1341,9 +1461,65 @@ export function QuestionScreen({
     // J2 (P1): a required multi never skips silently - Continue stays
     // clickable and an empty attempt explains itself (payroll handling).
     const canContinue = values.length > 0 || !q.required
+    // K3 (DB1/J1): chips from the list plus an add-new chip that persists
+    // and selects in one tap.
+    const options = mergeListOptions(q.options ?? [], q.optionsFromList, optionLists)
+    const addCustomOption = async () => {
+      const text = listAddText.trim()
+      if (!q.optionsFromList || !text || !onAddOptionListValue) return
+      const row = await onAddOptionListValue(q.optionsFromList, text)
+      if (row) {
+        setListAddText('')
+        setListAddOpen(false)
+        if (!values.includes(row.name)) toggle(row.name)
+      }
+    }
     return (
       <div className="space-y-4">
-        <MultiChips options={q.options ?? []} values={values} onToggle={toggle} />
+        <MultiChips options={options} values={values} onToggle={toggle} />
+        {q.optionsFromList && onAddOptionListValue && (
+          listAddOpen ? (
+            <div className="flex items-center gap-2">
+              <input
+                aria-label="Type the custom option"
+                data-testid="multi-custom-input"
+                className={inputCls}
+                placeholder="Type it once - it's on the list from now on"
+                value={listAddText}
+                autoFocus
+                onChange={(e) => setListAddText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void addCustomOption()
+                  }
+                  if (e.key === 'Escape') setListAddOpen(false)
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void addCustomOption()}
+                disabled={listAddText.trim() === ''}
+                data-testid="multi-custom-add"
+              >
+                <Plus className="h-3.5 w-3.5" aria-hidden />
+                Add
+              </Button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              data-testid="multi-custom-open"
+              onClick={() => setListAddOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:border-firm-brand/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden />
+              Something else…
+            </button>
+          )
+        )}
         {requiredError && (
           <p className="text-sm font-medium text-status-overdue" role="alert">
             {requiredError}
@@ -1396,6 +1572,8 @@ export function QuestionScreen({
         onApply={onApply}
         onAdvance={onAdvance}
         contactSearch={contactSearch}
+        optionLists={optionLists}
+        onAddOptionListValue={onAddOptionListValue}
       />
     )
   }
@@ -1410,6 +1588,8 @@ export function QuestionScreen({
         onApply={onApply}
         onAdvance={onAdvance}
         onPickOption={onPickOption}
+        optionLists={optionLists}
+        onAddOptionListValue={onAddOptionListValue}
       />
     )
   }
@@ -1430,6 +1610,8 @@ export function QuestionScreen({
       contactSearch={contactSearch}
       processors={merchantProcessors}
       onAddProcessor={onAddMerchantProcessor}
+      optionLists={optionLists}
+      onAddOptionListValue={onAddOptionListValue}
     />
   )
 }

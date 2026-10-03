@@ -16,6 +16,7 @@ import {
   findChapter,
   findQuestion,
   isCustomOtherPick,
+  type OptionListValueLite,
   type QuestionDef,
   type WizardAnswers,
 } from './registry'
@@ -52,6 +53,8 @@ export function EditQuestionDialog({
   merchantProcessors = [],
   onAddMerchantProcessor,
   contactSearch = null,
+  optionLists,
+  onAddOptionListValue,
 }: {
   target: EditTarget | null
   answers: WizardAnswers
@@ -65,6 +68,9 @@ export function EditQuestionDialog({
   merchantProcessors?: MerchantProcessorRow[]
   onAddMerchantProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
   contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
+  /** K3: the option lists behind optionsFromList questions (from the wizard). */
+  optionLists?: Record<string, OptionListValueLite[]>
+  onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
 }) {
   // The money-behavior yes waiting on its mandatory note, scoped to this
   // overlay (the wizard's own note prompt is a separate, wizard-path state).
@@ -159,6 +165,8 @@ export function EditQuestionDialog({
               merchantProcessors={merchantProcessors}
               onAddMerchantProcessor={onAddMerchantProcessor}
               contactSearch={contactSearch}
+              optionLists={optionLists}
+              onAddOptionListValue={onAddOptionListValue}
             />
           </div>
         </DialogContent>

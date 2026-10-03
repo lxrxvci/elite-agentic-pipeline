@@ -16,10 +16,15 @@ import {
   addPayrollProviderAction,
   listPayrollProvidersAction,
 } from '@/server/actions/payroll-providers'
+import {
+  addOptionValueAction,
+  listOptionValuesBulkAction,
+} from '@/server/actions/option-lists'
 import type { ContactLookupResults } from '@/server/contact-lookup'
 import type { IntakeRunningNote } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
 import type { MerchantProcessorRow } from '@/server/merchant-processors'
+import type { OptionValueRow } from '@/server/option-lists'
 import type { PayrollProviderRow } from '@/server/payroll-providers'
 import { cn } from '@/shared/lib/utils'
 
@@ -70,6 +75,22 @@ import { QuestionHero, QuestionScreen } from './screens'
 
 export const SAVE_DEBOUNCE_MS = 800
 export const QUOTE_DEBOUNCE_MS = 400
+
+/** K3 (DB1): every option list the intake can render - one bulk read. */
+export const INTAKE_OPTION_LIST_KEYS = [
+  'referral_sources',
+  'tax_structure_customs',
+  'accounting_software',
+  'payment_methods',
+  'property_types',
+  'industries',
+  'report_types',
+  'custom_task_templates',
+  'payroll_frequencies',
+  'bookkeeping_frequencies',
+  'engagement_types',
+  'bill_pay_locations',
+] as const
 
 /** I4 (plan §3D): the staff peek flag lives in sessionStorage - remembered
  *  per browser session, never across sessions, default hidden. */
@@ -161,8 +182,13 @@ export function IntakeWizard({
   const [institutions, setInstitutions] = useState<InstitutionRow[]>([])
   const [payrollProviders, setPayrollProviders] = useState<PayrollProviderRow[]>([])
   const [merchantProcessors, setMerchantProcessors] = useState<MerchantProcessorRow[]>([])
+  // K3 (DB1): the universal option lists behind optionsFromList questions.
+  const [optionLists, setOptionLists] = useState<Record<string, OptionValueRow[]>>({})
 
   useEffect(() => {
+    void listOptionValuesBulkAction([...INTAKE_OPTION_LIST_KEYS]).then((res) => {
+      if (res.ok) setOptionLists(res.data)
+    })
     void listInstitutionsAction().then((res) => {
       if (res.ok) setInstitutions(res.data)
     })
@@ -206,6 +232,26 @@ export function IntakeWizard({
     )
     return res.data
   }, [])
+
+  // K3 (J1/J2): a custom option persists to its list and lands, sorted,
+  // in the local copy - "once added through an intake, it stays in the
+  // database for future use."
+  const addOptionListValue = useCallback(
+    async (listKey: string, name: string): Promise<OptionValueRow | null> => {
+      const res = await addOptionValueAction(listKey, name)
+      if (!res.ok) return null
+      setOptionLists((prev) => {
+        const current = prev[listKey] ?? []
+        if (current.some((v) => v.id === res.data.id)) return prev
+        return {
+          ...prev,
+          [listKey]: [...current, res.data].sort((a, b) => a.name.localeCompare(b.name)),
+        }
+      })
+      return res.data
+    },
+    [],
+  )
 
   // J1 (C5/C6/C7): the contact pickers' debounced server read.
   const contactSearch = useCallback(
@@ -687,6 +733,8 @@ export function IntakeWizard({
                         merchantProcessors={merchantProcessors}
                         onAddMerchantProcessor={addMerchantProcessor}
                         contactSearch={contactSearch}
+                        optionLists={optionLists}
+                        onAddOptionListValue={addOptionListValue}
                       />
                     </div>
                     {note && (
@@ -803,6 +851,8 @@ export function IntakeWizard({
         merchantProcessors={merchantProcessors}
         onAddMerchantProcessor={addMerchantProcessor}
         contactSearch={contactSearch}
+        optionLists={optionLists}
+        onAddOptionListValue={addOptionListValue}
       />
     </div>
   )

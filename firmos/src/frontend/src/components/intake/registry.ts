@@ -106,6 +106,10 @@ export interface FieldDef {
    *  holds; hidden fields are skipped by validation too (the last-filed
    *  date hides while the missed-filings toggle is off). */
   visibleIf?: (values: Record<string, unknown>) => boolean
+  /** K3 (DB1/J1): an option_list_values key backing this field - `select`
+   *  fields render the list with inline add-new; text fields get a
+   *  type-ahead datalist and their value persists to the list on commit. */
+  optionsFromList?: string
   /** number kind only */
   min?: number
   max?: number
@@ -261,6 +265,11 @@ export interface QuestionDef {
    *  provider question reads payroll_providers). The stored answer is the
    *  row's NAME, so the answer key stays stable. */
   dropdown?: 'payrollProviders'
+  /** K3 (DB1/J1): an option_list_values key backing this question. On
+   *  `select` cards the list's values join the static cards (custom "Other"
+   *  answers persist here instead of stranding in customAnswers); on `multi`
+   *  chips the chips come from the list with an add-new chip. */
+  optionsFromList?: string
   /** J1 (C6/C7): picker-first `fields` questions - a contact/client
    *  type-ahead sits above the fields; picking an existing record writes
    *  the link key, manual typing stays the create-new path. */
@@ -461,6 +470,38 @@ export function ownershipSumNote(items: Array<Record<string, unknown>>): string 
 
 /** The canonical answer value whenever a custom answer is typed. */
 export const CUSTOM_OTHER_VALUE = 'Other'
+
+/** K3: an option_list_values row as the wizard consumes it. */
+export interface OptionListValueLite {
+  id: number
+  name: string
+}
+
+/**
+ * K3 (DB1/J2): merge a question's static options with its list's values -
+ * static cards keep their logic keys, list values append as name-valued
+ * extra cards/chips (fold-deduped against static labels and each other).
+ * A custom "Other" typed last month returns as a first-class card today.
+ */
+export function mergeListOptions(
+  statics: SelectOption[],
+  listKey: string | undefined,
+  optionLists: Record<string, OptionListValueLite[]> | undefined,
+): SelectOption[] {
+  if (!listKey) return statics
+  const values = optionLists?.[listKey] ?? []
+  const seen = new Set(
+    statics.flatMap((o) => [o.label.toLowerCase().trim(), o.value.toLowerCase().trim()]),
+  )
+  const extras: SelectOption[] = []
+  for (const v of values) {
+    const fold = v.name.toLowerCase().trim()
+    if (fold === '' || seen.has(fold)) continue
+    seen.add(fold)
+    extras.push({ value: v.name, label: v.name })
+  }
+  return [...statics, ...extras]
+}
 
 /** Carded selects with more than two options offer "Other - type it". */
 export const customAllowed = (q: QuestionDef): boolean =>
@@ -1583,6 +1624,9 @@ export const CHAPTERS: ChapterDef[] = [
         help: 'The tax classification drives payroll rules, owner count, and year-end filings.',
         type: 'select',
         required: true,
+        // K3 (DB1): custom structures persist to tax_structure_customs and
+        // return as extra cards on later intakes.
+        optionsFromList: 'tax_structure_customs',
         options: [
           { value: 'LLC', label: 'LLC', sub: 'Flexible - taxed the way you elect' },
           { value: 'S-corp', label: 'S-corp', sub: 'Officers must be paid through payroll' },
@@ -1634,7 +1678,7 @@ export const CHAPTERS: ChapterDef[] = [
         required: false,
         fields: [
           { key: 'dbaName', label: 'DBA (optional)', kind: 'text', placeholder: 'Fern & Feather' },
-          { key: 'industry', label: 'Industry (optional)', kind: 'text', placeholder: 'Retail florist' },
+          { key: 'industry', label: 'Industry (optional)', kind: 'text', placeholder: 'Retail florist', optionsFromList: 'industries' },
         ],
         get: (a) => a.dbaName ?? a.industry,
         apply: (_a, v) => v as Partial<WizardAnswers>,
@@ -1817,6 +1861,8 @@ export const CHAPTERS: ChapterDef[] = [
         title: 'How did they find us?',
         type: 'select',
         required: false,
+        // K3 (DB1): list-backed; customs persist to referral_sources.
+        optionsFromList: 'referral_sources',
         options: [
           { value: 'CPA referral', label: 'Referred by a CPA' },
           { value: 'Existing client', label: 'Referred by a client' },
@@ -1863,6 +1909,8 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'engagement',
         title: 'What kind of engagement is this?',
+        // K3 (DB1): custom engagement kinds persist to engagement_types.
+        optionsFromList: 'engagement_types',
         type: 'select',
         required: true,
         options: [
@@ -2077,6 +2125,8 @@ export const CHAPTERS: ChapterDef[] = [
         help: 'Each property is created at conversion with its type.',
         type: 'multi',
         required: false,
+        // K3 (DB1): chips from property_types + add-new.
+        optionsFromList: 'property_types',
         when: isRealEstate,
         options: Object.entries(PROPERTY_TYPE_LABELS).map(([value, label]) => ({ value, label })),
         get: (a) => a.propertyTypes ?? [],
@@ -2116,6 +2166,8 @@ export const CHAPTERS: ChapterDef[] = [
         help: 'Every way customers pay them.',
         type: 'multi',
         required: false,
+        // K3 (DB1): chips from payment_methods + add-new (Zelle, Venmo...).
+        optionsFromList: 'payment_methods',
         options: Object.entries(PAYMENT_METHOD_LABELS).map(([value, label]) => ({ value, label })),
         get: (a) => a.paymentMethods ?? [],
         apply: (_a, v) => ({ paymentMethods: v as string[] }),
@@ -2287,6 +2339,8 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'payroll-frequency',
         title: 'How often is payroll run?',
+        // K3 (DB1): custom cadences persist to payroll_frequencies.
+        optionsFromList: 'payroll_frequencies',
         type: 'select',
         required: true,
         when: hasPayroll,
@@ -2397,6 +2451,8 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'bk-frequency',
         title: 'How often do we close the books?',
+        // K3 (DB1): custom cadences persist to bookkeeping_frequencies.
+        optionsFromList: 'bookkeeping_frequencies',
         type: 'select',
         required: true,
         options: [
@@ -2555,7 +2611,7 @@ export const CHAPTERS: ChapterDef[] = [
         repeatable: {
           addLabel: 'Add report',
           itemFields: [
-            { key: 'name', label: 'Report name', kind: 'text', required: true, placeholder: 'Oregon Special Report' },
+            { key: 'name', label: 'Report name', kind: 'text', required: true, placeholder: 'Oregon Special Report', optionsFromList: 'report_types' },
             {
               key: 'frequency', label: 'Frequency', kind: 'select', required: true, half: true,
               options: ['monthly', 'quarterly', 'semi_annual', 'annual'].map((f) => ({ value: f, label: FREQUENCY_LABELS[f] })),
@@ -2686,6 +2742,8 @@ export const CHAPTERS: ChapterDef[] = [
         title: 'Where do they stand with QuickBooks?',
         type: 'select',
         required: true,
+        // K3 (DB1): Xero/Wave/etc. persist to accounting_software and return.
+        optionsFromList: 'accounting_software',
         options: [
           { value: 'existing', label: 'Already on QuickBooks Online' },
           { value: 'desktop', label: 'On QuickBooks Desktop', sub: 'Needs a migration to Online' },
@@ -2800,7 +2858,7 @@ export const CHAPTERS: ChapterDef[] = [
         repeatable: {
           addLabel: 'Add recurring rule',
           itemFields: [
-            { key: 'title', label: 'Title', kind: 'text', required: true, placeholder: 'Weekly deposit review' },
+            { key: 'title', label: 'Title', kind: 'text', required: true, placeholder: 'Weekly deposit review', optionsFromList: 'custom_task_templates' },
             {
               key: 'scheduleType', label: 'Schedule', kind: 'select', required: true, half: true,
               options: ['daily', 'weekly', 'monthly', 'quarterly', 'semi_annual', 'annual'].map((f) => ({ value: f, label: FREQUENCY_LABELS[f] })),

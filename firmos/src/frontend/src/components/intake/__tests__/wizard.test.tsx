@@ -103,6 +103,21 @@ vi.mock('@/server/actions/merchant-processors', () => ({
   addMerchantProcessorAction: vi.fn(async (name: string) => ({ ok: true as const, data: { id: 97, name } })),
 }))
 
+// K3 (DB1): the universal option lists - mocked with one prior custom so
+// list-backed questions have something to merge.
+vi.mock('@/server/actions/option-lists', () => ({
+  listOptionValuesBulkAction: vi.fn(async () => ({
+    ok: true as const,
+    data: {
+      referral_sources: [{ id: 50, listKey: 'referral_sources', name: 'Chamber of Commerce', meta: null, isActive: true }],
+    },
+  })),
+  addOptionValueAction: vi.fn(async (_key: string, name: string) => ({
+    ok: true as const,
+    data: { id: 98, listKey: _key, name, meta: null, isActive: true },
+  })),
+}))
+
 // J1 (C5/C6/C7): the contact pickers' server read - mocked with one
 // existing contact and one existing client.
 vi.mock('@/server/actions/contacts', () => ({
@@ -263,6 +278,9 @@ describe('custom "Other" option cards (I1)', () => {
     fireEvent.change(input, { target: { value: 'Series LLC taxed as a trust' } })
 
     fireEvent.click(screen.getByTestId('continue'))
+    // Continue persists the custom to its option list (a mocked microtask),
+    // then advances.
+    await act(async () => {})
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'dba-industry')
 
     // Autosave carried the canonical Other value plus the verbatim text.

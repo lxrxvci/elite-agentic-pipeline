@@ -138,10 +138,10 @@ describe("jason harness - standing rules awaiting their K-wave (the index)", () 
   //  - J9 clickables_have_pointer_cursor -> k1-harness.test.tsx (globals.css pin)
   //  - J10 no_internal_jargon_in_copy -> k1-harness.test.tsx (registry scan)
   //  - A7 continue_with_unadded_draft_prompts_save_or_discard -> k1-harness.test.tsx
-  // K3 - persistent-option engine
-  it.todo("J1: every_add_new_persists_globally");
-  it.todo("J2: custom_answer_never_stranded");
-  it.todo("J16: lists_admin_manageable");
+  // Flipped in K3:
+  //  - J1 every_add_new_persists_globally -> option-lists.test.ts + k3-option-lists.test.tsx
+  //  - J2 custom_answer_never_stranded -> option-lists.test.ts + k3-option-lists.test.tsx
+  //  - J16 lists_admin_manageable -> option-lists.test.ts + admin/__tests__/option-lists-admin.test.tsx
   // K4 - contacts & cards
   it.todo("J6: every_committed_item_editable");
   // K5 - scheduler

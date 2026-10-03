@@ -10,10 +10,12 @@ import { createIntake, getIntake, type IntakePatch } from "@/server/intake";
 import {
   answersFromExtraction,
   coerceExtraction,
+  EXTRACTION_LIST_KEYS,
   getIntakeExtractor,
   type ExtractionResult,
   type IntakeExtractor,
 } from "@/server/intake-extract";
+import { listOptionValues } from "@/server/option-lists";
 import { getStorageDriver } from "@/server/storage";
 import { sanitizeFileName } from "@/server/uploads";
 
@@ -168,12 +170,17 @@ export async function confirmExtractedIntake(
     throw new IntakeImportError("A legal name is required to create the intake.");
   }
 
-  // Re-validate every accepted field against the extraction vocabulary;
-  // anything that fails coercion is dropped, never written.
+  // Re-validate every accepted field against the extraction vocabulary
+  // (merged with the live option lists - K3); anything that fails coercion
+  // is dropped, never written.
+  const dynamicOptions: Partial<Record<string, readonly string[]>> = {};
+  for (const [specKey, listKey] of Object.entries(EXTRACTION_LIST_KEYS)) {
+    dynamicOptions[specKey] = (await listOptionValues(listKey)).map((v) => v.name);
+  }
   const recoerced = coerceExtraction({
     fields: input.fields.map((f) => ({ ...f, confidence: 1, evidence: "confirmed by reviewer" })),
     suggestedLegalName: input.legalName,
-  });
+  }, dynamicOptions);
 
   const answers = answersFromExtraction(recoerced.fields, input.legalName.trim());
   const patch: IntakePatch = buildPatch(answers);

@@ -583,7 +583,25 @@ function coerceValue(
  * Fields without a verbatim evidence quote are omitted (never guessed);
  * invalid values land in `rejected` with human-readable reasons.
  */
-export function coerceExtraction(raw: unknown): ExtractionResult {
+/**
+ * K3: spec keys whose enum options merge live option_list_values at extract
+ * time, so a list-added custom ('Chamber of Commerce') coerces cleanly
+ * instead of being rejected as off-vocabulary.
+ */
+export const EXTRACTION_LIST_KEYS: Record<string, string> = {
+  taxStructure: 'tax_structure_customs',
+  referralSource: 'referral_sources',
+  engagementType: 'engagement_types',
+  quickbooksStatus: 'accounting_software',
+  payrollFrequency: 'payroll_frequencies',
+  bookkeepingFrequency: 'bookkeeping_frequencies',
+  paymentMethods: 'payment_methods',
+}
+
+export function coerceExtraction(
+  raw: unknown,
+  dynamicOptions?: Partial<Record<string, readonly string[]>>,
+): ExtractionResult {
   const rejected: RejectedField[] = []
   const fields: ExtractedField[] = []
   const obj = asRecord(raw) ?? {}
@@ -618,7 +636,10 @@ export function coerceExtraction(raw: unknown): ExtractionResult {
       rejected.push({ key, reason: 'no evidence quote - omitted', value: o.value })
       continue
     }
-    const coerced = coerceValue(spec, o.value, rejected)
+    const mergedSpec = dynamicOptions?.[spec.key]
+      ? { ...spec, options: [...(spec.options ?? []), ...(dynamicOptions[spec.key] ?? [])] }
+      : spec
+    const coerced = coerceValue(mergedSpec, o.value, rejected)
     if (!coerced.ok) {
       rejected.push({ key, reason: coerced.reason, value: o.value })
       continue

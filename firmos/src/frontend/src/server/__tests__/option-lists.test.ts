@@ -88,3 +88,21 @@ describe.skipIf(!reachable)("option-lists engine", () => {
     expect(actions).toContain("option_value_deactivated");
   });
 });
+
+describe("extraction parity (K3)", () => {
+  it("extraction_vocab_matches_live_lists: a list-added custom coerces instead of rejecting", async () => {
+    const { coerceExtraction } = await import("@/server/intake-extract");
+    const raw = {
+      fields: [
+        { key: "referralSource", value: "Chamber of Commerce", confidence: 0.9, evidence: "met at the chamber" },
+      ],
+      suggestedLegalName: "Test Co",
+    };
+    // Off-vocabulary without the merge: rejected.
+    const without = coerceExtraction(raw);
+    expect(without.fields.find((f) => f.key === "referralSource")).toBeUndefined();
+    // With the live list merged: accepted.
+    const withLive = coerceExtraction(raw, { referralSource: ["Chamber of Commerce"] });
+    expect(withLive.fields.find((f) => f.key === "referralSource")?.value).toBe("Chamber of Commerce");
+  });
+});

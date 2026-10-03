@@ -88,3 +88,19 @@ export async function setOptionValueActiveAction(
     return fail(error);
   }
 }
+
+/** Bulk read for the wizard: one round trip for every list the intake shows. */
+export async function listOptionValuesBulkAction(
+  listKeys: string[],
+): Promise<ActionResult<Record<string, OptionValueRow[]>>> {
+  try {
+    await requireStaff();
+    const out: Record<string, OptionValueRow[]> = {};
+    for (const key of listKeys) {
+      out[key] = await listOptionValues(key);
+    }
+    return { ok: true, data: out };
+  } catch (error) {
+    return fail(error);
+  }
+}

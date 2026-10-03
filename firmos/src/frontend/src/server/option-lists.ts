@@ -109,7 +109,27 @@ export const OPTION_LISTS: Record<string, OptionListDef> = {
     key: "accounting_software",
     label: "Accounting software",
     noun: "software",
-    seeds: ["QuickBooks Online", "QuickBooks Desktop", "Xero", "Wave"],
+    // The QBO cards themselves stay static (they drive setup/tier logic);
+    // the list carries the alternatives.
+    seeds: ["Wave", "Xero"],
+  },
+  payroll_frequencies: {
+    key: "payroll_frequencies",
+    label: "Payroll frequencies",
+    noun: "frequency",
+    seeds: [],
+  },
+  bookkeeping_frequencies: {
+    key: "bookkeeping_frequencies",
+    label: "Bookkeeping frequencies",
+    noun: "frequency",
+    seeds: [],
+  },
+  engagement_types: {
+    key: "engagement_types",
+    label: "Engagement types",
+    noun: "engagement type",
+    seeds: [],
   },
 };
 
