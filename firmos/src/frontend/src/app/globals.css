@@ -317,3 +317,21 @@
   outline: 2px solid var(--firm-brand);
   outline-offset: 2px;
 }
+
+/* J9 harness (meeting 09_30 00:31:28): the pointer hand on ANYTHING
+   clickable - "anytime there's something that's clickable... have it to
+   where it changes the mouse type... the hand the pointer finger one."
+   Disabled and aria-disabled targets keep their not-allowed signal. */
+button:not(:disabled):not([aria-disabled='true']),
+[role='button']:not([aria-disabled='true']),
+[role='option'],
+[role='checkbox'],
+[role='switch'],
+[role='tab'],
+[role='menuitem'],
+a[href],
+select,
+summary,
+label:has(> input:not(:disabled)) {
+  cursor: pointer;
+}

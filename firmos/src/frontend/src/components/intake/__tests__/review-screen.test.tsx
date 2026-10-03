@@ -511,10 +511,33 @@ describe('ReviewScreen closeout rows (N2 + A45 + A41/E1-E3)', () => {
     expect(screen.getByText("Do they ever deposit anything that isn't business income?")).toBeInTheDocument()
     expect(screen.getByText('Do they ever pay for non-business things on business accounts?')).toBeInTheDocument()
     // The personal-card row (B18) still renders its own answer.
-    expect(screen.getByText('Do they put business expenses on a personal credit card?')).toBeInTheDocument()
+    expect(screen.getByText('Do they pay for business expenses outside the business?')).toBeInTheDocument()
     // J2 (E1-E3): the mandatory notes render on the yes rows.
     expect(screen.getByText('Yes · Owner covers a bill from his personal account some months')).toBeInTheDocument()
     expect(screen.getByText('Yes · The Amex picks up supplies')).toBeInTheDocument()
+  })
+
+  it('notes_render_on_review (K1, C9 - 09_30 00:25:18): the typed note itself shows, not a placeholder', () => {
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={{
+          legalName: 'Noted Co',
+          engagementType: 'bookkeeping',
+          internalNotes: 'Referred by Cascade Tax Group. Wants close by the 10th.',
+        }}
+        quote={null}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+      />,
+    )
+    expandSection('recurring')
+    expect(screen.getByText('Referred by Cascade Tax Group. Wants close by the 10th.')).toBeInTheDocument()
+    expect(screen.queryByText('Notes on file')).not.toBeInTheDocument()
   })
 
   it('hides the established-date row when the optional answer was skipped', () => {

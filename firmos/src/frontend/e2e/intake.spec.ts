@@ -17,9 +17,10 @@ async function expectQuestion(page: Page, id: string) {
   await expect(page.getByTestId('question-screen')).toHaveAttribute('data-question', id)
 }
 
-/** Pick an option card and wait for the auto-advance to land. */
+/** Pick an option card and Continue to the next screen (J4: nothing auto-advances). */
 async function pick(page: Page, testid: string, nextQuestion: string) {
   await page.getByTestId(testid).click()
+  await page.getByTestId('continue').click()
   await expectQuestion(page, nextQuestion)
 }
 
@@ -103,7 +104,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
 
   // ── Starting point: new client; the renamed start question (N2) ──
   await pick(page, 'option-no', 'bk-start')
-  await expect(page.getByText('When would you like your bookkeeping to start?')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'When would you like your bookkeeping to start?' })).toBeVisible()
   await page.getByLabel('Bookkeeping start date').pressSequentially('01012026')
   await expect(page.getByLabel('Bookkeeping start date')).toHaveValue('01/01/2026')
   // A45: the established date is the next card (optional date-text).
@@ -170,7 +171,8 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByTestId('behavior-note-save')).toBeDisabled()
   await page.getByTestId('behavior-note-input').fill('Owner covers a bill from his personal account some months')
   await page.getByTestId('behavior-note-save').click()
-  await expectQuestion(page, 'personal-on-business')
+  // J4: the note saves and the overlay closes; Continue moves to the next card.
+  await advance(page, 'personal-on-business')
   await pick(page, 'option-no', 'personal-card') // never personal spend on business accounts (A41)
   await pick(page, 'option-no', 'payroll') // no business spend on a personal card (B18)
   await pick(page, 'option-no', 'online-access') // no payroll (I3: access checklist next)
@@ -225,7 +227,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
   await expect(page.getByTestId('standard-account_reconciliations')).toHaveAttribute('data-checked', 'true')
   await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
-  await expect(page.getByTestId('later-badge-record_bills')).toHaveText('Added by your answers')
+  await expect(page.getByTestId('later-badge-record_bills')).toHaveText('Added from your answers')
   await expect(page.getByTestId('later-badge-1099_collection')).toHaveCount(0)
   await page.getByTestId('addon-invoicing').click()
   await advance(page, 'qbo-status')
@@ -320,15 +322,15 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByText('Mar 1, 2019')).toBeVisible()
   // A41: both money-behavior questions carry review rows.
   await page.getByTestId('section-toggle-income').click()
-  await expect(page.getByText("Do they ever deposit anything that isn't business income?")).toBeVisible()
-  await expect(page.getByText('Do they ever pay for non-business things on business accounts?')).toBeVisible()
+  await expect(page.getByTestId('review-screen').getByText("Do they ever deposit anything that isn't business income?")).toBeVisible()
+  await expect(page.getByTestId('review-screen').getByText('Do they ever pay for non-business things on business accounts?')).toBeVisible()
   // J2 (E1): the mandatory note shows on the yes row.
   await expect(
     page.getByText('Yes · Owner covers a bill from his personal account some months'),
   ).toBeVisible()
   // J2 (E6): the bills split carries both rows, locations included.
   await page.getByTestId('section-toggle-reporting').click()
-  await expect(page.getByText('Should we record their bills?')).toBeVisible()
+  await expect(page.getByTestId('review-screen').getByText('Should we record their bills?')).toBeVisible()
   await expect(page.getByText('Yes · pays at: Vendor websites')).toBeVisible()
 
   // V6/V7 (01:04:00-01:06:58): the estimate buckets recurring services by
@@ -383,7 +385,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // The review updated in place; the wizard behind never moved.
   await expect(page.getByTestId('question-screen')).toHaveCount(0)
   await page.getByTestId('section-toggle-recurring').click()
-  await expect(page.getByText('Notes on file')).toBeVisible()
+  await expect(page.getByTestId('review-screen').getByText('Wants the close by the 10th.')).toBeVisible()
 
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
@@ -439,7 +441,8 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
 
   // Tax structure: something completely far-fetched via "Other - type it".
   await advance(page, 'tax-structure') // skip EIN
-  await pick(page, 'option-Other', 'tax-structure') // stays put: no auto-advance on Other
+  await page.getByTestId('option-Other').click() // stays put: the custom input opens in place
+  await expectQuestion(page, 'tax-structure')
   await expect(page.getByTestId('custom-input-tax-structure')).toBeVisible()
   await page.getByTestId('custom-input-tax-structure').fill('Series LLC taxed as a trust')
   await advance(page, 'dba-industry')
@@ -599,7 +602,7 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await pick(page, 'option-no', 'services')
   // I4: standards pre-selected, no add-ons for this engagement.
   await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
-  await expect(page.getByTestId('later-badge-payroll')).toHaveText('Added by your answers')
+  await expect(page.getByTestId('later-badge-payroll')).toHaveText('Added from your answers')
   await advance(page, 'qbo-status')
   await pick(page, 'option-existing', 'qbo-users')
   await page.getByLabel('QuickBooks users').fill('2')

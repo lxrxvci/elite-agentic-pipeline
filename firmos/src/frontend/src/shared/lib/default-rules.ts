@@ -60,7 +60,10 @@ export const DEFAULT_RULE_KEYS: readonly string[] = DEFAULT_RECURRING_RULES.map(
  */
 export const PERSONAL_CARD_REMINDER_TITLE = "Ask client for personal-card business-expense breakdown";
 export const NON_BUSINESS_DEPOSITS_REVIEW_TITLE = "Review non-business deposits - record as owner contribution";
-export const OWNER_DRAWS_CONFIRMATION_TITLE = "Confirm owner draws with the client";
+// K1 (E5, 09_30 00:54:51): the task matches the card's wording - "these
+// non-business related reminder things should just match what we have on
+// the previous card" (was "Confirm owner draws with the client").
+export const OWNER_DRAWS_CONFIRMATION_TITLE = "Review non-business expenses on business accounts with the client";
 export const MERCHANT_RECONCILIATION_TITLE = "Merchant reconciliation";
 export const PRELIMINARY_REPORTS_NOTE =
   "Send the package even when client questions are still open, marked preliminary (intake choice).";

@@ -5,7 +5,7 @@ import type { Quote } from '@firmos/domain'
 import { flattenScreens, visibleChapters, type WizardAnswers } from '../registry'
 
 /**
- * Wizard mechanics: autosave debounce, option auto-advance timing, the live
+ * Wizard mechanics: autosave debounce, the J4 no-auto-advance rule, the live
  * quote rendering server numbers only, review edit-jump, and the duplicate
  * warning flow. Server actions are mocked; the registry is the real thing.
  */
@@ -141,7 +141,7 @@ vi.mock('@/server/actions/contacts', () => ({
   })),
 }))
 
-import { IntakeWizard, AUTO_ADVANCE_MS, NOTE_DWELL_MS, SAVE_DEBOUNCE_MS, QUOTE_DEBOUNCE_MS } from '../wizard'
+import { IntakeWizard, SAVE_DEBOUNCE_MS, QUOTE_DEBOUNCE_MS } from '../wizard'
 
 const noop = () => {}
 
@@ -216,8 +216,8 @@ describe('autosave', () => {
   })
 })
 
-describe('option auto-advance', () => {
-  it('advances shortly after an option pick, not instantly', async () => {
+describe('J4 harness: no_auto_advance_on_any_card (meeting 09_30)', () => {
+  it('a pick applies in place and ONLY Continue moves forward', async () => {
     vi.useFakeTimers()
     renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
     // Resumes at tax-structure (legal name and main contact are answered).
@@ -226,30 +226,37 @@ describe('option auto-advance', () => {
     fireEvent.click(screen.getByTestId('option-LLC'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
 
-    // I2: an LLC pick opens the tax-classification follow-up first.
+    // Not now, not later: no timer ever moves the walk ("we can just click
+    // the continue" - 09_30 00:12:36).
     await act(async () => {
-      vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
+      vi.advanceTimersByTime(10_000)
     })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
+
+    // I2: an LLC pick opens the tax-classification follow-up on Continue.
+    fireEvent.click(screen.getByTestId('continue'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'llc-subclass')
 
     fireEvent.click(screen.getByTestId('option-llc_sml'))
     await act(async () => {
-      vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
+      vi.advanceTimersByTime(10_000)
     })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'llc-subclass')
+    fireEvent.click(screen.getByTestId('continue'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'dba-industry')
   })
 })
 
 describe('custom "Other" option cards (I1)', () => {
-  it('picking Other opens the inline input instead of auto-advancing; Continue moves on', async () => {
+  it('picking Other opens the inline input and waits; Continue moves on', async () => {
     vi.useFakeTimers()
     renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
 
     fireEvent.click(screen.getByTestId('option-Other'))
-    // The typed answer replaces the auto-advance: still on tax-structure.
+    // The typed answer replaces any advance: still on tax-structure.
     await act(async () => {
-      vi.advanceTimersByTime(AUTO_ADVANCE_MS + NOTE_DWELL_MS + 500)
+      vi.advanceTimersByTime(10_000)
     })
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
     const input = screen.getByTestId('custom-input-tax-structure')
@@ -288,9 +295,11 @@ describe('custom "Other" option cards (I1)', () => {
 
     fireEvent.click(screen.getByTestId('option-LLC'))
     await act(async () => {
-      vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
+      vi.advanceTimersByTime(1_000)
     })
-    // I2: the LLC subclass follow-up comes next; the custom text is cleared.
+    // I2: the LLC subclass follow-up comes next (via Continue); the custom
+    // text is cleared.
+    fireEvent.click(screen.getByTestId('continue'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'llc-subclass')
     await act(async () => {
       vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
@@ -521,7 +530,8 @@ describe('review screen', () => {
     fireEvent.click(screen.getByTestId('submit-intake'))
 
     await waitFor(() => expect(screen.getByTestId('duplicate-warning')).toBeInTheDocument())
-    expect(screen.getByText(/tax ID \(EIN\)/)).toBeInTheDocument()
+    // Scoped: the chapter rail's hover menu also renders question titles.
+    expect(within(screen.getByTestId('duplicate-warning')).getByText(/tax ID \(EIN\)/)).toBeInTheDocument()
     expect(submitIntakeForReview).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByTestId('submit-anyway'))
@@ -749,16 +759,16 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
     expect(screen.getByTestId('behavior-note-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
 
-    // Saving the note applies the yes + note and moves on (the advance rides
-    // the standard auto-advance timer, so the save flush sees the applied yes).
+    // Saving the note applies the yes + note and closes the overlay; the
+    // walk still moves only on Continue (J4 harness).
     fireEvent.change(screen.getByTestId('behavior-note-input'), {
       target: { value: 'Owner covers a bill from his personal account some months' },
     })
     fireEvent.click(screen.getByTestId('behavior-note-save'))
     expect(screen.queryByTestId('behavior-note-dialog')).toBeNull()
-    await waitFor(() =>
-      expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'personal-on-business'),
-    )
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'personal-on-business')
 
     // The note persists into form_data.behaviorNotes with the answer.
     await waitFor(() => expect(saveIntake).toHaveBeenCalled())
@@ -780,11 +790,13 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
     expect(screen.getByTestId('option-yes')).not.toHaveAttribute('data-selected', 'true')
 
-    // A no advances straight away and clears any prior note.
+    // A no applies in place and clears any prior note; Continue advances.
     fireEvent.click(screen.getByTestId('option-no'))
     await act(async () => {
-      vi.advanceTimersByTime(AUTO_ADVANCE_MS + 50)
+      vi.advanceTimersByTime(1_000)
     })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
+    fireEvent.click(screen.getByTestId('continue'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'personal-on-business')
     await act(async () => {
       vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
@@ -901,5 +913,32 @@ describe('N3 chapter rail navigation (meeting #3)', () => {
     // A rail jump from review lands on the chapter's first question.
     fireEvent.click(screen.getByTestId('chapter-jump-reporting'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'bk-frequency')
+  })
+})
+
+describe('K1 rail hover menu (A4/A2 - 09_30 00:29:54, 00:01:02)', () => {
+  it('hover_reveals_card_title: reached chapters list their slides for a direct jump', () => {
+    const balanceAt = flattenScreens(completeAnswers).findIndex(
+      (s) => s.kind === 'question' && s.chapterId === 'balance',
+    )
+    renderWizard(completeAnswers, balanceAt)
+
+    // Reached chapters carry a hover menu naming the chapter and every slide
+    // in it ("Every card should be an option if there's a name for the card").
+    const entityMenu = screen.getByTestId('chapter-menu-entity')
+    expect(entityMenu).toHaveTextContent('Entity & ownership')
+    expect(within(entityMenu).getByTestId('chapter-menu-item-entity-tax-structure')).toHaveTextContent(
+      'How is the business taxed?',
+    )
+    expect(within(entityMenu).getByTestId('chapter-menu-item-entity-owners')).toHaveTextContent(
+      'Who owns the business?',
+    )
+    // Unreached chapters have no menu.
+    expect(screen.queryByTestId('chapter-menu-income')).toBeNull()
+
+    // Clicking a slide jumps straight to it - not just the chapter's first.
+    fireEvent.click(within(entityMenu).getByTestId('chapter-menu-item-entity-owners'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'owners')
+    expect(screen.getByTestId('chapter-jump-entity')).toHaveAttribute('aria-current', 'step')
   })
 })

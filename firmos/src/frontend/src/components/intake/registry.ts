@@ -102,6 +102,10 @@ export interface FieldDef {
    *  predicate over the current form value holds (the missed-filings yes/no
    *  gates the last-filed date). */
   requiredIf?: (values: Record<string, unknown>) => boolean
+  /** K1 (C11): conditionally VISIBLE - the field renders only when this
+   *  holds; hidden fields are skipped by validation too (the last-filed
+   *  date hides while the missed-filings toggle is off). */
+  visibleIf?: (values: Record<string, unknown>) => boolean
   /** number kind only */
   min?: number
   max?: number
@@ -265,7 +269,7 @@ export interface QuestionDef {
    *  of advancing; the note lands in form_data.behaviorNotes[id]. */
   noteOnYes?: NoteOnYesDef
   /** J2 (E6): `yes-no-list` questions - the yes/no pick plus the string-list
-   *  editor shown when yes (never auto-advances; Continue commits). */
+   *  editor shown when yes; Continue commits). */
   yesNoList?: YesNoListDef
   /** Branch predicate; question renders only when this returns true. */
   when?: (a: WizardAnswers) => boolean
@@ -436,7 +440,11 @@ const pctText = (n: number): string => String(Math.round(n * 100) / 100)
 /** Hard guard: over 100% blocks Continue in plain language; exactly 100 is fine. */
 export function ownershipSumError(items: Array<Record<string, unknown>>): string | null {
   const sum = ownershipSum(items)
-  return sum > 100 ? `You're at ${pctText(sum)}% — ownership can't exceed 100%.` : null
+  // K1 (09_30 00:04:41): say HOW MUCH to take off - "you must enter a
+  // number that's equal to or less than [the remaining]".
+  return sum > 100
+    ? `Ownership can't go over 100% — you're at ${pctText(sum)}%. Lower the percentages by ${pctText(sum - 100)}% total to continue.`
+    : null
 }
 
 /** Soft note: under 100% is allowed, with a nudge once any % is entered. */
@@ -2168,13 +2176,13 @@ export const CHAPTERS: ChapterDef[] = [
         // seeded task's description.
         id: 'deposits-non-business',
         title: 'Do they ever deposit anything that isn\'t business income?',
-        help: 'Personal money put into the business to cover something. Yes means we review those deposits every month and record them as owner contributions - conversion seeds that task automatically.',
+        help: 'Personal money put into the business to cover something. Yes means those deposits get a monthly review, recorded as owner contributions.',
         type: 'select',
         required: true,
         ...yesNo('depositsNonBusiness'),
         noteOnYes: {
           heading: 'What deposits are coming through?',
-          body: 'This changes how we track these deposits - tell us what\'s coming through. The note rides the monthly review task this answer seeds.',
+          body: 'This changes how we track these deposits - tell us what\'s coming through. The note shows on the monthly review task.',
           placeholder: 'Owner covers a bill from his personal account some months; rent refunds land here…',
         },
         summarize: (a) =>
@@ -2188,13 +2196,13 @@ export const CHAPTERS: ChapterDef[] = [
         // J2 (E2, 00:26:30-00:27:56): same mandatory note overlay on yes.
         id: 'personal-on-business',
         title: 'Do they ever pay for non-business things on business accounts?',
-        help: 'Groceries, personal subscriptions, a family dinner on the business card. Yes means we confirm owner draws with the client every month - conversion seeds that task automatically.',
+        help: 'Groceries, personal subscriptions, a family dinner on the business card. Yes means we confirm those with the client every month.',
         type: 'select',
         required: true,
         ...yesNo('personalOnBusiness'),
         noteOnYes: {
           heading: 'What lands on the business accounts?',
-          body: 'This changes how we track that spend - tell us what comes through. The note rides the monthly owner-draws confirmation this answer seeds.',
+          body: 'This changes how we track that spend - tell us what comes through. The note shows on the monthly confirmation task.',
           placeholder: 'Groceries and the family Netflix hit the business debit card…',
         },
         summarize: (a) =>
@@ -2206,16 +2214,19 @@ export const CHAPTERS: ChapterDef[] = [
         // B18 (01:04:29): a "sometimes" is a yes - the monthly chase task
         // seeds at conversion either way.
         // J2 (E3, 00:27:56): same mandatory note overlay on yes.
+        // K1 (C8, 09_30 00:27:14): reworded to cover every out-of-business
+        // payment path - "sometimes it could be a personal bank account.
+        // It could be cash."
         id: 'personal-card',
-        title: 'Do they put business expenses on a personal credit card?',
-        help: 'Yes means we ask for the breakdown every month - conversion seeds that reminder task automatically.',
+        title: 'Do they pay for business expenses outside the business?',
+        help: 'Personal credit cards, cash, or a personal bank account picking up business costs. Yes means we ask for the breakdown every month.',
         type: 'select',
         required: true,
         ...yesNo('personalCardForBusiness', { yes: 'Yes, sometimes or often', no: 'No' }),
         noteOnYes: {
-          heading: 'Which personal card, and what lands on it?',
-          body: 'This changes how we track these - tell us what\'s coming through. The note rides the monthly breakdown reminder this answer seeds.',
-          placeholder: 'The owner\'s Amex picks up supplies and job-site lunches…',
+          heading: 'What are they paying with, and what lands on it?',
+          body: 'This changes how we track these - tell us what\'s coming through. The note shows on the monthly breakdown reminder task.',
+          placeholder: 'The owner\'s Amex picks up supplies; cash covers job-site lunches…',
         },
         summarize: (a) =>
           a.personalCardForBusiness === true
@@ -2560,6 +2571,8 @@ export const CHAPTERS: ChapterDef[] = [
             {
               key: 'lastFiledDate', label: 'Most recent filing', kind: 'date-text', half: true, placeholder: '06/30/2026',
               requiredIf: (v) => v.missedFilings === true,
+              // K1 (C11): hidden while the toggle is off - no orphan input.
+              visibleIf: (v) => v.missedFilings === true,
             },
           ],
           itemValid: (i) => !!str(i.name) && !!str(i.frequency),
@@ -2769,7 +2782,14 @@ export const CHAPTERS: ChapterDef[] = [
         fields: [{ key: 'internalNotes', label: 'Internal notes (optional)', kind: 'textarea', placeholder: 'Referred by Cascade Tax Group. Wants close by the 10th.' }],
         get: (a) => a.internalNotes,
         apply: (_a, v) => v as Partial<WizardAnswers>,
-        summarize: (a) => (str(a.internalNotes) ? 'Notes on file' : null),
+        // K1 (C9, 09_30 00:25:18): the note itself renders on review -
+        // "the notes there... Where's the note?" (was a bare "Notes on file").
+        summarize: (a) => {
+          const text = str(a.internalNotes)
+          if (!text) return null
+          const firstLine = text.split('\n')[0].trim()
+          return firstLine.length > 100 ? `${firstLine.slice(0, 100)}…` : firstLine
+        },
       },
       {
         id: 'rules',

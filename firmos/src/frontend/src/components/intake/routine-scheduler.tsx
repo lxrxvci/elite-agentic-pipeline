@@ -10,9 +10,10 @@ import {
   useSensors,
   type DragEndEvent,
   type DragStartEvent,
+  type Modifier,
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+import { CSS, getEventCoordinates } from '@dnd-kit/utilities'
 import { ArrowDown, ArrowRight, ArrowUp, ChevronDown, GripVertical, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -397,7 +398,10 @@ function RoutineTaskCard({
         </button>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-foreground">{task.title}</p>
-          <p className="mt-0.5 truncate text-xs" data-testid={`schedule-summary-${task.key}`}>
+          {/* K1 (E7, 09_30 00:57:44): full descriptions - "all of those are
+              cut off and truncated... we need to be able to see what those
+              are" for the team AND onboarding clients. */}
+          <p className="mt-0.5 text-xs" data-testid={`schedule-summary-${task.key}`}>
             <span className="font-medium text-firm-brand-strong">
               {entry.keepSourceSchedule
                 ? `${task.detail ?? ROUTINE_BUCKET_LABELS[entry.bucket]} cadence`
@@ -489,6 +493,34 @@ function RoutineTaskCard({
 
 // ── The screen ────────────────────────────────────────────────────────────
 
+/**
+ * K1 (E2, 09_30 00:51:38): the drag overlay tracks the pointer grab point -
+ * "when you click and drag to drop it, the category drops significantly far
+ * from the right side of the mouse pointer." dnd-kit anchors DragOverlay to
+ * the dragged CARD's rect; because these cards are full-width, the clone
+ * floated wide of the cursor. This modifier shifts the overlay so its
+ * top-left sits a small margin up-left of the cursor (where the handle is),
+ * and the overlay content is width-locked to the source card, so the card
+ * visually follows the pointer 1:1 no matter where it was grabbed.
+ */
+export const OVERLAY_CURSOR_MARGIN_X = 20
+export const OVERLAY_CURSOR_MARGIN_Y = 12
+
+export const snapOverlayToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
+  if (!draggingNodeRect || !activatorEvent) return transform
+  const start = getEventCoordinates(activatorEvent)
+  if (!start) return transform
+  const grabOffsetX = start.x - draggingNodeRect.left
+  const grabOffsetY = start.y - draggingNodeRect.top
+  return {
+    ...transform,
+    x: transform.x + grabOffsetX - OVERLAY_CURSOR_MARGIN_X,
+    y: transform.y + grabOffsetY - OVERLAY_CURSOR_MARGIN_Y,
+    scaleX: 1,
+    scaleY: 1,
+  }
+}
+
 export function RoutineSchedulerScreen({
   q,
   answers,
@@ -505,6 +537,7 @@ export function RoutineSchedulerScreen({
   const entries = resolveRoutineEntries(tasks, answers.routineSchedule)
   const order = routineBucketOrder(tasks, entries)
   const [activeKey, setActiveKey] = useState<string | null>(null)
+  const [overlayWidth, setOverlayWidth] = useState<number | null>(null)
   const [openControls, setOpenControls] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
 
@@ -535,10 +568,14 @@ export function RoutineSchedulerScreen({
     })
   }
 
-  const onDragStart = (e: DragStartEvent) => setActiveKey(String(e.active.id))
+  const onDragStart = (e: DragStartEvent) => {
+    setActiveKey(String(e.active.id))
+    setOverlayWidth(e.active.rect.current.initial?.width ?? null)
+  }
 
   const onDragEnd = (e: DragEndEvent) => {
     setActiveKey(null)
+    setOverlayWidth(null)
     const key = String(e.active.id)
     const over = e.over
     if (!over || !entries[key]) return
@@ -577,7 +614,7 @@ export function RoutineSchedulerScreen({
 
   return (
     <div className="space-y-4" data-testid="routine-scheduler">
-      <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+      <DndContext sensors={sensors} modifiers={[snapOverlayToCursor]} onDragStart={onDragStart} onDragEnd={onDragEnd}>
         {/* Buckets stack full-width: the per-card controls need the room. */}
         <div className="space-y-3">
           {ROUTINE_BUCKETS.map((bucket) => (
@@ -598,8 +635,22 @@ export function RoutineSchedulerScreen({
         </div>
         <DragOverlay>
           {activeTask ? (
-            <div className="rounded-xl border border-firm-brand bg-card px-4 py-3 shadow-pop">
-              <p className="text-sm font-medium text-foreground">{activeTask.title}</p>
+            /* K1 (E2): width-locked to the source card so the clone reads as
+               the same card, positioned by snapOverlayToCursor. */
+            <div
+              className="rounded-xl border border-firm-brand bg-card px-3.5 py-3 shadow-pop"
+              style={overlayWidth ? { width: overlayWidth } : undefined}
+              data-testid="routine-drag-overlay"
+            >
+              <div className="flex items-start gap-2">
+                <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">{activeTask.title}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {ROUTINE_BUCKET_LABELS[entries[activeTask.key]?.bucket ?? 'monthly']}
+                  </p>
+                </div>
+              </div>
             </div>
           ) : null}
         </DragOverlay>

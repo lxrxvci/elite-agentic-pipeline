@@ -156,7 +156,7 @@ describe('"Other - type it" on carded selects (I1, 00:15:53)', () => {
     const a = answersNow()
     expect(a.engagementType).toBe('Other')
     expect(a.customAnswers).toEqual({ engagement: 'Fractional CFO retainer' })
-    // A Continue button appears since auto-advance is suppressed on Other.
+    // Continue appears alongside the open custom input.
     expect(screen.getByTestId('continue')).toBeInTheDocument()
   })
 
@@ -256,9 +256,13 @@ describe('owner-count guards on the owners screen (I2, 00:26:10)', () => {
     expect(onAdvance).not.toHaveBeenCalled()
     expect(screen.getByRole('alert')).toHaveTextContent('A partnership needs at least 2 owners.')
 
-    // Add the second owner and Continue sails through.
+    // Add the second owner and Continue sails through. K1: the typed-but-
+    // unadded draft asks first (the unsaved-work guardrail) - "Save and
+    // continue" commits it.
     fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Sal Vega' } })
     fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('unsaved-draft-save'))
     expect(onAdvance).toHaveBeenCalled()
     expect(answersNow().owners).toHaveLength(2)
   })
@@ -300,7 +304,7 @@ describe('corporate payroll card (I2, 00:48:07)', () => {
     expect(onAdvance).toHaveBeenCalled()
   })
 
-  it('an unanswered select keeps the auto-advance-only flow (no Continue)', () => {
+  it('an unanswered select shows no Continue until a pick', () => {
     render(<Harness q={findQuestion('income', 'personal-card')!} initial={{}} />)
     expect(screen.queryByTestId('continue')).toBeNull()
   })
@@ -388,9 +392,9 @@ describe('I4 services screen (plan §1 screen 5, §3C)', () => {
     }
     // N1: the section names the answer-qualified scope; the payroll and bill
     // answers already qualified those two rows, the rest stay unbadged.
-    expect(later).toHaveTextContent('Qualified by your answers')
-    expect(screen.getByTestId('later-badge-payroll')).toHaveTextContent('Added by your answers')
-    expect(screen.getByTestId('later-badge-record_bills')).toHaveTextContent('Added by your answers')
+    expect(later).toHaveTextContent('From your answers')
+    expect(screen.getByTestId('later-badge-payroll')).toHaveTextContent('Added from your answers')
+    expect(screen.getByTestId('later-badge-record_bills')).toHaveTextContent('Added from your answers')
     expect(screen.queryByTestId('later-badge-1099_collection')).toBeNull()
     expect(screen.queryByTestId('later-badge-specialty_reports')).toBeNull()
     expect(screen.queryByTestId('later-badge-merchant_account_reconciliation')).toBeNull()
@@ -898,7 +902,7 @@ describe('ownership_sum_never_exceeds_100 - UI half (J1, C3)', () => {
     )
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent("You're at 105% — ownership can't exceed 100%")
+    expect(screen.getByRole('alert')).toHaveTextContent("Lower the percentages by 5% total to continue")
   })
 
   it('under 100% shows the soft note and never blocks', () => {
@@ -1044,7 +1048,7 @@ describe('J2 pay-bills screen (E6)', () => {
   it('yes reveals the addable locations list; Continue commits; no clears the list', () => {
     const onAdvance = vi.fn()
     render(<Harness q={payBills} initial={{ recordBills: true }} onAdvance={onAdvance} />)
-    // No auto-advance affordance: no Continue until a pick.
+    // No Continue until a pick.
     expect(screen.queryByTestId('continue')).toBeNull()
     expect(screen.queryByTestId('yes-no-list-editor')).toBeNull()
 

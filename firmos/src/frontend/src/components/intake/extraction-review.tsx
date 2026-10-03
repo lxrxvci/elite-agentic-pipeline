@@ -200,10 +200,10 @@ export function ExtractionReview({
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-status-overdue" aria-hidden />
           <div>
             <h2 className="font-display text-lg font-semibold text-foreground">
-              Extraction {status === 'failed' ? 'failed' : 'did not finish'}
+              The import {status === 'failed' ? 'failed' : 'did not finish'}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              {errorMessage ?? 'The transcript was saved but no extraction ran on it.'}
+              {errorMessage ?? 'The call notes were saved, but nothing could be pulled from them.'}
             </p>
             <div className="mt-4 flex items-center gap-3">
               <Button
@@ -217,7 +217,7 @@ export function ExtractionReview({
                 disabled={busy}
                 data-testid="retry-extraction"
               >
-                {busy ? 'Retrying…' : 'Retry extraction'}
+                {busy ? 'Retrying…' : 'Retry the import'}
               </Button>
               <Button asChild variant="outline">
                 <Link href="/intake">Back to intakes</Link>
@@ -374,7 +374,7 @@ export function ExtractionReview({
                         ) : (
                           <ChevronRight className="h-3 w-3" aria-hidden />
                         )}
-                        Evidence
+                        From the notes
                       </button>
                       {state?.showEvidence && (
                         <blockquote

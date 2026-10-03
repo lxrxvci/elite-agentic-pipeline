@@ -50,7 +50,7 @@ export function NewIntakeButton() {
         <DialogHeader>
           <DialogTitle>Start a new intake</DialogTitle>
           <DialogDescription>
-            The wizard saves every answer as you go, so you can always pick it back up.
+            Every answer saves as you go, so you can always pick it back up.
           </DialogDescription>
         </DialogHeader>
         <form

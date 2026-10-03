@@ -650,7 +650,7 @@ describe('A41 money-behavior cards', () => {
     expect(personal.summarize({ ...base, personalOnBusiness: true })).toBe('Yes')
     // The help copy names what a yes seeds at conversion.
     expect(String(deposits.help)).toContain('owner contribution')
-    expect(String(personal.help)).toContain('owner draws')
+    expect(String(personal.help)).toContain('confirm those with the client')
   })
 
   it('both keys ride form_data through the autosave patch', () => {
@@ -1497,7 +1497,7 @@ describe('ownership_sum_never_exceeds_100 (J1, C3 - 00:07:40)', () => {
       { name: 'Wren', ownershipPercent: 60 },
       { name: 'Sal', ownershipPercent: 45 },
     ])
-    expect(err).toBe("You're at 105% — ownership can't exceed 100%.")
+    expect(err).toBe("Ownership can't go over 100% — you're at 105%. Lower the percentages by 5% total to continue.")
   })
 
   it('exactly 100% is fine; under 100% is allowed', () => {

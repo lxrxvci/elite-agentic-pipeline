@@ -102,21 +102,23 @@ export function ReportUploadDropzone({
         }}
         disabled={disabled || uploading}
         className={cn(
-          'flex w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-5 text-center transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-7 text-center transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          // V15 (M2 D16): a big target with bright-green guard rails on
+          // drag-over - never wonder whether the drop will land.
           dragging
-            ? 'border-firm-action bg-firm-action-soft text-firm-action'
+            ? 'border-firm-action bg-firm-action-soft text-firm-action ring-2 ring-firm-action/50 ring-offset-2'
             : 'border-border hover:border-firm-action/60 hover:bg-firm-action-soft/40',
           (disabled || uploading) && 'cursor-not-allowed opacity-70',
         )}
       >
         {uploading ? (
           <>
-            <Loader2 className="h-4 w-4 animate-spin text-firm-action" aria-hidden />
+            <Loader2 className="h-6 w-6 animate-spin text-firm-action" aria-hidden />
             <span className="text-sm font-medium text-foreground">Uploading…</span>
           </>
         ) : uploadedFileName != null ? (
           <>
-            <FileUp className="h-4 w-4 text-muted-foreground" aria-hidden />
+            <FileUp className="h-6 w-6 text-muted-foreground" aria-hidden />
             <span className="text-sm font-medium text-foreground">
               Drop a corrected file, or click to replace
             </span>
@@ -126,7 +128,7 @@ export function ReportUploadDropzone({
           </>
         ) : (
           <>
-            <UploadCloud className="h-4 w-4 text-muted-foreground" aria-hidden />
+            <UploadCloud className="h-6 w-6 text-muted-foreground" aria-hidden />
             <span className="text-sm font-medium text-foreground">
               Drop the {periodText} report here, or click to browse
             </span>

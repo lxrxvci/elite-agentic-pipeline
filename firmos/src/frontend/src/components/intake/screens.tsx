@@ -4,6 +4,14 @@ import { useState } from 'react'
 import { ArrowRight, Check, Info, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import type { ContactLookupResults } from '@/server/contact-lookup'
 import type { IntakeAccountInput } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
@@ -29,10 +37,12 @@ import {
 /**
  * Question renderers for the conversational intake wizard. One question per
  * screen; each type knows how to collect its value and calls back into the
- * wizard (which owns auto-advance timing, autosave, and the branch walk).
- * J1: the contact type-ahead (ContactPicker) sits on the contacts/CPA/
- * referral questions, and the payroll-provider / merchant-processor fields
- * read their database lists - all data arrives via props from the wizard.
+ * wizard (which owns autosave and the branch walk). J4 harness (meeting
+ * 09_30): nothing auto-advances - every screen commits via its Continue
+ * button. J1: the contact type-ahead (ContactPicker) sits on the
+ * contacts/CPA/referral questions, and the payroll-provider /
+ * merchant-processor fields read their database lists - all data arrives
+ * via props from the wizard.
  */
 
 // ── The hero card chrome ──────────────────────────────────────────────────
@@ -303,9 +313,9 @@ export function ServicesScreen({
       </section>
 
       {grouping.laterAddons.length > 0 && (
-        <section data-testid="services-later-addons" aria-label="Qualified by your answers">
+        <section data-testid="services-later-addons" aria-label="From your answers">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Qualified by your answers
+            From your answers
           </h2>
           <ul className="mt-2 divide-y divide-border rounded-xl border border-dashed border-border bg-muted/40 px-4">
             {grouping.laterAddons.map((o) => {
@@ -319,7 +329,7 @@ export function ServicesScreen({
                         className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground"
                         data-testid={`later-badge-${o.value}`}
                       >
-                        Added by your answers
+                        Added from your answers
                       </span>
                     )}
                     {o.sub && <span className="text-[11px] text-muted-foreground">{o.sub}</span>}
@@ -592,7 +602,9 @@ function FieldGrid({
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      {fields.map((f) => (
+      {fields
+        .filter((f) => !f.visibleIf || f.visibleIf(value))
+        .map((f) => (
         <div key={f.key} className={cn(f.half || f.kind === 'checkbox' ? '' : 'sm:col-span-2')}>
           {f.kind !== 'checkbox' && (
             <label className="mb-1 block text-xs font-medium text-muted-foreground">{f.label}</label>
@@ -613,6 +625,8 @@ function FieldGrid({
 
 function validateFields(fields: FieldDef[], value: Record<string, unknown>): string | null {
   for (const f of fields) {
+    // K1 (C11): a hidden field can never block.
+    if (f.visibleIf && !f.visibleIf(value)) continue
     const v = value[f.key]
     const empty = v == null || String(v).trim() === ''
     // J2 (R6): a conditionally required field (requiredIf) must be filled
@@ -672,6 +686,10 @@ export function RepeatableScreen({
   const rep = q.repeatable!
   const [draft, setDraft] = useState<Record<string, unknown>>({})
   const [error, setError] = useState<string | null>(null)
+  // K1 (09_30 00:38:21): Continue with a filled-but-unadded draft asks
+  // "save this before proceeding?" instead of silently committing it (the
+  // 00:23:52 processor bug) or silently dropping it.
+  const [confirmDraftSave, setConfirmDraftSave] = useState(false)
 
   const draftValid = rep.itemValid(draft)
   const draftTouched = Object.values(draft).some((v) => v != null && v !== '')
@@ -691,18 +709,7 @@ export function RepeatableScreen({
     setDraft({})
   }
 
-  const finish = () => {
-    // A capped list can't grow - the draft form is hidden then, so the draft
-    // only commits while under the cap.
-    let next = items
-    if (draftTouched && !capped) {
-      const err = validateFields(rep.itemFields, draft)
-      if (err || !draftValid) {
-        setError(err ?? 'A little more detail first, or clear the form to skip.')
-        return
-      }
-      next = [...items, draft]
-    }
+  const proceed = (next: Array<Record<string, unknown>>) => {
     if (next.length === 0 && q.required) {
       setError('Add at least one, or go back.')
       return
@@ -716,6 +723,28 @@ export function RepeatableScreen({
     setError(null)
     onCommit(next)
     onAdvance()
+  }
+
+  const finish = () => {
+    // A capped list can't grow - the draft form is hidden then, so a draft
+    // can only be pending while under the cap.
+    if (draftTouched && !capped) {
+      const err = validateFields(rep.itemFields, draft)
+      if (err || !draftValid) {
+        setError(err ?? 'A little more detail first, or clear the form to skip.')
+        return
+      }
+      setError(null)
+      setConfirmDraftSave(true)
+      return
+    }
+    proceed(items)
+  }
+
+  const finishWithDraft = (saveDraft: boolean) => {
+    setConfirmDraftSave(false)
+    proceed(saveDraft ? [...items, draft] : items)
+    if (saveDraft) setDraft({})
   }
 
   return (
@@ -848,6 +877,46 @@ export function RepeatableScreen({
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
       </div>
+
+      {/* K1 (09_30 00:38:21): the unsaved-work guardrail - "Do you want to
+          save this contact before moving to the next page?" Never auto-add,
+          never silently drop. */}
+      <Dialog open={confirmDraftSave} onOpenChange={setConfirmDraftSave}>
+        <DialogContent data-testid="unsaved-draft-dialog">
+          <DialogHeader>
+            <DialogTitle>Save this before continuing?</DialogTitle>
+            <DialogDescription>
+              You started adding {rep.summarize(draft) || 'an item'} but never clicked &quot;{rep.addLabel}&quot;.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="action"
+              onClick={() => finishWithDraft(true)}
+              data-testid="unsaved-draft-save"
+            >
+              Save and continue
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => finishWithDraft(false)}
+              data-testid="unsaved-draft-discard"
+            >
+              Don&apos;t save
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setConfirmDraftSave(false)}
+              data-testid="unsaved-draft-back"
+            >
+              Go back
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -998,8 +1067,8 @@ function FieldsScreen({
 /**
  * `yes-no-list` questions (the pay-bills card): yes/no option cards plus,
  * when yes, an addable-rows editor of free-text entries (where bills get
- * paid). Picking never auto-advances - the wizard skips its timer for this
- * type and Continue commits. The list is optional detail on a yes.
+ * paid). A yes pick reveals the editor in place; Continue commits. The list
+ * is optional detail on a yes.
  */
 function YesNoListScreen({
   q,
@@ -1119,7 +1188,7 @@ export function QuestionScreen({
   /** Merge a patch into answers (no navigation). */
   onApply: (patch: Partial<WizardAnswers>) => void
   onAdvance: () => void
-  /** Option-card pick: the wizard applies, notes, and auto-advances. */
+  /** Option-card pick: the wizard applies and notes; Continue advances. */
   onPickOption: (value: string) => void
   /** I3: the seeded institution list for the account mini-form bank
    *  dropdowns; the add-new handler persists and returns the new row. */
@@ -1152,7 +1221,7 @@ export function QuestionScreen({
   }
 
   // J3 (R1-R5): the "Routine order and frequency" scheduler - the final
-  // content screen before review. Never auto-advances; Continue commits.
+  // content screen before review. Continue commits.
   if (q.type === 'routine-scheduler') {
     return (
       <RoutineSchedulerScreen q={q} answers={answers} onApply={onApply} onAdvance={onAdvance} />
@@ -1165,7 +1234,7 @@ export function QuestionScreen({
     // J1 (P2/DB1): the payroll-provider question renders the database-backed
     // dropdown + inline add-new instead of option cards; the stored answer
     // is the provider's NAME (the answer key stays stable). Dropdowns never
-    // auto-advance - pick, then Continue.
+    // pick, then Continue.
     if (q.dropdown === 'payrollProviders') {
       const rows = payrollProviders
       const selected = rows.find((r) => r.name === current) ?? null
@@ -1199,7 +1268,7 @@ export function QuestionScreen({
 
     const customOn = customAllowed(q)
     // I1: picking "Other - type it" opens the inline text field and waits for
-    // Continue instead of auto-advancing (the wizard suppresses the timer).
+    // Continue commits once the custom text is in.
     const otherOpen = customOn && current === CUSTOM_OTHER_VALUE
     // I2: per-option locks (e.g. corporate payroll's "No").
     const options = (q.options ?? []).map((o) =>
@@ -1331,8 +1400,8 @@ export function QuestionScreen({
     )
   }
 
-  // J2 (E6): yes/no + the addable string list (bill-pay locations). Continue
-  // commits; the wizard never auto-advances this type.
+  // J2 (E6): yes/no + the addable string list (bill-pay locations).
+  // Continue commits like every other screen.
   if (q.type === 'yes-no-list') {
     return (
       <YesNoListScreen

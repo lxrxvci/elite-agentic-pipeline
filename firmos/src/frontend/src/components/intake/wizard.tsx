@@ -49,21 +49,25 @@ import { QuestionHero, QuestionScreen } from './screens'
 /**
  * The conversational client intake wizard: one question per screen on a
  * single page in Jason's dictated order (intake-restructure I1, plan §1),
- * option picks auto-advance, direction-aware transitions, a persistent Back
- * link that never loses answers, debounced autosave through saveIntake, and
- * a persistent live quote priced by the server only. The branch map lives in
- * registry.ts, declarative and tested.
+ * direction-aware transitions, a persistent Back link that never loses
+ * answers, debounced autosave through saveIntake, and a persistent live
+ * quote priced by the server only. The branch map lives in registry.ts,
+ * declarative and tested.
+ *
+ * J4 harness (meeting 09_30, 00:12:36/00:29:04): NOTHING auto-advances -
+ * "take any spot where it automatically clicks through when you select
+ * something. We don't need it... We can just click the continue." Every
+ * screen moves forward only via its Continue button (or the rail jumps).
  *
  * N3 (meeting #3): the chapter rail under the header is also the section
  * navigator - a nav landmark where every reached chapter (plus the current
  * one) jumps straight to that chapter's first question. Jumps never lose
  * answers (they are already in form_data via autosave) and the resume point
  * can never rewind past answered questions; unreached chapters stay disabled
- * until the walk lands on them.
+ * until the walk lands on them. K1 (09_30 00:29:54): hovering a rail tab
+ * enlarges it and shows the chapter's questions for a direct jump.
  */
 
-export const AUTO_ADVANCE_MS = 180
-export const NOTE_DWELL_MS = 2400
 export const SAVE_DEBOUNCE_MS = 800
 export const QUOTE_DEBOUNCE_MS = 400
 
@@ -224,7 +228,6 @@ export function IntakeWizard({
   answersRef.current = answers
   const dirtyRef = useRef(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const quoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── Autosave (debounced; flushes before advancing screens) ──
@@ -247,7 +250,6 @@ export function IntakeWizard({
   useEffect(() => {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current)
-      if (advanceTimer.current) clearTimeout(advanceTimer.current)
       if (quoteTimer.current) clearTimeout(quoteTimer.current)
     }
   }, [])
@@ -311,10 +313,6 @@ export function IntakeWizard({
 
   const go = useCallback(
     (dir: 'fwd' | 'back') => {
-      if (advanceTimer.current) {
-        clearTimeout(advanceTimer.current)
-        advanceTimer.current = null
-      }
       setDirection(dir)
       setNote(null)
       setScreenIndex((i) =>
@@ -330,13 +328,9 @@ export function IntakeWizard({
       const q = screen?.kind === 'question' ? findQuestion(screen.chapterId, screen.questionId) : undefined
       if (!q || q.id !== questionId) return
       // J2 (E1-E3): a yes on a money-behavior card opens the blocking note
-      // overlay INSTEAD of applying or advancing - the answer lands only
-      // when the note saves (behavior-note-dialog.tsx).
+      // overlay INSTEAD of applying - the answer lands only when the note
+      // saves (behavior-note-dialog.tsx).
       if (q.noteOnYes && value === 'yes') {
-        if (advanceTimer.current) {
-          clearTimeout(advanceTimer.current)
-          advanceTimer.current = null
-        }
         setNotePrompt(screen!.kind === 'question' ? { chapterId: screen.chapterId, questionId: q.id } : null)
         return
       }
@@ -360,40 +354,23 @@ export function IntakeWizard({
         }
       }
       apply(patch)
-      // Picking "Other - type it" opens the inline input; Continue advances.
-      if (isCustomOtherPick(q, value)) {
+      // J4 harness (09_30): no advance on any pick - the inline custom input
+      // (Other), the yes-no-list editor, and option notes all reveal in
+      // place; Continue is the only way forward.
+      if (isCustomOtherPick(q, value) || q.type === 'yes-no-list') {
         setNote(null)
-        if (advanceTimer.current) {
-          clearTimeout(advanceTimer.current)
-          advanceTimer.current = null
-        }
-        return
-      }
-      // J2 (E6): yes-no-list cards (pay-bills) never auto-advance - the yes
-      // reveals the locations editor and Continue commits.
-      if (q.type === 'yes-no-list') {
-        setNote(null)
-        if (advanceTimer.current) {
-          clearTimeout(advanceTimer.current)
-          advanceTimer.current = null
-        }
         return
       }
       const optionNote = q.options?.find((o) => o.value === value)?.note ?? null
       setNote(optionNote)
-      if (advanceTimer.current) clearTimeout(advanceTimer.current)
-      advanceTimer.current = setTimeout(
-        () => go('fwd'),
-        optionNote ? NOTE_DWELL_MS : AUTO_ADVANCE_MS,
-      )
     },
-    [apply, go, screen],
+    [apply, screen],
   )
 
   // J2 (E1-E3): the note saves the yes answer (plus form_data.behaviorNotes)
-  // and only then moves on; "Go back" discards the pick entirely. The
-  // advance rides the same timer as a normal pick so the apply re-renders
-  // (and is what the flushed autosave sees) before navigation.
+  // and closes the overlay; "Go back" discards the pick entirely. J4 harness:
+  // no advance after the save either - the card shows its yes and waits for
+  // Continue like every other screen.
   const saveBehaviorNote = useCallback(
     (text: string) => {
       if (!notePrompt) return
@@ -402,10 +379,8 @@ export function IntakeWizard({
       const patch = q.apply(answersRef.current, 'yes')
       apply({ ...patch, behaviorNotes: { ...(answersRef.current.behaviorNotes ?? {}), [q.id]: text } })
       setNotePrompt(null)
-      if (advanceTimer.current) clearTimeout(advanceTimer.current)
-      advanceTimer.current = setTimeout(() => go('fwd'), AUTO_ADVANCE_MS)
     },
-    [notePrompt, apply, go],
+    [notePrompt, apply],
   )
   const noteQuestion = notePrompt ? findQuestion(notePrompt.chapterId, notePrompt.questionId) : undefined
 
@@ -431,10 +406,6 @@ export function IntakeWizard({
     (chapterId: string) => {
       const target = screens.findIndex((s) => s.kind === 'question' && s.chapterId === chapterId)
       if (target < 0 || target === idx) return
-      if (advanceTimer.current) {
-        clearTimeout(advanceTimer.current)
-        advanceTimer.current = null
-      }
       setDirection(target < idx ? 'back' : 'fwd')
       setNote(null)
       setScreenIndex(target)
@@ -477,6 +448,22 @@ export function IntakeWizard({
     screen?.kind === 'question' ? questionPosition(answers, screen) : null
   const currentChapterId = screen?.kind === 'question' ? screen.chapterId : null
   const currentChapterIndex = chapters.findIndex((c) => c.id === currentChapterId)
+
+  // K1 (09_30 00:29:54 + 00:01:02): each rail tab's hover dropdown - the
+  // chapter's visible questions in walk order for a direct jump ("if there's
+  // multiple slides in one of these, a drop down pops up").
+  const chapterQuestions = useMemo(() => {
+    const map = new Map<string, { questionId: string; title: string }[]>()
+    for (const s of screens) {
+      if (s.kind !== 'question') continue
+      const q = findQuestion(s.chapterId, s.questionId)
+      if (!q) continue
+      const list = map.get(s.chapterId) ?? []
+      list.push({ questionId: s.questionId, title: q.title })
+      map.set(s.chapterId, list)
+    }
+    return map
+  }, [screens])
 
   // N3: landing on a chapter marks it reached (jumpable from the rail);
   // reaching the review screen unlocks every visible chapter - the walk
@@ -592,8 +579,9 @@ export function IntakeWizard({
                         : 'upcoming'
                   const jumpable =
                     screen?.kind === 'review' || reachedChapters.has(c.id) || i === currentChapterIndex
+                  const qList = chapterQuestions.get(c.id) ?? []
                   return (
-                    <li key={c.id} className="min-w-0 flex-1">
+                    <li key={c.id} className="group relative min-w-0 flex-1">
                       <button
                         type="button"
                         disabled={!jumpable}
@@ -611,11 +599,12 @@ export function IntakeWizard({
                         title={jumpable ? `Jump to ${c.label}` : `${c.label} - not reached yet`}
                         data-testid={`chapter-jump-${c.id}`}
                         data-state={state}
-                        className="group block w-full rounded-sm py-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed"
+                        className="block w-full rounded-sm py-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed"
                       >
+                        {/* K1: tabs grow on hover so they read as interactive. */}
                         <span
                           className={cn(
-                            'block h-1.5 w-full rounded-full transition-colors duration-300',
+                            'block h-1.5 w-full rounded-full transition-all duration-300 group-hover:h-2.5',
                             state === 'done'
                               ? 'bg-firm-brand'
                               : state === 'current'
@@ -625,6 +614,36 @@ export function IntakeWizard({
                           )}
                         />
                       </button>
+                      {/* K1 (A4/A2): hover/focus reveals the chapter name and
+                          its slides ("Every card should be an option if
+                          there's a name for the card") - a direct jump to
+                          any reached slide, not just the chapter's first. */}
+                      {jumpable && (
+                        <div className="pointer-events-none absolute left-1/2 top-full z-30 w-56 -translate-x-1/2 pt-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                          <div
+                            className="overflow-hidden rounded-lg border border-border bg-popover shadow-pop"
+                            data-testid={`chapter-menu-${c.id}`}
+                          >
+                            <p className="border-b border-border px-3 py-2 text-xs font-semibold text-foreground">
+                              {c.label}
+                            </p>
+                            <ul className="max-h-64 overflow-y-auto py-1">
+                              {qList.map((item) => (
+                                <li key={item.questionId}>
+                                  <button
+                                    type="button"
+                                    onClick={() => jumpTo(c.id, item.questionId)}
+                                    data-testid={`chapter-menu-item-${c.id}-${item.questionId}`}
+                                    className="block w-full truncate px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none"
+                                  >
+                                    {item.title}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
                     </li>
                   )
                 })}

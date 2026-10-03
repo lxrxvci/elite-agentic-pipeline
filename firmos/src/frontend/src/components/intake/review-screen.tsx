@@ -99,7 +99,8 @@ function accountDetailLine(a: IntakeAccountInput): string | null {
 }
 
 /** V1: the row-level edit affordance - hover/focus reveal on pointer
- *  devices, always visible on touch. */
+ *  devices, always visible on touch. K1 (F2, 09_30 01:00:58): bigger, with
+ *  a visible border on reveal - "it's kind of small... more interactive". */
 function RowEditButton({
   label,
   testid,
@@ -115,9 +116,9 @@ function RowEditButton({
       onClick={onClick}
       aria-label={`Edit ${label}`}
       data-testid={testid}
-      className="shrink-0 self-center rounded p-1 text-firm-brand-strong opacity-0 transition-all hover:bg-accent focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+      className="shrink-0 self-center rounded-md border border-transparent p-1.5 text-firm-brand-strong opacity-0 transition-all hover:border-firm-brand/40 hover:bg-accent focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring group-hover:opacity-100 [@media(hover:none)]:opacity-100"
     >
-      <Pencil className="h-3 w-3" aria-hidden />
+      <Pencil className="h-3.5 w-3.5" aria-hidden />
     </button>
   )
 }

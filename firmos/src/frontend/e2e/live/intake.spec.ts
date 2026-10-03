@@ -24,9 +24,10 @@ async function expectQuestion(page: Page, id: string) {
   await expect(page.getByTestId('question-screen')).toHaveAttribute('data-question', id)
 }
 
-/** Pick an option card and wait for the auto-advance to land. */
+/** Pick an option card and Continue to the next screen (J4: nothing auto-advances). */
 async function pick(page: Page, testid: string, nextQuestion: string) {
   await page.getByTestId(testid).click()
+  await page.getByTestId('continue').click()
   await expectQuestion(page, nextQuestion)
 }
 
