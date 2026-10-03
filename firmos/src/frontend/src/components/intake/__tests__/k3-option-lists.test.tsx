@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 
-import { findQuestion, mergeListOptions, type OptionListValueLite, type QuestionDef, type WizardAnswers } from '../registry'
+import { findQuestion, mergeListOptions, registerCustomAddonServiceKeys, type OptionListValueLite, type QuestionDef, type WizardAnswers } from '../registry'
 import { QuestionScreen } from '../screens'
 
 /**
@@ -186,3 +186,53 @@ describe('bill-pay locations (yes-no-list)', () => {
     expect(answersNow().billPayLocations).toContain('Checks by mail')
   })
 })
+
+describe('services screen from the catalog (K3/J16)', () => {
+  const servicesQ = findQuestion('services', 'services')!
+  const catalog = [
+    { serviceKey: 'invoicing', productName: 'Invoicing', isStandard: false, isAddon: true, isActive: true },
+    { serviceKey: 'class_tracking', productName: 'Class tracking', isStandard: false, isAddon: true, isActive: false },
+    { serviceKey: 'weekend_emergency_catch_up', productName: 'Weekend emergency catch-up', isStandard: false, isAddon: true, isActive: true },
+    { serviceKey: 'bank_feed_management', productName: 'Bank Feed Management', isStandard: true, isAddon: false, isActive: true },
+    { serviceKey: 'account_reconciliations', productName: 'Account Reconciliations', isStandard: true, isAddon: false, isActive: true },
+  ]
+
+  it('custom catalog add-ons render as toggles; hidden rows disappear; standards stay', () => {
+    render(<Harness q={servicesQ} initial={{}} />)
+    // Without a catalog prop the registry statics render (fallback).
+    expect(screen.getByTestId('addon-invoicing')).toBeInTheDocument()
+    expect(screen.getByTestId('addon-class_tracking')).toBeInTheDocument()
+  })
+
+  it('catalog-driven: custom add-on toggles on, inactive add-on hides', () => {
+    // The wizard registers catalog add-on keys on load - mirror that here.
+    registerCustomAddonServiceKeys(['weekend_emergency_catch_up'])
+    const catalogHarness = render(<ServicesHarness catalogRows={catalog} />)
+    expect(catalogHarness.getByTestId('addon-weekend_emergency_catch_up')).toBeInTheDocument()
+    expect(catalogHarness.queryByTestId('addon-class_tracking')).not.toBeInTheDocument()
+    expect(catalogHarness.getByTestId('standard-bank_feed_management')).toBeInTheDocument()
+    fireEvent.click(catalogHarness.getByTestId('addon-weekend_emergency_catch_up'))
+    expect(JSON.parse(catalogHarness.getByTestId('answers').textContent ?? '{}').serviceKeys).toContain(
+      'weekend_emergency_catch_up',
+    )
+  })
+})
+
+/** ServicesScreen through the real question, with the catalog prop. */
+function ServicesHarness({ catalogRows }: { catalogRows: import('../registry').ServiceCatalogRowLite[] }) {
+  const q = findQuestion('services', 'services')!
+  const [answers, setAnswers] = useState<WizardAnswers>({})
+  return (
+    <div>
+      <QuestionScreen
+        q={q}
+        answers={answers}
+        onApply={(p) => setAnswers((a) => ({ ...a, ...p }))}
+        onAdvance={() => {}}
+        onPickOption={() => {}}
+        servicesCatalog={catalogRows}
+      />
+      <pre data-testid="answers">{JSON.stringify(answers)}</pre>
+    </div>
+  )
+}

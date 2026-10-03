@@ -96,6 +96,35 @@ export const sopVideos = pgTable(
 );
 
 /**
+ * K3 (J16): the services catalog - every service/add-on the firm sells, as
+ * DATA. Canonical rows mirror the domain PRICING table (seeded); custom
+ * services carry their own key + price and price quotes without a deploy.
+ * unitPrice null on a canonical row = "follow PRICING + admin overrides";
+ * custom rows must carry a price. is_standard = the three included-in-every-
+ * engagement rows; is_addon = the services screen's toggle rows.
+ */
+export const servicesCatalog = pgTable(
+  "services_catalog",
+  {
+    id: serial("id").primaryKey(),
+    serviceKey: text("service_key").notNull(),
+    productName: text("product_name").notNull(),
+    group: text("group").notNull(),
+    unit: text("unit").notNull(),
+    unitPrice: integer("unit_price"),
+    scaling: text("scaling").notNull(),
+    bucket: text("bucket").notNull(),
+    isStandard: boolean("is_standard").notNull().default(false),
+    isAddon: boolean("is_addon").notNull().default(false),
+    isActive: boolean("is_active").notNull().default(true),
+    position: integer("position").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("services_catalog_key_unique").on(t.serviceKey)],
+);
+
+/**
  * §7/§9 - key/value JSON settings and feature flags, e.g.
  * feature_flags.client_portal_enabled (portal kill switch),
  * payroll_config.commission_payout, docs_root_path, max_clock_in_hours.

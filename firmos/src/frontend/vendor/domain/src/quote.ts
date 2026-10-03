@@ -119,16 +119,26 @@ export type PricingOverrides = Partial<Record<string, number | null | undefined>
  * PRICING with overrides merged over it. Returns the PRICING table itself
  * when there is nothing to merge, so the no-override path is identical.
  */
-export function mergedPricing(overrides?: PricingOverrides | null): Record<string, PricingEntry> {
-  if (!overrides) return PRICING;
+/**
+ * K3 (J16): customEntries are admin-created catalog services (keys unknown
+ * to the static PRICING table). They sit UNDER the canonical table - a
+ * custom key colliding with a canonical one never shadows it - and take
+ * overrides like any other entry.
+ */
+export function mergedPricing(
+  overrides?: PricingOverrides | null,
+  customEntries?: Record<string, PricingEntry> | null,
+): Record<string, PricingEntry> {
+  const base: Record<string, PricingEntry> = customEntries ? { ...customEntries, ...PRICING } : PRICING;
+  if (!overrides) return base;
   let merged: Record<string, PricingEntry> | null = null;
   for (const [key, price] of Object.entries(overrides)) {
-    const entry = PRICING[key];
+    const entry = base[key];
     if (!entry || price == null) continue;
-    merged ??= { ...PRICING };
+    merged ??= { ...base };
     merged[key] = { ...entry, unit_price: price };
   }
-  return merged ?? PRICING;
+  return merged ?? base;
 }
 
 export type ReportFrequency = "monthly" | "quarterly" | "semi_annual" | "annual";
@@ -447,8 +457,12 @@ function serviceQuantity(
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /** HANDOFF §15 calculate_quote(): intake answers → full quote. */
-export function calculateQuote(input: QuoteInput, pricingOverrides?: PricingOverrides | null): Quote {
-  const pricing = mergedPricing(pricingOverrides);
+export function calculateQuote(
+  input: QuoteInput,
+  pricingOverrides?: PricingOverrides | null,
+  customEntries?: Record<string, PricingEntry> | null,
+): Quote {
+  const pricing = mergedPricing(pricingOverrides, customEntries);
   const cycle = billingCycleMonths(input.reportFrequency);
   const payrollFrequency = input.payrollFrequency ?? "monthly";
   const lines: QuoteLine[] = [];

@@ -118,6 +118,12 @@ vi.mock('@/server/actions/option-lists', () => ({
   })),
 }))
 
+// K3 (J16): the services catalog - undefined means the registry statics
+// render (the fallback path).
+vi.mock('@/server/actions/services-catalog', () => ({
+  listServicesCatalogAction: vi.fn(async () => ({ ok: false as const, error: 'no catalog in tests' })),
+}))
+
 // J1 (C5/C6/C7): the contact pickers' server read - mocked with one
 // existing contact and one existing client.
 vi.mock('@/server/actions/contacts', () => ({

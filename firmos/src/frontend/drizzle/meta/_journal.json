@@ -169,6 +169,13 @@
       "when": 1791053157306,
       "tag": "0023_outstanding_doctor_strange",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791063839649,
+      "tag": "0024_icy_loki",
+      "breakpoints": true
     }
   ]
 }

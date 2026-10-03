@@ -29,6 +29,7 @@ import {
   customAllowed,
   laterAddonQualified,
   mergeListOptions,
+  type ServiceCatalogRowLite,
   type FieldDef,
   type OptionListValueLite,
   type QuestionDef,
@@ -229,6 +230,7 @@ export function ServicesScreen({
   answers,
   onCommit,
   onAdvance,
+  catalogRows,
 }: {
   q: QuestionDef
   values: string[]
@@ -236,9 +238,30 @@ export function ServicesScreen({
   answers: WizardAnswers
   onCommit: (values: string[]) => void
   onAdvance: () => void
+  /** K3 (J16): the services catalog drives membership (which rows are
+   *  standards/add-ons and what is hidden); registry copy wins for the
+   *  canonical keys it knows. */
+  catalogRows?: ServiceCatalogRowLite[]
 }) {
   const grouping = q.services!
-  const options = q.options ?? []
+  const registryStandards = grouping.standards
+  const registryOptions = q.options ?? []
+  let options = registryOptions
+  let standards = registryStandards
+  if (catalogRows) {
+    const active = catalogRows.filter((r) => r.isActive)
+    standards = [
+      ...registryStandards.filter((s) => s.derived || active.some((r) => r.isStandard && r.serviceKey === s.value)),
+      ...active
+        .filter((r) => r.isStandard && !registryStandards.some((s) => s.value === r.serviceKey))
+        .map((r) => ({ value: r.serviceKey, label: r.productName })),
+    ]
+    options = [
+      ...active
+        .filter((r) => r.isAddon)
+        .map((r) => registryOptions.find((o) => o.value === r.serviceKey) ?? { value: r.serviceKey, label: r.productName, sub: 'Custom service' }),
+    ]
+  }
   const addonValues = values.filter((v) => options.some((o) => o.value === v))
   const toggle = (v: string) =>
     onCommit(addonValues.includes(v) ? addonValues.filter((x) => x !== v) : [...addonValues, v])
@@ -250,7 +273,7 @@ export function ServicesScreen({
           Included in every engagement
         </h2>
         <ul className="mt-2 space-y-2">
-          {grouping.standards.map((s) => (
+          {standards.map((s) => (
             <li
               key={s.value}
               data-testid={`standard-${s.value}`}
@@ -1280,6 +1303,7 @@ export function QuestionScreen({
   contactSearch = null,
   optionLists,
   onAddOptionListValue,
+  servicesCatalog,
 }: {
   q: QuestionDef
   answers: WizardAnswers
@@ -1304,6 +1328,8 @@ export function QuestionScreen({
    *  questions/fields, and the persist write for customs. */
   optionLists?: Record<string, OptionListValueLite[]>
   onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
+  /** K3 (J16): the services catalog behind the services screen. */
+  servicesCatalog?: ServiceCatalogRowLite[]
 }) {
   // J2 (P1): the required-multi empty-attempt message (payroll handling).
   const [requiredError, setRequiredError] = useState<string | null>(null)
@@ -1450,6 +1476,7 @@ export function QuestionScreen({
         answers={answers}
         onCommit={(next) => onApply(q.apply(answers, next))}
         onAdvance={onAdvance}
+        catalogRows={servicesCatalog}
       />
     )
   }

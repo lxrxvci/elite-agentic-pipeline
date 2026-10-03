@@ -6,6 +6,7 @@ import {
   reportMonthsForFrequency,
   type CustomItemInput,
   type LocalDate,
+  type PricingEntry,
   type PricingOverrides,
   type Quote,
   type QuoteInput,
@@ -14,6 +15,7 @@ import {
 } from "@firmos/domain";
 
 import { statementDayForIntakeAccount } from "./accounts-seed";
+import { getCustomServiceEntries } from "./services-catalog";
 import { localToday } from "./dates";
 import type { IntakeCustomItemInput, IntakeFormData, IntakeReportDefinition } from "./intake";
 import { getPricingOverrides } from "./pricing-config";
@@ -145,10 +147,15 @@ export function specialtyReportsFromIntake(
     }));
 }
 
-function toQuoteInput(answers: IntakeQuoteAnswers, today: LocalDate): QuoteInput {
+function toQuoteInput(
+  answers: IntakeQuoteAnswers,
+  today: LocalDate,
+  customEntries?: Record<string, PricingEntry> | null,
+): QuoteInput {
   const serviceKeys = answers.serviceKeys ?? [];
   const services: QuoteServiceInput[] = serviceKeys.map((key) => {
-    if (!PRICING[key]) throw new Error(`unknown service key: ${key}`);
+    // K3: catalog (admin-created) service keys are valid alongside PRICING.
+    if (!PRICING[key] && !customEntries?.[key]) throw new Error(`unknown service key: ${key}`);
     const explicit = answers.serviceQuantities?.[key];
     // C1 follow-through: the wizard's per-service discount (flat dollars off
     // per billing cycle) rides the service input; the domain clamps at zero.
@@ -246,8 +253,9 @@ export function calculateIntakeQuote(
   answers: IntakeQuoteAnswers,
   today: LocalDate = localToday(),
   pricingOverrides?: PricingOverrides | null,
+  customEntries?: Record<string, PricingEntry> | null,
 ): Quote {
-  return calculateQuote(toQuoteInput(answers, today), pricingOverrides);
+  return calculateQuote(toQuoteInput(answers, today, customEntries), pricingOverrides, customEntries);
 }
 
 /**
@@ -260,7 +268,9 @@ export async function calculateIntakeQuoteWithConfig(
   answers: IntakeQuoteAnswers,
   today: LocalDate = localToday(),
 ): Promise<Quote> {
-  return calculateIntakeQuote(answers, today, await getPricingOverrides());
+  // K3: admin-created catalog services price alongside the canonical table.
+  const [overrides, customEntries] = await Promise.all([getPricingOverrides(), getCustomServiceEntries()]);
+  return calculateIntakeQuote(answers, today, overrides, customEntries);
 }
 
 // ── Recurring services template (§6.5 price flow, step 2) ────────────────

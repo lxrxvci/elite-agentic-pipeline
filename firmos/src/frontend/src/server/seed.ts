@@ -38,6 +38,7 @@ import {
 import { localToday } from "./dates";
 import { seedInstitutions } from "./institutions";
 import { seedOptionLists } from "./option-lists";
+import { seedServicesCatalog } from "./services-catalog";
 import { seedMerchantProcessors } from "./merchant-processors";
 import { seedPayrollProviders } from "./payroll-providers";
 import { materializeOperationalRows } from "./materialize";
@@ -133,6 +134,8 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
   await seedMerchantProcessors();
   // K3 (DB1): the universal option lists ride the same restore rule.
   await seedOptionLists();
+  // K3 (J16): the services catalog mirrors the domain PRICING table.
+  await seedServicesCatalog();
 
   const yearStart = `${today.year}-01-01`;
   const catchup = formatLocalDate({ ...addMonths({ year: today.year, month: today.month }, -2), day: 1 });

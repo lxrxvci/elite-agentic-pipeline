@@ -477,6 +477,15 @@ export interface OptionListValueLite {
   name: string
 }
 
+/** K3 (J16): a services_catalog row as the services screen consumes it. */
+export interface ServiceCatalogRowLite {
+  serviceKey: string
+  productName: string
+  isStandard: boolean
+  isAddon: boolean
+  isActive: boolean
+}
+
 /**
  * K3 (DB1/J2): merge a question's static options with its list's values -
  * static cards keep their logic keys, list values append as name-valued
@@ -666,6 +675,18 @@ export const laterAddonQualified = (value: string, a: WizardAnswers): boolean =>
   SERVICES_LATER_ADDON_QUALIFIED[value]?.(a) ?? false
 
 const SERVICES_ADDON_VALUES = new Set(SERVICES_ADDON_OPTIONS.map((o) => o.value))
+
+/**
+ * K3 (J16): admin-created catalog services offered as add-ons register their
+ * keys at runtime (the wizard loads the catalog), so the services screen's
+ * apply keeps them instead of filtering them out as unknown.
+ */
+const CUSTOM_ADDON_SERVICE_KEYS = new Set<string>()
+export function registerCustomAddonServiceKeys(keys: Iterable<string>): void {
+  for (const k of keys) CUSTOM_ADDON_SERVICE_KEYS.add(k)
+}
+const isAddonServiceKey = (k: string): boolean =>
+  SERVICES_ADDON_VALUES.has(k) || CUSTOM_ADDON_SERVICE_KEYS.has(k)
 const SERVICES_STANDARD_VALUES = new Set(SERVICES_STANDARD_ROWS.map((r) => r.value))
 
 /** The I4 grouping flag on the services question: standards render as a
@@ -2713,19 +2734,19 @@ export const CHAPTERS: ChapterDef[] = [
         // its own add-on rows as toggles.
         get: (a) => a.serviceKeys ?? [],
         apply: (a, v) => {
-          const picked = (v as string[]).filter((k) => SERVICES_ADDON_VALUES.has(k))
+          const picked = (v as string[]).filter(isAddonServiceKey)
           // Reconcile by service key: anything the screen doesn't render
           // (legacy loans_and_liabilities, payroll/1099/reporting keys the
           // later cards own) survives the rewrite.
           const preserved = (a.serviceKeys ?? []).filter(
-            (k) => !SERVICES_ADDON_VALUES.has(k) && !SERVICES_STANDARD_VALUES.has(k),
+            (k) => !isAddonServiceKey(k) && !SERVICES_STANDARD_VALUES.has(k),
           )
           return { serviceKeys: [...SERVICES_STANDARD_KEYS, ...preserved, ...picked] }
         },
         summarize: (a) => {
           const stored = a.serviceKeys ?? []
           if (stored.length === 0) return null
-          const addons = stored.filter((k) => SERVICES_ADDON_VALUES.has(k))
+          const addons = stored.filter(isAddonServiceKey)
           return addons.length > 0
             ? `The 3 standards + ${addons.map(serviceLabel).join(', ')}`
             : 'The 3 standards'

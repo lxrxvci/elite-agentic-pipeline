@@ -20,6 +20,7 @@ import {
   addOptionValueAction,
   listOptionValuesBulkAction,
 } from '@/server/actions/option-lists'
+import { listServicesCatalogAction } from '@/server/actions/services-catalog'
 import type { ContactLookupResults } from '@/server/contact-lookup'
 import type { IntakeRunningNote } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
@@ -38,6 +39,8 @@ import {
   buildPatch,
   CUSTOM_OTHER_VALUE,
   customAllowed,
+  registerCustomAddonServiceKeys,
+  type ServiceCatalogRowLite,
   effectiveServiceKeys,
   findChapter,
   findQuestion,
@@ -184,10 +187,19 @@ export function IntakeWizard({
   const [merchantProcessors, setMerchantProcessors] = useState<MerchantProcessorRow[]>([])
   // K3 (DB1): the universal option lists behind optionsFromList questions.
   const [optionLists, setOptionLists] = useState<Record<string, OptionValueRow[]>>({})
+  // K3 (J16): the services catalog behind the services screen.
+  const [servicesCatalog, setServicesCatalog] = useState<ServiceCatalogRowLite[] | undefined>(undefined)
 
   useEffect(() => {
     void listOptionValuesBulkAction([...INTAKE_OPTION_LIST_KEYS]).then((res) => {
       if (res.ok) setOptionLists(res.data)
+    })
+    void listServicesCatalogAction().then((res) => {
+      if (res.ok) {
+        setServicesCatalog(res.data)
+        // Custom add-ons must survive the services screen's apply filter.
+        registerCustomAddonServiceKeys(res.data.filter((r) => r.isAddon).map((r) => r.serviceKey))
+      }
     })
     void listInstitutionsAction().then((res) => {
       if (res.ok) setInstitutions(res.data)
@@ -735,6 +747,7 @@ export function IntakeWizard({
                         contactSearch={contactSearch}
                         optionLists={optionLists}
                         onAddOptionListValue={addOptionListValue}
+                        servicesCatalog={servicesCatalog}
                       />
                     </div>
                     {note && (
