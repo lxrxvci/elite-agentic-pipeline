@@ -16,7 +16,7 @@
  *   tax.ts            tax & compliance (3)
  *   time.ts           time tracking (3)
  *   communications.ts communications & notifications (6)
- *   admin.ts          admin, audit & settings (4)
+ *   admin.ts          admin, audit & settings (5)
  *   saved-views.ts    per-user saved views (1)
  *   vault.ts          client credential vault (2) - Phase 3B
  *   meetings.ts       meetings (1) - Phase 3C

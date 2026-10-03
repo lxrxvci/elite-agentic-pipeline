@@ -39,6 +39,34 @@ export const sopTemplates = pgTable("sop_templates", {
 });
 
 /**
+ * K2 (meeting 09_30, 01:16:00): native SOP walkthrough videos - the in-house
+ * Loom. One row per recording attached to an SOP template; the bytes live in
+ * the §13 storage driver (local dev / vercel-blob prod, always private) under
+ * sop-videos/{sop_template_id}/... and stream through /api/sop-videos/[id]
+ * after the staff-session check. Recorded in-browser via getDisplayMedia +
+ * MediaRecorder; upload/delete are audited and gated by can_edit_sops.
+ */
+export const sopVideos = pgTable(
+  "sop_videos",
+  {
+    id: serial("id").primaryKey(),
+    sopTemplateId: integer("sop_template_id")
+      .notNull()
+      .references(() => sopTemplates.id, { onDelete: "cascade" }),
+    uploadedById: integer("uploaded_by_id").references((): AnyPgColumn => users.id),
+    title: text("title").notNull(),
+    /** Relative path in the storage driver (§13 - never absolute). */
+    storedPath: text("stored_path").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    /** Whole seconds, reported by the recorder; null on legacy/manual rows. */
+    durationSecs: integer("duration_secs"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("sop_videos_sop_idx").on(t.sopTemplateId)],
+);
+
+/**
  * §7/§9 - key/value JSON settings and feature flags, e.g.
  * feature_flags.client_portal_enabled (portal kill switch),
  * payroll_config.commission_payout, docs_root_path, max_clock_in_hours.

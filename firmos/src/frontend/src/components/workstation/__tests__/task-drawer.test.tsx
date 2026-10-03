@@ -103,6 +103,7 @@ function detail(partial?: Partial<TaskDetail>): TaskDetail {
         institutionKey: 'chevron wex',
         institutionName: 'Chevron WEX',
         links: ['https://www.loom.com/share/abc123'],
+        videos: [],
       },
     ],
     manualEntries: [
@@ -114,6 +115,7 @@ function detail(partial?: Partial<TaskDetail>): TaskDetail {
     ],
     reportGate: null,
     canFlagStale: true,
+    canRecordSop: true,
     today: '2026-08-15',
     ...partial,
   }
@@ -160,9 +162,11 @@ function cardDetail(partial?: Partial<WorkCardSopDetail>): WorkCardSopDetail {
         institutionKey: 'columbia bank',
         institutionName: 'Columbia Bank',
         links: [],
+        videos: [],
       },
     ],
     canFlagStale: true,
+    canRecordSop: true,
     today: '2026-08-15',
     ...partial,
   }
@@ -245,6 +249,43 @@ describe('TaskDrawer', () => {
     renderDrawer()
     await screen.findByTestId('sop-card')
     expect(screen.queryByTestId('sop-flag-stale')).not.toBeInTheDocument()
+  })
+
+  it('K2: Record SOP opens the recorder and native videos embed on the card', async () => {
+    mockDetail.mockResolvedValue({
+      ok: true,
+      data: detail({
+        sops: [
+          {
+            id: 31,
+            title: 'Chevron WEX fuel card close',
+            content: '1. Download the WEX statement',
+            updatedAt: '2026-08-01T12:00:00.000Z',
+            changeNote: null,
+            institutionKey: 'chevron wex',
+            institutionName: 'Chevron WEX',
+            links: [],
+            videos: [{ id: 77, title: 'WEX portal walkthrough', durationSecs: 95, sizeBytes: 1024 * 1024 }],
+          },
+        ],
+      }),
+    })
+    renderDrawer()
+    // The Record SOP affordance (can_edit_sops) and the embedded player.
+    fireEvent.click(await screen.findByTestId('sop-record-open'))
+    expect(await screen.findByTestId('sop-recorder-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('sop-record-start')).toBeInTheDocument()
+    const player = document.querySelector('video')
+    expect(player).toHaveAttribute('src', '/api/sop-videos/77')
+    expect(screen.getByTestId('sop-video-77')).toHaveTextContent('WEX portal walkthrough')
+    expect(screen.getByTestId('sop-video-77')).toHaveTextContent('01:35')
+  })
+
+  it('K2: the record affordance hides without can_edit_sops', async () => {
+    mockDetail.mockResolvedValue({ ok: true, data: detail({ canRecordSop: false }) })
+    renderDrawer()
+    await screen.findByTestId('sop-card')
+    expect(screen.queryByTestId('sop-record-open')).not.toBeInTheDocument()
   })
 
   it('toggles a subtask optimistically and calls the action', async () => {
@@ -401,6 +442,7 @@ describe('TaskDrawer bank-feed / reconciliation cards (I5 learning center)', () 
             institutionKey: 'columbia bank',
             institutionName: 'Columbia Bank',
             links: [],
+          videos: [],
           },
         ],
       }),

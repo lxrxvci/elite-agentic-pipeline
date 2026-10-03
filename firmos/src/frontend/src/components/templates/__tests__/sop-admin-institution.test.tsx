@@ -72,7 +72,7 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('shows the institution chip and "Updated" line only when the data exists', () => {
-    render(<SopAdmin sops={[KEYED, UNKEYED]} canEdit={true} {...PROPS} />)
+    render(<SopAdmin sops={[KEYED, UNKEYED]} videosBySop={{}} merchantProcessors={[]} canEdit={true} {...PROPS} />)
     const chips = screen.getAllByTestId('sop-institution-chip')
     expect(chips).toHaveLength(1)
     // The chip renders the pretty institutions-table name, not the raw key.
@@ -86,7 +86,7 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
 
   it('creates an SOP with a picked institution, previewing the account match', async () => {
     const user = userEvent.setup()
-    render(<SopAdmin sops={[]} canEdit={true} {...PROPS} />)
+    render(<SopAdmin sops={[]} videosBySop={{}} merchantProcessors={[]} canEdit={true} {...PROPS} />)
     await user.click(screen.getByRole('button', { name: /New SOP/ }))
     await user.type(screen.getByLabelText('Title'), 'WEX close')
 
@@ -111,7 +111,7 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
 
   it('previews "no client accounts yet" for a bank with none', async () => {
     const user = userEvent.setup()
-    render(<SopAdmin sops={[]} canEdit={true} {...PROPS} />)
+    render(<SopAdmin sops={[]} videosBySop={{}} merchantProcessors={[]} canEdit={true} {...PROPS} />)
     await user.click(screen.getByRole('button', { name: /New SOP/ }))
     await user.click(screen.getByLabelText('Institution'))
     await user.click(screen.getByRole('option', { name: 'Columbia Bank' }))
@@ -126,7 +126,7 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
       ok: true,
       data: { id: 3, name: 'First Interstate Bank' },
     })
-    render(<SopAdmin sops={[]} canEdit={true} {...PROPS} />)
+    render(<SopAdmin sops={[]} videosBySop={{}} merchantProcessors={[]} canEdit={true} {...PROPS} />)
     await user.click(screen.getByRole('button', { name: /New SOP/ }))
     await user.type(screen.getByLabelText('Title'), 'New bank procedure')
 
@@ -152,7 +152,7 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
   it('pre-fills a legacy key on edit (no matching institution row) and sends it back', async () => {
     const user = userEvent.setup()
     const legacy: SopTemplateItem = { ...KEYED, institutionKey: 'legacy bank' }
-    render(<SopAdmin sops={[legacy]} canEdit={true} {...PROPS} />)
+    render(<SopAdmin sops={[legacy]} videosBySop={{}} merchantProcessors={[]} canEdit={true} {...PROPS} />)
     await user.click(screen.getByRole('button', { name: 'Edit Chevron WEX fuel card close' }))
     // Free-text fallback: the dropdown shows the raw key as the current value.
     expect(screen.getByTestId('bank-select-0')).toHaveTextContent('legacy bank')
@@ -164,5 +164,50 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
       1,
       expect.objectContaining({ institutionKey: 'Columbia Bank' }),
     )
+  })
+})
+
+describe('K2: videos + merchant-processor SOP keys (H3)', () => {
+  const SQUARE = [{ id: 9, name: 'Square' }]
+
+  it('merchant processors appear as key options (a "Square" SOP flows to merchant accounts)', async () => {
+    const user = userEvent.setup()
+    render(<SopAdmin sops={[]} videosBySop={{}} merchantProcessors={SQUARE} canEdit={true} {...PROPS} />)
+    await user.click(screen.getByRole('button', { name: /New SOP/ }))
+    await user.click(screen.getByRole('button', { name: /Pick the institution|Select|Institution/i }))
+    expect(await screen.findByRole('option', { name: 'Square' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Chevron WEX' })).toBeInTheDocument()
+  })
+
+  it('the Videos button counts recordings and the dialog lists them; Record SOP opens the recorder', async () => {
+    const user = userEvent.setup()
+    render(
+      <SopAdmin
+        sops={[KEYED]}
+        videosBySop={{ 1: [{ id: 44, title: 'WEX portal walkthrough', durationSecs: 62, sizeBytes: 900 * 1024 }] }}
+        merchantProcessors={SQUARE}
+        canEdit={true}
+        {...PROPS}
+      />,
+    )
+    expect(screen.getByTestId('sop-videos-open-1')).toHaveTextContent('Videos (1)')
+
+    await user.click(screen.getByTestId('sop-videos-open-1'))
+    expect(await screen.findByTestId('sop-videos-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('sop-video-44')).toHaveTextContent('WEX portal walkthrough')
+    expect(document.querySelector('video')).toHaveAttribute('src', '/api/sop-videos/44')
+    await user.keyboard('{Escape}')
+
+    await user.click(screen.getByTestId('sop-record-open-1'))
+    expect(await screen.findByTestId('sop-recorder-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('sop-record-start')).toBeInTheDocument()
+  })
+
+  it('an empty video library says so, and hides Record SOP without the edit flag', async () => {
+    const user = userEvent.setup()
+    render(<SopAdmin sops={[KEYED]} videosBySop={{}} merchantProcessors={[]} canEdit={false} {...PROPS} />)
+    expect(screen.queryByTestId('sop-record-open-1')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('sop-videos-open-1'))
+    expect(await screen.findByTestId('sop-videos-empty')).toHaveTextContent('No videos yet')
   })
 })

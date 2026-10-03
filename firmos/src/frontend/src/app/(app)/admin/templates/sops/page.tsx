@@ -4,6 +4,8 @@ import { TemplateAdminNav } from '@/components/templates/template-admin-nav'
 import { getInstitutionSopCoverage } from '@/server/admin-reads'
 import { canEditSops, requireStaff } from '@/server/auth/guards'
 import { listInstitutions } from '@/server/institutions'
+import { listMerchantProcessors } from '@/server/merchant-processors'
+import { listSopVideos } from '@/server/sop-videos'
 import { countAccountsByInstitutionKey, listSopTemplates } from '@/server/templates'
 
 import { listActiveClientRefs } from '../_lib'
@@ -13,14 +15,26 @@ export const dynamic = 'force-dynamic'
 
 export default async function SopTemplatesPage() {
   const user = await requireStaff()
-  const [sops, clientRefs, institutions, accountCounts, coverage] = await Promise.all([
+  const [sops, clientRefs, institutions, merchantProcessors, accountCounts, coverage] = await Promise.all([
     listSopTemplates(true),
     listActiveClientRefs(),
     listInstitutions(),
+    listMerchantProcessors(),
     countAccountsByInstitutionKey(),
     getInstitutionSopCoverage(),
   ])
   const canEdit = canEditSops(user)
+  // K2: native walkthrough videos grouped per SOP (the in-house Loom).
+  const videos = await listSopVideos(sops.map((s) => s.id))
+  const videosBySop: Record<number, { id: number; title: string; durationSecs: number | null; sizeBytes: number }[]> = {}
+  for (const v of videos) {
+    ;(videosBySop[v.sopTemplateId] ??= []).push({
+      id: v.id,
+      title: v.title,
+      durationSecs: v.durationSecs,
+      sizeBytes: v.sizeBytes,
+    })
+  }
 
   return (
     <div className="space-y-5 pb-10">
@@ -42,8 +56,10 @@ export default async function SopTemplatesPage() {
           changeNote: s.changeNote,
           updatedAt: s.updatedAt.toISOString(),
         }))}
+        videosBySop={videosBySop}
         clients={clientRefs}
         institutions={institutions}
+        merchantProcessors={merchantProcessors}
         accountCounts={Object.fromEntries(accountCounts)}
         canEdit={canEdit}
       />

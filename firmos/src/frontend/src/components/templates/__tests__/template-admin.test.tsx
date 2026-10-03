@@ -95,7 +95,7 @@ const RECURRING: TaskTemplateItem[] = [
 
 describe('template permission gating', () => {
   it('SOP admin without can_edit_sops is read-only: edits hidden, note shown, apply kept', () => {
-    render(<SopAdmin sops={SOPS} clients={CLIENTS} {...SOP_ADMIN_DEFAULTS} canEdit={false} />)
+    render(<SopAdmin sops={SOPS} clients={CLIENTS} {...SOP_ADMIN_DEFAULTS} videosBySop={{}} merchantProcessors={[]} canEdit={false} />)
     expect(screen.getByTestId('template-readonly-note')).toHaveTextContent('can_edit_sops')
     expect(screen.queryByRole('button', { name: /New SOP/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Edit Bank feed triage' })).not.toBeInTheDocument()
@@ -108,7 +108,7 @@ describe('template permission gating', () => {
   })
 
   it('SOP admin with the flag shows create and edit controls', () => {
-    render(<SopAdmin sops={SOPS} clients={CLIENTS} {...SOP_ADMIN_DEFAULTS} canEdit={true} />)
+    render(<SopAdmin sops={SOPS} clients={CLIENTS} {...SOP_ADMIN_DEFAULTS} videosBySop={{}} merchantProcessors={[]} canEdit={true} />)
     expect(screen.queryByTestId('template-readonly-note')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /New SOP/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Edit Bank feed triage' })).toBeInTheDocument()
@@ -134,7 +134,7 @@ describe('SopAdmin apply flow', () => {
 
   it('applies an SOP to the chosen client', async () => {
     const user = userEvent.setup()
-    render(<SopAdmin sops={SOPS} clients={CLIENTS} {...SOP_ADMIN_DEFAULTS} canEdit={false} />)
+    render(<SopAdmin sops={SOPS} clients={CLIENTS} {...SOP_ADMIN_DEFAULTS} videosBySop={{}} merchantProcessors={[]} canEdit={false} />)
     const applyButtons = screen.getAllByRole('button', { name: /Apply to client/ })
     await user.click(applyButtons[0])
     // Client picker options render in the portal; pick by text.

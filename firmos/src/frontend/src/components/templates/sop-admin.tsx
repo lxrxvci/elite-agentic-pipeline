@@ -2,10 +2,11 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Pencil, Plus, Send, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Send, Trash2, Video } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { InstitutionSelect } from '@/components/intake/account-screens'
+import { SopRecorderDialog, SopVideoList, type SopVideoSummary } from '@/components/sop/sop-recorder'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -27,6 +28,7 @@ import {
   updateSopTemplateAction,
 } from '@/server/actions/templates'
 import type { InstitutionRow } from '@/server/institutions'
+import type { MerchantProcessorRow } from '@/server/merchant-processors'
 import { stampLabel } from '@/shared/lib/date-display'
 import { normalizeInstitutionKey } from '@/shared/lib/institution-key'
 
@@ -63,20 +65,35 @@ interface SopAdminProps {
   clients: ClientRef[]
   /** The firm's bank list (institutions table) - the key dropdown source. */
   institutions: InstitutionRow[]
+  /** H3 (M2 A48 tail): merchant processors are also valid SOP keys - a
+      "Square" SOP flows to every client whose merchant account names it. */
+  merchantProcessors: MerchantProcessorRow[]
   /** I5: normalized institution key → active client account count, for the
       editor's "matches N client accounts" preview. */
   accountCounts: Record<string, number>
+  /** K2: native walkthrough videos grouped by SOP id. */
+  videosBySop: Record<number, SopVideoSummary[]>
   /** can_edit_sops or owner/admin (decided server-side). */
   canEdit: boolean
 }
 
-export function SopAdmin({ sops, clients, institutions, accountCounts, canEdit }: SopAdminProps) {
+export function SopAdmin({ sops, clients, institutions, merchantProcessors, accountCounts, videosBySop, canEdit }: SopAdminProps) {
   const router = useRouter()
   const [editTarget, setEditTarget] = useState<SopTemplateItem | null>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [applyTarget, setApplyTarget] = useState<SopTemplateItem | null>(null)
   const [applyClientId, setApplyClientId] = useState<number | null>(null)
+  const [videosTarget, setVideosTarget] = useState<SopTemplateItem | null>(null)
+  const [recorderTarget, setRecorderTarget] = useState<SopTemplateItem | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // H3: banks + merchant processors share one key dropdown; processor rows
+  // get negative ids so the two serial sequences never collide. Add-new
+  // still writes banks (institutions) - processors come from the intake.
+  const keyOptions = [
+    ...institutions,
+    ...merchantProcessors.map((p) => ({ ...p, id: -p.id })),
+  ].sort((a, b) => a.name.localeCompare(b.name))
 
   // Form state
   const [title, setTitle] = useState('')
@@ -212,6 +229,30 @@ export function SopAdmin({ sops, clients, institutions, accountCounts, canEdit }
                 <ActiveState isActive={sop.isActive} />
               </span>
               <div className="flex shrink-0 items-center gap-1">
+                {/* K2: the SOP's native videos + the recorder. */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label={`Videos for ${sop.title}`}
+                  data-testid={`sop-videos-open-${sop.id}`}
+                  onClick={() => setVideosTarget(sop)}
+                >
+                  <Video aria-hidden className="mr-1.5 h-3.5 w-3.5" />
+                  Videos ({(videosBySop[sop.id] ?? []).length})
+                </Button>
+                {canEdit && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid={`sop-record-open-${sop.id}`}
+                    onClick={() => setRecorderTarget(sop)}
+                  >
+                    <Video aria-hidden className="mr-1.5 h-3.5 w-3.5" />
+                    Record SOP
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="outline"
@@ -272,7 +313,8 @@ export function SopAdmin({ sops, clients, institutions, accountCounts, canEdit }
               <Label htmlFor="sop-content">Content</Label>
               <Textarea id="sop-content" rows={6} value={content} onChange={(e) => setContent(e.target.value)} />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                One step per line. Paste a Loom link on its own line to attach the walkthrough video.
+                One step per line. Record the walkthrough with the Record SOP button on this row - or paste a
+                video link on its own line.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -286,9 +328,9 @@ export function SopAdmin({ sops, clients, institutions, accountCounts, canEdit }
                     same dropdown + inline add-new the intake uses), never
                     free text - so a keyed SOP always names a real bank. */}
                 <InstitutionSelect
-                  institutions={institutions}
+                  institutions={keyOptions}
                   selectedId={
-                    institutions.find(
+                    keyOptions.find(
                       (i) => normalizeInstitutionKey(i.name) === normalizeInstitutionKey(institutionKey),
                     )?.id ?? null
                   }
@@ -395,6 +437,43 @@ export function SopAdmin({ sops, clients, institutions, accountCounts, canEdit }
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* K2: the SOP's native videos (watch / delete) */}
+      <Dialog open={videosTarget != null} onOpenChange={(open) => !open && setVideosTarget(null)}>
+        <DialogContent className="sm:max-w-xl" data-testid="sop-videos-dialog">
+          <DialogHeader>
+            <DialogTitle>Videos — {videosTarget?.title}</DialogTitle>
+            <DialogDescription>
+              Walkthroughs recorded right here play everywhere this SOP surfaces - including the task drawer.
+            </DialogDescription>
+          </DialogHeader>
+          {(videosBySop[videosTarget?.id ?? -1] ?? []).length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground" data-testid="sop-videos-empty">
+              No videos yet{canEdit ? ' - hit Record SOP to capture the first one.' : '.'}
+            </p>
+          ) : (
+            <SopVideoList
+              videos={videosBySop[videosTarget?.id ?? -1] ?? []}
+              canEdit={canEdit}
+              onDeleted={() => router.refresh()}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* K2: the in-house recorder (09_30 01:16:00) */}
+      {recorderTarget && (
+        <SopRecorderDialog
+          sopTemplateId={recorderTarget.id}
+          sopTitle={recorderTarget.title}
+          open
+          onClose={() => setRecorderTarget(null)}
+          onRegistered={() => {
+            setRecorderTarget(null)
+            router.refresh()
+          }}
+        />
+      )}
     </div>
   )
 }

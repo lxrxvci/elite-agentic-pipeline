@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { BookOpen, CalendarCheck, ExternalLink, FileText, Flag, ListChecks, MessageSquare, StickyNote, Video } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { SopRecorderDialog, SopVideoList } from '@/components/sop/sop-recorder'
+
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -87,14 +89,18 @@ function linkLabel(url: string): string {
 function SopCard({
   sop,
   canFlagStale,
+  canRecord,
   onFlagged,
 }: {
   sop: TaskDetailSop
   /** I5: manager+ (or can_edit_sops) sees the staleness flag. */
   canFlagStale: boolean
+  /** K2: can_edit_sops sees the Record SOP button (09_30 01:16:00). */
+  canRecord: boolean
   onFlagged: () => void
 }) {
   const [flagging, setFlagging] = React.useState(false)
+  const [recorderOpen, setRecorderOpen] = React.useState(false)
   // Content lines become the step list; bare URLs drop out of the steps and
   // render as their own link row below.
   const steps = (sop.content ?? '')
@@ -127,14 +133,29 @@ function SopCard({
     <article data-testid="sop-card" className="rounded-lg border border-border bg-card p-3">
       <div className="flex items-start justify-between gap-2">
         <h4 className="text-sm font-semibold leading-snug text-foreground">{sop.title}</h4>
-        {institutionLabel && (
-          <span
-            data-testid="sop-institution-chip"
-            className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
-          >
-            {institutionLabel} SOP
-          </span>
-        )}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {/* K2 (09_30 01:16:00): "the task pops up, they should be able to
+              click record SOP and it should just pop up a recorder". */}
+          {canRecord && (
+            <button
+              type="button"
+              data-testid="sop-record-open"
+              onClick={() => setRecorderOpen(true)}
+              className="flex items-center gap-1 rounded-md border border-firm-action/50 bg-firm-action-soft px-2 py-0.5 text-[11px] font-semibold text-firm-action transition-colors duration-150 hover:bg-firm-action-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Video className="h-3 w-3" aria-hidden />
+              Record SOP
+            </button>
+          )}
+          {institutionLabel && (
+            <span
+              data-testid="sop-institution-chip"
+              className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+            >
+              {institutionLabel} SOP
+            </span>
+          )}
+        </div>
       </div>
       <div className="mt-1 flex items-center justify-between gap-2">
         <p className="tnum text-[11px] text-muted-foreground" data-testid="sop-updated">
@@ -167,6 +188,13 @@ function SopCard({
           ))}
         </ol>
       )}
+      {/* K2: native walkthrough videos play right in the drawer; legacy
+          pasted Loom/YouTube links keep rendering as outbound pills below. */}
+      {sop.videos.length > 0 && (
+        <div className="mt-2">
+          <SopVideoList videos={sop.videos} canEdit={canRecord} onDeleted={() => onFlagged()} />
+        </div>
+      )}
       {sop.links.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {sop.links.map((url) => (
@@ -188,6 +216,16 @@ function SopCard({
           ))}
         </div>
       )}
+      <SopRecorderDialog
+        sopTemplateId={sop.id}
+        sopTitle={sop.title}
+        open={recorderOpen}
+        onClose={() => setRecorderOpen(false)}
+        onRegistered={() => {
+          setRecorderOpen(false)
+          onFlagged()
+        }}
+      />
     </article>
   )
 }
@@ -617,6 +655,7 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
                         key={sop.id}
                         sop={sop}
                         canFlagStale={detail.canFlagStale}
+                        canRecord={detail.canRecordSop}
                         onFlagged={() => card != null && void refresh(card)}
                       />
                     ))}
@@ -838,6 +877,7 @@ export function TaskDrawer({ card, open, closeContext = null, onOpenChange, onTo
                             key={sop.id}
                             sop={sop}
                             canFlagStale={cardDetail.canFlagStale}
+                            canRecord={cardDetail.canRecordSop}
                             onFlagged={() => void refresh(card)}
                           />
                         ))}

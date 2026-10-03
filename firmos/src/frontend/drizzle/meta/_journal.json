@@ -155,6 +155,13 @@
       "when": 1790506044215,
       "tag": "0021_abnormal_riptide",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791022378606,
+      "tag": "0022_useful_ben_grimm",
+      "breakpoints": true
     }
   ]
 }

@@ -21,6 +21,7 @@ import { requireStaff, canEditSops, type SessionUser } from "@/server/auth/guard
 import { normalizeInstitutionKey } from "@/shared/lib/institution-key";
 
 import { logEvent } from "./audit";
+import { listSopVideos } from "./sop-videos";
 import { getStaffOpenWorkCounts } from "./capacity";
 import { localToday } from "./dates";
 import { getDocumentById, latestReportDocument } from "./documents";
@@ -82,6 +83,13 @@ export interface TaskDetailNote {
   createdAt: string;
 }
 
+export interface TaskDetailSopVideo {
+  id: number;
+  title: string;
+  durationSecs: number | null;
+  sizeBytes: number;
+}
+
 export interface TaskDetailSop {
   id: number;
   title: string;
@@ -95,6 +103,8 @@ export interface TaskDetailSop {
   institutionName: string | null;
   /** http(s) links extracted from the content (Loom walkthroughs). */
   links: string[];
+  /** K2: native recordings attached to this SOP (in-house Loom). */
+  videos: TaskDetailSopVideo[];
 }
 
 export interface TaskDetailManualEntry {
@@ -147,6 +157,8 @@ export interface TaskDetail {
   } | null;
   /** I5: manager+ sees the flag-stale action on each SOP card. */
   canFlagStale: boolean;
+  /** K2: can_edit_sops users see the Record SOP button on each card. */
+  canRecordSop: boolean;
   /** Firm-local today, ISO-local - aging math never uses the client clock. */
   today: string;
 }
@@ -159,9 +171,17 @@ export function extractLinks(content: string | null): string[] {
   return [...new Set(content.match(URL_PATTERN) ?? [])];
 }
 
-/** Shape SOP template rows for the drawer, resolving pretty bank names. */
+/** Shape SOP template rows for the drawer, resolving pretty bank names and
+    attaching each SOP's native videos (K2). */
 async function toTaskDetailSops(rows: SopTemplateRow[]): Promise<TaskDetailSop[]> {
   const namesByKey = await institutionNameByKey();
+  const videos = await listSopVideos(rows.map((s) => s.id));
+  const videosBySop = new Map<number, TaskDetailSopVideo[]>();
+  for (const v of videos) {
+    const list = videosBySop.get(v.sopTemplateId) ?? [];
+    list.push({ id: v.id, title: v.title, durationSecs: v.durationSecs, sizeBytes: v.sizeBytes });
+    videosBySop.set(v.sopTemplateId, list);
+  }
   return rows.map((s) => {
     const key = normalizeInstitutionKey(s.institutionKey);
     return {
@@ -173,6 +193,7 @@ async function toTaskDetailSops(rows: SopTemplateRow[]): Promise<TaskDetailSop[]
       institutionKey: s.institutionKey,
       institutionName: key != null ? (namesByKey.get(key) ?? null) : null,
       links: extractLinks(s.content),
+      videos: videosBySop.get(s.id) ?? [],
     };
   });
 }
@@ -322,6 +343,7 @@ export async function getTaskDetail(taskId: number, today: LocalDate = localToda
     })),
     reportGate,
     canFlagStale: canFlagSopStale(user),
+    canRecordSop: canEditSops(user),
     today: formatLocalDate(today),
   };
 }
@@ -348,6 +370,8 @@ export interface WorkCardSopDetail {
   sops: TaskDetailSop[];
   /** Manager+ sees the flag-stale action on each SOP card. */
   canFlagStale: boolean;
+  /** K2: can_edit_sops users see the Record SOP button on each card. */
+  canRecordSop: boolean;
   today: string;
 }
 
@@ -462,6 +486,7 @@ export async function getWorkCardSopDetail(
     hasInstitution: displayByKey.size > 0,
     sops: await toTaskDetailSops(matched),
     canFlagStale: canFlagSopStale(user),
+    canRecordSop: canEditSops(user),
     today: formatLocalDate(today),
   };
 }

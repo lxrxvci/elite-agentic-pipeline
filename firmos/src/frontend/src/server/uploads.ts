@@ -133,6 +133,62 @@ export function extensionOf(fileName: string): string {
   return dot === -1 ? "" : fileName.slice(dot + 1).toLowerCase();
 }
 
+// ── K2: SOP video uploads (the in-house recorder) ─────────────────────────
+
+/** Recordings run large; the recorder reports its own size before upload. */
+export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
+
+export const VIDEO_EXTENSIONS: ReadonlySet<string> = new Set(["webm", "mp4"]);
+export const VIDEO_MIME_TYPES: ReadonlySet<string> = new Set(["video/webm", "video/mp4"]);
+
+const SIG_EBML: Signature = { bytes: [0x1a, 0x45, 0xdf, 0xa3] }; // webm container
+const SIG_FTYP: Signature = { bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 }; // mp4 container
+
+const VIDEO_SIGNATURES: Record<string, Signature[]> = {
+  webm: [SIG_EBML],
+  mp4: [SIG_FTYP],
+};
+
+/**
+ * The video branch of the §13 layers (K2). Same shape as validateUpload but
+ * for recorder output: extension + declared MIME allow-lists, the size cap,
+ * magic bytes (EBML / ftyp), and the executable deny-list. `bytes` may be
+ * just the file's first chunk - the signatures all live in the header.
+ */
+export function validateVideoUpload(
+  rawFileName: string,
+  declaredMimeType: string | null | undefined,
+  bytes: Uint8Array,
+): ValidatedUpload {
+  if (bytes.length === 0) {
+    throw new UploadValidationError("The file is empty.");
+  }
+  if (bytes.length > MAX_VIDEO_BYTES) {
+    throw new UploadValidationError("The recording is over the 500 MB limit.");
+  }
+  const fileName = sanitizeFileName(rawFileName);
+  const ext = extensionOf(fileName);
+  if (!VIDEO_EXTENSIONS.has(ext)) {
+    throw new UploadValidationError('Only ".webm" and ".mp4" recordings can be uploaded here.');
+  }
+  const mime = (declaredMimeType ?? "").toLowerCase();
+  if (!UNDECLARED_MIME_TYPES.has(mime) && !VIDEO_MIME_TYPES.has(mime)) {
+    throw new UploadValidationError(`Files of type "${mime}" cannot be uploaded here.`);
+  }
+  for (const denied of DENIED_SIGNATURES) {
+    if (startsWith(bytes, denied)) {
+      throw new UploadValidationError(`This file looks like a ${denied.name}, which cannot be uploaded.`);
+    }
+  }
+  const required = VIDEO_SIGNATURES[ext];
+  if (required && !required.every((sig) => startsWith(bytes, sig))) {
+    throw new UploadValidationError(
+      `The file's contents do not match its ".${ext}" extension. It may be misnamed or corrupted.`,
+    );
+  }
+  return { fileName, ext, mimeType: mime, bytes };
+}
+
 /**
  * Run all five §13 layers. Returns the sanitized, validated upload or throws
  * UploadValidationError with a human-readable reason.
