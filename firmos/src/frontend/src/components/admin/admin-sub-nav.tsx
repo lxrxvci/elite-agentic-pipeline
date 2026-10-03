@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { DollarSign, FileClock, Flag, Gauge, Layers, MessageSquareWarning, ShieldAlert, Trash2, Users } from 'lucide-react'
+import { DollarSign, FileClock, Flag, Gauge, Layers, ListChecks, MessageSquareWarning, ShieldAlert, Trash2, Users } from 'lucide-react'
 
 import { cn } from '@/shared/lib/utils'
 
@@ -17,6 +17,7 @@ const ITEMS = [
   { title: 'Trash', href: '/admin/trash', icon: Trash2 },
   { title: 'Audit log', href: '/admin/audit', icon: FileClock },
   { title: 'Pricing', href: '/admin/pricing', icon: DollarSign },
+  { title: 'Option lists', href: '/admin/option-lists', icon: ListChecks },
   { title: 'Settings', href: '/admin/settings', icon: Flag },
   { title: 'Feedback', href: '/admin/feedback', icon: MessageSquareWarning },
   { title: 'Templates', href: '/admin/templates', icon: Layers },

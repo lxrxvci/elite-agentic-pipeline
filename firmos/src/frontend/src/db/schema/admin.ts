@@ -7,6 +7,7 @@ import {
   pgTable,
   serial,
   text,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
@@ -37,6 +38,34 @@ export const sopTemplates = pgTable("sop_templates", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+/**
+ * K3 (meeting 09_30 + DB1/J1, 09_27 00:28:42): the universal option store -
+ * "anytime there's a potential database, it should be a database; once added
+ * through an intake, it stays in the database for future use." One table
+ * backs every reusable dropdown/chip list in the app (referral sources,
+ * industries, payment methods, ...); the OPTION_LISTS registry in
+ * server/option-lists.ts declares each list's key, label, noun, and seeds.
+ * Adds are trim/case-fold deduped and alphabetized everywhere; admins
+ * rename/deactivate from the option-lists manager. Answers store the option
+ * NAME (the same convention as payroll providers), so renames flow through.
+ */
+export const optionListValues = pgTable(
+  "option_list_values",
+  {
+    id: serial("id").primaryKey(),
+    listKey: text("list_key").notNull(),
+    name: text("name").notNull(),
+    /** Per-list extras (e.g. close-tier day/price, asset-type account mapping). */
+    meta: jsonb("meta"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("option_list_values_list_name_unique").on(t.listKey, t.name),
+    index("option_list_values_list_idx").on(t.listKey),
+  ],
+);
 
 /**
  * K2 (meeting 09_30, 01:16:00): native SOP walkthrough videos - the in-house
