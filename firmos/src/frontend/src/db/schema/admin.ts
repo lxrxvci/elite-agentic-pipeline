@@ -125,6 +125,20 @@ export const servicesCatalog = pgTable(
 );
 
 /**
+ * K3 (J16): admin-editable email copy. One row per template key; subject and
+ * footnote overrides with {{clientName}}/{{firmName}} merge tags; absent
+ * rows fall back to the branded builders' copy (email-templates.ts). Body
+ * structure stays in code - item lists and interpolation keep working.
+ */
+export const emailTemplates = pgTable("email_templates", {
+  key: text("key").primaryKey(),
+  subject: text("subject"),
+  footnote: text("footnote"),
+  updatedById: integer("updated_by_id").references((): AnyPgColumn => users.id),
+  updatedAt: updatedAt(),
+});
+
+/**
  * §7/§9 - key/value JSON settings and feature flags, e.g.
  * feature_flags.client_portal_enabled (portal kill switch),
  * payroll_config.commission_payout, docs_root_path, max_clock_in_hours.

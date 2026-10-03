@@ -35,6 +35,28 @@ export function appUrl(): string {
   return raw.replace(/\/+$/, "");
 }
 
+/**
+ * K3 (J16): admin-editable subject/footnote overrides (email_templates
+ * table). Merge tags interpolate at build time; an absent row (or empty
+ * field) keeps the builder's default copy.
+ */
+export interface EmailTemplateOverride {
+  subject?: string | null;
+  footnote?: string | null;
+}
+
+/** Interpolate {{clientName}} / {{firmName}} / {{title}} / {{year}} merge tags. */
+export function interpolateEmailCopy(
+  template: string,
+  vars: { clientName?: string; firmName?: string; title?: string; year?: string | number },
+): string {
+  return template
+    .replace(/\{\{\s*clientName\s*\}\}/g, vars.clientName ?? "")
+    .replace(/\{\{\s*firmName\s*\}\}/g, vars.firmName ?? firmName())
+    .replace(/\{\{\s*title\s*\}\}/g, vars.title ?? "")
+    .replace(/\{\{\s*year\s*\}\}/g, String(vars.year ?? ""));
+}
+
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -116,6 +138,7 @@ export function brandedEmail(input: BrandedEmailInput): string {
 export function welcomePortalEmail(input: {
   clientName: string;
   contactFirstName: string | null;
+  override?: EmailTemplateOverride;
 }): BrandedEmail {
   const greeting = input.contactFirstName ? `Hi ${input.contactFirstName},` : "Hello,";
   const portalUrl = `${appUrl()}/portal`;
@@ -125,13 +148,14 @@ export function welcomePortalEmail(input: {
     `Your client portal is the fastest way to see what we need from you, share documents, and follow along as your books close each month.`,
     `If email is easier, that works too - replying to any message from us reaches your bookkeeper directly.`,
   ].join("\n\n");
+  const vars = { clientName: input.clientName };
   return {
-    subject: `Welcome to ${firmName()} - your ${input.clientName} portal is ready`,
+    subject: interpolateEmailCopy(input.override?.subject ?? `Welcome to ${firmName()} - your ${input.clientName} portal is ready`, vars),
     html: brandedEmail({
       heading: `Welcome aboard, ${input.clientName}`,
       bodyText,
       cta: { label: "Open your portal", url: portalUrl },
-      footnote: "The portal link is always the same - bookmark it or just reply to this email any time.",
+      footnote: input.override?.footnote ?? "The portal link is always the same - bookmark it or just reply to this email any time.",
     }),
     text: `${bodyText}\n\nOpen your portal: ${portalUrl}`,
   };
@@ -143,6 +167,7 @@ export function missingInfoReminderEmail(input: {
   clientName: string;
   items: string[];
   includePortalLink?: boolean;
+  override?: EmailTemplateOverride;
 }): BrandedEmail {
   const portalUrl = `${appUrl()}/portal`;
   const bodyText = [
@@ -150,13 +175,13 @@ export function missingInfoReminderEmail(input: {
     `We're getting ${input.clientName}'s books set up and a few things are still open on your side. Could you take a look when you get a chance?`,
   ].join("\n\n");
   return {
-    subject: `A few things we still need for ${input.clientName}`,
+    subject: interpolateEmailCopy(input.override?.subject ?? `A few things we still need for ${input.clientName}`, { clientName: input.clientName }),
     html: brandedEmail({
       heading: "A few things are still open",
       bodyText,
       items: input.items,
       cta: input.includePortalLink === false ? undefined : { label: "See what's needed", url: portalUrl },
-      footnote: "You can also just reply to this email - it goes straight to your bookkeeper.",
+      footnote: input.override?.footnote ?? "You can also just reply to this email - it goes straight to your bookkeeper.",
     }),
     text:
       `${bodyText}\n\n${input.items.map((i) => `- ${i}`).join("\n")}` +
@@ -171,6 +196,7 @@ export function quoteReadyEmail(input: {
   lines: { name: string; amount: string }[];
   totalLabel: string;
   includePortalLink?: boolean;
+  override?: EmailTemplateOverride;
 }): BrandedEmail {
   const reviewUrl = `${appUrl()}/portal`;
   const items = [...input.lines.map((l) => `${l.name} - ${l.amount}`), `Total: ${input.totalLabel}`];
@@ -179,7 +205,7 @@ export function quoteReadyEmail(input: {
     `Your proposal from ${firmName()} is ready. Here is the summary:`,
   ].join("\n\n");
   return {
-    subject: `Your ${firmName()} proposal is ready`,
+    subject: interpolateEmailCopy(input.override?.subject ?? `Your ${firmName()} proposal is ready`, { clientName: input.clientName }),
     html: brandedEmail({
       heading: "Your proposal is ready",
       bodyText,
@@ -188,7 +214,7 @@ export function quoteReadyEmail(input: {
         input.includePortalLink === false
           ? undefined
           : { label: "Review your proposal", url: reviewUrl },
-      footnote: "Questions about any line? Reply to this email and we will walk through it together.",
+      footnote: input.override?.footnote ?? "Questions about any line? Reply to this email and we will walk through it together.",
     }),
     text:
       `${bodyText}\n\n${items.map((i) => `- ${i}`).join("\n")}` +
@@ -200,6 +226,7 @@ export function quoteReadyEmail(input: {
 export function waitingOnClientEmail(input: {
   clientName: string;
   question: string;
+  override?: EmailTemplateOverride;
 }): BrandedEmail {
   const bodyText = [
     "Hello,",
@@ -208,22 +235,22 @@ export function waitingOnClientEmail(input: {
     "Just reply to this email - your answer lands directly on the work item and your bookkeeper gets notified. No login needed.",
   ].join("\n\n");
   return {
-    subject: `Question about ${input.clientName}`,
+    subject: interpolateEmailCopy(input.override?.subject ?? `Question about ${input.clientName}`, { clientName: input.clientName }),
     html: brandedEmail({
       heading: `A question about ${input.clientName}`,
       bodyText,
-      footnote: "Replying to this email is enough - it attaches your answer to the right work item automatically.",
+      footnote: input.override?.footnote ?? "Replying to this email is enough - it attaches your answer to the right work item automatically.",
     }),
     text: bodyText,
   };
 }
 
 /** Staff composer mail: the same shell around a free-form body. */
-export function staffComposerEmail(input: { bodyText: string }): string {
+export function staffComposerEmail(input: { bodyText: string; override?: EmailTemplateOverride }): string {
   return brandedEmail({
     heading: firmName(),
     bodyText: input.bodyText,
-    footnote: "You can reply directly to this email - it reaches your bookkeeper's inbox.",
+    footnote: input.override?.footnote ?? "You can reply directly to this email - it reaches your bookkeeper's inbox.",
   });
 }
 
@@ -238,6 +265,7 @@ export function meetingInfoEmail(input: {
   link?: string | null;
   location?: string | null;
   notes?: string | null;
+  override?: EmailTemplateOverride;
 }): BrandedEmail {
   const details = [`When: ${input.whenLabel}`];
   if (input.location) details.push(`Where: ${input.location}`);
@@ -249,12 +277,12 @@ export function meetingInfoEmail(input: {
     "If the time stops working, just reply to this email and we will find a new one.",
   ].join("\n\n");
   return {
-    subject: `Meeting: ${input.title}`,
+    subject: interpolateEmailCopy(input.override?.subject ?? `Meeting: ${input.title}`, { title: input.title }),
     html: brandedEmail({
       heading: input.title,
       bodyText,
       cta: input.link ? { label: "Join the meeting", url: input.link } : undefined,
-      footnote: "Replying to this email reaches your bookkeeper directly - no login needed.",
+      footnote: input.override?.footnote ?? "Replying to this email reaches your bookkeeper directly - no login needed.",
     }),
     text: `${bodyText}${input.link ? `\n\nJoin the meeting: ${input.link}` : ""}`,
   };
@@ -265,6 +293,7 @@ export function w9RequestEmail(input: {
   clientName: string;
   vendorName: string;
   year: number;
+  override?: EmailTemplateOverride;
 }): BrandedEmail {
   const portalUrl = `${appUrl()}/portal`;
   const bodyText = [
@@ -273,12 +302,13 @@ export function w9RequestEmail(input: {
     `You can reply to this email with the signed form attached, or upload it through the secure portal link below.`,
   ].join("\n\n");
   return {
-    subject: `W-9 request from ${input.clientName} (${input.year})`,
+    subject: interpolateEmailCopy(input.override?.subject ?? `W-9 request from ${input.clientName} (${input.year})`, { clientName: input.clientName, year: input.year }),
     html: brandedEmail({
       heading: `Form W-9 needed for ${input.year}`,
       bodyText,
       cta: { label: "Upload your W-9", url: portalUrl },
       footnote:
+        input.override?.footnote ??
         "Prefer email? Just reply with the signed form attached - it lands directly with the bookkeeping team.",
     }),
     text: `${bodyText}\n\nUpload your W-9: ${portalUrl}`,

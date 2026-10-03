@@ -28,6 +28,7 @@ import {
   waitingOnClientEmail,
   welcomePortalEmail,
 } from "./email-templates";
+import { getEmailTemplateOverrides } from "./email-template-overrides";
 import { emitNotification, firmTimezone } from "./notifications";
 import { isPortalEnabled, requirePortalClientAccess } from "./portal";
 import { calculateIntakeQuoteWithConfig } from "./quote";
@@ -228,6 +229,7 @@ export async function sendWelcomeEmail(
 
   const clientName = client.dbaName ?? client.legalName;
   const mail = welcomePortalEmail({
+    override: (await getEmailTemplateOverrides()).get("welcome"),
     clientName,
     contactFirstName: contactFirstName(target.contact),
   });
@@ -260,6 +262,7 @@ export async function sendMissingInfoReminder(
 
   const clientName = client.dbaName ?? client.legalName;
   const mail = missingInfoReminderEmail({
+    override: (await getEmailTemplateOverrides()).get("missing_info"),
     clientName,
     items,
     includePortalLink: await isPortalEnabled(),
@@ -328,6 +331,7 @@ export async function sendQuoteReadyEmail(
       amount: moneyText(l.amount == null ? null : Math.max(0, l.amount - (l.discount ?? 0))),
     }));
   const mail = quoteReadyEmail({
+    override: (await getEmailTemplateOverrides()).get("quote_ready"),
     clientName,
     lines,
     totalLabel: `${moneyText(quote.totals.effectiveMonthly)}/mo`,
@@ -387,6 +391,7 @@ export async function sendMeetingInfoEmail(input: {
   if (!target) return { sent: false, reason: "no_contact_email" };
 
   const mail = meetingInfoEmail({
+    override: (await getEmailTemplateOverrides()).get("meeting_info"),
     clientName: client.dbaName ?? client.legalName,
     title: input.title,
     whenLabel: meetingWhenLabel(input.startsAt, input.endsAt),
@@ -425,6 +430,7 @@ export async function sendW9RequestEmail(input: {
   const [client] = await db.select().from(clients).where(eq(clients.id, input.clientId)).limit(1);
   if (!client) throw new CorrespondenceError(404, `Client ${input.clientId} not found`);
   const mail = w9RequestEmail({
+    override: (await getEmailTemplateOverrides()).get("w9_request"),
     clientName: client.dbaName ?? client.legalName,
     vendorName: input.vendorName,
     year: input.year,
@@ -492,7 +498,7 @@ export async function sendComposerEmail(input: ComposerInput): Promise<Correspon
 
   const clientName = client.dbaName ?? client.legalName;
   if (taskId != null) {
-    const mail = waitingOnClientEmail({ clientName, question: input.bodyText.trim() });
+    const mail = waitingOnClientEmail({ clientName, question: input.bodyText.trim(), override: (await getEmailTemplateOverrides()).get("waiting_on_client") });
     return sendAndRecord({
       clientId: input.clientId,
       contactId: input.contactId,
@@ -512,7 +518,7 @@ export async function sendComposerEmail(input: ComposerInput): Promise<Correspon
     to,
     subject: input.subject,
     bodyText: input.bodyText.trim(),
-    html: staffComposerEmail({ bodyText: input.bodyText.trim() }),
+    html: staffComposerEmail({ bodyText: input.bodyText.trim(), override: (await getEmailTemplateOverrides()).get("staff_composer") }),
     template: "staff_composer",
     sentById: input.sentById,
     now: input.now,

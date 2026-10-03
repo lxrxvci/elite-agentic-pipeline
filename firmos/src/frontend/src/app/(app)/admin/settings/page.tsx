@@ -1,7 +1,9 @@
 import type { Metadata } from 'next'
 
+import { EmailTemplatesAdmin } from '@/components/admin/email-templates-admin'
 import { SettingsForm } from '@/components/admin/settings-form'
 import { getAdminSettings } from '@/server/admin-reads'
+import { EMAIL_TEMPLATE_DEFS, getEmailTemplateOverrides } from '@/server/email-template-overrides'
 import { requireRole } from '@/server/auth/guards'
 
 export const metadata: Metadata = { title: 'FirmOS - Admin - Settings' }
@@ -12,6 +14,11 @@ export const metadata: Metadata = { title: 'FirmOS - Admin - Settings' }
  */
 export default async function AdminSettingsPage() {
   await requireRole('admin', 'owner')
-  const settings = await getAdminSettings()
-  return <SettingsForm settings={settings} />
+  const [settings, emailOverrides] = await Promise.all([getAdminSettings(), getEmailTemplateOverrides()])
+  return (
+    <div className="space-y-4">
+      <SettingsForm settings={settings} />
+      <EmailTemplatesAdmin defs={EMAIL_TEMPLATE_DEFS} overrides={Object.fromEntries(emailOverrides)} />
+    </div>
+  )
 }
