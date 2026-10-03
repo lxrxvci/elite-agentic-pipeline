@@ -30,6 +30,11 @@ export interface IntakeOwnerInput {
    */
   phone?: string | null;
   receivesReports?: boolean;
+  /**
+   * K4 (B6): set when the owner was picked from the contact type-ahead -
+   * conversion links that row with the owner role instead of name-matching.
+   */
+  contactId?: number | null;
 }
 
 export interface IntakeContactInput {

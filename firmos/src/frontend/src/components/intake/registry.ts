@@ -143,6 +143,21 @@ export interface RepeatableDef {
    *  links the row instead of duplicating the person). The draft form stays
    *  as the create-new path. */
   contactPicker?: boolean
+  /** K4 (C6, 09_30 00:22:01): merchant-processor repeatables ALSO render
+   *  an alphabetized tile grid - one tap adds/removes the processor, no name
+   *  re-entry (C7). The dropdown draft below stays for the comparison. */
+  processorTiles?: boolean
+  /** K4 (B6): how a picked contact maps onto THIS repeatable's item shape
+   *  (the contacts card's shape is the default; owners carry role+name). */
+  pickerItem?: (hit: {
+    id: number
+    name: string
+    firstName: string | null
+    lastName: string | null
+    entityName: string | null
+    email: string | null
+    phone: string | null
+  }) => Record<string, unknown>
   /** J1 (C3): a non-blocking note over the committed list (the ownership
    *  %-under-100 soft note). Blocking problems stay on validateItems. */
   itemsNote?: (items: Array<Record<string, unknown>>, a: WizardAnswers) => string | null
@@ -232,13 +247,15 @@ export interface AccountCountDef {
 /** J1 (C6/C7): config for picker-first `fields` questions. */
 export interface ContactPickerDef {
   /** form_data key carrying the picked CONTACT id (null once typed over). */
-  linkKey: 'cpaContactId' | 'referralContactId'
+  linkKey: 'cpaContactId' | 'referralContactId' | 'mainContactId'
   /** Referral-who additionally links CLIENT records (C7). */
   clientLinkKey?: 'referralClientId'
   /** The name field the picker writes and the typed path edits. */
-  nameKey: 'cpaName' | 'referralWho'
-  /** Optional email field prefilled from a picked contact. */
-  emailKey?: 'cpaEmail'
+  nameKey: 'cpaName' | 'referralWho' | 'contactName'
+  /** Optional email/phone fields prefilled from a picked contact. */
+  emailKey?: 'cpaEmail' | 'contactEmail'
+  /** K4 (B6): main-contact prefills phone too. */
+  phoneKey?: 'contactPhone'
   placeholder: string
 }
 
@@ -519,6 +536,38 @@ export const customAllowed = (q: QuestionDef): boolean =>
 /** The verbatim custom text for a question, when one was typed. */
 export const customText = (a: WizardAnswers, questionId: string): string | null =>
   str(a.customAnswers?.[questionId])
+
+/**
+ * K4 (B7, 09_30 00:06:59): "the primary contact, the owner, and this who
+ * else do we talk to are kind of all interconnected... if you edit it in one
+ * spot, it should edit to the other ones." The contacts array is the
+ * canonical store; linked owner copies follow it by contactId. One
+ * direction only (owner-side edits on linked rows stay local until re-picked)
+ * - the picker link is what guarantees ONE record at conversion.
+ */
+export function syncLinkedContactCopies(a: WizardAnswers): Partial<WizardAnswers> | null {
+  const contacts = a.contacts ?? []
+  const owners = a.owners ?? []
+  if (owners.length === 0 || contacts.length === 0) return null
+  const byId = new Map<number, IntakeContactInput>()
+  for (const c of contacts) {
+    if (typeof c.contactId === 'number') byId.set(c.contactId, c)
+  }
+  if (byId.size === 0) return null
+  let changed = false
+  const nextOwners = owners.map((o) => {
+    const cid = typeof o.contactId === 'number' ? o.contactId : null
+    const srcRecord = cid != null ? byId.get(cid) : undefined
+    if (!srcRecord) return o
+    const name = str(srcRecord.entityName) ?? [srcRecord.firstName, srcRecord.lastName].filter(Boolean).join(' ')
+    const email = srcRecord.email ?? ''
+    const phone = srcRecord.phone ?? ''
+    if (o.name === name && (o.email ?? '') === email && (o.phone ?? '') === phone) return o
+    changed = true
+    return { ...o, name, email, phone }
+  })
+  return changed ? { owners: nextOwners } : null
+}
 
 /** True when this pick opens the inline custom-text input instead of advancing. */
 export const isCustomOtherPick = (q: QuestionDef, value: string): boolean =>
@@ -1548,6 +1597,16 @@ export const CHAPTERS: ChapterDef[] = [
         help: 'The person we call, email, and send reports to. If they also own the business, the contacts card can prefill them.',
         type: 'fields',
         required: true,
+        // K4 (B6, 09_30 00:07:51): the type-ahead sits on the main contact
+        // too - "the search for people already existing should be an option
+        // across any time in the intake that we're doing a contact".
+        contactPicker: {
+          linkKey: 'mainContactId',
+          nameKey: 'contactName',
+          emailKey: 'contactEmail',
+          phoneKey: 'contactPhone',
+          placeholder: 'Search people already on file…',
+        },
         fields: [
           { key: 'contactName', label: 'Full name', kind: 'text', required: true, placeholder: 'Wren Okafor' },
           { key: 'contactPhone', label: 'Phone', kind: 'tel', half: true, placeholder: '(503) 555-0182' },
@@ -1577,6 +1636,9 @@ export const CHAPTERS: ChapterDef[] = [
             return { contacts }
           }
           const { firstName, lastName } = splitFullName(name ?? '')
+          // K4 (B6): the picker link (or a surviving prior link) converts to
+          // a link instead of a duplicate person.
+          const linkedId = (val.mainContactId as number | null | undefined) ?? contacts[idx]?.contactId ?? null
           const entry: IntakeContactInput = {
             ...contacts[idx],
             firstName: name ? firstName : null,
@@ -1586,6 +1648,7 @@ export const CHAPTERS: ChapterDef[] = [
             phone,
             isPrimary: true,
             relationshipType: 'primary_contact',
+            ...(linkedId != null ? { contactId: linkedId } : {}),
           }
           if (idx >= 0) contacts[idx] = entry
           else contacts.unshift(entry)
@@ -1747,6 +1810,14 @@ export const CHAPTERS: ChapterDef[] = [
             { key: 'ownershipPercent', label: 'Ownership % (optional)', kind: 'number', min: 0, max: 100, half: true, placeholder: '60' },
             { key: 'receivesReports', label: 'Receives the monthly reports', kind: 'checkbox' },
           ],
+          contactPicker: true,
+          // K4 (B6): a picked person links - one record, role owner.
+          pickerItem: (hit) => ({
+            contactId: hit.id,
+            name: hit.entityName ?? [hit.firstName, hit.lastName].filter(Boolean).join(' '),
+            email: hit.email ?? '',
+            phone: hit.phone ?? '',
+          }),
           itemValid: (i) => !!str(i.name),
           summarize: (i) => String(i.name),
           sub: (i) =>
@@ -2212,6 +2283,9 @@ export const CHAPTERS: ChapterDef[] = [
         required: true,
         when: takesCards,
         repeatable: {
+          // K4 (C6/C7): tiles + dropdown side by side - Jason picks the
+          // winner next call.
+          processorTiles: true,
           addLabel: 'Add processor',
           itemFields: [
             { key: 'name', label: 'Name', kind: 'text', required: true, placeholder: 'Stripe' },

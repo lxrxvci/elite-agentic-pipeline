@@ -702,6 +702,7 @@ export async function convertIntakeToClient(
             phone: formOwnersByName.get(o.name.trim().toLowerCase())?.phone ?? null,
             receivesReports:
               formOwnersByName.get(o.name.trim().toLowerCase())?.receivesReports ?? true,
+            contactId: formOwnersByName.get(o.name.trim().toLowerCase())?.contactId ?? null,
           }))
         : (form.owners ?? []).map((o) => ({
             id: null as number | null,
@@ -710,13 +711,25 @@ export async function convertIntakeToClient(
             ownershipPercent: o.ownershipPercent == null ? null : String(o.ownershipPercent),
             phone: o.phone ?? null,
             receivesReports: o.receivesReports ?? true,
+            contactId: o.contactId ?? null,
           }));
     for (const owner of owners) {
       // J1 (C4): an owner who is already on file - or was just created as
       // the primary contact in this same conversion (the C1 same-as-primary
       // shortcut) - LINKS the existing record with the owner role instead
       // of duplicating the person. Name+email both required to match.
-      const linkedRow = await findContactByNameEmail(tx, owner.name, owner.email);
+      // K4 (B6): a picker-linked owner (contactId set) links THAT record
+      // directly; name+email matching stays the fallback.
+      const linkedRow =
+        owner.contactId != null
+          ? (
+              await tx
+                .select()
+                .from(contacts)
+                .where(sql`${contacts.id} = ${owner.contactId}`)
+                .limit(1)
+            )[0] ?? (await findContactByNameEmail(tx, owner.name, owner.email))
+          : await findContactByNameEmail(tx, owner.name, owner.email);
       const contact =
         linkedRow ??
         (

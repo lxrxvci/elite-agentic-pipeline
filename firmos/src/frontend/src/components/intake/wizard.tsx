@@ -40,6 +40,7 @@ import {
   CUSTOM_OTHER_VALUE,
   customAllowed,
   registerCustomAddonServiceKeys,
+  syncLinkedContactCopies,
   type ServiceCatalogRowLite,
   effectiveServiceKeys,
   findChapter,
@@ -353,7 +354,14 @@ export function IntakeWizard({
   // ── Navigation ──
   const apply = useCallback(
     (patch: Partial<WizardAnswers>) => {
-      setAnswers((prev) => ({ ...prev, ...patch }))
+      setAnswers((prev) => {
+        const next = { ...prev, ...patch }
+        // K4 (B7, 09_30 00:06:59): linked contact copies follow the
+        // canonical store - edit the primary contact once and the linked
+        // owner card shows it too.
+        const sync = syncLinkedContactCopies(next)
+        return sync ? { ...next, ...sync } : next
+      })
       if (editable) scheduleSave()
     },
     [editable, scheduleSave],

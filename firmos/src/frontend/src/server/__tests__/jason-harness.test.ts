@@ -142,8 +142,11 @@ describe("jason harness - standing rules awaiting their K-wave (the index)", () 
   //  - J1 every_add_new_persists_globally -> option-lists.test.ts + k3-option-lists.test.tsx
   //  - J2 custom_answer_never_stranded -> option-lists.test.ts + k3-option-lists.test.tsx
   //  - J16 lists_admin_manageable -> option-lists.test.ts + admin/__tests__/option-lists-admin.test.tsx
-  // K4 - contacts & cards
-  it.todo("J6: every_committed_item_editable");
+  // Flipped in K4:
+  //  - J6 every_committed_item_editable -> k4-contacts.test.tsx (inline expand-edit)
+  //  - B6 contact_picker_on_every_person_field -> k4-contacts.test.tsx
+  //  - B7 edit_syncs_across_cards -> k4-contacts.test.tsx
+  //  - B10 one_person_two_businesses_one_record -> server k4-contacts.test.ts
   // K5 - scheduler
   it.todo("E6: questions_addressed_starts_7_day_report_clock");
   // K6 - estimate

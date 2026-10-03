@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowRight, Check, Info, Plus, X } from 'lucide-react'
+import { ArrowRight, Check, Info, Pencil, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -749,12 +749,42 @@ export function RepeatableScreen({
   // "save this before proceeding?" instead of silently committing it (the
   // 00:23:52 processor bug) or silently dropping it.
   const [confirmDraftSave, setConfirmDraftSave] = useState(false)
+  // K4 (09_30 00:01:54 + 00:03:13): committed items are vertical cards that
+  // expand in place for editing - "is there a way to edit it after you added
+  // it?... it sucks having to type the whole thing again."
+  const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [editDraft, setEditDraft] = useState<Record<string, unknown>>({})
 
   const draftValid = rep.itemValid(draft)
   const draftTouched = Object.values(draft).some((v) => v != null && v !== '')
   const capped = maxItems != null && items.length >= maxItems
 
-  const removeAt = (idx: number) => onCommit(items.filter((_, i) => i !== idx))
+  const removeAt = (idx: number) => {
+    setEditingIndex(null)
+    onCommit(items.filter((_, i) => i !== idx))
+  }
+
+  const openEdit = (idx: number) => {
+    setError(null)
+    setEditingIndex((current) => {
+      if (current === idx) return null
+      setEditDraft({ ...items[idx] })
+      return idx
+    })
+  }
+
+  const saveEdit = () => {
+    if (editingIndex == null) return
+    const err = validateFields(rep.itemFields, editDraft)
+    if (err) {
+      setError(err)
+      return
+    }
+    persistItemLists(editDraft)
+    setError(null)
+    onCommit(items.map((item, i) => (i === editingIndex ? { ...editDraft } : item)))
+    setEditingIndex(null)
+  }
 
   // K3 (J2): list-backed item fields persist when a draft commits.
   const persistItemLists = (item: Record<string, unknown>) => {
@@ -822,25 +852,58 @@ export function RepeatableScreen({
   return (
     <div className="space-y-4">
       {items.length > 0 && (
-        <ul className="flex flex-wrap gap-2" aria-label="Added so far">
+        <ul className="space-y-2" aria-label="Added so far">
           {items.map((item, i) => {
             const sub = rep.sub?.(item)
+            const editing = editingIndex === i
             return (
               <li
                 key={`${rep.summarize(item)}-${i}`}
-                className="inline-flex items-center gap-2 rounded-full border border-firm-brand/40 bg-accent py-1.5 pl-3.5 pr-1.5 text-sm"
+                className="rounded-xl border border-firm-brand/40 bg-accent px-3.5 py-2.5"
                 data-testid="entity-chip"
               >
-                <span className="font-medium text-accent-foreground">{rep.summarize(item)}</span>
-                {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
-                <button
-                  type="button"
-                  aria-label={`Remove ${rep.summarize(item)}`}
-                  onClick={() => removeAt(i)}
-                  className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                >
-                  <X className="h-3 w-3" aria-hidden />
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* K4: click the card to expand and edit in place. */}
+                  <button
+                    type="button"
+                    onClick={() => openEdit(i)}
+                    aria-expanded={editing}
+                    data-testid={`entity-edit-${i}`}
+                    className="flex min-w-0 flex-1 items-baseline gap-2 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  >
+                    <span className="truncate text-sm font-medium text-accent-foreground">{rep.summarize(item)}</span>
+                    {sub && <span className="shrink-0 text-xs text-muted-foreground">{sub}</span>}
+                    <Pencil className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${rep.summarize(item)}`}
+                    onClick={() => removeAt(i)}
+                    className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  >
+                    <X className="h-3 w-3" aria-hidden />
+                  </button>
+                </div>
+                {editing && (
+                  <div className="mt-3 border-t border-firm-brand/20 pt-3" data-testid={`entity-edit-form-${i}`}>
+                    <FieldGrid
+                      fields={rep.itemFields}
+                      value={editDraft}
+                      onChange={(k, v) => setEditDraft((d) => ({ ...d, [k]: v }))}
+                      processors={processors}
+                      onAddProcessor={onAddProcessor}
+                      optionLists={optionLists}
+                    />
+                    <div className="mt-3 flex items-center gap-2">
+                      <Button type="button" variant="action" size="sm" onClick={saveEdit} data-testid={`entity-edit-save-${i}`}>
+                        Save
+                      </Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setEditingIndex(null)} data-testid={`entity-edit-cancel-${i}`}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </li>
             )
           })}
@@ -876,18 +939,21 @@ export function RepeatableScreen({
                   onPick={(hit: ContactPickerHit) => {
                     if (hit.kind !== 'contact') return
                     setError(null)
-                    onCommit([
-                      ...items,
-                      {
-                        contactId: hit.id,
-                        firstName: hit.firstName,
-                        lastName: hit.lastName,
-                        entityName: hit.entityName,
-                        email: hit.email,
-                        phone: hit.phone,
-                        relationshipType: 'related',
-                      },
-                    ])
+                    // K4 (B6): each repeatable maps the pick onto its own
+                    // item shape (owners get the owner role); the contacts
+                    // card keeps the default mapping.
+                    const item = rep.pickerItem
+                      ? rep.pickerItem(hit)
+                      : {
+                          contactId: hit.id,
+                          firstName: hit.firstName,
+                          lastName: hit.lastName,
+                          entityName: hit.entityName,
+                          email: hit.email,
+                          phone: hit.phone,
+                          relationshipType: 'related',
+                        }
+                    onCommit([...items, item])
                   }}
                 />
                 <p className="mt-1.5 text-xs text-muted-foreground">
@@ -909,6 +975,54 @@ export function RepeatableScreen({
                     {p.label}
                   </button>
                 ))}
+              </div>
+            )}
+            {/* K4 (C6/C7, 09_30 00:22:01): the alphabetized tile grid - one
+                tap adds the processor (no name re-entry), tapping again
+                removes it; the dropdown below stays for the comparison. */}
+            {rep.processorTiles && processors && processors.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-1.5" data-testid="processor-tiles">
+                {[...processors]
+                  .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+                  .map((p) => {
+                    const added = items.some(
+                      (i) => i.processorId === p.id || String(i.processor ?? '').toLowerCase() === p.name.toLowerCase(),
+                    )
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        aria-pressed={added}
+                        data-testid={`processor-tile-${p.id}`}
+                        data-selected={added || undefined}
+                        onClick={() => {
+                          setError(null)
+                          if (added) {
+                            onCommit(
+                              items.filter(
+                                (i) =>
+                                  !(
+                                    i.processorId === p.id ||
+                                    String(i.processor ?? '').toLowerCase() === p.name.toLowerCase()
+                                  ),
+                              ),
+                            )
+                          } else {
+                            onCommit([...items, { processor: p.name, processorId: p.id, name: p.name }])
+                          }
+                        }}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+                          added
+                            ? 'border-firm-brand bg-accent text-accent-foreground'
+                            : 'border-border bg-card text-foreground hover:border-firm-brand/60 hover:bg-accent/50',
+                        )}
+                      >
+                        {added && <Check className="h-3 w-3" aria-hidden />}
+                        {p.name}
+                      </button>
+                    )
+                  })}
               </div>
             )}
             <FieldGrid
@@ -1074,6 +1188,8 @@ function FieldsScreen({
     if (!picker) return
     const patch: Record<string, unknown> = { ...value, [picker.nameKey]: hit.name }
     if (picker.emailKey) patch[picker.emailKey] = hit.kind === 'contact' ? (hit.email ?? '') : ''
+    // K4 (B6): the main-contact picker prefills phone too.
+    if (picker.phoneKey) patch[picker.phoneKey] = hit.kind === 'contact' ? (hit.phone ?? '') : ''
     patch[picker.linkKey] = hit.kind === 'contact' ? hit.id : null
     if (picker.clientLinkKey) patch[picker.clientLinkKey] = hit.kind === 'client' ? hit.id : null
     setTyped({})
