@@ -20,6 +20,7 @@ import type { PayrollProviderRow } from '@/server/payroll-providers'
 import { cn } from '@/shared/lib/utils'
 
 import { AccountCountScreen, inputCls, InstitutionSelect } from './account-screens'
+import { CustomWorkAdder } from './custom-work'
 import { ContactPicker, type ContactPickerHit } from './contact-picker'
 import { dateTextDigits, dateTextToIso, isoToDateText, maskDateText } from './date-text'
 import { formatPhone, phoneDigits } from './format'
@@ -231,6 +232,10 @@ export function ServicesScreen({
   onCommit,
   onAdvance,
   catalogRows,
+  onCustomWork,
+  customTaskCatalog,
+  onAddCustomTaskTitle,
+  industrySuggestions = [],
 }: {
   q: QuestionDef
   values: string[]
@@ -242,6 +247,13 @@ export function ServicesScreen({
    *  standards/add-ons and what is hidden); registry copy wins for the
    *  canonical keys it knows. */
   catalogRows?: ServiceCatalogRowLite[]
+  /** K6 (D3, 09_30 00:48:39): custom recurring work enters HERE, on the
+   *  services screen - the standalone card is gone. */
+  onCustomWork?: (patch: Partial<WizardAnswers>) => void
+  customTaskCatalog?: OptionListValueLite[]
+  onAddCustomTaskTitle?: (name: string) => void
+  /** K6 (D2): industry-driven suggestions - suggestive, never auto-added. */
+  industrySuggestions?: { id: number; serviceKey: string; explainer: string }[]
 }) {
   const grouping = q.services!
   const registryStandards = grouping.standards
@@ -363,6 +375,67 @@ export function ServicesScreen({
               )
             })}
           </ul>
+        </section>
+      )}
+
+      {/* K6 (D2, 09_30 00:44:51): industry suggestions - "if there's tasks
+          that we've done before for that industry, it'll pop up as a
+          suggested task on this page." Suggestive only: a click adds. */}
+      {industrySuggestions.length > 0 && (
+        <section data-testid="services-suggestions" aria-label="Suggested for this industry">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Suggested for this industry
+          </h2>
+          <ul className="mt-2 space-y-2">
+            {industrySuggestions.map((s) => {
+              const on = addonValues.includes(s.serviceKey)
+              return (
+                <li
+                  key={s.id}
+                  className="flex items-start gap-3 rounded-xl border border-dashed border-firm-brand/50 bg-accent/40 px-4 py-3"
+                  data-testid={`suggestion-${s.serviceKey}`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-foreground">
+                      {options.find((o) => o.value === s.serviceKey)?.label ??
+                        catalogRows?.find((r) => r.serviceKey === s.serviceKey)?.productName ??
+                        s.serviceKey.replaceAll('_', ' ')}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{s.explainer}</span>
+                  </span>
+                  <Button
+                    type="button"
+                    variant={on ? 'outline' : 'action'}
+                    size="sm"
+                    aria-pressed={on}
+                    data-testid={`suggestion-add-${s.serviceKey}`}
+                    onClick={() => toggle(s.serviceKey)}
+                  >
+                    {on ? 'Added' : 'Add'}
+                  </Button>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )}
+
+      {/* K6 (D3/D4): custom one-time or recurring work enters in the
+          services area, merged with the standard bookkeeping tasks and
+          add-ons (00:48:39). */}
+      {onCustomWork && (
+        <section data-testid="services-custom-work" aria-label="Custom work">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Custom work
+          </h2>
+          <div className="mt-2">
+            <CustomWorkAdder
+              answers={answers}
+              onApply={onCustomWork}
+              onAddToCatalog={onAddCustomTaskTitle}
+              catalog={customTaskCatalog}
+            />
+          </div>
         </section>
       )}
 
@@ -1420,6 +1493,7 @@ export function QuestionScreen({
   optionLists,
   onAddOptionListValue,
   servicesCatalog,
+  industrySuggestions,
 }: {
   q: QuestionDef
   answers: WizardAnswers
@@ -1446,6 +1520,8 @@ export function QuestionScreen({
   onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
   /** K3 (J16): the services catalog behind the services screen. */
   servicesCatalog?: ServiceCatalogRowLite[]
+  /** K6 (D2): industry-driven suggestions for the services screen. */
+  industrySuggestions?: { id: number; serviceKey: string; explainer: string }[]
 }) {
   // J2 (P1): the required-multi empty-attempt message (payroll handling).
   const [requiredError, setRequiredError] = useState<string | null>(null)
@@ -1593,6 +1669,10 @@ export function QuestionScreen({
         onCommit={(next) => onApply(q.apply(answers, next))}
         onAdvance={onAdvance}
         catalogRows={servicesCatalog}
+        industrySuggestions={industrySuggestions}
+        onCustomWork={onApply}
+        customTaskCatalog={optionLists?.custom_task_templates}
+        onAddCustomTaskTitle={onAddOptionListValue ? (name) => void onAddOptionListValue('custom_task_templates', name) : undefined}
       />
     )
   }

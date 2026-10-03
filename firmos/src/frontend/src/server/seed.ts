@@ -39,6 +39,7 @@ import { localToday } from "./dates";
 import { seedInstitutions } from "./institutions";
 import { seedOptionLists } from "./option-lists";
 import { seedServicesCatalog } from "./services-catalog";
+import { seedIndustrySuggestions, seedJobCostingService } from "./industry-suggestions";
 import { seedMerchantProcessors } from "./merchant-processors";
 import { seedPayrollProviders } from "./payroll-providers";
 import { materializeOperationalRows } from "./materialize";
@@ -136,6 +137,9 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
   await seedOptionLists();
   // K3 (J16): the services catalog mirrors the domain PRICING table.
   await seedServicesCatalog();
+  // K6 (D2): job costing as an unpriced catalog add-on + the industry seeds.
+  await seedJobCostingService();
+  await seedIndustrySuggestions();
 
   const yearStart = `${today.year}-01-01`;
   const catchup = formatLocalDate({ ...addMonths({ year: today.year, month: today.month }, -2), day: 1 });

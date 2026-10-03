@@ -139,6 +139,29 @@ export const emailTemplates = pgTable("email_templates", {
 });
 
 /**
+ * K6 (D2, 09_30 00:42:02-00:47:59): industry-driven suggested add-ons -
+ * "if there's tasks that we've done before for that industry, it'll pop up
+ * as a suggested task on this page... a database of those custom tasks for
+ * that industry." Suggestive, NEVER generative: a suggestion renders with
+ * its read-aloud explainer and only a click adds it. industryKey folds to
+ * the industries option list's name; serviceKey names a services_catalog row.
+ */
+export const industrySuggestions = pgTable(
+  "industry_suggestions",
+  {
+    id: serial("id").primaryKey(),
+    industryKey: text("industry_key").notNull(),
+    serviceKey: text("service_key").notNull(),
+    /** The read-aloud "why" for the salesperson (the guardrail for a new hire). */
+    explainer: text("explainer").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    position: integer("position").notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [index("industry_suggestions_industry_idx").on(t.industryKey)],
+);
+
+/**
  * §7/§9 - key/value JSON settings and feature flags, e.g.
  * feature_flags.client_portal_enabled (portal kill switch),
  * payroll_config.commission_payout, docs_root_path, max_clock_in_hours.

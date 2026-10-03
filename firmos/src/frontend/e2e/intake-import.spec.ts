@@ -132,17 +132,15 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   // R7: the retroactive/cleanup question is gone - the books-start date
   // qualifies retroactive work on its own. J3: notes open the chapter; the
   // routine scheduler is bookkeeping-only.
-  await advance(page, 'rules')
+  // Project track: no scheduler - notes -> review directly.
   await page.getByTestId('continue').click()
 
-  // ── Review: the extracted answers render, then submit for review (J4/V2:
-  // sections are collapsed - expand the ones being asserted). ──
+  // ── Review: the extracted answers render, then submit for review (F1:
+  // sections default open). ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByText('Riverbend Coffee Roasters LLC').first()).toBeVisible()
-  await page.getByTestId('section-toggle-engagement').click()
   await expect(page.getByText('One-time project')).toBeVisible()
-  // I2: the subclass folds into the tax-structure row...
-  await page.getByTestId('section-toggle-entity').click()
+  // I2: the subclass folds into the tax-structure row (F1: default open)...
   await expect(page.getByText('LLC · partnership')).toBeVisible()
   // ...and the owners row shows the pair the partnership guard required.
   await expect(page.getByText('Jason Mercado, Dana')).toBeVisible()

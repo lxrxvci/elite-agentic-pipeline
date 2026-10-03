@@ -91,8 +91,10 @@ describe('intake_order_matches_template (I1, plan §1)', () => {
     // ...and land just before the recurring closeout and the scheduler,
     // which stays the final content screen before review.
     expect(ids.indexOf('qbo-tier')).toBeLessThan(ids.indexOf('notes'))
-    expect(ids.indexOf('notes')).toBeLessThan(ids.indexOf('rules'))
-    expect(ids.indexOf('rules')).toBeLessThan(ids.indexOf('routine-scheduler'))
+    // K6 (D3): no standalone rules card - custom work enters on the
+    // services screen; the scheduler follows the notes card directly.
+    expect(ids.indexOf('notes')).toBeLessThan(ids.indexOf('routine-scheduler'))
+    expect(ids).not.toContain('rules')
     expect(ids.indexOf('routine-scheduler')).toBe(ids.length - 1)
     expect(screens[screens.length - 1]).toEqual({ kind: 'review' })
   })
@@ -774,7 +776,7 @@ describe('J3 routine scheduler (meeting #3, R1-R5, 00:39:26-00:54:05)', () => {
 
   it('is the final content screen before review, right after custom recurring work', () => {
     // R1: notes moved up so custom recurring sits just before the scheduler.
-    expect(visibleQuestions(recurring, base).map((q) => q.id)).toEqual(['notes', 'rules', 'routine-scheduler'])
+    expect(visibleQuestions(recurring, base).map((q) => q.id)).toEqual(['notes', 'routine-scheduler'])
     const screens = flattenScreens(base)
     expect(screens[screens.length - 2]).toEqual({
       kind: 'question',
@@ -1361,7 +1363,7 @@ describe('standard_three_preselected (I4, plan §1 screen 5, §3C)', () => {
       'payment_processing',
       'class_tracking',
       'location_tracking',
-      'additional_therapist_tracking',
+      // K6 (D2): therapist tracking is industry-suggested, never standard.
     ])
     expect(services.options?.some((o) => o.value === 'bank_feed_management')).toBe(false)
     expect(services.options?.some((o) => o.value === 'account_reconciliations')).toBe(false)
@@ -1833,7 +1835,7 @@ describe('J2 retroactive question removal (R7)', () => {
     const recurring = CHAPTERS.find((c) => c.id === 'recurring')!
     // J3: the B21 default-rules checklist is gone too - the scheduler screen
     // closes the chapter (notes first, custom work just before it, R1).
-    expect(visibleQuestions(recurring, base).map((q) => q.id)).toEqual(['notes', 'rules', 'routine-scheduler'])
+    expect(visibleQuestions(recurring, base).map((q) => q.id)).toEqual(['notes', 'routine-scheduler'])
     // ...and the review has no row for it (no summarize survives it).
     const ids = flattenScreens(base).flatMap((s) => (s.kind === 'question' ? [s.questionId] : []))
     expect(ids).not.toContain('retroactive')

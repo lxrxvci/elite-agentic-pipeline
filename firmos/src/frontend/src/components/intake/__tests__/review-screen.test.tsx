@@ -29,9 +29,12 @@ vi.mock('@/server/actions/correspondence', () => ({
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-/** V2: expand a collapsed section (only one is open at a time). */
+/** K6 (F1): sections default OPEN; expandSection survives for test intent
+ *  but only clicks when the section was manually collapsed. */
 function expandSection(id: string) {
-  fireEvent.click(screen.getByTestId(`section-toggle-${id}`))
+  const toggle = screen.queryByTestId(`section-toggle-${id}`)
+  if (!toggle) return
+  if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle)
 }
 
 const DISCOUNT_QUOTE: Quote = {
@@ -91,7 +94,7 @@ const ESTIMATE_QUOTE: Quote = {
     totalOneTime: 6200,
     effectiveMonthly: 315,
   },
-  retroactive: { months: 7, startMonth: { year: 2025, month: 12 }, perMonthRate: 350, total: 2450 },
+  retroactive: { months: 7, startMonth: { year: 2025, month: 12 }, perMonthRate: 350, baseTotal: 2450, discountPercent: null, total: 2450 },
 }
 
 /** Five statement-proof money accounts -> the recon breakdown's count math. */
@@ -142,7 +145,7 @@ function renderReview({
   )
 }
 
-describe('sections_expand_one_at_a_time (V2)', () => {
+describe('sections_default_open_confirm_greens_and_collapses (K6, F1 - 09_30 01:00:58)', () => {
   const answers: WizardAnswers = {
     legalName: 'Accordion Co',
     engagementType: 'bookkeeping',
@@ -152,39 +155,47 @@ describe('sections_expand_one_at_a_time (V2)', () => {
     hasCpa: false,
   }
 
-  it('the first section starts expanded; every other is a collapsed summary', () => {
+  it('every section starts expanded; the confirm check greens + collapses; uncheck reopens', () => {
     renderReview({ answers, quote: null })
-    // Contact (first) is open: its rows render.
+    // All open by default: both chapters' rows render, no summaries.
     expect(screen.getByText('Wren Okafor')).toBeInTheDocument()
-    // Entity is collapsed: its rows are out of the DOM, its summary shows.
-    expect(screen.queryByText('LLC · single-member')).toBeNull()
-    expect(screen.getByTestId('section-summary-entity')).toBeInTheDocument()
-    // Disclosure buttons are keyboard-accessible buttons with aria-expanded.
-    expect(screen.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'false')
-  })
-
-  it('expanding one section collapses the previous; toggling the open one closes all', () => {
-    renderReview({ answers, quote: null })
-    expandSection('entity')
     expect(screen.getByText('LLC · single-member')).toBeInTheDocument()
-    expect(screen.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'true')
-    // The previous section collapsed: its rows left the DOM, summary back.
+    expect(screen.queryByTestId('section-summary-entity')).toBeNull()
+
+    // Confirm the contact section: greens, collapses, summary returns.
+    fireEvent.click(screen.getByTestId('section-confirm-contact'))
+    expect(screen.getByTestId('review-section-contact')).toHaveAttribute('data-confirmed', 'true')
     expect(screen.queryByText('Wren Okafor')).toBeNull()
     expect(screen.getByTestId('section-summary-contact')).toBeInTheDocument()
-    expect(screen.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('section-confirm-contact')).toHaveAttribute('aria-checked', 'true')
 
-    // Opening a third section keeps the one-open rule.
-    expandSection('contact')
+    // Entity stays open (independent sections - the one-open rule is gone).
+    expect(screen.getByText('LLC · single-member')).toBeInTheDocument()
+
+    // Uncheck reopens and ungreens.
+    fireEvent.click(screen.getByTestId('section-confirm-contact'))
     expect(screen.getByText('Wren Okafor')).toBeInTheDocument()
-    expect(screen.queryByText('LLC · single-member')).toBeNull()
+    expect(screen.getByTestId('review-section-contact')).not.toHaveAttribute('data-confirmed')
+  })
 
-    // Toggling the open section collapses everything.
-    expandSection('contact')
-    expect(screen.queryByText('Wren Okafor')).toBeNull()
+  it('the estimate greens itself when every chapter is confirmed', () => {
+    renderReview({ answers: { ...answers, bookkeepingFrequency: 'monthly', monthlyCloseTier: '10', bookkeepingStartDate: '2026-08-01' }, quote: DISCOUNT_QUOTE })
+    expect(screen.getByTestId('review-quote')).not.toHaveAttribute('data-confirmed')
+    // Jason's flow: work down the page confirming each section in turn.
+    for (const el of screen.getAllByTestId(/^section-confirm-/)) {
+      if (el.getAttribute('aria-checked') !== 'true') fireEvent.click(el)
+    }
+    expect(screen.getByTestId('review-quote')).toHaveAttribute('data-confirmed', 'true')
+  })
+
+  it('the chevron still collapses/expands manually without confirming', () => {
+    renderReview({ answers, quote: null })
+    const toggle = screen.getByTestId('section-toggle-entity')
+    fireEvent.click(toggle) // collapse
     expect(screen.queryByText('LLC · single-member')).toBeNull()
-    expect(screen.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('review-section-entity')).not.toHaveAttribute('data-confirmed')
+    fireEvent.click(toggle) // expand again
+    expect(screen.getByText('LLC · single-member')).toBeInTheDocument()
   })
 })
 
@@ -357,13 +368,17 @@ describe('one_time_fees_separate_from_recurring (V7)', () => {
   it('QBO setup, missed filings, and the retro cleanup list separately, split by period', () => {
     renderReview({ answers: FIVE_ACCOUNTS, quote: ESTIMATE_QUOTE })
     expandSection('quote')
+    // K6 (D5/D7): one-time fees up top hold QBO setup only - missed filings
+    // and the cleanup moved to the retro block at the bottom.
     const oneTime = screen.getByTestId('estimate-one-time')
     expect(oneTime).toHaveTextContent('One-time fees')
-    expect(screen.getByTestId('one-time-total')).toHaveTextContent('$6,200')
+    expect(oneTime).not.toHaveTextContent('Missed past filings')
     expect(screen.getByTestId('one-time-qbo_setup')).toHaveTextContent('$150')
-    expect(screen.getByTestId('one-time-specialty_report_1_retro')).toHaveTextContent('$3,600')
+    const retroBlock = screen.getByTestId('estimate-retro')
+    expect(retroBlock).toHaveTextContent('Retroactive cleanup')
+    expect(screen.getByTestId('retro-specialty_report_1_retro')).toHaveTextContent('$3,600')
     // The retro project: months x rate math plus the per-period split.
-    const retro = screen.getByTestId('one-time-retroactive_bookkeeping')
+    const retro = screen.getByTestId('retro-retroactive_bookkeeping')
     expect(retro).toHaveTextContent('$2,450')
     expect(screen.getByTestId('one-time-math-retroactive_bookkeeping')).toHaveTextContent('7 months × $350/mo')
     expect(screen.getByTestId('retro-periods')).toHaveTextContent('2025: 1 month · 2026: 6 months')

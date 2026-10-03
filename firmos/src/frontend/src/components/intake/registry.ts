@@ -694,13 +694,15 @@ export const SERVICES_STANDARD_KEYS: readonly string[] = SERVICES_STANDARD_ROWS.
   (r) => !r.derived,
 ).map((r) => r.value)
 
-/** The add-ons this screen toggles, keyed to their existing pricing keys. */
+/** The add-ons this screen toggles, keyed to their existing pricing keys.
+ *  K6 (D2, 09_30 00:42:02): therapist tracking is NOT standard - it surfaces
+ *  as an industry suggestion for medical/therapy practices instead. */
+
 export const SERVICES_ADDON_OPTIONS: SelectOption[] = [
   { value: 'invoicing', label: 'Invoicing', sub: 'Create and send their invoices' },
   { value: 'payment_processing', label: 'Payment processing' },
   { value: 'class_tracking', label: 'Class tracking', sub: 'Priced per class' },
   { value: 'location_tracking', label: 'Location tracking', sub: 'Priced per location' },
-  { value: 'additional_therapist_tracking', label: 'Therapist tracking' },
 ]
 
 /** Add-ons quoted by rule 1 (00:18:13) but captured by their own cards
@@ -2996,8 +2998,9 @@ export const CHAPTERS: ChapterDef[] = [
       // derivation from that date is untouched; see effectiveServiceKeys).
       // J3 (R1, 00:43:07): the B21 "which standard routines should we seed"
       // checklist is gone too - the "Routine order and frequency" scheduler
-      // (the final content screen before review) subsumes it, and the custom
-      // recurring-work question stays just before it so customs appear there.
+      // (the final content screen before review) subsumes it. K6 (D3,
+      // 09_30 00:48:39): the custom recurring-work card is also gone - custom
+      // work enters on the services screen now and lands on the scheduler.
       {
         id: 'notes',
         title: 'Anything else the team should know?',
@@ -3014,48 +3017,6 @@ export const CHAPTERS: ChapterDef[] = [
           if (!text) return null
           const firstLine = text.split('\n')[0].trim()
           return firstLine.length > 100 ? `${firstLine.slice(0, 100)}…` : firstLine
-        },
-      },
-      {
-        id: 'rules',
-        title: 'Any custom recurring work?',
-        help: 'Firm-specific routines beyond the standard close, with their own checklist. They land on the Routine order and frequency screen next.',
-        type: 'repeatable',
-        required: false,
-        repeatable: {
-          addLabel: 'Add recurring rule',
-          itemFields: [
-            { key: 'title', label: 'Title', kind: 'text', required: true, placeholder: 'Weekly deposit review', optionsFromList: 'custom_task_templates' },
-            {
-              key: 'scheduleType', label: 'Schedule', kind: 'select', required: true, half: true,
-              options: ['daily', 'weekly', 'monthly', 'quarterly', 'semi_annual', 'annual'].map((f) => ({ value: f, label: FREQUENCY_LABELS[f] })),
-            },
-            { key: 'dayOfMonth', label: 'Day of month (optional)', kind: 'number', min: 1, max: 31, half: true, placeholder: '15' },
-            { key: 'subtasksText', label: 'Checklist (one per line, optional)', kind: 'textarea', placeholder: 'Pull deposit report\nMatch to merchant payouts' },
-          ],
-          itemValid: (i) => !!str(i.title) && !!str(i.scheduleType),
-          summarize: (i) => String(i.title),
-          sub: (i) => FREQUENCY_LABELS[String(i.scheduleType)] ?? null,
-        },
-        get: (a) =>
-          (a.customRecurringRules ?? []).map((r) => ({
-            ...r,
-            subtasksText: (r.subtasks ?? []).join('\n'),
-          })),
-        apply: (_a, v) => ({
-          customRecurringRules: (v as Array<Record<string, unknown>>).map((i) => ({
-            title: String(i.title),
-            scheduleType: i.scheduleType as 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'semi_annual' | 'annual',
-            dayOfMonth: i.dayOfMonth === '' || i.dayOfMonth == null ? null : Number(i.dayOfMonth),
-            subtasks: String(i.subtasksText ?? '')
-              .split('\n')
-              .map((s) => s.trim())
-              .filter(Boolean),
-          })),
-        }),
-        summarize: (a) => {
-          const rs = a.customRecurringRules ?? []
-          return rs.length > 0 ? rs.map((r) => r.title).join(', ') : null
         },
       },
       {

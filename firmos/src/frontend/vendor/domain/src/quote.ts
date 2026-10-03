@@ -257,7 +257,7 @@ export interface QuoteServiceInput {
   discount?: number;
 }
 
-export type CustomItemFrequency = "weekly" | "daily" | "monthly" | "quarterly" | "semi_annual";
+export type CustomItemFrequency = "weekly" | "daily" | "monthly" | "quarterly" | "semi_annual" | "annual" | "one_time";
 
 export interface CustomItemInput {
   key: string; // custom_item_{n}
@@ -343,6 +343,10 @@ export interface QuoteInput {
    * ("quoted at review").
    */
   retroactive?: RetroactiveQuoteInput | null;
+  /** K6 (D6, 09_30 01:06:06): a bulk discount percent on the retroactive
+   *  cleanup block only ("I usually give a discount on that... retro work is
+   *  done in one pass"). 0-100, clamped; the recurring lines never see it. */
+  retroDiscountPercent?: number | null;
   /**
    * Specialty report definitions with pricing data (C10). Each prices as a
    * recurring line at the report's own cadence (normalized into the monthly
@@ -411,6 +415,10 @@ export interface Quote {
     months: number;
     startMonth: Month;
     perMonthRate: number;
+    /** Before the bulk discount (months x rate). */
+    baseTotal: number;
+    /** K6 (D6): the applied bulk-discount percent; null when none. */
+    discountPercent: number | null;
     total: number;
   } | null;
 }
@@ -424,6 +432,11 @@ export interface Quote {
  */
 export function customItemQuantity(frequency: CustomItemFrequency, cycle: number, base = 1): number {
   switch (frequency) {
+    // K6 (D4): one-time custom work prices once, never monthly.
+    case "one_time":
+      return 1;
+    case "annual":
+      return cycle / 12;
     case "weekly":
       return base * 4 * cycle;
     case "daily":
@@ -524,7 +537,8 @@ export function calculateQuote(
       quantity,
       discount: 0,
       amount: item.unit_price * quantity,
-      bucket: "monthly",
+      // K6 (D4): one-time custom work lands in the one-time block.
+      bucket: item.frequency === "one_time" ? "one_time" : item.frequency === "annual" ? "annual" : "monthly",
       unpriced: false,
     });
   }
@@ -641,10 +655,14 @@ export function calculateQuote(
     // J4 (V4): a direct price override on the retro line prices the whole
     // cleanup project flat; the months x rate math stays on the line for
     // display, but the total - and only the total - follows the override.
-    const total =
+    const baseTotal =
       line?.price_override != null
         ? round2(Math.max(0, line.price_override))
         : round2(perMonthRate * months);
+    // K6 (D6): the retro bulk discount applies after any flat override.
+    const rawPct = input.retroDiscountPercent;
+    const pct = rawPct != null && Number.isFinite(rawPct) ? Math.min(100, Math.max(0, rawPct)) : null;
+    const total = pct != null ? round2(baseTotal * (1 - pct / 100)) : baseTotal;
     if (line) {
       line.unit_price = perMonthRate;
       line.quantity = months;
@@ -652,7 +670,7 @@ export function calculateQuote(
       line.unpriced = false;
     }
     totals.totalOneTime += total;
-    retroactive = { months, startMonth, perMonthRate, total };
+    retroactive = { months, startMonth, perMonthRate, baseTotal, discountPercent: pct, total };
   }
 
   return { billingCycle: cycle, lines, totals, qbo, retroactive };

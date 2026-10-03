@@ -216,6 +216,11 @@ export interface BucketedEstimate {
   groups: EstimateBucketGroup[]
   oneTime: OneTimeItem[]
   oneTimeTotal: number
+  /** K6 (D7): the retro block at the BOTTOM - the cleanup + missed filings,
+   *  never mixed into recurring or the plain one-time fees. */
+  retroItems: OneTimeItem[]
+  retroTotal: number
+  retroDiscountPercent: number | null
   unpricedRecurringCount: number
 }
 
@@ -339,6 +344,9 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers): Buc
       // V7: one-time money. The priced retro line is represented by its own
       // period-split block below; the unpriced one lists here, flagged.
       if (line.service_key === 'retroactive_bookkeeping' && quote.retroactive) continue
+      // K6 (D7): missed past filings are retro work - they list in the retro
+      // block at the bottom, not the one-time fees up top.
+      if (/^specialty_report_\d+_retro$/.test(line.service_key)) continue
       oneTime.push({
         key: line.service_key,
         name,
@@ -374,21 +382,36 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers): Buc
   }
 
   // V7: the retroactive cleanup, one-time, split by period (2025 + 2026…).
+  // K6 (D7): missed past filings list beside it in the same retro block.
+  const retroItems: OneTimeItem[] = []
   const retro = quote.retroactive
   if (retro && retro.months > 0) {
     const retroLine = quote.lines.find((l) => l.service_key === 'retroactive_bookkeeping')
     const overridden = retroLine?.price_override != null
-    oneTime.push({
+    retroItems.push({
       key: 'retroactive_bookkeeping',
       name: 'Retroactive bookkeeping',
       amount: retro.total,
-      standard: round2(retro.perMonthRate * retro.months),
+      standard: retro.baseTotal,
       overridden,
       unpriced: false,
       math: overridden
         ? null
-        : `${retro.months} month${retro.months === 1 ? '' : 's'} × ${formatMoney(retro.perMonthRate)}/mo`,
+        : `${retro.months} month${retro.months === 1 ? '' : 's'} × ${formatMoney(retro.perMonthRate)}/mo${retro.discountPercent != null ? ` − ${retro.discountPercent}%` : ''}`,
       periods: retroPeriods(retro.startMonth, retro.months),
+    })
+  }
+  for (const line of quote.lines) {
+    if (!/^specialty_report_\d+_retro$/.test(line.service_key) || line.quantity <= 0) continue
+    retroItems.push({
+      key: line.service_key,
+      name: quoteLineName(quote, line),
+      amount: quoteLineNet(line),
+      standard: line.amount,
+      overridden: line.price_override != null,
+      unpriced: line.unpriced && line.price_override == null,
+      math: null,
+      periods: null,
     })
   }
 
@@ -406,6 +429,9 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers): Buc
     groups,
     oneTime,
     oneTimeTotal: quote.totals.totalOneTime,
+    retroItems,
+    retroTotal: round2(retroItems.reduce((acc, i) => acc + (i.amount ?? 0), 0)),
+    retroDiscountPercent: retro?.discountPercent ?? null,
     unpricedRecurringCount,
   }
 }

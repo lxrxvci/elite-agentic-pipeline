@@ -175,7 +175,7 @@ export interface IntakeCustomRuleInput {
 export interface IntakeCustomItemInput {
   productName: string;
   unitPrice: number;
-  frequency: "weekly" | "daily" | "monthly" | "quarterly" | "semi_annual";
+  frequency: "weekly" | "daily" | "monthly" | "quarterly" | "semi_annual" | "annual" | "one_time";
   quantity?: number;
 }
 
@@ -321,6 +321,8 @@ export interface IntakeFormData {
   recordBills?: boolean;
   /** K5 (C10): the deposits mirror of the bills answer. */
   recordDeposits?: boolean;
+  /** K6 (D6): bulk discount % on the retroactive cleanup block (0-100). */
+  retroDiscountPercent?: number | null;
   payBills?: boolean;
   billPayLocations?: string[];
   /** J2 (meeting #3, R6): send reports before the client's open questions

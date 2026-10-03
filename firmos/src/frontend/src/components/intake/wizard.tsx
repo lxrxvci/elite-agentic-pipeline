@@ -21,6 +21,8 @@ import {
   listOptionValuesBulkAction,
 } from '@/server/actions/option-lists'
 import { listServicesCatalogAction } from '@/server/actions/services-catalog'
+import { listIndustrySuggestionsAction } from '@/server/actions/industry-suggestions'
+import type { IndustrySuggestionRow } from '@/server/industry-suggestions'
 import type { ContactLookupResults } from '@/server/contact-lookup'
 import type { IntakeRunningNote } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
@@ -190,10 +192,15 @@ export function IntakeWizard({
   const [optionLists, setOptionLists] = useState<Record<string, OptionValueRow[]>>({})
   // K3 (J16): the services catalog behind the services screen.
   const [servicesCatalog, setServicesCatalog] = useState<ServiceCatalogRowLite[] | undefined>(undefined)
+  // K6 (D2): industry-driven suggestions for the services screen.
+  const [industrySuggestions, setIndustrySuggestions] = useState<IndustrySuggestionRow[]>([])
 
   useEffect(() => {
     void listOptionValuesBulkAction([...INTAKE_OPTION_LIST_KEYS]).then((res) => {
       if (res.ok) setOptionLists(res.data)
+    })
+    void listIndustrySuggestionsAction(answersRef.current.industry ?? null).then((res) => {
+      if (res.ok) setIndustrySuggestions(res.data)
     })
     void listServicesCatalogAction().then((res) => {
       if (res.ok) {
@@ -328,6 +335,8 @@ export function IntakeWizard({
         pr: answers.servicePrices ?? null,
         n: answers.estimated1099Count ?? null,
         c: answers.customItems ?? [],
+        // K6 (D6): the retro bulk discount reprices the cleanup block.
+        rd2: answers.retroDiscountPercent ?? null,
         // Specialty report definitions move the quote when priced (C10).
         rd: answers.reportDefinitions ?? [],
         // QBO tier inputs and the retroactive scope move the quote too.
@@ -338,6 +347,14 @@ export function IntakeWizard({
       }),
     [answers],
   )
+
+  // D2: the suggestions follow the industry answer.
+  const industryKey = answers.industry ?? ''
+  useEffect(() => {
+    void listIndustrySuggestionsAction(industryKey === '' ? null : industryKey).then((res) => {
+      if (res.ok) setIndustrySuggestions(res.data)
+    })
+  }, [industryKey])
 
   useEffect(() => {
     if (quoteTimer.current) clearTimeout(quoteTimer.current)
@@ -756,6 +773,7 @@ export function IntakeWizard({
                         optionLists={optionLists}
                         onAddOptionListValue={addOptionListValue}
                         servicesCatalog={servicesCatalog}
+                        industrySuggestions={industrySuggestions}
                       />
                     </div>
                     {note && (
@@ -783,6 +801,10 @@ export function IntakeWizard({
                 clientId={clientId}
                 onEdit={openEditor}
                 onPriceChange={changeServicePrice}
+                onRetroDiscountChange={(percent) => apply({ retroDiscountPercent: percent })}
+                onCustomWork={apply}
+                customTaskCatalog={optionLists.custom_task_templates ?? []}
+                onAddCustomTaskTitle={(name) => void addOptionListValue('custom_task_templates', name)}
               />
             </div>
           )}

@@ -124,6 +124,11 @@ vi.mock('@/server/actions/services-catalog', () => ({
   listServicesCatalogAction: vi.fn(async () => ({ ok: false as const, error: 'no catalog in tests' })),
 }))
 
+// K6 (D2): industry suggestions - none in tests.
+vi.mock('@/server/actions/industry-suggestions', () => ({
+  listIndustrySuggestionsAction: vi.fn(async () => ({ ok: true as const, data: [] })),
+}))
+
 // J1 (C5/C6/C7): the contact pickers' server read - mocked with one
 // existing contact and one existing client.
 vi.mock('@/server/actions/contacts', () => ({
@@ -398,7 +403,7 @@ describe('quote panel: QBO recommendation and priced retroactive', () => {
       effectiveMonthly: 160,
     },
     qbo: { tier: 'essentials', serviceKey: 'quickbooks_essentials', recommended: true },
-    retroactive: { months: 7, startMonth: { year: 2026, month: 1 }, perMonthRate: 160, total: 1120 },
+    retroactive: { months: 7, startMonth: { year: 2026, month: 1 }, perMonthRate: 160, baseTotal: 1120, discountPercent: null, total: 1120 },
   }
 
   it('names the recommended QBO tier and breaks retroactive out as one-time', async () => {
@@ -423,13 +428,12 @@ describe('quote panel: QBO recommendation and priced retroactive', () => {
     renderWizard(completeAnswers, reviewIndex)
     await waitFor(() => expect(screen.getByTestId('review-quote')).toBeInTheDocument(), { timeout: 3000 })
 
-    fireEvent.click(screen.getByTestId('section-toggle-quote'))
+    // K6 (F1): default-open; K6 (D5/D7): the retro block is its own bottom
+    // block now - one-time fees up top hold QBO-type fees.
     expect(screen.getAllByText('QuickBooks Essentials (recommended)').length).toBeGreaterThan(0)
-    // V7: retroactive cleanup lives in the separate one-time fees block with
-    // its months x rate math and the per-period split.
-    const oneTime = screen.getByTestId('estimate-one-time')
-    expect(oneTime).toHaveTextContent('$1,120')
-    expect(oneTime).toHaveTextContent('One-time fees')
+    const retro = screen.getByTestId('estimate-retro')
+    expect(retro).toHaveTextContent('$1,120')
+    expect(retro).toHaveTextContent('Retroactive cleanup')
     expect(screen.getByTestId('one-time-math-retroactive_bookkeeping')).toHaveTextContent(
       '7 months × $160/mo',
     )
@@ -487,8 +491,7 @@ describe('running notes rail', () => {
     )
     // Rail lists the seeded note while editing…
     expect(screen.getAllByTestId('running-note').length).toBeGreaterThan(0)
-    // …and the review screen carries the same note (V2: expand the section).
-    fireEvent.click(screen.getByTestId('section-toggle-notes'))
+    // …and the review screen carries the same note (K6: default open).
     const section = screen.getByTestId('review-running-notes')
     expect(section).toHaveTextContent('Wants weekly deposits reviewed')
   })
@@ -631,10 +634,8 @@ describe('I2 corporate payroll auto-flag (00:48:07-00:49:44)', () => {  // S-cor
   it('the review screen shows the auto-flagged payroll row', () => {
     renderWizard(scorpAnswers, flattenScreens(scorpAnswers).length - 1)
     expect(screen.getByTestId('review-screen')).toBeInTheDocument()
-    // V2: expand the sections carrying the rows.
-    fireEvent.click(screen.getByTestId('section-toggle-entity'))
+    // K6 (F1): sections default open - no toggling to reach the rows.
     expect(screen.getByText('S-corp')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('section-toggle-income'))
     expect(screen.getByText('Yes · officers must be on payroll')).toBeInTheDocument()
   })
 })

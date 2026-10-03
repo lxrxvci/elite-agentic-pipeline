@@ -238,6 +238,8 @@ function toQuoteInput(
     // every line - services, QBO pass-through, custom items, specialty
     // reports - honors the review screen's price edits uniformly.
     servicePrices: answers.servicePrices ?? undefined,
+    // K6 (D6): the retro bulk discount rides with the scope.
+    retroDiscountPercent: answers.retroDiscountPercent ?? undefined,
   };
 }
 

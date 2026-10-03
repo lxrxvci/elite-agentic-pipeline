@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, Mail, Pencil } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Check, CheckCircle2, ChevronDown, Mail, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Quote } from '@firmos/domain'
 
@@ -14,6 +14,7 @@ import { monthLabel } from '@/shared/lib/date-display'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 import { ROUTINE_BUCKET_LABELS } from '@/shared/lib/routine-schedule'
 import { cn } from '@/shared/lib/utils'
+import { CustomWorkAdder } from './custom-work'
 
 import { ConvertDialog, type StaffOption } from './convert-dialog'
 import { formatMoney } from './format'
@@ -325,18 +326,78 @@ function EstimateSection({
   answers,
   priceEditable,
   onPriceChange,
+  onRetroDiscountChange,
+  onCustomWork,
+  customTaskCatalog,
+  onAddCustomTaskTitle,
 }: {
   quote: Quote
   answers: WizardAnswers
   priceEditable: boolean
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
+  /** K6 (D6): the retro bulk-discount percent (null clears it). */
+  onRetroDiscountChange?: (percent: number | null) => void
+  /** K6 (D3/D4): custom one-time or recurring work added from the review. */
+  onCustomWork?: (patch: Partial<WizardAnswers>) => void
+  /** K3: persist the custom task title to the shared catalog list. */
+  onAddCustomTaskTitle?: (name: string) => void
+  customTaskCatalog?: { id: number; name: string }[]
 }) {
   const estimate = buildBucketedEstimate(quote, answers)
   // V5: breakdowns toggle independently of the section accordion (V2).
   const [openBreakdowns, setOpenBreakdowns] = useState<Record<string, boolean>>({})
+  // D6: the retro bulk-discount input's local text (commits on blur/Enter).
+  const [retroPct, setRetroPct] = useState(
+    estimate.retroDiscountPercent != null ? String(estimate.retroDiscountPercent) : '',
+  )
 
   return (
     <div data-testid="estimate">
+      {/* K6 (D5): one-time fees FIRST, recurring buckets in the middle, the
+          retro block at the BOTTOM - "one-time fees at the top, recurring in
+          the middle, retroactive at the end" (01:02:53). */}
+      {estimate.oneTime.length > 0 && (
+        <div className="px-4 py-2.5" data-testid="estimate-one-time">
+          <p className="flex items-baseline justify-between gap-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            One-time fees
+            <span className="tnum font-normal normal-case tracking-normal" data-testid="one-time-total">
+              {formatMoney(estimate.oneTimeTotal)}
+            </span>
+          </p>
+          <ul className="mt-1 divide-y divide-border/60">
+            {estimate.oneTime.map((item) => (
+              <li key={item.key} className="group py-2" data-testid={`one-time-${item.key}`}>
+                <div className="flex items-baseline justify-between gap-4">
+                  <span className="min-w-0 text-sm text-foreground">{item.name}</span>
+                  {priceEditable && onPriceChange ? (
+                    <PriceEditControl
+                      serviceKey={item.key}
+                      name={item.name}
+                      cycleLabel="one-time"
+                      standard={item.standard}
+                      effective={item.amount}
+                      deviates={item.overridden}
+                      onSave={(dollars) => onPriceChange(item.key, dollars)}
+                    />
+                  ) : (
+                    <StaticPrice
+                      standard={item.standard}
+                      effective={item.amount}
+                      deviates={item.overridden}
+                    />
+                  )}
+                </div>
+                {item.math && (
+                  <p className="tnum mt-0.5 text-xs text-muted-foreground" data-testid={`one-time-math-${item.key}`}>
+                    {item.math}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {estimate.groups.length > 0 && (
         <div className="divide-y divide-border px-4" data-testid="estimate-recurring">
           {estimate.groups.map((group) => (
@@ -375,19 +436,19 @@ function EstimateSection({
         </p>
       )}
 
-      {/* V7: one-time money, separate from the recurring buckets - QBO
-          setup, missed filings, and the retro cleanup split by period. */}
-      {estimate.oneTime.length > 0 && (
-        <div className="border-t border-border px-4 py-2.5" data-testid="estimate-one-time">
+      {/* K6 (D5/D6/D7): the retro block at the bottom - cleanup + missed
+          filings, with Jason's bulk discount on the whole block. */}
+      {estimate.retroItems.length > 0 && (
+        <div className="border-t border-border px-4 py-2.5" data-testid="estimate-retro">
           <p className="flex items-baseline justify-between gap-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            One-time fees
-            <span className="tnum font-normal normal-case tracking-normal" data-testid="one-time-total">
-              {formatMoney(estimate.oneTimeTotal)}
+            Retroactive cleanup
+            <span className="tnum font-normal normal-case tracking-normal" data-testid="retro-total">
+              {formatMoney(estimate.retroTotal)}
             </span>
           </p>
           <ul className="mt-1 divide-y divide-border/60">
-            {estimate.oneTime.map((item) => (
-              <li key={item.key} className="group py-2" data-testid={`one-time-${item.key}`}>
+            {estimate.retroItems.map((item) => (
+              <li key={item.key} className="group py-2" data-testid={`retro-${item.key}`}>
                 <div className="flex items-baseline justify-between gap-4">
                   <span className="min-w-0 text-sm text-foreground">{item.name}</span>
                   {priceEditable && onPriceChange ? (
@@ -423,12 +484,54 @@ function EstimateSection({
               </li>
             ))}
           </ul>
+          {/* D6: "I usually give a discount on the retroactive stuff... a bulk
+              discount" (01:06:06) - percent off the whole retro block. */}
+          {priceEditable && onRetroDiscountChange && (
+            <div className="mt-2 flex items-center gap-2">
+              <label htmlFor="retro-discount" className="text-xs text-muted-foreground">
+                Bulk discount on retroactive work
+              </label>
+              <input
+                id="retro-discount"
+                data-testid="retro-discount"
+                className="tnum h-8 w-20 rounded-md border border-input bg-background px-2 text-right text-sm text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                inputMode="numeric"
+                placeholder="0"
+                value={retroPct}
+                onChange={(e) => setRetroPct(e.target.value)}
+                onBlur={() => {
+                  const n = retroPct.trim() === '' ? null : Number(retroPct)
+                  if (n == null || (Number.isFinite(n) && n >= 0 && n <= 100)) {
+                    onRetroDiscountChange(n)
+                  } else {
+                    setRetroPct(estimate.retroDiscountPercent != null ? String(estimate.retroDiscountPercent) : '')
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                }}
+              />
+              <span className="text-xs text-muted-foreground">%</span>
+            </div>
+          )}
         </div>
       )}
       {quote.billingCycle > 1 && (
         <p className="px-4 pb-2.5 text-[11px] text-muted-foreground">
           Billed every {quote.billingCycle} months - shown at the effective monthly rate.
         </p>
+      )}
+      {/* K6 (D4, 09_30 01:08:26): custom one-time or recurring work enters
+          from the services review area - "that's where the services review
+          area, we would have the option to enter in custom one time or
+          custom recurring." */}
+      {priceEditable && onCustomWork && (
+        <div className="border-t border-border px-4 py-3" data-testid="estimate-custom-work">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Custom work
+          </p>
+          <CustomWorkAdder answers={answers} onApply={onCustomWork} onAddToCatalog={onAddCustomTaskTitle} catalog={customTaskCatalog} />
+        </div>
       )}
     </div>
   )
@@ -443,6 +546,10 @@ function SectionBody({
   editable,
   onEdit,
   onPriceChange,
+  onRetroDiscountChange,
+  onCustomWork,
+  customTaskCatalog,
+  onAddCustomTaskTitle,
 }: {
   section: SectionDef
   quote: Quote | null
@@ -450,6 +557,10 @@ function SectionBody({
   editable: boolean
   onEdit: (chapterId: string, questionId: string) => void
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
+  onRetroDiscountChange?: (percent: number | null) => void
+  onCustomWork?: (patch: Partial<WizardAnswers>) => void
+  customTaskCatalog?: { id: number; name: string }[]
+  onAddCustomTaskTitle?: (name: string) => void
 }) {
   if (section.kind === 'quote') {
     if (!quote) return null
@@ -459,6 +570,10 @@ function SectionBody({
         answers={answers}
         priceEditable={editable && onPriceChange != null}
         onPriceChange={onPriceChange}
+        onRetroDiscountChange={onRetroDiscountChange}
+        onCustomWork={onCustomWork}
+        customTaskCatalog={customTaskCatalog}
+        onAddCustomTaskTitle={onAddCustomTaskTitle}
       />
     )
   }
@@ -523,6 +638,10 @@ export function ReviewScreen({
   clientId,
   onEdit,
   onPriceChange,
+  onRetroDiscountChange,
+  onCustomWork,
+  customTaskCatalog,
+  onAddCustomTaskTitle,
 }: {
   intakeId: number
   answers: WizardAnswers
@@ -536,6 +655,13 @@ export function ReviewScreen({
   onEdit: (chapterId: string, questionId: string) => void
   /** V4: direct per-line price editing; present only on the editable review. */
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
+  /** K6 (D6): retro bulk-discount percent writer (editable review only). */
+  onRetroDiscountChange?: (percent: number | null) => void
+  /** K6 (D3/D4): custom work writer (editable review only). */
+  onCustomWork?: (patch: Partial<WizardAnswers>) => void
+  /** K3: custom task titles catalog for the type-ahead. */
+  customTaskCatalog?: { id: number; name: string }[]
+  onAddCustomTaskTitle?: (name: string) => void
 }) {
   const [phase, setPhase] = useState<Phase>('review')
   const [duplicates, setDuplicates] = useState<DuplicateCandidate[]>([])
@@ -543,9 +669,14 @@ export function ReviewScreen({
   const [error, setError] = useState<string | null>(null)
   const [convertOpen, setConvertOpen] = useState(false)
   const [sendingQuote, setSendingQuote] = useState(false)
-  // V2: the one-open-at-a-time accordion. Null = untouched (the first
-  // section reads open); the '__closed__' sentinel = the user collapsed all.
-  const [openSection, setOpenSection] = useState<string | null>(null)
+  // K6 (F1, 09_30 01:00:58-01:02:53): the confirm-green model replaces the
+  // V2 accordion - "It should default to all of them being open... you click
+  // a check mark and it turns it green. Boom. And it closes it... when
+  // you're done they're all green." Left = complete (green), right = edit.
+  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(new Set())
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  // D8 (01:07:50): after the first proposal send the button reads Resend.
+  const [proposalSent, setProposalSent] = useState(false)
 
   const editable = status === 'draft'
 
@@ -571,12 +702,28 @@ export function ReviewScreen({
     sections.push({ kind: 'notes', id: 'notes' })
   }
 
-  const openId = openSection ?? sections[0]?.id ?? null
+  const isOpen = (id: string) => !confirmed.has(id) && !collapsed.has(id)
+  // The chevron manually collapses/expands without touching the review state.
   const toggleSection = (id: string) =>
-    setOpenSection((cur) => {
-      const current = cur ?? sections[0]?.id ?? null
-      return current === id ? '__closed__' : id
+    setCollapsed((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
     })
+  // The confirm check: green + collapse; uncheck reopens (and ungreens).
+  const toggleConfirm = (id: string) =>
+    setConfirmed((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  // "...when you're done they're all green. And then the final estimate at
+  // the bottom thing turns green." The estimate greens itself once every
+  // chapter section is confirmed.
+  const chapterIds = sections.filter((s) => s.kind === 'chapter').map((s) => s.id)
+  const allChaptersConfirmed = chapterIds.length > 0 && chapterIds.every((id) => confirmed.has(id))
 
   /** V2's collapsed one-liner, per section. */
   const summaryFor = (section: SectionDef): string | null => {
@@ -703,17 +850,45 @@ export function ReviewScreen({
 
   return (
     <div className="space-y-5" data-testid="review-screen">
+      {/* K6 (D8, 09_30 01:07:50): the proposal email lives top-right -
+          "that'll be your resend." After the first send it reads Resend. */}
+      {(status === 'draft' || status === 'pending_review') && canConvert && quote != null && phase === 'review' && (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="email-proposal"
+            disabled={sendingQuote}
+            onClick={async () => {
+              await sendQuote()
+              setProposalSent(true)
+            }}
+          >
+            <Mail className="h-3.5 w-3.5" aria-hidden />
+            {sendingQuote ? 'Sending…' : proposalSent ? 'Resend proposal' : 'Email proposal'}
+          </Button>
+        </div>
+      )}
       <div className="space-y-4">
         {sections.map((section) => {
-          const open = openId === section.id
+          const isConfirmed = confirmed.has(section.id)
+          // K6 (F1): all sections default open; confirm greens + collapses.
+          const open = isOpen(section.id)
+          // The estimate greens itself once every chapter is confirmed.
+          const greened = isConfirmed || (section.kind === 'quote' && allChaptersConfirmed)
           const title = titleFor(section)
           const summary = summaryFor(section)
           const first = section.kind === 'chapter' ? section.questions[0] : undefined
           return (
             <section
               key={section.id}
-              className="rounded-xl border border-border bg-card"
+              className={cn(
+                'rounded-xl border bg-card transition-colors duration-200',
+                greened ? 'border-status-on-track bg-status-on-track-bg/30' : 'border-border',
+              )}
               data-chapter={section.kind === 'chapter' ? section.chapter.id : undefined}
+              data-confirmed={greened || undefined}
               data-testid={section.kind === 'quote' ? 'review-quote' : `review-section-${section.id}`}
             >
               <div
@@ -722,7 +897,24 @@ export function ReviewScreen({
                   open && 'border-b border-border',
                 )}
               >
-                {/* V2: the disclosure - keyboard-accessible, one open at a time. */}
+                {/* K6 (F1): the confirm check on the left - "left side is
+                    complete, right side is not complete" (edit stays right). */}
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={isConfirmed}
+                  aria-label={`Mark ${title} reviewed`}
+                  data-testid={`section-confirm-${section.id}`}
+                  onClick={() => toggleConfirm(section.id)}
+                  className={cn(
+                    'flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+                    isConfirmed
+                      ? 'border-status-on-track bg-status-on-track text-white'
+                      : 'border-input bg-card hover:border-firm-brand/60',
+                  )}
+                >
+                  {isConfirmed && <Check className="h-3.5 w-3.5" aria-hidden />}
+                </button>
                 <button
                   type="button"
                   aria-expanded={open}
@@ -753,21 +945,6 @@ export function ReviewScreen({
                   />
                 </button>
                 <span className="flex shrink-0 items-center gap-2">
-                  {section.kind === 'quote' && canConvert && (status === 'draft' || status === 'pending_review') && (
-                    /* Correspondence hub: email the proposal to the intake's
-                        primary contact (branded template + history row). */
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      data-testid="email-proposal"
-                      disabled={sendingQuote}
-                      onClick={() => void sendQuote()}
-                    >
-                      <Mail className="h-3.5 w-3.5" aria-hidden />
-                      {sendingQuote ? 'Sending…' : 'Email proposal'}
-                    </Button>
-                  )}
                   {section.kind === 'quote' && quote && (
                     <span className="tnum text-sm font-semibold text-money-strong" data-testid="quote-total">
                       {formatMoney(quote.totals.effectiveMonthly)}
@@ -797,6 +974,10 @@ export function ReviewScreen({
                     editable={editable}
                     onEdit={onEdit}
                     onPriceChange={onPriceChange}
+                    onRetroDiscountChange={onRetroDiscountChange}
+                    onCustomWork={onCustomWork}
+                    customTaskCatalog={customTaskCatalog}
+                    onAddCustomTaskTitle={onAddCustomTaskTitle}
                   />
                 </div>
               )}

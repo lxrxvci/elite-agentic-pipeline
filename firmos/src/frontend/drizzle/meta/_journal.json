@@ -183,6 +183,13 @@
       "when": 1791064687122,
       "tag": "0025_tearful_angel",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791070280076,
+      "tag": "0026_aspiring_mandroid",
+      "breakpoints": true
     }
   ]
 }

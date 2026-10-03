@@ -307,8 +307,6 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'notes')
   await page.getByTestId('continue').click()
-  await expect(question).toHaveAttribute('data-question', 'rules')
-  await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'routine-scheduler')
   await settle()
   await expectAccessible(page, 'wizard - routine scheduler buckets (J3)')
@@ -325,13 +323,10 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   // The review reveal + price-pop animations run ~500ms; axe must measure
   // final colors (same settle pattern as the wizard scans).
   await page.waitForTimeout(800)
-  await expectAccessible(page, 'review - collapsed sections (J4)')
-  // Expand the estimate (V6) and open a row edit overlay (V1).
-  await page.getByTestId('section-toggle-quote').click()
+  await expectAccessible(page, 'review - sections default open (K6/F1)')
+  // The estimate is already open (F1) - scan it, then open a row edit overlay.
   await settle()
-  await expectAccessible(page, 'review - bucketed estimate open (J4)')
-  // One-open-at-a-time collapsed the contact section - re-open it first.
-  await page.getByTestId('section-toggle-contact').click()
+  await expectAccessible(page, 'review - bucketed estimate open (K6/F1)')
   await page.getByTestId('edit-row-main-contact').click()
   await expect(page.getByTestId('edit-overlay')).toBeVisible()
   await settle()

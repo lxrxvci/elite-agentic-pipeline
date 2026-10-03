@@ -147,12 +147,60 @@ describe("jason harness - standing rules awaiting their K-wave (the index)", () 
   //  - B6 contact_picker_on_every_person_field -> k4-contacts.test.tsx
   //  - B7 edit_syncs_across_cards -> k4-contacts.test.tsx
   //  - B10 one_person_two_businesses_one_record -> server k4-contacts.test.ts
-  // K5 - scheduler
-  it.todo("E6: questions_addressed_starts_7_day_report_clock");
-  // K6 - estimate
-  it.todo("J13: weekly_100_shows_400_monthly");
+  // Flipped in K5/K6:
+  //  - E6 questions_addressed_starts_7_day_report_clock -> server k5-report-clock.test.ts
+  //  - J13 weekly_100_shows_400_monthly -> jason-harness.test.ts (K6 pins block)
+  //  - D6 retro_bulk_discount_applies -> jason-harness.test.ts
+  //  - D5 estimate_order_onetime_recurring_retro -> k6-review.test.tsx
+  //  - D2 industry_suggests_never_autoselects + therapist_tracking_not_standard -> k6-review.test.tsx
+  //  - D3/D4 custom_task_in_review_persists_to_catalog -> k6-review.test.tsx
+  //  - F1 sections_default_open_confirm_greens_and_collapses -> review-screen.test.tsx
   // K7 - structural
   it.todo("J5: conversion_gates_mandatory_fields");
   it.todo("J7: duration_flags_are_passive");
   it.todo("J18: landing_shows_client_response_badge");
+});
+
+describe("jason harness - K6 pins", () => {
+  it("retro_bulk_discount_applies: 20% off the cleanup block discounts the retro total only", async () => {
+    const { calculateIntakeQuote } = await import("@/server/quote");
+    const base = {
+      engagementType: "bookkeeping",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "10",
+      bookkeepingStartDate: "2026-01-01",
+      serviceKeys: ["bank_feed_management", "retroactive_bookkeeping"],
+    } as Parameters<typeof calculateIntakeQuote>[0];
+    const full = calculateIntakeQuote(base, TEST_TODAY);
+    const discounted = calculateIntakeQuote({ ...base, retroDiscountPercent: 20 }, TEST_TODAY);
+    const retro = discounted.retroactive!;
+    expect(retro.discountPercent).toBe(20);
+    expect(retro.total).toBeCloseTo(retro.baseTotal * 0.8, 2);
+    // The recurring rate is untouched - the discount never bleeds monthly.
+    expect(discounted.totals.effectiveMonthly).toBe(full.totals.effectiveMonthly);
+    expect(discounted.totals.totalOneTime).toBeLessThan(full.totals.totalOneTime);
+  });
+
+  it("J13: weekly_100_shows_400_monthly - a custom weekly line shows the monthly math", async () => {
+    const { buildBucketedEstimate } = await import("@/components/intake/review-estimate");
+    const { calculateIntakeQuote } = await import("@/server/quote");
+    const quote = calculateIntakeQuote(
+      {
+        engagementType: "bookkeeping",
+        bookkeepingFrequency: "monthly",
+        monthlyCloseTier: "10",
+        bookkeepingStartDate: "2026-08-01",
+        serviceKeys: [],
+        customItems: [{ productName: "Weekly bank deposits", unitPrice: 100, frequency: "weekly" }],
+      } as Parameters<typeof calculateIntakeQuote>[0],
+      TEST_TODAY,
+    );
+    const estimate = buildBucketedEstimate(quote, {
+      engagementType: "bookkeeping",
+      customItems: [{ productName: "Weekly bank deposits", unitPrice: 100, frequency: "weekly" }],
+    } as never);
+    const line = estimate.groups.flatMap((g) => g.lines).find((l) => l.name === "Weekly bank deposits");
+    expect(line?.math).toBe("$100/week × 4 weeks = $400/mo");
+    expect(line?.perMonth).toBe(400);
+  });
 });
