@@ -227,6 +227,7 @@ export {
   OWNER_DRAWS_CONFIRMATION_TITLE,
   PERSONAL_CARD_REMINDER_TITLE,
 } from "@/shared/lib/default-rules";
+import { EOY_TAX_CHECKLIST_ITEMS, EOY_TAX_CHECKLIST_TITLE } from "@/shared/lib/default-rules";
 /** B18: the reminder lands on the 1st, asking for the prior month's breakdown. */
 const PERSONAL_CARD_REMINDER_DAY = 1;
 
@@ -988,6 +989,46 @@ export async function convertIntakeToClient(
           nextRun,
           assigneeId: spec.assignee === "manager" ? managerId : bookkeeperId,
         });
+        recurringRulesCreated += 1;
+      }
+
+      // K5 (E9, 09_30 00:59:13): the annual tax-readiness checklist seeds for
+      // EVERY bookkeeping client on the legacy cadence path too - due the
+      // month after year-end (Jan 31 for calendar filers; the month after
+      // the fiscal year-end otherwise), with the checklist as subtasks.
+      {
+        const fiscal = typeof form.fiscalYearEnd === "string" ? form.fiscalYearEnd : null;
+        const fiscalMonth = fiscal && /^\d{2}-\d{2}$/.test(fiscal) ? Number(fiscal.slice(0, 2)) : null;
+        const anchorMonth = fiscalMonth != null ? (fiscalMonth % 12) + 1 : 1;
+        const [eoyRule] = await tx
+          .insert(recurringTasks)
+          .values({
+            clientId,
+            title: EOY_TAX_CHECKLIST_TITLE,
+            description: EOY_TAX_CHECKLIST_ITEMS.join("\n"),
+            scheduleType: "annual",
+            anchorMonth,
+            dayOfMonth: 31,
+            nextRun: initialNextRun(
+              {
+                schedule_type: "annual",
+                day_of_month: 31,
+                anchor_month: anchorMonth,
+                next_run: intake.bookkeepingStartDate ?? formatLocalDate(today),
+              },
+              intake.bookkeepingStartDate,
+              today,
+            ),
+            assigneeId: managerId,
+          })
+          .returning();
+        await tx.insert(recurringTaskSubtasks).values(
+          EOY_TAX_CHECKLIST_ITEMS.map((title, position) => ({
+            recurringTaskId: eoyRule.id,
+            title,
+            position,
+          })),
+        );
         recurringRulesCreated += 1;
       }
 

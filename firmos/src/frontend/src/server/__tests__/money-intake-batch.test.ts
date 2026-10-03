@@ -396,7 +396,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
     expect(titles).toContain("Categorize Transactions");
     expect(titles).not.toContain("Client Questions");
     expect(titles).not.toContain("Send Reports");
-    expect(result.recurringRulesCreated).toBe(2);
+    expect(result.recurringRulesCreated).toBe(3); // 2 remaining + the annual EOY checklist (E9)
   });
 
   // Item 3 (C15): milestone billing - progress invoices every N months from

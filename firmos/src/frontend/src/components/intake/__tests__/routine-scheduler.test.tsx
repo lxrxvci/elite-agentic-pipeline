@@ -143,7 +143,8 @@ describe('J3 routine scheduler screen', () => {
     fireEvent.change(days, { target: { value: '45' } })
     expect(scheduleNow().send_reports).toEqual({
       bucket: 'annual',
-      order: 0,
+      // K5 (E9): the EOY tax checklist is annual order 0 now; this lands 1.
+      order: 1,
       fiscalYearEnd: '06-30',
       daysAfterPeriodEnd: 45,
     })

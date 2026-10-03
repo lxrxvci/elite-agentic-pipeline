@@ -319,6 +319,8 @@ export interface IntakeFormData {
    *  includeBillPay flag - still honored as the fallback); payBills requires
    *  recordBills and carries the places bills get paid. */
   recordBills?: boolean;
+  /** K5 (C10): the deposits mirror of the bills answer. */
+  recordDeposits?: boolean;
   payBills?: boolean;
   billPayLocations?: string[];
   /** J2 (meeting #3, R6): send reports before the client's open questions

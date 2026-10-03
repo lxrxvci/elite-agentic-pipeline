@@ -108,6 +108,7 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await advance(page, 'deposits-non-business') // A41: the money-behavior cards first
   await pick(page, 'option-no', 'personal-on-business') // no non-business deposits (A41)
   await pick(page, 'option-no', 'personal-card') // nothing personal on business accounts (A41)
+  await pick(page, 'option-no', 'record-deposits') // C10
   await pick(page, 'option-no', 'payroll') // no personal-card business spend (B18)
   await pick(page, 'option-no', 'online-access') // no payroll; I3 access checklist next
 

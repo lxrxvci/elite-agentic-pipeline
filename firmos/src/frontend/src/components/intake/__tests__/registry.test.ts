@@ -35,6 +35,9 @@ const base: WizardAnswers = {
   legalName: 'Test Co',
   engagementType: 'bookkeeping',
   quickbooksStatus: 'existing',
+  // K5 (C10): the record-deposits card is required for bookkeeping - the
+  // shared fixture answers it so resume tests walk past it.
+  recordDeposits: false,
 }
 
 const chapterIds = (a: WizardAnswers) => visibleChapters(a).map((c) => c.id)
@@ -519,6 +522,7 @@ describe('firstUnansweredScreen (resume)', () => {
       monthlyCloseTier: '10',
       accountingMethod: 'cash',
       recordBills: false,
+      recordDeposits: false,
       sendPreliminaryReports: false,
     }
     const screens = flattenScreens(full)
@@ -542,6 +546,7 @@ describe('firstUnansweredScreen (resume)', () => {
       monthlyCloseTier: '10',
       accountingMethod: 'cash',
       recordBills: false,
+      recordDeposits: false,
       sendPreliminaryReports: false,
     }
     const screens = flattenScreens(nearlyFull)
@@ -748,8 +753,11 @@ describe('J3 routine scheduler (meeting #3, R1-R5, 00:39:26-00:54:05)', () => {
       'categorize_transactions',
       'reconcile_accounts',
       'client_questions',
-      'send_reports',
+      'eoy-tax-checklist',
     ])
+    // K5 (E3/E9): the annual tax checklist lands before Send Reports, which
+    // is always last.
+    expect(keys[keys.length - 1]).toBe('send_reports')
     // R5: monthly clients default to the close tier day (client questions
     // keep their 25th-of-the-month touchpoint), in bucket order 0..3.
     expect(
@@ -758,7 +766,9 @@ describe('J3 routine scheduler (meeting #3, R1-R5, 00:39:26-00:54:05)', () => {
       ['monthly', 10, 0],
       ['monthly', 10, 1],
       ['monthly', 25, 2],
-      ['monthly', 10, 3],
+      // K5 (E9): the annual tax checklist rides the annual bucket (order is
+      // bucket-scoped, so it's 0 there).
+      ['annual', undefined, 0],
     ])
   })
 
@@ -910,7 +920,7 @@ describe('J3 routine scheduler (meeting #3, R1-R5, 00:39:26-00:54:05)', () => {
     // The committed map drives the review one-liner.
     const tasks = deriveRoutineTasks(base)
     const full = Object.fromEntries(tasks.map((t) => [t.key, t.defaultEntry]))
-    expect(q.summarize({ ...base, routineSchedule: full })).toBe('4 routines · Monthly 4')
+    expect(q.summarize({ ...base, routineSchedule: full })).toBe('5 routines · Monthly 4 · Annual 1')
   })
 })
 
@@ -1853,15 +1863,29 @@ describe('J2 preliminary reports option (R6)', () => {
   })
 })
 
-describe('J2 1099 estimated count (meeting #3)', () => {
-  const count = findQuestion('reporting', 'ten99-count')!
+describe('K5 1099 wave (D1, 09_30 00:35:49)', () => {
+  const card = findQuestion('reporting', 'ten99-services')!
 
-  it('asks whenever any 1099 service level is on - collection, management, or per filing', () => {
-    expect(count.when?.({ ...base, serviceKeys: ['1099_collection'] })).toBe(true)
-    expect(count.when?.({ ...base, serviceKeys: ['1099_full_management'] })).toBe(true)
-    expect(count.when?.({ ...base, serviceKeys: ['1099_per_filing'] })).toBe(true)
-    expect(count.when?.({ ...base, serviceKeys: [] })).toBe(false)
-    expect(count.summarize({ ...base, serviceKeys: ['1099_collection'], estimated1099Count: 12 })).toBe('~12 filings')
+  it('1099_mutually_exclusive: full management drops collection and vice versa', () => {
+    // The freshest pick wins when both land (the toggle appends).
+    expect(card.apply({ ...base, serviceKeys: [] }, ['1099_collection', '1099_full_management']).include1099Collection).toBe(false)
+    expect(card.apply({ ...base, serviceKeys: [] }, ['1099_collection', '1099_full_management']).include1099FullManagement).toBe(true)
+    expect(card.apply({ ...base, serviceKeys: [] }, ['1099_full_management', '1099_collection']).include1099FullManagement).toBe(false)
+    // And the keys land alone.
+    expect(card.apply({ ...base, serviceKeys: [] }, ['1099_collection', '1099_full_management']).serviceKeys).toEqual(['1099_full_management'])
+  })
+
+  it('the count rides the card as an inline followup; deselecting both clears it', () => {
+    expect(card.followup?.key).toBe('estimated1099Count')
+    expect(card.followup?.keys).toEqual(['1099_collection', '1099_full_management'])
+    // Per-filing is no longer a chip (the count x rate prices it).
+    expect(card.options?.some((o) => o.value === '1099_per_filing')).toBe(false)
+    const cleared = card.apply({ ...base, serviceKeys: ['1099_collection'], estimated1099Count: 12 }, [])
+    expect(cleared.estimated1099Count).toBeNull()
+  })
+
+  it('the separate count screen is gone', () => {
+    expect(findQuestion('reporting', 'ten99-count')).toBeUndefined()
   })
 })
 

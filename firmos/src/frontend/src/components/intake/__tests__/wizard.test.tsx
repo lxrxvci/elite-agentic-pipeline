@@ -196,6 +196,7 @@ const completeAnswers: WizardAnswers = {
   isRealEstateClient: false,
   hasPayroll: false,
   personalCardForBusiness: false,
+  recordDeposits: false,
   depositsNonBusiness: false,
   personalOnBusiness: false,
   bookkeepingFrequency: 'monthly',

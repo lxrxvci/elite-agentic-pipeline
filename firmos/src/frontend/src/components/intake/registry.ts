@@ -5,8 +5,11 @@ import type { IntakeFormData, IntakeRow } from '@/server/intake'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 import {
   DEFAULT_RECURRING_RULES,
+  EOY_TAX_CHECKLIST_ITEMS,
+  EOY_TAX_CHECKLIST_TITLE,
   MERCHANT_RECONCILIATION_TITLE,
   NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
+  RECORD_DEPOSITS_TITLE,
   OWNER_DRAWS_CONFIRMATION_TITLE,
   PERSONAL_CARD_REMINDER_TITLE,
   PRELIMINARY_REPORTS_NOTE,
@@ -294,6 +297,15 @@ export interface QuestionDef {
   /** J2 (E1-E3): a yes pick opens the mandatory explanation overlay instead
    *  of advancing; the note lands in form_data.behaviorNotes[id]. */
   noteOnYes?: NoteOnYesDef
+  /** K5 (D1, 09_30 00:35:49): an inline follow-up select revealed when any
+   *  of `keys` is currently on (the estimated-1099 count rides the 1099
+   *  card instead of being its own screen). */
+  followup?: {
+    keys: string[]
+    key: 'estimated1099Count'
+    label: string
+    options: { value: string; label: string }[]
+  }
   /** J2 (E6): `yes-no-list` questions - the yes/no pick plus the string-list
    *  editor shown when yes; Continue commits). */
   yesNoList?: YesNoListDef
@@ -609,6 +621,7 @@ export const SERVICE_LABELS: Record<string, string> = {
   invoicing: 'Invoicing',
   payment_processing: 'Payment processing',
   record_bills: 'Bill pay (record bills)',
+  record_deposits: 'Record deposits',
   monthly_reporting_5: 'Monthly reporting, close by the 5th',
   monthly_reporting_10: 'Monthly reporting, close by the 10th',
   monthly_reporting_15: 'Monthly reporting, close by the 15th',
@@ -699,6 +712,7 @@ export const SERVICES_ADDON_OPTIONS: SelectOption[] = [
 export const SERVICES_LATER_ADDON_ROWS: SelectOption[] = [
   { value: 'payroll', label: 'Payroll', sub: 'Set by the payroll answers' },
   { value: 'record_bills', label: 'Bill entry', sub: 'Set by the bill answers' },
+  { value: 'record_deposits', label: 'Deposit recording', sub: 'Set by the deposit answers' },
   { value: '1099_collection', label: '1099 prep', sub: 'Set by the 1099 answers' },
   { value: 'specialty_reports', label: 'Specialty reports', sub: 'Set by the reports answers' },
   { value: 'merchant_account_reconciliation', label: 'Merchant reconciliation', sub: 'Set by the income answers' },
@@ -711,6 +725,7 @@ export const SERVICES_LATER_ADDON_QUALIFIED: Record<string, (a: WizardAnswers) =
     (a.serviceKeys ?? []).some((k) => k.startsWith('payroll_') || k === 'process_payroll') ||
     a.payrollSelfProcessed === true,
   record_bills: (a) => (a.recordBills ?? a.includeBillPay) === true,
+  record_deposits: (a) => a.recordDeposits === true,
   '1099_collection': (a) =>
     a.include1099Collection === true ||
     a.include1099FullManagement === true ||
@@ -876,6 +891,8 @@ export function effectiveServiceKeys(a: WizardAnswers, today?: { year: number; m
     // J2 (E6): record_bills derives from the record-bills answer; legacy
     // intakes carrying includeBillPay keep their key.
     [a.recordBills ?? a.includeBillPay, 'record_bills'],
+    // K5 (C10): the deposits mirror.
+    [a.recordDeposits, 'record_deposits'],
   ]
   for (const [on, k] of derived) {
     if (on) set.add(k)
@@ -1291,13 +1308,17 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
     orders[bucket] = (orders[bucket] ?? 0) + 1
   }
 
-  // R2: the standard four, in Jason's dictated working order. Pre-J3
-  // exclusions (B21) keep their meaning: excluded routines never derive.
+  // E4/E3 (09_30 00:52:56-00:54:51): Jason's default working order -
+  // "anything that comes through the bank accounts needs to be done before
+  // you reconcile" (categorize, merchant recons, payroll entries, bills),
+  // then the bank reconciliation, then money-behavior reviews + client
+  // questions, and Send Reports always defaults LAST of its bucket ("it
+  // would default to that, not always be that" - drag rearranges freely).
+  // Pre-J3 exclusions (B21) keep their meaning: excluded routines never derive.
   const excluded = new Set(a.excludedDefaultRules ?? [])
-  const standardsOrder = ['categorize_transactions', 'reconcile_accounts', 'client_questions', 'send_reports']
-  for (const k of standardsOrder) {
+  const pushStandard = (k: (typeof DEFAULT_RECURRING_RULES)[number]['key']) => {
     const rule = DEFAULT_RECURRING_RULES.find((r) => r.key === k)
-    if (!rule || excluded.has(k)) continue
+    if (!rule || excluded.has(k)) return
     const day = rule.dueDay === 'tier' ? tierDay : rule.dueDay
     push({
       key: rule.key,
@@ -1309,6 +1330,7 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
       ...closeCadencePlacement(a, day),
     })
   }
+  pushStandard('categorize_transactions')
 
   // I6: merchant reconciliation rides the close cadence next to the four.
   if (a.includeMerchantReconciliation === true) {
@@ -1319,38 +1341,6 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
       detail: names.length > 0 ? names.join(', ') : 'Processor accounts reconcile here',
       assignee: 'bookkeeper',
       ...closeCadencePlacement(a, tierDay),
-    })
-  }
-
-  // A41/B18: the money-behavior seeds - monthly regardless of cadence today.
-  if (a.depositsNonBusiness === true) {
-    push({
-      key: 'deposits-non-business',
-      title: NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
-      detail: 'Booked as owner contributions, never income',
-      assignee: 'bookkeeper',
-      description: behaviorNoteFor(a, 'deposits-non-business'),
-      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: tierDay },
-    })
-  }
-  if (a.personalOnBusiness === true) {
-    push({
-      key: 'personal-on-business',
-      title: OWNER_DRAWS_CONFIRMATION_TITLE,
-      detail: 'Confirmed with the client every month',
-      assignee: 'bookkeeper',
-      description: behaviorNoteFor(a, 'personal-on-business'),
-      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: tierDay },
-    })
-  }
-  if (a.personalCardForBusiness === true) {
-    push({
-      key: 'personal-card',
-      title: PERSONAL_CARD_REMINDER_TITLE,
-      detail: 'Asks for the prior month\u2019s breakdown',
-      assignee: 'bookkeeper',
-      description: behaviorNoteFor(a, 'personal-card'),
-      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: 1 },
     })
   }
 
@@ -1402,6 +1392,54 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
       defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
     })
   }
+
+  // K5 (C10): the deposits mirror of record-bills - same weekly cadence,
+  // always before the bank reconciliation.
+  if (a.recordDeposits === true) {
+    push({
+      key: 'record-deposits',
+      title: RECORD_DEPOSITS_TITLE,
+      detail: 'Deposits recorded as they land',
+      assignee: 'bookkeeper',
+      defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
+    })
+  }
+
+  pushStandard('reconcile_accounts')
+
+  // A41/B18: the money-behavior seeds - monthly regardless of cadence today.
+  if (a.depositsNonBusiness === true) {
+    push({
+      key: 'deposits-non-business',
+      title: NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
+      detail: 'Booked as owner contributions, never income',
+      assignee: 'bookkeeper',
+      description: behaviorNoteFor(a, 'deposits-non-business'),
+      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: tierDay },
+    })
+  }
+  if (a.personalOnBusiness === true) {
+    push({
+      key: 'personal-on-business',
+      title: OWNER_DRAWS_CONFIRMATION_TITLE,
+      detail: 'Confirmed with the client every month',
+      assignee: 'bookkeeper',
+      description: behaviorNoteFor(a, 'personal-on-business'),
+      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: tierDay },
+    })
+  }
+  if (a.personalCardForBusiness === true) {
+    push({
+      key: 'personal-card',
+      title: PERSONAL_CARD_REMINDER_TITLE,
+      detail: 'Asks for the prior month\u2019s breakdown',
+      assignee: 'bookkeeper',
+      description: behaviorNoteFor(a, 'personal-card'),
+      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: 1 },
+    })
+  }
+
+  pushStandard('client_questions')
 
   // J2: 1099 work is year-end work - due January 31st (31 days after the
   // calendar year ends) by default.
@@ -1540,6 +1578,21 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
         break
     }
   }
+
+  // K5 (E9, 09_30 00:59:13): every bookkeeping client gets the annual
+  // tax-readiness checklist - due a month after year-end by default.
+  push({
+    key: 'eoy-tax-checklist',
+    title: EOY_TAX_CHECKLIST_TITLE,
+    detail: 'Verify everything is ready for their tax preparer',
+    assignee: 'manager',
+    description: EOY_TAX_CHECKLIST_ITEMS.join('\n'),
+    subtasks: [...EOY_TAX_CHECKLIST_ITEMS],
+    defaultEntry: { bucket: 'annual', order: 0, daysAfterPeriodEnd: 31, fiscalYearEnd: null },
+  })
+
+  // E3: Send Reports defaults last in its bucket (09_30 00:52:18).
+  pushStandard('send_reports')
 
   return tasks
 }
@@ -2381,6 +2434,25 @@ export const CHAPTERS: ChapterDef[] = [
             : boolWord(a.personalCardForBusiness),
       },
       {
+        // K5 (C10, 09_30 00:34:07): "in the income section, we probably
+        // would want to have something similar to like, do they need us to
+        // record deposits... in the same way that we have it for bills."
+        // The answer derives the (unpriced) record_deposits service line +
+        // seeds the weekly routine, exactly like record-bills.
+        id: 'record-deposits',
+        title: 'Do they need us to record deposits?',
+        help: 'The mirror of the bills flow, for money coming in - deposits recorded as they land, so reconciliation is never a hunt.',
+        type: 'select',
+        required: true,
+        when: isBookkeeping,
+        options: [
+          { value: 'yes', label: 'Yes, record their deposits' },
+          { value: 'no', label: 'No, they handle that' },
+        ],
+        ...key('recordDeposits'),
+        summarize: (a) => (isBookkeeping(a) ? boolWord(a.recordDeposits) : null),
+      },
+      {
         // I2 (00:48:07-00:49:44): corporate structures legally require an
         // officer paid through payroll, so the card pre-answers yes (with the
         // why in a callout) and "No" is disabled. The answer is derived, not
@@ -2650,51 +2722,51 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'ten99-services',
         title: 'Any 1099 work at year end?',
+        // K5 (D1, 09_30 00:35:49): collection and full management are
+        // mutually exclusive ("full management obviously includes
+        // collecting"); the per-filing chip is gone - the count x the
+        // admin-configurable per-filing rate prices it (quote.ts derives
+        // the line). The estimate dropdown rides THIS card; deselecting
+        // both clears it.
         type: 'multi',
         required: false,
         options: [
-          { value: '1099_collection', label: '1099 collection', sub: 'W-9s gathered' },
-          { value: '1099_full_management', label: '1099 full management' },
-          { value: '1099_per_filing', label: 'Per filing', sub: 'Priced per filing' },
+          { value: '1099_collection', label: '1099 collection', sub: 'W-9s gathered, we file the forms' },
+          { value: '1099_full_management', label: '1099 full management', sub: 'Collection + filing, end to end' },
         ],
-        get: (a) => (a.serviceKeys ?? []).filter((k) => k.startsWith('1099_')),
+        followup: {
+          keys: ['1099_collection', '1099_full_management'],
+          key: 'estimated1099Count',
+          label: 'Estimated number of 1099 filings',
+          options: [
+            ...Array.from({ length: 20 }, (_, i) => String(i + 1)),
+            '25', '30', '40', '50', '75', '100',
+          ].map((n) => ({ value: n, label: n })),
+        },
+        get: (a) =>
+          (a.serviceKeys ?? []).filter((k) => k === '1099_collection' || k === '1099_full_management'),
         apply: (a, v) => {
-          const picked = new Set(v as string[])
-          const rest = (a.serviceKeys ?? []).filter((k) => !k.startsWith('1099_'))
+          const arr = v as string[]
+          // The freshest pick wins when both land (the toggle appends).
+          let picked = new Set(arr)
+          if (picked.has('1099_collection') && picked.has('1099_full_management')) {
+            picked = new Set([arr[arr.length - 1]])
+          }
+          const rest = (a.serviceKeys ?? []).filter(
+            (k) => k !== '1099_collection' && k !== '1099_full_management' && k !== '1099_per_filing',
+          )
           return {
             serviceKeys: [...rest, ...picked],
             include1099Collection: picked.has('1099_collection'),
             include1099FullManagement: picked.has('1099_full_management'),
+            // Deselecting both clears the estimate with it.
+            estimated1099Count: picked.size === 0 ? null : a.estimated1099Count,
           }
         },
         summarize: (a) => {
-          const ks = (a.serviceKeys ?? []).filter((k) => k.startsWith('1099_'))
-          return ks.length > 0 ? ks.map(serviceLabel).join(', ') : null
-        },
-      },
-      {
-        // J2 (meeting #3): the estimated count is asked whenever ANY 1099
-        // service level is on - collection or management included - and the
-        // quote prices count x the admin-configurable per-filing rate.
-        id: 'ten99-count',
-        title: 'About how many 1099 filings per year?',
-        type: 'fields',
-        required: false,
-        when: (a) =>
-          (a.serviceKeys ?? []).some((k) =>
-            k === '1099_collection' || k === '1099_full_management' || k === '1099_per_filing',
-          ),
-        fields: [{ key: 'estimated1099Count', label: 'Estimated filings (optional)', kind: 'number', min: 0, max: 999, placeholder: '4' }],
-        get: (a) => a.estimated1099Count,
-        apply: (_a, v) => {
-          const raw = (v as Record<string, unknown>).estimated1099Count
-          const n = raw === '' || raw == null ? null : Number(raw)
-          return { estimated1099Count: Number.isFinite(n as number) ? (n as number) : null }
-        },
-        summarize: (a) => {
-          const n = a.estimated1099Count
-          const any1099 = (a.serviceKeys ?? []).some((k) => k.startsWith('1099_'))
-          return any1099 && n != null ? `~${n} filings` : null
+          const ks = (a.serviceKeys ?? []).filter((k) => k === '1099_collection' || k === '1099_full_management')
+          if (ks.length === 0) return null
+          return join(ks.map(serviceLabel).join(', '), a.estimated1099Count != null ? `~${a.estimated1099Count} filings` : null)
         },
       },
       {

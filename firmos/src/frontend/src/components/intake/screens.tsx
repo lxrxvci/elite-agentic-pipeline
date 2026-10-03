@@ -1620,6 +1620,35 @@ export function QuestionScreen({
     return (
       <div className="space-y-4">
         <MultiChips options={options} values={values} onToggle={toggle} />
+        {/* K5 (D1): an inline follow-up revealed by the current picks (the
+            1099 estimate count rides the 1099 card - 09_30 00:35:49). */}
+        {q.followup && q.followup.keys.some((k) => values.includes(k)) && (
+          <div className="rounded-lg border border-border bg-muted/40 px-3.5 py-3" data-testid="followup">
+            <label
+              htmlFor={`followup-${q.followup.key}`}
+              className="mb-1 block text-xs font-medium text-muted-foreground"
+            >
+              {q.followup.label}
+            </label>
+            <select
+              id={`followup-${q.followup.key}`}
+              data-testid={`followup-select-${q.followup.key}`}
+              className={cn(inputCls, 'appearance-none')}
+              value={String(answers[q.followup.key] ?? '')}
+              onChange={(e) => {
+                const raw = e.target.value
+                onApply({ [q.followup!.key]: raw === '' ? null : Number(raw) } as Partial<WizardAnswers>)
+              }}
+            >
+              <option value="">Estimate…</option>
+              {q.followup.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         {q.optionsFromList && onAddOptionListValue && (
           listAddOpen ? (
             <div className="flex items-center gap-2">

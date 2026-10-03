@@ -70,6 +70,7 @@ export const PRICING: Record<string, PricingEntry> = {
   invoicing: { product_name: "Invoicing", group: "core_monthly", unit_price: 100, unit: "month", scaling: "flat_monthly", bucket: "monthly" }, // $100 min
   payment_processing: { product_name: "Payment Processing", group: "core_monthly", unit_price: 100, unit: "month", scaling: "flat_monthly", bucket: "monthly" }, // $100 min
   record_bills: { product_name: "Record Bills", group: "core_monthly", unit_price: 25, unit: "month", scaling: "flat_monthly", bucket: "monthly" }, // $25 min
+  record_deposits: { product_name: "Record Deposits", group: "core_monthly", unit_price: null, unit: "month", scaling: "flat_monthly", bucket: "monthly" }, // K5 (C10): named, unpriced - quoted at review (J14)
   // Reporting - monthly at three close tiers; quarterly/semi-annual/annual at $25
   monthly_reporting_5: { product_name: "Monthly Reporting (close by the 5th)", group: "reporting", unit_price: 100, unit: "month", scaling: "flat_monthly", bucket: "monthly" },
   monthly_reporting_10: { product_name: "Monthly Reporting (close by the 10th)", group: "reporting", unit_price: 50, unit: "month", scaling: "flat_monthly", bucket: "monthly" },

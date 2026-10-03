@@ -184,7 +184,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       .select()
       .from(recurringTasks)
       .where(eq(recurringTasks.clientId, client.id));
-    expect(rules).toHaveLength(8);
+    expect(rules).toHaveLength(9); // + the annual EOY tax checklist (E9)
     const titles = rules.map((r) => r.title);
     for (const t of ["Reconcile Accounts", "Categorize Transactions", "Client Questions", "Send Reports"]) {
       expect(titles).toContain(t);
@@ -249,7 +249,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
 
     expect(result.onboardingTasksCreated).toBe(9);
     expect(result.reportRowsCreated).toBe(16);
-    expect(result.recurringRulesCreated).toBe(8); // 4 defaults + 1 custom + 1 merchant recon (I6) + 2 specialty report rules (C10)
+    expect(result.recurringRulesCreated).toBe(9); // 4 defaults + EOY (E9) + 1 custom + 1 merchant recon (I6) + 2 specialty report rules (C10)
     expect(result.tasksGenerated).not.toBeNull();
   });
 
@@ -548,7 +548,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       .select()
       .from(recurringTasks)
       .where(eq(recurringTasks.clientId, client.id));
-    expect(rules).toHaveLength(4);
+    expect(rules).toHaveLength(5); // + the annual EOY tax checklist (E9)
     expect(rules.every((r) => r.assigneeId === null)).toBe(true);
 
     // Onboarding tasks carry null assignees, same phases as staffed clients.
@@ -1885,7 +1885,7 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rules = await rulesFor(result.clientId);
     expect(rules.get("Client Questions")).toBeUndefined();
-    expect(result.recurringRulesCreated).toBe(3);
+    expect(result.recurringRulesCreated).toBe(4); // 3 remaining defaults + EOY (E9)
   });
 
   it("extraction-created intakes (no routineSchedule key) convert on the legacy path", async () => {
@@ -1903,7 +1903,7 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
       },
     });
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
-    expect(result.recurringRulesCreated).toBe(5); // 4 defaults + 1 custom
+    expect(result.recurringRulesCreated).toBe(6); // 4 defaults + EOY (E9) + 1 custom
     const rules = await rulesFor(result.clientId);
     expect(rules.get("Categorize Transactions")).toMatchObject({ scheduleType: "monthly", dayOfMonth: 15 });
     expect(rules.get("Weekly deposit review")).toMatchObject({
@@ -2080,7 +2080,7 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
     // ── Recurring rules through the J3 scheduler path: every J2 note rides ──
     const rules = await db.select().from(recurringTasks).where(eq(recurringTasks.clientId, clientId));
     const byTitle = new Map(rules.map((r) => [r.title, r]));
-    expect(rules).toHaveLength(14);
+    expect(rules).toHaveLength(15); // + the annual EOY tax checklist (E9)
     expect(byTitle.get("Send Reports")).toMatchObject({ scheduleType: "monthly", dayOfMonth: 10, description: PRELIMINARY_REPORTS_NOTE });
     expect(byTitle.get(NON_BUSINESS_DEPOSITS_REVIEW_TITLE)?.description).toBe(
       "Client context from intake: Owner covers a bill from his personal account some months",

@@ -1,6 +1,8 @@
 import { and, eq, isNull, ne } from "drizzle-orm";
 import {
+  addDays,
   compareLocalDate,
+  formatLocalDate,
   incompleteSubtaskCount,
   isReportTaskName,
   isSettled,
@@ -464,6 +466,32 @@ export async function completeTask(
 
   const now = nowIso();
   await setTaskCompleted(taskId, completed, userId, now);
+
+  // E6 (09_30 00:56:49): "once they've been marked as addressed, then the
+  // timer goes off - you have seven days to send these reports out."
+  // Completing the period's Client Questions task pulls the same period's
+  // open Send Reports task to completion + 7 days (firm-local).
+  if (
+    completed &&
+    task.title === "Client Questions" &&
+    task.clientId != null &&
+    task.attributedYear != null &&
+    task.attributedMonth != null
+  ) {
+    const reportsDue = formatLocalDate(addDays(parseLocalDate(now.slice(0, 10)), 7));
+    await db
+      .update(tasks)
+      .set({ dueDate: reportsDue })
+      .where(
+        and(
+          eq(tasks.clientId, task.clientId),
+          eq(tasks.title, "Send Reports"),
+          eq(tasks.attributedYear, task.attributedYear),
+          eq(tasks.attributedMonth, task.attributedMonth),
+          isNull(tasks.completedAt),
+        ),
+      );
+  }
 
   // Call notes: "once the task is marked as done, it clocks you out of it" -
   // completing closes the acting user's open timer on the task. stopTaskTimer

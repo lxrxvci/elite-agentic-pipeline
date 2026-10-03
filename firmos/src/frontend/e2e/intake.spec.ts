@@ -174,7 +174,8 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // J4: the note saves and the overlay closes; Continue moves to the next card.
   await advance(page, 'personal-on-business')
   await pick(page, 'option-no', 'personal-card') // never personal spend on business accounts (A41)
-  await pick(page, 'option-no', 'payroll') // no business spend on a personal card (B18)
+  await pick(page, 'option-no', 'record-deposits') // no business spend on a personal card (B18)
+  await pick(page, 'option-no', 'payroll') // they handle deposit recording (C10)
   await pick(page, 'option-no', 'online-access') // no payroll (I3: access checklist next)
 
   // ── Online access: the checklist pulls the statement-proof accounts (I3) ──
@@ -547,6 +548,7 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await advance(page, 'deposits-non-business') // A41: the money-behavior cards first
   await pick(page, 'option-no', 'personal-on-business')
   await pick(page, 'option-no', 'personal-card')
+  await pick(page, 'option-no', 'record-deposits') // C10
   await pick(page, 'option-no', 'payroll')
 
   // ── The auto-flag: callout, Yes pre-selected, No locked ──

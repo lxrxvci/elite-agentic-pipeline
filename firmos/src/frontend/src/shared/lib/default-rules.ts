@@ -65,5 +65,18 @@ export const NON_BUSINESS_DEPOSITS_REVIEW_TITLE = "Review non-business deposits 
 // the previous card" (was "Confirm owner draws with the client").
 export const OWNER_DRAWS_CONFIRMATION_TITLE = "Review non-business expenses on business accounts with the client";
 export const MERCHANT_RECONCILIATION_TITLE = "Merchant reconciliation";
+// K5 (C10, 09_30 00:34:07): the deposits mirror of the bills flow.
+export const RECORD_DEPOSITS_TITLE = "Record deposits";
+// K5 (E9, 09_30 00:59:13): every bookkeeping client gets the annual tax
+// readiness checklist ("we verify everything to make sure everything's
+// ready for your taxes").
+export const EOY_TAX_CHECKLIST_TITLE = "Year-end tax readiness checklist";
+export const EOY_TAX_CHECKLIST_ITEMS: readonly string[] = [
+  "Verify every account is reconciled through year-end",
+  "Review intercompany loans",
+  "Confirm all data is entered",
+  "Confirm owner draws / non-business spend reviewed with the client",
+  "Package the books ready for the tax preparer",
+];
 export const PRELIMINARY_REPORTS_NOTE =
   "Send the package even when client questions are still open, marked preliminary (intake choice).";

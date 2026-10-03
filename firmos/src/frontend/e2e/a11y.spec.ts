@@ -265,6 +265,10 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await expect(question).toHaveAttribute('data-question', 'personal-card')
   await page.getByTestId('option-no').click()
   await page.getByTestId('continue').click()
+  // K5 (C10): the record-deposits card sits between personal-card and payroll.
+  await expect(question).toHaveAttribute('data-question', 'record-deposits')
+  await page.getByTestId('option-no').click()
+  await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'payroll')
   await page.getByTestId('option-no').click()
   await page.getByTestId('continue').click()

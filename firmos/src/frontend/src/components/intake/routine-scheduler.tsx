@@ -36,6 +36,7 @@ import {
 import { cn } from '@/shared/lib/utils'
 
 import { inputCls } from './account-screens'
+import { RoutineCalendar } from './routine-calendar'
 import { closeTierDay, deriveRoutineTasks, type QuestionDef, type WizardAnswers } from './registry'
 
 /**
@@ -661,6 +662,9 @@ export function RoutineSchedulerScreen({
           {error}
         </p>
       )}
+
+      {/* K5 (E1, 09_30 00:50:15): the workload-vs-price calendar visual. */}
+      <RoutineCalendar tasks={tasks} entries={entries} />
 
       <Button type="button" variant="action" onClick={finish} data-testid="continue">
         Continue

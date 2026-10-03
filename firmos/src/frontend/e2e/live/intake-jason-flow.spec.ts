@@ -126,6 +126,7 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   await advance(page, 'deposits-non-business') // A41: the money-behavior cards first
   await pick(page, 'option-no', 'personal-on-business') // no non-business deposits
   await pick(page, 'option-no', 'personal-card') // nothing personal on business accounts
+  await pick(page, 'option-no', 'record-deposits') // C10
   await pick(page, 'option-no', 'payroll') // no personal-card spend
   // The corporate callout explains the pre-answer; "No" is locked, and a
   // pre-answered select still offers Continue (the live-verified stall fix).
