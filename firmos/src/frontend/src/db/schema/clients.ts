@@ -188,6 +188,11 @@ export const contactClientLinks = pgTable(
       .notNull()
       .references(() => clients.id, { onDelete: "cascade" }),
     relationshipType: relationshipTypeEnum("relationship_type").notNull().default("related"),
+    // K8 (B4, 09_30 00:06:12): the picked role LABEL from the contact_roles
+    // option list ("Office manager", "Billing contact"). The enum stays the
+    // system of record for logic (custom labels collapse to `related`); this
+    // preserves the firm's wording through conversion. Null for core roles.
+    roleLabel: text("role_label"),
     ownershipPercent: numeric("ownership_percent", { precision: 5, scale: 2 }),
     // I6: whether this contact receives the client's monthly reports (the
     // intake's per-owner "receives reports" checkbox stamps it at conversion;

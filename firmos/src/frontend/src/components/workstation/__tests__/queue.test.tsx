@@ -850,7 +850,7 @@ describe('Completion check-draw (Wave 3 dopamine hit)', () => {
   })
 })
 
-describe('WorkstationQueue - correspondence badge', () => {
+describe('WorkstationQueue - correspondence badge (J18: landing_shows_client_response_badge)', () => {
   it('shows the unread-reply chip on the My Day client card, linked to the tab', () => {
     render(
       <TooltipProvider>

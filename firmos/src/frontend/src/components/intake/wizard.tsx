@@ -96,6 +96,8 @@ export const INTAKE_OPTION_LIST_KEYS = [
   'bookkeeping_frequencies',
   'engagement_types',
   'bill_pay_locations',
+  // K8 (B4): the roles database behind the contacts role type-ahead.
+  'contact_roles',
 ] as const
 
 /** I4 (plan §3D): the staff peek flag lives in sessionStorage - remembered

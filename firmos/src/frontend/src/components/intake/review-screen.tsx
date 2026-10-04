@@ -20,6 +20,7 @@ import { ConvertDialog, type StaffOption } from './convert-dialog'
 import { formatMoney } from './format'
 import { noteLabel } from './notes-rail'
 import { PriceEditControl } from './price-edit'
+import { QuoteTemplateButton } from './quote-template-button'
 import {
   BREAKDOWN_ACCOUNTS,
   buildBucketedEstimate,
@@ -40,17 +41,18 @@ import {
 } from './registry'
 
 /**
- * The review chapter. J4 (meeting #3, V1-V7, 00:58:28-01:06:58):
- *  - V2: every section is a collapsible disclosure (title + one-line
- *    summary); expanding one auto-collapses the previous so the page reads
- *    in focused pieces, never a wall of text. The first section starts open.
+ * The review chapter. J4 (meeting #3, V1-V7) as revised by K6 (09_30
+ * 01:00:58, F1 - the confirm-green model):
+ *  - F1: every section starts EXPANDED (no one-open-at-a-time accordion);
+ *    the top-left confirm checkbox turns the section green and collapses it
+ *    to signal "reviewed"; unchecking reopens. Left = complete, right =
+ *    edit. When every chapter is confirmed the estimate block greens too.
  *  - V1: every section AND every row carries an edit affordance (hover/
  *    focus reveal, always visible on touch) that opens the question's hero
  *    card in the overlay - never a navigation back into the wizard.
- *  - V4/V5/V6/V7: the quote section is the bucketed estimate - recurring
- *    services grouped by the five routine buckets with their math visible,
- *    collapsible per-account breakdowns, direct inline price editing, and
- *    one-time fees listed separately (retro split by period).
+ *  - V4/V5/V6/V7: the quote section is the bucketed estimate - one-time
+ *    fees top, recurring grouped by the five routine buckets with per-line
+ *    monthly math, retro bottom with a bulk-discount control (K6 D5-D7).
  * Never counted in the "Question X of Y" progress.
  */
 
@@ -853,7 +855,9 @@ export function ReviewScreen({
       {/* K6 (D8, 09_30 01:07:50): the proposal email lives top-right -
           "that'll be your resend." After the first send it reads Resend. */}
       {(status === 'draft' || status === 'pending_review') && canConvert && quote != null && phase === 'review' && (
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          {/* K8 (D8): the email template options ride the same top-right row. */}
+          <QuoteTemplateButton />
           <Button
             type="button"
             variant="outline"

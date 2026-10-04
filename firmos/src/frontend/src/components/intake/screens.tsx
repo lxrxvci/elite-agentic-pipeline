@@ -784,6 +784,7 @@ export function RepeatableScreen({
   capNote = null,
   itemsNote = null,
   validateItems,
+  validateAddItem,
   onCommit,
   onAdvance,
   contactSearch,
@@ -804,6 +805,8 @@ export function RepeatableScreen({
   itemsNote?: string | null
   /** I2: plain-language Continue blocker over the committed list. */
   validateItems?: (items: Array<Record<string, unknown>>) => string | null
+  /** B1: add-time blocker over the committed list plus the pending draft. */
+  validateAddItem?: (items: Array<Record<string, unknown>>, draft: Record<string, unknown>) => string | null
   onCommit: (items: Array<Record<string, unknown>>) => void
   onAdvance: () => void
   /** J1 (C5): the type-ahead lookup behind `contactPicker` repeatables. */
@@ -875,6 +878,13 @@ export function RepeatableScreen({
     const err = validateFields(rep.itemFields, draft)
     if (err || !draftValid) {
       setError(err ?? 'A little more detail first.')
+      return
+    }
+    // B1 (09_30 00:04:41): the add-time guard (ownership cap) names the
+    // remaining available and refuses the add - not just a Continue block.
+    const addError = validateAddItem?.(items, draft) ?? null
+    if (addError) {
+      setError(addError)
       return
     }
     setError(null)
@@ -1857,6 +1867,7 @@ export function QuestionScreen({
       capNote={q.repeatable?.capNote?.(answers) ?? null}
       itemsNote={q.repeatable?.itemsNote?.(items, answers) ?? null}
       validateItems={q.validateItems ? (next) => q.validateItems!(next, answers) : undefined}
+      validateAddItem={q.validateAddItem ? (next, draft) => q.validateAddItem!(next, draft, answers) : undefined}
       onCommit={(next) => onApply(q.apply(answers, next))}
       onAdvance={onAdvance}
       contactSearch={contactSearch}

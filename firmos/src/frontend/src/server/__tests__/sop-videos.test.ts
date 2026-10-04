@@ -166,3 +166,39 @@ describe.skipIf(!reachable)("sop video registration + playback (DB + local stora
     });
   });
 });
+
+describe("playback route auth branches (no staff session, portal roles)", () => {
+  // K8 audit closeout: the 401/403 branches were previously code-inspection
+  // only - the staff-session mock never exercised them.
+  let GET_AUTH: typeof import("@/app/api/sop-videos/[id]/route").GET;
+  let sessionUser: { id: number; normalizedRole: string } | null = null;
+
+  beforeAll(async () => {
+    vi.resetModules();
+    vi.doMock("@/server/auth/guards", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/server/auth/guards")>();
+      return { ...actual, getSessionUser: vi.fn(async () => sessionUser) };
+    });
+    ({ GET: GET_AUTH } = await import("@/app/api/sop-videos/[id]/route"));
+  });
+
+  it("video_route_rejects_anonymous_401_and_portal_roles_403", async () => {
+    sessionUser = null;
+    const anon = await GET_AUTH(new Request("http://x/api/sop-videos/1"), {
+      params: Promise.resolve({ id: "1" }),
+    });
+    expect(anon.status).toBe(401);
+
+    sessionUser = { id: 9, normalizedRole: "client" };
+    const clientRes = await GET_AUTH(new Request("http://x/api/sop-videos/1"), {
+      params: Promise.resolve({ id: "1" }),
+    });
+    expect(clientRes.status).toBe(403);
+
+    sessionUser = { id: 10, normalizedRole: "cpa" };
+    const cpaRes = await GET_AUTH(new Request("http://x/api/sop-videos/1"), {
+      params: Promise.resolve({ id: "1" }),
+    });
+    expect(cpaRes.status).toBe(403);
+  });
+});

@@ -29,7 +29,7 @@ describe.skipIf(!reachable)("option-lists engine", () => {
     await seedDatabase(TEST_TODAY);
   });
 
-  it("every registered list seeds and reads back alphabetized", async () => {
+  it("all_option_lists_alphabetized: every registered list seeds and reads back alphabetized (J3)", async () => {
     await seedOptionLists();
     for (const def of Object.values(OPTION_LISTS)) {
       const names = (await listOptionValues(def.key)).map((v) => v.name);

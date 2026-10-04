@@ -45,7 +45,10 @@ export interface IntakeContactInput {
   phone?: string | null;
   /** Exactly one primary contact becomes the client's primary_contact. */
   isPrimary?: boolean;
-  relationshipType?: "owner" | "primary_contact" | "cpa" | "related";
+  /** K8 (B4): any contact_roles label ("Office manager") or a legacy enum
+   *  value - conversion folds core labels onto the enum and keeps custom
+   *  wording in role_label. */
+  relationshipType?: string;
   /** J1 (C4/C5): set when the contact was picked from the type-ahead lookup
    *  of existing contacts - conversion LINKS that row with the new role
    *  instead of creating a duplicate person. */

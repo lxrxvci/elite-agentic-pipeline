@@ -40,8 +40,17 @@ describe('J10: no_internal_jargon_in_copy', () => {
       .filter((l) => !l.trim().startsWith('//'))
       .join('\n')
     // The phrases Jason read out loud as "definitely some AI jargon"
-    // (09_30 00:25:18) and their siblings.
-    for (const banned of ['rides the', 'this answer seeds', 'conversion seeds', 'seats the task']) {
+    // (09_30 00:25:18) and their siblings. K8: the seat-count and
+    // engagement-seeds constructions join the ban list.
+    for (const banned of [
+      'rides the',
+      'this answer seeds',
+      'conversion seeds',
+      'seats the task',
+      'this engagement seeds',
+      'Seats drive',
+      'seat count',
+    ]) {
       expect(src).not.toContain(banned)
     }
   })

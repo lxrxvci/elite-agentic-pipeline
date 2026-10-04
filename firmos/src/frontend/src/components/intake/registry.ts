@@ -324,6 +324,9 @@ export interface QuestionDef {
   /** `repeatable` questions only: plain-language Continue blocker over the
    *  committed list (I2 owner-count guards). Null lets the screen advance. */
   validateItems?: (items: Array<Record<string, unknown>>, a: WizardAnswers) => string | null
+  /** `repeatable` questions only: add-time blocker over the committed list
+   *  plus the pending draft (B1 ownership cap fires when you click Add). */
+  validateAddItem?: (items: Array<Record<string, unknown>>, draft: Record<string, unknown>, a: WizardAnswers) => string | null
   /**
    * `fields` questions only: overrides how the form value object is built
    * from answers (default: top-level answer keys matching field keys). I1's
@@ -364,6 +367,10 @@ const yesNo = (k: keyof WizardAnswers, labels?: { yes?: string; no?: string }) =
     { value: 'no', label: labels?.no ?? 'No' },
   ],
 })
+
+/** K8: tolerates legacy string 'yes' answers saved before the boolean apply
+ *  fix (record-deposits stored the raw option value for a few days). */
+const yesFlag = (v: unknown): boolean => v === true || v === 'yes'
 
 const boolWord = (v: unknown): string | null =>
   v === true ? 'Yes' : v === false ? 'No' : null
@@ -483,6 +490,23 @@ export function ownershipSumError(items: Array<Record<string, unknown>>): string
   return sum > 100
     ? `Ownership can't go over 100% — you're at ${pctText(sum)}%. Lower the percentages by ${pctText(sum - 100)}% total to continue.`
     : null
+}
+
+/**
+ * K8 (B1, 09_30 00:04:41): the cap fires when you try to ADD the owner, not
+ * just at Continue - and it names the remaining available %: "you must
+ * enter a number that's equal to or less than [remaining]."
+ */
+export function ownershipAddError(
+  items: Array<Record<string, unknown>>,
+  draft: Record<string, unknown>,
+): string | null {
+  const draftPct = numOrNull(draft.ownershipPercent)
+  if (draftPct == null) return null
+  const committed = ownershipSum(items)
+  if (committed + draftPct <= 100) return null
+  const remaining = Math.max(0, Math.round((100 - committed) * 100) / 100)
+  return `Ownership can't go over 100% — the others already take ${pctText(committed)}%, so this one can be at most ${pctText(remaining)}%.`
 }
 
 /** Soft note: under 100% is allowed, with a nudge once any % is entered. */
@@ -727,7 +751,7 @@ export const SERVICES_LATER_ADDON_QUALIFIED: Record<string, (a: WizardAnswers) =
     (a.serviceKeys ?? []).some((k) => k.startsWith('payroll_') || k === 'process_payroll') ||
     a.payrollSelfProcessed === true,
   record_bills: (a) => (a.recordBills ?? a.includeBillPay) === true,
-  record_deposits: (a) => a.recordDeposits === true,
+  record_deposits: (a) => yesFlag(a.recordDeposits),
   '1099_collection': (a) =>
     a.include1099Collection === true ||
     a.include1099FullManagement === true ||
@@ -1390,7 +1414,7 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
 
   // K5 (C10): the deposits mirror of record-bills - same weekly cadence,
   // always before the bank reconciliation.
-  if (a.recordDeposits === true) {
+  if (yesFlag(a.recordDeposits)) {
     push({
       key: 'record-deposits',
       title: RECORD_DEPOSITS_TITLE,
@@ -1880,6 +1904,7 @@ export const CHAPTERS: ChapterDef[] = [
         // language ("A partnership needs at least 2 owners."). J1 (C3): the
         // cumulative ownership % can never exceed 100 - same treatment.
         validateItems: (items, a) => ownerCountError(items.length, a) ?? ownershipSumError(items),
+        validateAddItem: (items, draft) => ownershipAddError(items, draft),
         get: (a) => a.owners ?? [],
         apply: (_a, v) => ({ owners: v as WizardAnswers['owners'] }),
         summarize: (a) => {
@@ -1907,18 +1932,30 @@ export const CHAPTERS: ChapterDef[] = [
             {
               // I1: the CPA role moved to its own card (00:30:14); legacy
               // entries with relationshipType 'cpa' still render and convert.
-              key: 'relationshipType', label: 'Role', kind: 'select', half: true,
-              options: [
-                { value: 'primary_contact', label: 'Primary contact' },
-                { value: 'related', label: 'Other' },
-              ],
+              // K8 (B4, 09_30 00:06:12): role types are a DATABASE - the
+              // type-ahead reads contact_roles and a new role persists
+              // globally for every future intake ("we create role types").
+              key: 'relationshipType', label: 'Role', kind: 'text', half: true,
+              placeholder: 'Office manager',
+              optionsFromList: 'contact_roles',
             },
             { key: 'isPrimary', label: 'Also receives the monthly reports', kind: 'checkbox' },
           ],
           itemValid: (i) => !!str(i.firstName) || !!str(i.entityName),
           summarize: (i) => (str(i.entityName) ?? [i.firstName, i.lastName].filter(Boolean).join(' ')),
           sub: (i) => {
-            const role = i.isPrimary ? 'Primary contact' : i.relationshipType === 'cpa' ? 'CPA' : null
+            // K8 (B4): show the picked role label (it may be any contact_roles
+            // value); legacy enum values fold to their display form.
+            const raw = str(i.relationshipType)
+            const role = i.isPrimary
+              ? 'Primary contact'
+              : raw === 'cpa'
+                ? 'CPA'
+                : raw === 'primary_contact'
+                  ? 'Primary contact'
+                  : raw && raw !== 'related'
+                    ? raw
+                    : null
             return join(role, i.contactId != null ? 'linked from the existing record' : null)
           },
           // I1 (00:29:05): when the contact is also an owner, one tap copies
@@ -2444,7 +2481,10 @@ export const CHAPTERS: ChapterDef[] = [
           { value: 'yes', label: 'Yes, record their deposits' },
           { value: 'no', label: 'No, they handle that' },
         ],
-        ...key('recordDeposits'),
+        // K8 fix: store the BOOLEAN like record-bills (the K5 key() stored
+        // the raw 'yes' string, so a Yes answer never derived anything).
+        get: (a) => (a.recordDeposits === true ? 'yes' : a.recordDeposits === false ? 'no' : undefined),
+        apply: (_a, v) => ({ recordDeposits: v === 'yes' }),
         summarize: (a) => (isBookkeeping(a) ? boolWord(a.recordDeposits) : null),
       },
       {
@@ -2930,7 +2970,7 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'qbo-users',
         title: 'How many people need QuickBooks access?',
-        help: 'Seats drive the plan: two users need at least Essentials, four need Plus.',
+        help: 'The headcount sets the plan: two users need at least Essentials, four need Plus.',
         type: 'fields',
         required: true,
         when: hasQbo,
@@ -2949,7 +2989,7 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'qbo-tier',
         title: 'Which QuickBooks plan?',
-        help: 'Class or location tracking needs Plus. Pick a plan, or let the quote recommend one from the seat count.',
+        help: 'Class or location tracking needs Plus. Pick a plan, or let the quote recommend one from the user count.',
         type: 'select',
         required: true,
         when: hasQbo,
@@ -3022,7 +3062,7 @@ export const CHAPTERS: ChapterDef[] = [
         // conversion seeds exactly what the screen shows.
         id: ROUTINE_SCHEDULER_QUESTION_ID,
         title: 'Routine order and frequency',
-        help: 'Every recurring task this engagement seeds, in the order the work happens. Drag a card to reorder it or move it to another bucket; the schedule controls set exactly when it runs.',
+        help: 'Every recurring task for this engagement, in the order the work happens. Drag a card to reorder it or move it to another bucket; the schedule controls set exactly when it runs.',
         type: 'routine-scheduler',
         required: false,
         when: isBookkeeping,

@@ -1,0 +1,1 @@
+ALTER TABLE "contact_client_links" ADD COLUMN "role_label" text;

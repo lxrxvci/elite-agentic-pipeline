@@ -741,3 +741,41 @@ describe('I3 review: accounts grouped by type with institution + proof badges', 
     expect(screen.getByText('1 of 3 with online access')).toBeInTheDocument()
   })
 })
+
+describe('custom_task_in_review_persists_to_catalog (K8, D4 closeout)', () => {
+  it('adding a custom recurring task from the review estimate writes the catalog through onAddCustomTaskTitle', () => {
+    const onAddCustomTaskTitle = vi.fn()
+    const onCustomWork = vi.fn()
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={{ legalName: 'Custom Co', engagementType: 'bookkeeping' } as WizardAnswers}
+        quote={DISCOUNT_QUOTE}
+        status="draft"
+        canConvert
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+        onPriceChange={() => {}}
+        onCustomWork={onCustomWork}
+        onAddCustomTaskTitle={onAddCustomTaskTitle}
+        customTaskCatalog={[{ id: 1, name: 'Weekly deposit review' }]}
+      />,
+    )
+    // The custom-work adder rides the estimate block (all sections start open).
+    fireEvent.click(screen.getByTestId('custom-work-open'))
+    fireEvent.change(screen.getByTestId('custom-work-name'), { target: { value: 'Quarterly sales-tax prep' } })
+    fireEvent.change(screen.getByTestId('custom-work-cadence'), { target: { value: 'quarterly' } })
+    fireEvent.click(screen.getByTestId('custom-work-add'))
+
+    // The title persists to the custom_task_templates catalog via the wizard's wiring.
+    expect(onAddCustomTaskTitle).toHaveBeenCalledWith('Quarterly sales-tax prep')
+    // And the rule lands in the answers patch.
+    expect(onCustomWork).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customRecurringRules: [expect.objectContaining({ title: 'Quarterly sales-tax prep', scheduleType: 'quarterly' })],
+      }),
+    )
+  })
+})

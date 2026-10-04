@@ -652,15 +652,28 @@ export async function convertIntakeToClient(
         )[0];
       if (linkedRow) contactsLinked += 1;
       else contactsCreated += 1;
+      // K8 (B4): the role may be any contact_roles label - fold it onto the
+      // enum for logic and keep the firm's wording in role_label.
+      const roleRaw = (c.relationshipType ?? "").trim();
+      const roleFold = roleRaw.toLowerCase();
       const relationshipType = c.isPrimary
         ? ("primary_contact" as const)
-        : (c.relationshipType ?? ("related" as const));
+        : roleFold === "primary_contact" || roleFold === "primary contact"
+          ? ("primary_contact" as const)
+          : roleFold === "cpa"
+            ? ("cpa" as const)
+            : ("related" as const);
+      const roleLabel =
+        relationshipType === "related" && roleFold !== "" && roleFold !== "related" && roleFold !== "other"
+          ? roleRaw
+          : null;
       await tx
         .insert(contactClientLinks)
         .values({
           contactId: contact.id,
           clientId,
           relationshipType,
+          roleLabel,
         })
         .onConflictDoNothing();
       if (relationshipType === "primary_contact" && !primaryLinked) {
