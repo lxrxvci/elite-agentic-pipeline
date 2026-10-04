@@ -58,7 +58,7 @@ export function EmailTemplatesAdmin({
       <header className="border-b border-border px-4 py-3">
         <h2 className="text-sm font-semibold text-foreground">Email copy</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Tune the subject and the closing line of the firm's templated emails. Leave a field blank to use the
+          Tune the subject and the closing line of the firm&apos;s templated emails. Leave a field blank to use the
           default. Merge tags: {'{{clientName}}'}, {'{{firmName}}'}, {'{{title}}'}, {'{{year}}'}.
         </p>
       </header>
