@@ -54,6 +54,10 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    env:
+      # Placeholder only - next build imports db/index.ts which throws when
+      # DATABASE_URL is unset; postgres.js connects lazily, so no service.
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/firmos
     defaults:
       run:
         working-directory: firmos/src/frontend
