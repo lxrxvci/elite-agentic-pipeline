@@ -232,7 +232,7 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
       bookkeepingStartDate: "2025-03-01",
       formData: {
         serviceKeys: ["bank_feed_management", "retroactive_bookkeeping"],
-        accounts: [{ name: "Operating Checking", accountType: "checking", institution: "Chase" }],
+        accounts: [{ name: "Operating Checking", accountType: "checking", institution: "Chase", last4: "4411" }],
       },
     });
     const result = await convertIntakeToClient(intakeId, { managerId }, ownerId, CONVERSION_TODAY);
@@ -268,7 +268,7 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Checking", accountType: "checking" }],
+        accounts: [{ name: "Checking", accountType: "checking", institution: "Chase", last4: "4411" }],
       },
     });
     const clean = await convertIntakeToClient(cleanIntake, {}, ownerId, CONVERSION_TODAY);
@@ -422,8 +422,8 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
       formData: {
         serviceKeys: ["bank_feed_management"],
         accounts: [
-          { name: "Manual Checking", accountType: "checking", requiresManualTransactions: true },
-          { name: "Manual Credit Card", accountType: "credit_card", requiresManualTransactions: true },
+          { name: "Manual Checking", accountType: "checking", institution: "Chase", last4: "4411", requiresManualTransactions: true },
+          { name: "Manual Credit Card", accountType: "credit_card", institution: "Amex", last4: "1005", requiresManualTransactions: true },
         ],
       },
     });
@@ -456,8 +456,8 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
       formData: {
         serviceKeys: ["bank_feed_management"],
         accounts: [
-          { name: "Online Checking", accountType: "checking" },
-          { name: "Manual Savings", accountType: "savings", requiresManualTransactions: true },
+          { name: "Online Checking", accountType: "checking", institution: "Chase", last4: "4411" },
+          { name: "Manual Savings", accountType: "savings", institution: "Umpqua", last4: "2210", requiresManualTransactions: true },
         ],
       },
     });
@@ -625,7 +625,7 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
       reportDefinitions: [{ name: "Monthly Financial Package", frequency: "monthly" }],
       formData: {
         serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_15"],
-        accounts: [{ name: "Operating", accountType: "checking", statementDay: 31 }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411", statementDay: 31 }],
       },
     });
     const result = await convertIntakeToClient(intakeId, { managerId, bookkeeperId }, ownerId, CONVERSION_TODAY);

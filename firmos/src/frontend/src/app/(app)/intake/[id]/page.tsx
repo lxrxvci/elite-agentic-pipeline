@@ -60,6 +60,7 @@ export default async function IntakeWizardPage({ params }: { params: Promise<{ i
       <IntakeWizard
         intakeId={intake.id}
         status={intake.status}
+        intakeMode={intake.intakeMode === 'manual' ? 'manual' : 'discovery'}
         initialAnswers={answersFromIntake(intake)}
         canConvert={canConvert}
         managers={managers}

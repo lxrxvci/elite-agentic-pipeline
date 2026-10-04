@@ -32,7 +32,8 @@ function messageOf(error: unknown): string {
 
 export interface SaveIntakeInput {
   intakeId?: number
-  patch: IntakePatch
+  patch: IntakePatch  /** K7 (C2): manual = data-entry mode (the rail is fully unlocked). */
+  intakeMode?: 'discovery' | 'manual';
 }
 
 export interface SaveIntakeData {
@@ -51,7 +52,9 @@ export async function saveIntake(input: SaveIntakeInput): Promise<ActionResult<S
 
   try {
     if (input.intakeId == null) {
-      const intake = await createIntake(input.patch)
+      const intake = await createIntake(
+        input.intakeMode ? { ...input.patch, intakeMode: input.intakeMode } : input.patch,
+      )
       return { ok: true, data: { intake, cascaded: false } }
     }
     const intake = await updateIntake(input.intakeId, input.patch)

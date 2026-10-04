@@ -306,6 +306,9 @@ export function WorkstationQueue({
   useEffect(() => {
     if (!storageHydrated) return
     persistFocusMode(focusMode)
+    // K7 (G2, 09_30 01:22:16): the flag syncs server-side so reminder jobs
+    // skip a focused person ("they're supposed to be focused").
+    void import('@/server/actions/flags').then((m) => m.setFocusModeAction(focusMode)).catch(() => {})
   }, [focusMode, storageHydrated])
 
   useEffect(() => {

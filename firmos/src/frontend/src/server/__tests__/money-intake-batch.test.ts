@@ -103,7 +103,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         serviceDiscounts: { bank_feed_management: 25 },
       },
     });
@@ -135,7 +135,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"], // $100/mo
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         // The wizard writes reportDefinitions to BOTH the column and
         // form_data (buildPatch); mirror that here so the quote sees them.
         reportDefinitions: [
@@ -253,7 +253,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         personalCardForBusiness: true,
       },
     });
@@ -278,7 +278,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         personalCardForBusiness: false,
       },
     });
@@ -302,7 +302,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         depositsNonBusiness: true,
         personalOnBusiness: true,
       },
@@ -340,7 +340,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         depositsNonBusiness: false,
         personalOnBusiness: false,
       },
@@ -360,7 +360,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
       },
     });
     const legacyResult = await convertIntakeToClient(legacy, {}, ownerId, TEST_TODAY);
@@ -382,7 +382,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         excludedDefaultRules: ["client_questions", "send_reports"],
       },
     });
@@ -586,7 +586,7 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       payrollProvider: "Gusto",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         hasPayroll: true,
       },
     });
@@ -830,7 +830,7 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         depositsNonBusiness: true,
         personalOnBusiness: true,
         personalCardForBusiness: true,
@@ -864,7 +864,7 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         personalCardForBusiness: true,
       },
     });
@@ -888,7 +888,7 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management", "record_bills"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         recordBills: true,
         payBills: true,
         billPayLocations: ["Vendor websites", "Bank bill pay"],
@@ -910,7 +910,7 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management", "record_bills"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         recordBills: true,
         payBills: false,
       },
@@ -934,7 +934,7 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
       payrollProvider: "Gusto",
       formData: {
         serviceKeys: ["bank_feed_management", "payroll_quarterly_filings"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         hasPayroll: true,
         payrollSelfProcessed: true,
       },
@@ -963,7 +963,7 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         sendPreliminaryReports: true,
       },
     });
@@ -984,7 +984,7 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
         sendPreliminaryReports: false,
       },
     });

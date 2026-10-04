@@ -349,6 +349,12 @@ function AccountMiniForm({
           <div>
             <FieldLabel>Last 4 digits</FieldLabel>
             <Last4Input index={index} value={item.last4} onChange={(last4) => change({ last4 })} />
+            {/* K7 (C1/J5): optional during discovery, mandatory at conversion. */}
+            {(item.institution == null && item.institutionId == null) || normalizeLast4(item.last4) == null ? (
+              <p className="mt-1 text-[11px] text-muted-foreground" data-testid={`account-optional-note-${index}`}>
+                Optional for now - required when they become a client.
+              </p>
+            ) : null}
           </div>
         )}
 

@@ -78,9 +78,11 @@ interface ClientDetailTabsProps {
   credentialsPanel?: ReactNode
   /** Expected-but-unfilled vault slots - the tab badge. */
   missingCredentials?: number
+  /** K7 (V18): the client notes panel, prominent on Overview. */
+  notesPanel?: React.ReactNode
 }
 
-export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, workInitialStream = null, workInitialMonth = null, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel, correspondencePanel, unreadCorrespondence = 0, credentialsPanel, missingCredentials = 0 }: ClientDetailTabsProps) {
+export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, workInitialStream = null, workInitialMonth = null, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel, correspondencePanel, unreadCorrespondence = 0, credentialsPanel, missingCredentials = 0, notesPanel }: ClientDetailTabsProps) {
   /* Segmented-pill tab strip (DESIGN-FRESHBOOKS §1): the active tab is the
      brand pill (bg-primary/text-primary-foreground keeps AA in both themes);
      icons inherit currentColor, so they follow the pill for free. */
@@ -163,13 +165,16 @@ export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yea
       </TabsList>
 
       <TabsContent value="overview" className="mt-4">
-        <OverviewPanel
-          detail={detail}
-          canEditWorkDay={canEditWorkDay}
-          canAssignStaff={canAssignStaff}
-          managers={managers}
-          bookkeepers={bookkeepers}
-        />
+        <div className="space-y-4">
+          <OverviewPanel
+            detail={detail}
+            canEditWorkDay={canEditWorkDay}
+            canAssignStaff={canAssignStaff}
+            managers={managers}
+            bookkeepers={bookkeepers}
+          />
+          {notesPanel}
+        </div>
       </TabsContent>
       <TabsContent value="work" className="mt-4">
         <ClientWorkTab

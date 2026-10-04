@@ -407,6 +407,8 @@ export async function getIntake(intakeId: number): Promise<IntakeRow> {
 // ── Create / update (autosave) ────────────────────────────────────────────
 
 export interface IntakePatch {
+  /** K7 (C2): discovery (default) or manual data-entry mode. */
+  intakeMode?: "discovery" | "manual";
   legalName?: string;
   dbaName?: string | null;
   taxStructure?: string | null;
@@ -523,6 +525,7 @@ export async function createIntake(patch: IntakePatch): Promise<IntakeRow> {
     .values({
       ...columnPatch(patch),
       legalName: patch.legalName,
+      intakeMode: patch.intakeMode ?? "discovery",
       monthlyRecurringAmount: moneyOrNull(patch.monthlyRecurringAmount),
       baseMonthlyAmount: moneyOrNull(patch.baseMonthlyAmount),
       perAccountPrice: moneyOrNull(patch.perAccountPrice),

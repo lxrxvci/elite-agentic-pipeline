@@ -215,6 +215,11 @@ export const clientIntakes = pgTable(
   {
     id: serial("id").primaryKey(),
     status: intakeStatusEnum("status").notNull().default("new"),
+    /** K7 (C2, 09_30 00:14:42): discovery = the guided conversational walk;
+     *  manual = "we already know everything" data entry - the same wizard
+     *  with every chapter unlocked from the start (the rail jumps anywhere).
+     */
+    intakeMode: text("intake_mode").notNull().default("discovery"),
 
     // Step 1 - business & contacts
     legalName: text("legal_name").notNull(),

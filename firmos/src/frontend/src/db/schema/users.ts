@@ -80,6 +80,9 @@ export const users = pgTable(
     // workstation serves one client at a time in the firm's kind order and
     // locks the rest; owner/admin set the flag per employee.
     bumperLanesEnabled: boolean("bumper_lanes_enabled").notNull().default(false),
+    // K7 (G2, 09_30 01:22:16): focus mode suppresses reminder notifications
+    // ("the focus one would make it to where they're not getting alerts").
+    focusMode: boolean("focus_mode").notNull().default(false),
 
     // §12 - first-login portal tour; admin can reset it for all portal users.
     tourSeenAt: timestamp("tour_seen_at", { withTimezone: true, mode: "date" }),

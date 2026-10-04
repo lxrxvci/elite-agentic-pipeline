@@ -366,8 +366,8 @@ describe.skipIf(!reachable)("credential vault (Phase 3B)", () => {
       formData: {
         serviceKeys: ["bank_feed_management"],
         accounts: [
-          { name: "Chase Operating", accountType: "checking", institution: "Chase", grantLoginAccess: true },
-          { name: "Amex Gold", accountType: "credit_card", institution: "Amex" },
+          { name: "Chase Operating", accountType: "checking", institution: "Chase", last4: "4411", grantLoginAccess: true },
+          { name: "Amex Gold", accountType: "credit_card", institution: "Amex", last4: "1005" },
           { name: "QBO Payroll", accountType: "payroll_liability", institution: "Intuit", grantLoginAccess: true },
         ],
       },
@@ -381,7 +381,8 @@ describe.skipIf(!reachable)("credential vault (Phase 3B)", () => {
       .where(eq(clientCredentials.clientId, result.clientId))
       .orderBy(clientCredentials.label);
     expect(rows).toHaveLength(2);
-    expect(rows.map((r) => r.label)).toEqual(["Chase Operating", "QBO Payroll"]);
+    // With a last-4, the label follows the bank -> type -> last4 standard (D2).
+    expect(rows.map((r) => r.label)).toEqual(["Chase Checking · 4411", "QBO Payroll"]);
     for (const row of rows) {
       expect(row.secretPacked).toBeNull(); // expected = unfilled
       expect(row.createdVia).toBe("system");

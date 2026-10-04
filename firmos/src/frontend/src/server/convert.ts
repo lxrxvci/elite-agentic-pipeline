@@ -1,5 +1,6 @@
 import { sql, inArray } from "drizzle-orm";
 import {
+  addDays,
   closeTierDueDate,
   compareLocalDate,
   effectiveDueDate,
@@ -437,6 +438,41 @@ export async function convertIntakeToClient(
     const bookkeeperId = staff.bookkeeperId ?? intake.bookkeeperId;
 
     const form = formOf(intake);
+
+    // K7 (C1/J5, 09_30 00:13:10-00:17:06): the conversion completeness gate.
+    // Discovery keeps identifiers optional; conversion requires them. The
+    // error lists exactly what's missing per account so the fix is one
+    // re-walk away (the review screen's edit overlay makes it in-place).
+    {
+      const missing: string[] = [];
+      const MONEY_TYPES = new Set(["checking", "savings", "credit_card"]);
+      for (const a of form.accounts ?? []) {
+        const type = String(a.accountType ?? "");
+        const label = a.name ?? `${type} account`;
+        if (MONEY_TYPES.has(type)) {
+          // The J1 standardized label ("Chase Checking · 4411") embeds the
+          // bank; otherwise the explicit institution field/id carries it.
+          const labelHasBank = typeof a.name === "string" && a.name.includes(" · ");
+          if (a.institutionId == null && (a.institution ?? "").trim() === "" && !labelHasBank) {
+            missing.push(`${label}: pick the bank`);
+          }
+          if (normalizeLast4(a.last4) == null) {
+            missing.push(`${label}: the last 4 digits`);
+          }
+        }
+        if (type === "loan" && (a.proofCategory ?? "statement") === "statement") {
+          if ((a.lender ?? "").trim() === "" && a.lenderInstitutionId == null) {
+            missing.push(`${label}: the lender`);
+          }
+        }
+      }
+      if (missing.length > 0) {
+        throw new ConversionError(
+          `A few identifiers are still missing (they're optional during discovery, required to convert): ${missing.join("; ")}.`,
+        );
+      }
+    }
+
     // I1 (00:31:05): consulting runs on the project-engagement track - no
     // recurring rule seeding, no report rows, no weekly bank feeds. A custom
     // "Other" engagement (I1) takes the project track too: the wizard already
@@ -829,6 +865,38 @@ export async function convertIntakeToClient(
       insertedAccounts.push(insertedAccount);
       accountsCreated += 1;
     }
+    // K7 (C3, 09_30 00:17:55-00:19:49): evidence-driven onboarding tasks -
+    // a bill-of-sale entry requests the purchase document; an owner-declared
+    // entry asks the owner for the value. "It would always create some kind
+    // of task. It just depends on what it is."
+    for (const a of form.accounts ?? []) {
+      const label = a.name ?? `${a.accountType ?? "account"}`;
+      const followUp =
+        a.proofCategory === "bill_of_sale"
+          ? {
+              title: `Request the bill of sale: ${label}`,
+              description:
+                "Proof: bill of sale (chosen at intake). Ask the client for the purchase document so the asset lands on the books at its real value.",
+            }
+          : a.proofCategory === "owner_declared"
+            ? {
+                title: `Collect the owner's numbers: ${label}`,
+                description:
+                  "Owner-declared at intake - get the value/balance straight from the owner (what's the value? what's owed?).",
+              }
+            : null;
+      if (!followUp) continue;
+      await tx.insert(tasks).values({
+        clientId,
+        title: followUp.title,
+        description: followUp.description,
+        taskType: "onboarding",
+        status: "new",
+        dueDate: formatLocalDate(addDays(today, 7)),
+        assigneeId: managerId ?? null,
+      });
+    }
+
     // §29 fix: every merchant account becomes its own row with all fields
     // kept; multi-merchant arrays never collapse to a single value.
     // J1 (E4/DB1): the processor picks from merchant_processors - the name

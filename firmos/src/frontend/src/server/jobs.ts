@@ -151,8 +151,17 @@ async function notifyAssignees(
     notificationsSent: 0,
     failures: [],
   };
+  // K7 (G2, 09_30 01:22:16): focus mode means no alerts - "they're
+  // supposed to be focused."
+  const focused = new Set(
+    (await db.select({ id: users.id }).from(users).where(eq(users.focusMode, true))).map((u) => u.id),
+  );
   for (const card of cards) {
     if (card.assigneeId == null) continue;
+    if (focused.has(card.assigneeId)) {
+      summary.candidates -= 1;
+      continue;
+    }
     try {
       const verb = type === "task_overdue" ? "Overdue" : "Due soon";
       const written = await emitOncePerDay(

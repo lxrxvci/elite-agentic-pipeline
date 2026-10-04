@@ -564,9 +564,11 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
         contacts: [
           { firstName: "Jordan", lastName: "Reyes", email: "jordan@example.com", isPrimary: true },
         ],
+        // K7 (C1): identifiers are complete on convertible intakes (the
+        // conversion gate requires them).
         accounts: [
-          { name: "Operating Checking", accountType: "checking" },
-          { name: "Business Credit Card", accountType: "credit_card" },
+          { name: "Operating Checking", accountType: "checking", institution: "Chase", last4: "4411" },
+          { name: "Business Credit Card", accountType: "credit_card", institution: "Amex", last4: "1005" },
         ],
         reportDefinitions: s.reportDefinitions,
       },
@@ -603,9 +605,9 @@ export async function seedDatabase(today: LocalDate = localToday()): Promise<See
     quickbooksStatus: "existing",
     needsQuickbooksSetup: false,
     accounts: [
-      { name: "Operating Checking", accountType: "checking", institution: "Columbia Bank" },
-      { name: "Savings", accountType: "savings", institution: "Columbia Bank" },
-      { name: "Business Credit Card", accountType: "credit_card", institution: "Amex" },
+      { name: "Operating Checking", accountType: "checking", institution: "Columbia Bank", last4: "8820" },
+      { name: "Savings", accountType: "savings", institution: "Columbia Bank", last4: "2210" },
+      { name: "Business Credit Card", accountType: "credit_card", institution: "Amex", last4: "3019" },
       { name: "Delivery Van Loan", accountType: "vehicle_loan", institution: "Columbia Bank" },
       { name: "Loan from Wren", accountType: "loans_from_shareholders" },
     ],

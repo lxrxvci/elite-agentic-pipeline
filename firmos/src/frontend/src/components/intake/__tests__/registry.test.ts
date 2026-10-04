@@ -1603,26 +1603,18 @@ describe('account_label_is_bank_type_last4 (J1, D1/D2)', () => {
     expect(flat[0].name).toBe('Chase Checking · 4411')
   })
 
-  it('the count-card guard requires the bank and a 4-digit last-4 on money accounts', () => {
+  it('the count-card guard is soft at intake and gates at conversion (K7/C1/J5)', () => {
     const [checking] = ACCOUNT_COUNT_DEFS
+    // Discovery: no bank, no last-4 - nothing blocks (09_30 00:13:10).
     expect(
       accountItemError(checking, [{ name: '', accountType: 'checking', proofCategory: 'statement' }]),
-    ).toBe('Pick the bank for account #1.')
-    expect(
-      accountItemError(checking, [
-        { name: '', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '441' },
-      ]),
-    ).toBe('Enter the last 4 digits for account #1 - exactly 4 numbers.')
-    expect(
-      accountItemError(checking, [
-        { name: '', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '44117' },
-      ]),
-    ).toBe('Enter the last 4 digits for account #1 - exactly 4 numbers.')
+    ).toBeNull()
     expect(
       accountItemError(checking, [
         { name: '', accountType: 'checking', proofCategory: 'statement', institution: 'Chase', last4: '4411' },
       ]),
     ).toBeNull()
+    // The conversion gate owns the mandatory side (server k7-conversion-gate.test.ts).
   })
 
   it('the online-access checklist label follows the standard', () => {

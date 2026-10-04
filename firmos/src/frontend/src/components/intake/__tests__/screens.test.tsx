@@ -503,22 +503,15 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
     expect(await screen.findByTestId('bank-option-42')).toHaveTextContent('Umpqua')
   })
 
-  it('Continue blocks until every generated form has its bank + last-4 (J1/D1)', () => {
+  it('Continue allows missing identifiers at discovery with a soft note (K7/C1)', () => {
     const onAdvance = vi.fn()
     render(<AccountsHarness q={checking} initial={{}} onAdvance={onAdvance} />)
     fireEvent.change(screen.getByTestId('count-input'), { target: { value: '2' } })
     fireEvent.click(screen.getByTestId('bank-select-0'))
     fireEvent.click(screen.getByTestId('bank-option-7'))
     fireEvent.change(screen.getByTestId('last4-0'), { target: { value: '4411' } })
-    fireEvent.click(screen.getByTestId('continue'))
-    expect(onAdvance).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent('Pick the bank for account #2.')
-    fireEvent.click(screen.getByTestId('bank-select-1'))
-    fireEvent.click(screen.getByTestId('bank-option-3'))
-    fireEvent.click(screen.getByTestId('continue'))
-    expect(onAdvance).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter the last 4 digits for account #2 - exactly 4 numbers.')
-    fireEvent.change(screen.getByTestId('last4-1'), { target: { value: '0099' } })
+    // Account #2 has nothing - no block, just the soft note, and Continue sails.
+    expect(screen.getByTestId('account-optional-note-1')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).toHaveBeenCalled()
   })

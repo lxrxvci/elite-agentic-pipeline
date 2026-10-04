@@ -132,34 +132,8 @@ describe.skipIf(!reachable)("jason harness - database rules", () => {
   });
 });
 
-describe("jason harness - standing rules awaiting their K-wave (the index)", () => {
-  // Flipped in K1 (live in component suites):
-  //  - J4 no_auto_advance_on_any_card -> components/intake/__tests__/wizard.test.tsx
-  //  - J9 clickables_have_pointer_cursor -> k1-harness.test.tsx (globals.css pin)
-  //  - J10 no_internal_jargon_in_copy -> k1-harness.test.tsx (registry scan)
-  //  - A7 continue_with_unadded_draft_prompts_save_or_discard -> k1-harness.test.tsx
-  // Flipped in K3:
-  //  - J1 every_add_new_persists_globally -> option-lists.test.ts + k3-option-lists.test.tsx
-  //  - J2 custom_answer_never_stranded -> option-lists.test.ts + k3-option-lists.test.tsx
-  //  - J16 lists_admin_manageable -> option-lists.test.ts + admin/__tests__/option-lists-admin.test.tsx
-  // Flipped in K4:
-  //  - J6 every_committed_item_editable -> k4-contacts.test.tsx (inline expand-edit)
-  //  - B6 contact_picker_on_every_person_field -> k4-contacts.test.tsx
-  //  - B7 edit_syncs_across_cards -> k4-contacts.test.tsx
-  //  - B10 one_person_two_businesses_one_record -> server k4-contacts.test.ts
-  // Flipped in K5/K6:
-  //  - E6 questions_addressed_starts_7_day_report_clock -> server k5-report-clock.test.ts
-  //  - J13 weekly_100_shows_400_monthly -> jason-harness.test.ts (K6 pins block)
-  //  - D6 retro_bulk_discount_applies -> jason-harness.test.ts
-  //  - D5 estimate_order_onetime_recurring_retro -> k6-review.test.tsx
-  //  - D2 industry_suggests_never_autoselects + therapist_tracking_not_standard -> k6-review.test.tsx
-  //  - D3/D4 custom_task_in_review_persists_to_catalog -> k6-review.test.tsx
-  //  - F1 sections_default_open_confirm_greens_and_collapses -> review-screen.test.tsx
-  // K7 - structural
-  it.todo("J5: conversion_gates_mandatory_fields");
-  it.todo("J7: duration_flags_are_passive");
-  it.todo("J18: landing_shows_client_response_badge");
-});
+// The K-wave index closed out (K0-K7 all landed). This file keeps the live
+// canon pins above; new standing rules get their own named test here.
 
 describe("jason harness - K6 pins", () => {
   it("retro_bulk_discount_applies: 20% off the cleanup block discounts the retro total only", async () => {

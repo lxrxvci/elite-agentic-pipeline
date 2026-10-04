@@ -190,6 +190,20 @@
       "when": 1791070280076,
       "tag": "0026_aspiring_mandroid",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1791072223086,
+      "tag": "0027_outgoing_chamber",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791073059410,
+      "tag": "0028_secret_queen_noir",
+      "breakpoints": true
     }
   ]
 }

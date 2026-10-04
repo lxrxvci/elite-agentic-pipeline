@@ -1,0 +1,1 @@
+ALTER TABLE "client_intakes" ADD COLUMN "intake_mode" text DEFAULT 'discovery' NOT NULL;

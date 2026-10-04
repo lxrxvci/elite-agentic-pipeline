@@ -6,6 +6,8 @@ import { ArrowLeft } from 'lucide-react'
 import { formatLocalDate } from '@firmos/domain'
 
 import { ClientDetailTabs } from '@/components/clients/client-detail-tabs'
+import { ClientNotesPanel } from '@/components/clients/client-notes-panel'
+import { listClientNotesAction } from '@/server/actions/client-notes'
 import { ClientClockChip } from '@/components/clients/client-clock-chip'
 import { ClientRecurringPanel } from '@/components/clients/client-recurring-panel'
 import { cadenceTierLabel, fullDateLabel, moneyLabel } from '@/components/clients/format'
@@ -234,6 +236,10 @@ export default async function ClientDetailPage({
     attributedMonth: d.attributedMonth,
     canDelete: canDeleteDocument(user, d, today),
   }))
+  // K7 (V18): the notes surface - intake notes land here at conversion.
+  const clientNotesRes = await listClientNotesAction(id)
+  const clientNotesList = clientNotesRes.ok ? clientNotesRes.data : []
+
   const promoteAccounts = detail.accounts
     .filter((a) => a.isActive)
     .map((a) => ({ id: a.id, name: a.name, institution: a.institution }))

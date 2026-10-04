@@ -1027,13 +1027,11 @@ export function accountItemError(
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
     const n = i + 1
+    // K7 (C1/J5, 09_30 00:13:10-00:17:06): bank + last-4 are OPTIONAL during
+    // the discovery call and mandatory at conversion (the conversion gate
+    // lists what's missing) - "the last four digits should be optional until
+    // it's converted to a client then it becomes mandatory."
     if (def.deriveName) {
-      if (!str(item.institution) && item.institutionId == null) {
-        return `Pick the bank for account #${n}.`
-      }
-      if (normalizeLast4(item.last4) == null) {
-        return `Enter the last 4 digits for account #${n} - exactly 4 numbers.`
-      }
       continue
     }
     if (!str(item.name)) {
@@ -1042,12 +1040,7 @@ export function accountItemError(
     if (def.askFinanced && item.financed !== 'financed' && item.financed !== 'paid') {
       return `Is ${str(item.name) ?? `vehicle #${n}`} financed or paid in full?`
     }
-    if (def.askLender && !str(item.lender)) {
-      const proof = item.proofCategory ?? def.defaultProof
-      return proof === 'statement'
-        ? `Pick the lender for ${str(item.name) ?? `loan #${n}`} from the bank list.`
-        : `Type the lender for ${str(item.name) ?? `loan #${n}`} (a name is fine).`
-    }
+    // K7 (C1): the lender is optional at discovery too (gated at conversion).
   }
   return null
 }

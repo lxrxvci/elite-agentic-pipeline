@@ -338,11 +338,12 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
             accountType: "checking",
             institution: "Chase",
             institutionId: chase.id,
+            last4: "4411",
             proofCategory: "statement",
             grantLoginAccess: true,
           },
           // Only the institution id arrives: the text snapshot resolves.
-          { name: "Reserve", accountType: "savings", institutionId: umpqua.id, proofCategory: "statement" },
+          { name: "Reserve", accountType: "savings", institutionId: umpqua.id, last4: "2210", proofCategory: "statement" },
           { name: "Van loan", accountType: "loan", lender: "Columbia", balance: 14000, proofCategory: "statement" },
           { name: "Owner loan", accountType: "loan", lender: "Wren", proofCategory: "owner_declared" },
           { name: "Transit van", accountType: "vehicle", year: 2022, value: 28000, proofCategory: "bill_of_sale" },
@@ -403,6 +404,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
             name: "Operating",
             accountType: "checking",
             institutionId: columbia.id,
+            last4: "8820",
             proofCategory: "statement",
           },
         ],
@@ -531,7 +533,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management"],
-        accounts: [{ name: "Checking", accountType: "checking" }],
+        accounts: [{ name: "Checking", accountType: "checking", institution: "Chase", last4: "4411" }], // K7: identifiers complete (the conversion gate)
       },
     });
 
@@ -616,7 +618,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: {
         serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_15"],
-        accounts: [{ name: "Checking", accountType: "checking" }],
+        accounts: [{ name: "Checking", accountType: "checking", institution: "Chase", last4: "4411" }], // K7: identifiers complete (the conversion gate)
       },
     });
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
@@ -678,7 +680,7 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       owners: [{ name: "Pat Miller", ownershipPercent: 100 }],
       formData: {
         serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_15"],
-        accounts: [{ name: "Checking", accountType: "checking" }],
+        accounts: [{ name: "Checking", accountType: "checking", institution: "Chase", last4: "4411" }], // K7: identifiers complete (the conversion gate)
       },
     });
     const result = await convertIntakeToClient(
@@ -1899,7 +1901,7 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
       customRecurringRules: [{ title: "Weekly deposit review", scheduleType: "weekly", dayOfMonth: null }],
       formData: {
         serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_15"],
-        accounts: [{ name: "Operating", accountType: "checking" }],
+        accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
       },
     });
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);

@@ -115,6 +115,9 @@ export type IntakeStatusKey = 'new' | 'in_progress' | 'pending_review' | 'comple
 export interface IntakeWizardProps {
   intakeId: number
   status: IntakeStatusKey
+  /** K7 (C2): manual = "we already know everything" - the whole rail is
+   *  jumpable from the start (no forced walk). */
+  intakeMode?: 'discovery' | 'manual'
   initialAnswers: WizardAnswers
   initialScreenIndex?: number
   canConvert: boolean
@@ -126,6 +129,7 @@ export interface IntakeWizardProps {
 export function IntakeWizard({
   intakeId,
   status,
+  intakeMode = 'discovery',
   initialAnswers,
   initialScreenIndex,
   canConvert,
@@ -148,6 +152,10 @@ export function IntakeWizard({
   // the walk lands on it. Chapter ids (not indexes) so a branch flip that
   // hides chapters never marks an unvisited one as reached.
   const [reachedChapters, setReachedChapters] = useState<ReadonlySet<string>>(() => {
+    // K7 (C2): manual-entry mode starts with the whole rail unlocked.
+    if (intakeMode === 'manual' && editable) {
+      return new Set(visibleChapters(initialAnswers).map((c) => c.id))
+    }
     const resumeAt = editable ? (initialScreenIndex ?? firstUnansweredScreen(initialAnswers)) : 0
     const initialScreens = flattenScreens(initialAnswers)
     const reached = new Set<string>()

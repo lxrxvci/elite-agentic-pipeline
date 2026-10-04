@@ -20,6 +20,9 @@ export function NewIntakeButton() {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
+  // K7 (C2, 09_30 00:14:42): two intake versions - the guided discovery call
+  // or quick data entry when everything is already known.
+  const [mode, setMode] = useState<'discovery' | 'manual'>('discovery')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -30,7 +33,7 @@ export function NewIntakeButton() {
     }
     setBusy(true)
     setError(null)
-    const res = await saveIntake({ patch: { legalName: name.trim() } })
+    const res = await saveIntake({ patch: { legalName: name.trim() }, intakeMode: mode })
     setBusy(false)
     if (!res.ok) {
       setError(res.error)
@@ -38,6 +41,7 @@ export function NewIntakeButton() {
     }
     setOpen(false)
     setName('')
+    setMode('discovery')
     router.push(`/intake/${res.data.intake.id}`)
   }
 
@@ -76,6 +80,34 @@ export function NewIntakeButton() {
               {error}
             </p>
           )}
+          {/* K7 (C2): the two intake versions - discovery is the guided
+              walk-through; manual is quick data entry with the whole
+              section rail unlocked from the start. */}
+          <div className="mt-4 grid gap-2" role="radiogroup" aria-label="Intake mode">
+            {(
+              [
+                { value: 'discovery', label: 'Discovery call', sub: 'The guided walk-through, one question at a time' },
+                { value: 'manual', label: 'Quick entry', sub: 'They already told you everything - enter it directly, jump anywhere' },
+              ] as const
+            ).map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={mode === o.value}
+                data-testid={`intake-mode-${o.value}`}
+                onClick={() => setMode(o.value)}
+                className={`rounded-lg border px-3.5 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
+                  mode === o.value
+                    ? 'border-firm-brand bg-accent'
+                    : 'border-border bg-card hover:border-firm-brand/60 hover:bg-accent/50'
+                }`}
+              >
+                <span className="block text-sm font-medium text-foreground">{o.label}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">{o.sub}</span>
+              </button>
+            ))}
+          </div>
           <DialogFooter className="mt-4">
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
