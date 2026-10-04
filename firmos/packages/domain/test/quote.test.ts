@@ -225,6 +225,8 @@ test("retroactive work prices per elapsed month at the effective monthly rate", 
     months: 7, // Jan through Jul; August is worked live
     startMonth: { year: 2026, month: 1 },
     perMonthRate: 100,
+    baseTotal: 700,
+    discountPercent: null,
     total: 700,
   });
   const line = quote.lines.find((l) => l.service_key === "retroactive_bookkeeping");

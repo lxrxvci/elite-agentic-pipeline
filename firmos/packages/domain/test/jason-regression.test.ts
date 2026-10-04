@@ -36,6 +36,8 @@ test("quote_discount_25_off_100_times_18_months_equals_1350", () => {
     months: 18,
     startMonth: { year: 2025, month: 2 },
     perMonthRate: 75,
+    baseTotal: 1350,
+    discountPercent: null,
     total: 1350,
   });
   const retroLine = quote.lines.find((l) => l.service_key === "retroactive_bookkeeping");
