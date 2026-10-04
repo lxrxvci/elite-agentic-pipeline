@@ -54,9 +54,23 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: firmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      # Placeholder only - next build imports db/index.ts which throws when
-      # DATABASE_URL is unset; postgres.js connects lazily, so no service.
+      # Scratch DB for next build: page-data collection imports db/index.ts
+      # (throws when unset) and some pages prerender with real queries.
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/firmos
     defaults:
       run:
@@ -77,6 +91,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:ci
+      - run: npm run db:migrate
       - run: npm run build
 
   # A11y gate: axe-core over the key pages (e2e/a11y.spec.ts). Needs the real
