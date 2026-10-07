@@ -299,12 +299,15 @@ export interface QuestionDef {
   noteOnYes?: NoteOnYesDef
   /** K5 (D1, 09_30 00:35:49): an inline follow-up select revealed when any
    *  of `keys` is currently on (the estimated-1099 count rides the 1099
-   *  card instead of being its own screen). */
+   *  card instead of being its own screen). L1 (E1, 10_06 00:24:06): the
+   *  count is a free numeric text entry, not a dropdown. */
   followup?: {
     keys: string[]
     key: 'estimated1099Count'
     label: string
-    options: { value: string; label: string }[]
+    /** Free numeric text entry (digits only) instead of the option select. */
+    numeric?: boolean
+    options?: { value: string; label: string }[]
   }
   /** J2 (E6): `yes-no-list` questions - the yes/no pick plus the string-list
    *  editor shown when yes; Continue commits). */
@@ -1599,21 +1602,85 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
   }
 
   // K5 (E9, 09_30 00:59:13): every bookkeeping client gets the annual
-  // tax-readiness checklist - due a month after year-end by default.
-  push({
-    key: 'eoy-tax-checklist',
-    title: EOY_TAX_CHECKLIST_TITLE,
-    detail: 'Verify everything is ready for their tax preparer',
-    assignee: 'manager',
-    description: EOY_TAX_CHECKLIST_ITEMS.join('\n'),
-    subtasks: [...EOY_TAX_CHECKLIST_ITEMS],
-    defaultEntry: { bucket: 'annual', order: 0, daysAfterPeriodEnd: 31, fiscalYearEnd: null },
-  })
+  // tax-readiness checklist - due a month after year-end by default. L1 (H2):
+  // it can be excluded on the scheduler like the standard four.
+  if (!excluded.has('eoy-tax-checklist')) {
+    push({
+      key: 'eoy-tax-checklist',
+      title: EOY_TAX_CHECKLIST_TITLE,
+      detail: 'Verify everything is ready for their tax preparer',
+      assignee: 'manager',
+      description: EOY_TAX_CHECKLIST_ITEMS.join('\n'),
+      subtasks: [...EOY_TAX_CHECKLIST_ITEMS],
+      defaultEntry: { bucket: 'annual', order: 0, daysAfterPeriodEnd: 31, fiscalYearEnd: null },
+    })
+  }
 
   // E3: Send Reports defaults last in its bucket (09_30 00:52:18).
   pushStandard('send_reports')
 
   return tasks
+}
+
+/**
+ * L1 (H2, 10_06 00:42:51): "the what are we taking on tab is not connected
+ * to the routine order and frequency tab." X'ing a scheduler card writes the
+ * same removal BACK to the answers, so the services screen un-ticks and the
+ * estimate reprices: derived cards clear their qualifying answer, standard
+ * routines + the EOY checklist persist as exclusions, custom rules and
+ * specialty reports leave their catalogs.
+ */
+export function removeRoutineTaskSync(key: string, a: WizardAnswers): Partial<WizardAnswers> {
+  const dropServiceKeys = (drop: (k: string) => boolean) => (a.serviceKeys ?? []).filter((k) => !drop(k))
+  switch (key) {
+    // Standard four + EOY: exclusion, never re-derives (the J3/B21 mechanic).
+    case 'categorize_transactions':
+    case 'reconcile_accounts':
+    case 'client_questions':
+    case 'send_reports':
+    case 'eoy-tax-checklist':
+      return { excludedDefaultRules: [...new Set([...(a.excludedDefaultRules ?? []), key])] }
+    case 'merchant-reconciliation':
+      return { includeMerchantReconciliation: false }
+    case 'payroll-handling':
+      // Entity-required payroll (a corporate officer) re-derives by law; the
+      // voluntary flag and service picks clear.
+      return {
+        hasPayroll: false,
+        payrollSelfProcessed: false,
+        serviceKeys: dropServiceKeys((k) => k.startsWith('payroll_') || k === 'process_payroll'),
+      }
+    case 'record-bills':
+      return { recordBills: false, includeBillPay: false, payBills: false, billPayLocations: [] }
+    case 'pay-bills':
+      return { payBills: false }
+    case 'record-deposits':
+      return { recordDeposits: false }
+    case 'deposits-non-business':
+      return { depositsNonBusiness: false }
+    case 'personal-on-business':
+      return { personalOnBusiness: false }
+    case 'personal-card':
+      return { personalCardForBusiness: false }
+    case '1099-collection':
+      return { include1099Collection: false, serviceKeys: dropServiceKeys((k) => k === '1099_collection') }
+    case '1099-management':
+      return {
+        include1099FullManagement: false,
+        serviceKeys: dropServiceKeys((k) => k === '1099_full_management' || k === '1099_per_filing'),
+      }
+    default:
+      break
+  }
+  if (key.startsWith('specialty:')) {
+    const name = key.slice('specialty:'.length)
+    return { reportDefinitions: (a.reportDefinitions ?? []).filter((d) => str(d.name) !== name) }
+  }
+  if (key.startsWith('custom:')) {
+    const title = key.slice('custom:'.length)
+    return { customRecurringRules: (a.customRecurringRules ?? []).filter((r) => str(r.title) !== title) }
+  }
+  return {}
 }
 
 /** The review-screen one-liner for the scheduler screen. */
@@ -2773,10 +2840,9 @@ export const CHAPTERS: ChapterDef[] = [
           keys: ['1099_collection', '1099_full_management'],
           key: 'estimated1099Count',
           label: 'Estimated number of 1099 filings',
-          options: [
-            ...Array.from({ length: 20 }, (_, i) => String(i + 1)),
-            '25', '30', '40', '50', '75', '100',
-          ].map((n) => ({ value: n, label: n })),
+          // L1 (E1, 10_06 00:24:06-00:25:07): "it should just be a number we
+          // can type in" - the dropdown is gone.
+          numeric: true,
         },
         get: (a) =>
           (a.serviceKeys ?? []).filter((k) => k === '1099_collection' || k === '1099_full_management'),

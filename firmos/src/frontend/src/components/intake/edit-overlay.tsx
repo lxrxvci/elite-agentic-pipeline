@@ -1,21 +1,22 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/shared/lib/utils'
 import type { ContactLookupResults } from '@/server/contact-lookup'
 import type { InstitutionRow } from '@/server/institutions'
 import type { MerchantProcessorRow } from '@/server/merchant-processors'
 import type { PayrollProviderRow } from '@/server/payroll-providers'
 
-import { BehaviorNoteDialog } from './behavior-note-dialog'
 import {
   CUSTOM_OTHER_VALUE,
   customAllowed,
   findChapter,
   findQuestion,
   isCustomOtherPick,
+  visibleQuestions,
   type OptionListValueLite,
   type QuestionDef,
   type WizardAnswers,
@@ -39,6 +40,10 @@ import { QuestionHero, QuestionScreen } from './screens'
 export interface EditTarget {
   chapterId: string
   questionId: string
+  /** L1 (G1, 10_06 01:03:07): the section-header Edit walks EVERY question
+   *  in the chapter in sequence ("it should walk you through all those
+   *  options"); a row pencil edits its single question (walk unset). */
+  walk?: boolean
 }
 
 export function EditQuestionDialog({
@@ -72,38 +77,60 @@ export function EditQuestionDialog({
   optionLists?: Record<string, OptionListValueLite[]>
   onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
 }) {
-  // The money-behavior yes waiting on its mandatory note, scoped to this
-  // overlay (the wizard's own note prompt is a separate, wizard-path state).
-  const [noteOpen, setNoteOpen] = useState(false)
+  // L1 (C2, 10_06 00:12:26): the note rides the in-card panel inside the
+  // dialog - no overlay-level note state anymore.
+  // L1 (G1): walk mode - the current question within the chapter's visible
+  // list. Tracks the prop's questionId until the user steps.
+  const [stepQid, setStepQid] = useState<string | null>(null)
+  useEffect(() => {
+    setStepQid(target?.questionId ?? null)
+  }, [target?.chapterId, target?.questionId])
 
-  const q = target ? findQuestion(target.chapterId, target.questionId) : undefined
   const chapter = target ? findChapter(target.chapterId) : undefined
+  // Walk list: the chapter's currently-visible questions (recomputed as
+  // edits apply - a conditional card can appear or vanish mid-walk).
+  const walkQs = target?.walk && chapter ? visibleQuestions(chapter, answers) : []
+  const activeQid = target?.walk ? (stepQid ?? target.questionId) : target?.questionId
+  const q = activeQid ? findQuestion(target!.chapterId, activeQid) : undefined
   if (!target || !q || !chapter) return null
+  if (target.walk && walkQs.length === 0) return null
+  const stepIdx = target.walk ? Math.max(0, walkQs.findIndex((wq) => wq.id === q.id)) : 0
+  const isFirst = stepIdx <= 0
+  const isLast = stepIdx >= walkQs.length - 1
 
   const close = () => {
-    setNoteOpen(false)
     onClose()
   }
 
-  /** The wizard's pickOption without the navigation: apply, then close -
-   *  except for the cards that need a second step inline. */
+  /** L1 (G1): walk mode advances to the next question; single-question
+   *  edits and the last walk question close. */
+  const advanceOrClose = () => {
+    if (target.walk && !isLast) {
+      setStepQid(walkQs[stepIdx + 1].id)
+      return
+    }
+    close()
+  }
+  const stepBack = () => {
+    if (target.walk && !isFirst) {
+      setStepQid(walkQs[stepIdx - 1].id)
+    }
+  }
+
+  /** The wizard's pickOption without the navigation: apply, then close (or
+   *  advance in walk mode) - except for the cards that need a second step
+   *  inline. */
   const overlayPick = (value: string) => {
-    // J2 (E1-E3): a money-behavior yes requires the explanation note first;
-    // the answer lands only when the note saves (same rule as the wizard).
+    // L1 (C2, 10_06 00:12:26): a yes on a note-on-yes card applies and STAYS
+    // - the in-card note panel renders below the pick (no blocking overlay);
+    // the screen's gated Continue enforces the mandatory rule and advances.
     if (q.noteOnYes && value === 'yes') {
-      setNoteOpen(true)
+      onApply(q.apply(answers, value))
       return
     }
     let patch = q.apply(answers, value)
-    // A no on a note-on-yes card retires the stored note with it.
-    if (q.noteOnYes && value === 'no') {
-      const notes = answers.behaviorNotes
-      if (notes && notes[q.id] != null) {
-        const rest = { ...notes }
-        delete rest[q.id]
-        patch = { ...patch, behaviorNotes: rest }
-      }
-    }
+    // L1 (C1): a no on a note-on-yes card HIDES the note, never deletes it -
+    // re-picking yes restores it.
     // I1 custom "Other": re-picking a listed option drops the typed text.
     if (customAllowed(q) && value !== CUSTOM_OTHER_VALUE) {
       const custom = answers.customAnswers
@@ -115,15 +142,9 @@ export function EditQuestionDialog({
     }
     onApply(patch)
     // "Other - type it" opens the inline input and yes-no-list cards reveal
-    // the list editor - Continue (onAdvance) closes those.
+    // the list editor - Continue (onAdvance) moves past those.
     if (isCustomOtherPick(q, value) || q.type === 'yes-no-list') return
-    close()
-  }
-
-  const saveNote = (text: string) => {
-    const patch = q.apply(answers, 'yes')
-    onApply({ ...patch, behaviorNotes: { ...(answers.behaviorNotes ?? {}), [q.id]: text } })
-    close()
+    advanceOrClose()
   }
 
   return (
@@ -149,14 +170,32 @@ export function EditQuestionDialog({
           <DialogDescription className="sr-only">
             Edit this answer in place - saving updates the review without leaving it.
           </DialogDescription>
+          {/* L1 (G1): walk progress + back navigation for the chapter stepper. */}
+          {target.walk && (
+            <div className="mb-3 flex items-center justify-between" data-testid="edit-walk-nav">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="edit-walk-back"
+                disabled={isFirst}
+                onClick={stepBack}
+              >
+                Back
+              </Button>
+              <span className="tnum text-xs text-muted-foreground" data-testid="edit-walk-progress">
+                {stepIdx + 1} of {walkQs.length}
+              </span>
+            </div>
+          )}
           <QuestionHero q={q} answers={answers} titleAs="h2" />
           <div className="mt-5">
             <QuestionScreen
-              key={`${target.chapterId}.${target.questionId}`}
+              key={`${target.chapterId}.${q.id}`}
               q={q}
               answers={answers}
               onApply={onApply}
-              onAdvance={close}
+              onAdvance={advanceOrClose}
               onPickOption={overlayPick}
               institutions={institutions}
               onAddInstitution={onAddInstitution}
@@ -171,20 +210,6 @@ export function EditQuestionDialog({
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* J2 (E1-E3): the blocking explanation overlay for a money-behavior
-          yes picked inside the edit overlay. Saving completes the edit and
-          closes both; "Go back" discards the pick, keeping the edit open. */}
-      {q.noteOnYes && (
-        <BehaviorNoteDialog
-          questionId={q.id}
-          config={q.noteOnYes}
-          initialNote={answers.behaviorNotes?.[q.id] ?? null}
-          open={noteOpen}
-          onSave={saveNote}
-          onCancel={() => setNoteOpen(false)}
-        />
-      )}
     </>
   )
 }

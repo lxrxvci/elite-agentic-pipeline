@@ -217,10 +217,11 @@ describe('V1 edit affordances feed the overlay (never navigation)', () => {
       quote: null,
       onEdit,
     })
-    // Section-level edit: the chapter's first question.
+    // Section-level edit: the chapter's first question, in WALK mode (L1/G1:
+    // the parent Edit steps through every question in the chapter).
     fireEvent.click(screen.getByTestId('edit-contact'))
-    expect(onEdit).toHaveBeenCalledWith('contact', 'legal-name')
-    // Row-level edit: the exact question behind the row.
+    expect(onEdit).toHaveBeenCalledWith('contact', 'legal-name', true)
+    // Row-level edit: the exact question behind the row (single-question).
     fireEvent.click(screen.getByTestId('edit-row-main-contact'))
     expect(onEdit).toHaveBeenCalledWith('contact', 'main-contact')
     expect(onEdit).toHaveBeenCalledTimes(2)

@@ -17,7 +17,6 @@ import { CSS, getEventCoordinates } from '@dnd-kit/utilities'
 import { ArrowDown, ArrowRight, ArrowUp, ChevronDown, GripVertical, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { DEFAULT_RULE_KEYS } from '@/shared/lib/default-rules'
 import {
   ROUTINE_BUCKET_LABELS,
   ROUTINE_BUCKETS,
@@ -37,7 +36,8 @@ import { cn } from '@/shared/lib/utils'
 
 import { inputCls } from './account-screens'
 import { RoutineCalendar } from './routine-calendar'
-import { closeTierDay, deriveRoutineTasks, type QuestionDef, type WizardAnswers } from './registry'
+import { closeTierDay, deriveRoutineTasks, removeRoutineTaskSync, type QuestionDef, type WizardAnswers } from './registry'
+import { ConfirmDeleteDialog } from './confirm-delete-dialog'
 
 /**
  * J3 (meeting #3, R1-R5, 00:39:26-00:54:05): the "Routine order and
@@ -541,6 +541,9 @@ export function RoutineSchedulerScreen({
   const [overlayWidth, setOverlayWidth] = useState<number | null>(null)
   const [openControls, setOpenControls] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
+  // L1 (H2/H3/H4): the pending schedule deletion - every X confirms first,
+  // and the removal writes back to the answers (two-way sync, 00:42:51).
+  const [pendingDelete, setPendingDelete] = useState<{ key: string; title: string } | null>(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
@@ -558,16 +561,22 @@ export function RoutineSchedulerScreen({
   }
 
   const removeTask = (key: string) => {
-    // The J3 form of B21's unselect: only the four standard routines are
-    // removable here, and removal persists as an exclusion (the same key the
-    // legacy conversion path honors) - the card never derives again.
+    // L1 (H2, 10_06 00:42:51): removal syncs BACK to the answers - derived
+    // cards un-tick their qualifying answer (services screen + estimate
+    // follow), standard routines persist as exclusions. The schedule entry
+    // always drops here.
     const next = { ...entries }
     delete next[key]
     onApply({
       ...q.apply(answers, next),
-      excludedDefaultRules: [...(answers.excludedDefaultRules ?? []), key],
+      ...removeRoutineTaskSync(key, answers),
     })
   }
+
+  /** L1 (H3, 00:41:21): every card is X-able, but never silently - "if one
+   *  could be Xed, all of them could be Xed... it would give the same
+   *  warning." The dialog names the consequence before Delete arms. */
+  const askRemove = (key: string, title: string) => setPendingDelete({ key, title })
 
   const onDragStart = (e: DragStartEvent) => {
     setActiveKey(String(e.active.id))
@@ -615,9 +624,13 @@ export function RoutineSchedulerScreen({
 
   return (
     <div className="space-y-4" data-testid="routine-scheduler">
-      <DndContext sensors={sensors} modifiers={[snapOverlayToCursor]} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-        {/* Buckets stack full-width: the per-card controls need the room. */}
-        <div className="space-y-3">
+      <DndContext sensors={sensors} modifiers={[snapOverlayToCursor]} autoScroll onDragStart={onDragStart} onDragEnd={onDragEnd}>
+        {/* Buckets stack full-width: the per-card controls need the room.
+            L1 (H6, 10_06 00:39:05): the board scrolls INSIDE its own bounded
+            container, so dnd-kit's autoScroll works during a drag and the
+            overlay's grab-point math stays true (the old whole-page scroll
+            broke collision + overlay alignment once the list overflowed). */}
+        <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1" data-testid="routine-bucket-scroll">
           {ROUTINE_BUCKETS.map((bucket) => (
             <BucketSection
               key={bucket}
@@ -629,7 +642,10 @@ export function RoutineSchedulerScreen({
               openControls={openControls}
               onToggleControls={(key) => setOpenControls((o) => ({ ...o, [key]: !o[key] }))}
               onMove={move}
-              onRemove={removeTask}
+              onRemove={(key) => {
+                const task = tasks.find((t) => t.key === key)
+                askRemove(key, task?.title ?? key)
+              }}
               onPatch={patchEntry}
             />
           ))}
@@ -670,6 +686,23 @@ export function RoutineSchedulerScreen({
         Continue
         <ArrowRight className="h-4 w-4" aria-hidden />
       </Button>
+
+      {/* L1 (H3/H4): every X on this board confirms before anything removes. */}
+      <ConfirmDeleteDialog
+        open={pendingDelete != null}
+        itemName={pendingDelete?.title ?? ''}
+        consequence={
+          pendingDelete
+            ? `This removes "${pendingDelete.title}" from the schedule, un-ticks it in the services answers, and reprices the estimate.`
+            : undefined
+        }
+        confirmLabel="Remove"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) removeTask(pendingDelete.key)
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }
@@ -729,7 +762,7 @@ function BucketSection({
                 bucketKeys={keys}
                 dragging={activeKey === key}
                 controlsOpen={openControls[key] === true}
-                removable={DEFAULT_RULE_KEYS.includes(key)}
+                removable={true}
                 onToggleControls={() => onToggleControls(key)}
                 onMove={(b, i) => onMove(key, b, i)}
                 onRemove={() => onRemove(key)}

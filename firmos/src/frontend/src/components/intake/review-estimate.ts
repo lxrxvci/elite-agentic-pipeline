@@ -140,7 +140,7 @@ function taskKeysFor(line: QuoteLine): string[] {
       .replace(/^Missed past filings: /, '')
     return [`specialty:${name}`]
   }
-  if (line.service_key.startsWith('custom_item_')) return [`custom:${line.product_name}`]
+  if (line.service_key.startsWith('custom_item_') || line.service_key.startsWith('custom_rule_')) return [`custom:${line.product_name}`]
   return []
 }
 
@@ -284,6 +284,17 @@ function lineMath(
     if (item?.frequency === 'daily') {
       return `${rate}/day × 22 days${times} = ${formatMoney(perMonth)}/mo`
     }
+  }
+  // L1 (H1): recurring custom rules price with their cadence's math.
+  if (line.service_key.startsWith('custom_rule_')) {
+    const rule = (answers.customRecurringRules ?? [])[Number(line.service_key.replace('custom_rule_', '')) - 1]
+    const freq = rule?.scheduleType
+    if (freq === 'weekly') return `${rate}/week × 4 weeks = ${formatMoney(perMonth)}/mo`
+    if (freq === 'daily') return `${rate}/day × 22 days = ${formatMoney(perMonth)}/mo`
+    if (freq === 'quarterly') return `${rate}/quarter ÷ 3 = ${formatMoney(perMonth)}/mo`
+    if (freq === 'semi_annual') return `${rate}/6 months ÷ 6 = ${formatMoney(perMonth)}/mo`
+    if (freq === 'annual') return `${rate}/year ÷ 12 = ${formatMoney(perMonth)}/mo`
+    return null // monthly custom rule: the price IS the monthly math
   }
   // Specialty reports recur on their own cadence.
   const specialty = /^specialty_report_\d+$/.test(line.service_key)

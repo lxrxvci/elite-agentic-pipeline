@@ -249,11 +249,13 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await page.getByTestId('continue').click() // skip payment methods
   await expect(question).toHaveAttribute('data-question', 'deposits-non-business')
   await page.getByTestId('option-yes').click()
-  await expect(page.getByTestId('behavior-note-dialog')).toBeVisible()
+  // L1 (C2, 10_06): the note lives in an in-card panel, never an overlay.
+  await expect(page.getByTestId('note-panel-deposits-non-business')).toBeVisible()
+  await expect(page.getByTestId('behavior-note-dialog')).toHaveCount(0)
   await settle()
-  await expectAccessible(page, 'wizard - mandatory behavior-note overlay (E1)')
-  await page.getByTestId('behavior-note-input').fill('Owner covers a bill from his personal account some months')
-  await page.getByTestId('behavior-note-save').click()
+  await expectAccessible(page, 'wizard - mandatory behavior-note panel (E1/L1)')
+  await page.getByTestId('note-input-deposits-non-business').fill('Owner covers a bill from his personal account some months')
+  await page.getByTestId('note-input-deposits-non-business').blur()
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'personal-on-business')
 

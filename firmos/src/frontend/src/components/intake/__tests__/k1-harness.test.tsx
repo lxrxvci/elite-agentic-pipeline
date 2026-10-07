@@ -54,6 +54,40 @@ describe('J10: no_internal_jargon_in_copy', () => {
       expect(src).not.toContain(banned)
     }
   })
+
+  it('jargon_scan_covers_all_intake_copy (L1, 10_06): every user-facing intake file scans clean', () => {
+    const files = [
+      '../screens.tsx',
+      '../review-screen.tsx',
+      '../account-screens.tsx',
+      '../routine-scheduler.tsx',
+      '../routine-calendar.tsx',
+      '../custom-work.tsx',
+      '../note-on-yes-panel.tsx',
+      '../quote-template-button.tsx',
+      '../edit-overlay.tsx',
+      '../new-intake-button.tsx',
+    ]
+    for (const rel of files) {
+      const raw = readFileSync(path.resolve(__dirname, rel), 'utf8')
+      const src = raw
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .filter((l) => !l.trim().startsWith('//'))
+        .join('\n')
+      for (const banned of [
+        'rides the',
+        'this answer seeds',
+        'conversion seeds',
+        'seats the task',
+        'this engagement seeds',
+        'Seats drive',
+        'seat count',
+      ]) {
+        expect(src, `${rel} must not contain "${banned}"`).not.toContain(banned)
+      }
+    }
+  })
 })
 
 describe('E2: drag_overlay_tracks_pointer (09_30 00:51:38)', () => {

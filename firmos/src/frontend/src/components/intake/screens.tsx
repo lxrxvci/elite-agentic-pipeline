@@ -20,14 +20,17 @@ import type { PayrollProviderRow } from '@/server/payroll-providers'
 import { cn } from '@/shared/lib/utils'
 
 import { AccountCountScreen, inputCls, InstitutionSelect } from './account-screens'
+import { ConfirmDeleteDialog } from './confirm-delete-dialog'
 import { CustomWorkAdder } from './custom-work'
 import { ContactPicker, type ContactPickerHit } from './contact-picker'
+import { NoteOnYesPanel } from './note-on-yes-panel'
 import { dateTextDigits, dateTextToIso, isoToDateText, maskDateText } from './date-text'
 import { formatPhone, phoneDigits } from './format'
 import { RoutineSchedulerScreen } from './routine-scheduler'
 import {
   CUSTOM_OTHER_VALUE,
   customAllowed,
+  FREQUENCY_LABELS,
   laterAddonQualified,
   mergeListOptions,
   type ServiceCatalogRowLite,
@@ -275,6 +278,39 @@ export function ServicesScreen({
     ]
   }
   const addonValues = values.filter((v) => options.some((o) => o.value === v))
+  // L1 (H1, 10_06 00:37:30): the pending custom-work deletion - every delete
+  // confirms first (H4, 00:31:41).
+  const [pendingDelete, setPendingDelete] = useState<{ name: string; consequence: string; remove: () => void } | null>(null)
+  // L1 (H1): custom work lists HERE, in the add-ons section - not only on the
+  // master schedule ("Walk My Dog is showing up on the scheduler, not on the
+  // add-ons tab"). Recurring rules show cadence + price; one-time its fee.
+  const customAddons: { key: string; title: string; cadence: string; price: number | null; remove: () => void }[] = onCustomWork
+    ? [
+        ...(answers.customRecurringRules ?? []).map((r, i) => {
+          const priceNum = r.unitPrice == null ? null : Number(r.unitPrice)
+          return {
+            key: `rule-${i}`,
+            title: r.title,
+            cadence: FREQUENCY_LABELS[String(r.scheduleType)] ?? String(r.scheduleType),
+            price: r.isBillable && priceNum != null && Number.isFinite(priceNum) ? priceNum : null,
+            remove: () =>
+              onCustomWork({
+                customRecurringRules: (answers.customRecurringRules ?? []).filter((_, j) => j !== i),
+              }),
+          }
+        }),
+        ...(answers.customItems ?? []).map((c, i) => ({
+          key: `item-${i}`,
+          title: c.productName,
+          cadence: c.frequency === 'one_time' ? 'One-time' : (FREQUENCY_LABELS[c.frequency] ?? c.frequency),
+          price: c.unitPrice,
+          remove: () =>
+            onCustomWork({
+              customItems: (answers.customItems ?? []).filter((_, j) => j !== i),
+            }),
+        })),
+      ]
+    : []
   const toggle = (v: string) =>
     onCommit(addonValues.includes(v) ? addonValues.filter((x) => x !== v) : [...addonValues, v])
 
@@ -428,6 +464,40 @@ export function ServicesScreen({
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Custom work
           </h2>
+          {customAddons.length > 0 && (
+            <ul className="mt-2 space-y-2" data-testid="custom-addon-list">
+              {customAddons.map((c) => (
+                <li
+                  key={c.key}
+                  className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-2.5"
+                  data-testid={`custom-addon-${c.title}`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-foreground">{c.title}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {c.cadence}
+                      {c.price != null && <span className="tnum"> · ${c.price}</span>}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Delete ${c.title}`}
+                    data-testid={`custom-addon-delete-${c.title}`}
+                    className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring"
+                    onClick={() =>
+                      setPendingDelete({
+                        name: c.title,
+                        consequence: `This removes "${c.title}" (${c.cadence.toLowerCase()}) from the add-ons, the routine schedule, and the estimate.`,
+                        remove: c.remove,
+                      })
+                    }
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <div className="mt-2">
             <CustomWorkAdder
               answers={answers}
@@ -438,6 +508,16 @@ export function ServicesScreen({
           </div>
         </section>
       )}
+      <ConfirmDeleteDialog
+        open={pendingDelete != null}
+        itemName={pendingDelete?.name ?? ''}
+        consequence={pendingDelete?.consequence}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          pendingDelete?.remove()
+          setPendingDelete(null)
+        }}
+      />
 
       <Button type="button" variant="action" onClick={() => { onCommit(addonValues); onAdvance() }} data-testid="continue">
         Continue
@@ -830,6 +910,9 @@ export function RepeatableScreen({
   // it?... it sucks having to type the whole thing again."
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [editDraft, setEditDraft] = useState<Record<string, unknown>>({})
+  // L1 (H4, 10_06 00:31:41): every delete confirms first - "anytime you're
+  // going to delete something, there should be a warning."
+  const [pendingDelete, setPendingDelete] = useState<{ idx: number; name: string } | null>(null)
 
   const draftValid = rep.itemValid(draft)
   const draftTouched = Object.values(draft).some((v) => v != null && v !== '')
@@ -961,7 +1044,8 @@ export function RepeatableScreen({
                   <button
                     type="button"
                     aria-label={`Remove ${rep.summarize(item)}`}
-                    onClick={() => removeAt(i)}
+                    data-testid={`entity-remove-${i}`}
+                    onClick={() => setPendingDelete({ idx: i, name: rep.summarize(item) })}
                     className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   >
                     <X className="h-3 w-3" aria-hidden />
@@ -1187,6 +1271,21 @@ export function RepeatableScreen({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* L1 (H4, 10_06 00:31:41): the committed-card X confirms first -
+          "anytime you're going to delete something, there should be a
+          warning." */}
+      <ConfirmDeleteDialog
+        open={pendingDelete != null}
+        itemName={pendingDelete?.name ?? ''}
+        consequence={`This removes "${pendingDelete?.name}" from the list. The estimate and schedule update to match.`}
+        confirmLabel="Remove"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) removeAt(pendingDelete.idx)
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }
@@ -1378,6 +1477,8 @@ function YesNoListScreen({
   const current = q.get(answers) as string | undefined
   const locations = (answers[cfg.listKey] as string[] | undefined) ?? []
   const [draft, setDraft] = useState('')
+  // L1 (H4, 10_06 00:31:41): chip removals confirm first.
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   const commitLocations = (next: string[]) => onApply({ [cfg.listKey]: next } as Partial<WizardAnswers>)
   const addLocation = (raw?: string) => {
@@ -1420,7 +1521,7 @@ function YesNoListScreen({
                   <button
                     type="button"
                     aria-label={`Remove ${loc}`}
-                    onClick={() => commitLocations(locations.filter((_, idx) => idx !== i))}
+                    onClick={() => setPendingDelete(loc)}
                     className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   >
                     <X className="h-3 w-3" aria-hidden />
@@ -1481,6 +1582,19 @@ function YesNoListScreen({
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
       )}
+
+      {/* L1 (H4, 10_06 00:31:41): chip removals confirm first. */}
+      <ConfirmDeleteDialog
+        open={pendingDelete != null}
+        itemName={pendingDelete ?? ''}
+        consequence={`This removes "${pendingDelete}" from the places bills get paid.`}
+        confirmLabel="Remove"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          commitLocations(locations.filter((l) => l !== pendingDelete))
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }
@@ -1616,6 +1730,13 @@ export function QuestionScreen({
     // K3 (J2): the typed custom persists to the question's list before
     // moving on, so it is offered on every future intake.
     const persistCustomThenAdvance = async () => {
+      // L1 (C1/C2 + J2): a note-on-yes card still can't move on until the
+      // note says something - mandatory, just no longer a blocking overlay.
+      if (q.noteOnYes && current === 'yes' && ((answers.behaviorNotes?.[q.id] as string | undefined) ?? '').trim() === '') {
+        setRequiredError('Add the note before continuing - the card can\u2019t move on without it.')
+        return
+      }
+      setRequiredError(null)
       const customText = (answers.customAnswers?.[q.id] as string | undefined)?.trim()
       if (q.optionsFromList && customText && onAddOptionListValue) {
         await onAddOptionListValue(q.optionsFromList, customText)
@@ -1630,6 +1751,17 @@ export function QuestionScreen({
           onPick={onPickOption}
           allowCustom={customOn}
         />
+        {/* L1 (C1/C2, 10_06 00:12:26): the note rides INSIDE the card as a
+            drop-down panel tied to the yes pick - never a blocking overlay,
+            and a no hides it without deleting it (re-picking yes restores). */}
+        {q.noteOnYes && current === 'yes' && (
+          <NoteOnYesPanel q={q} answers={answers} onApply={onApply} />
+        )}
+        {requiredError && (
+          <p className="text-sm font-medium text-status-overdue" role="alert" data-testid={`note-required-${q.id}`}>
+            {requiredError}
+          </p>
+        )}
         {otherOpen && (
           <div>
             <label
@@ -1720,23 +1852,39 @@ export function QuestionScreen({
             >
               {q.followup.label}
             </label>
-            <select
-              id={`followup-${q.followup.key}`}
-              data-testid={`followup-select-${q.followup.key}`}
-              className={cn(inputCls, 'appearance-none')}
-              value={String(answers[q.followup.key] ?? '')}
-              onChange={(e) => {
-                const raw = e.target.value
-                onApply({ [q.followup!.key]: raw === '' ? null : Number(raw) } as Partial<WizardAnswers>)
-              }}
-            >
-              <option value="">Estimate…</option>
-              {q.followup.options.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            {q.followup.numeric ? (
+              // L1 (E1, 10_06 00:24:06): free numeric entry, digits only.
+              <input
+                id={`followup-${q.followup.key}`}
+                data-testid={`followup-input-${q.followup.key}`}
+                className={cn(inputCls, 'tnum')}
+                inputMode="numeric"
+                placeholder="56"
+                value={String(answers[q.followup.key] ?? '')}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/[^0-9]/g, '').slice(0, 3)
+                  onApply({ [q.followup!.key]: digits === '' ? null : Number(digits) } as Partial<WizardAnswers>)
+                }}
+              />
+            ) : (
+              <select
+                id={`followup-${q.followup.key}`}
+                data-testid={`followup-select-${q.followup.key}`}
+                className={cn(inputCls, 'appearance-none')}
+                value={String(answers[q.followup.key] ?? '')}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  onApply({ [q.followup!.key]: raw === '' ? null : Number(raw) } as Partial<WizardAnswers>)
+                }}
+              >
+                <option value="">Estimate…</option>
+                {(q.followup.options ?? []).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         )}
         {q.optionsFromList && onAddOptionListValue && (

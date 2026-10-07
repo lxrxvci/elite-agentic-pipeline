@@ -138,7 +138,7 @@ function ReviewAccounts({
 }: {
   answers: WizardAnswers
   editable: boolean
-  onEdit: (chapterId: string, questionId: string) => void
+  onEdit: (chapterId: string, questionId: string, walk?: boolean) => void
 }) {
   const accounts = allAccounts(answers)
   if (accounts.length === 0) return null
@@ -557,7 +557,7 @@ function SectionBody({
   quote: Quote | null
   answers: WizardAnswers
   editable: boolean
-  onEdit: (chapterId: string, questionId: string) => void
+  onEdit: (chapterId: string, questionId: string, walk?: boolean) => void
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
   onRetroDiscountChange?: (percent: number | null) => void
   onCustomWork?: (patch: Partial<WizardAnswers>) => void
@@ -654,7 +654,7 @@ export function ReviewScreen({
   bookkeepers: StaffOption[]
   clientId: number | null
   /** V1: opens the question's hero card in the edit overlay (never navigates). */
-  onEdit: (chapterId: string, questionId: string) => void
+  onEdit: (chapterId: string, questionId: string, walk?: boolean) => void
   /** V4: direct per-line price editing; present only on the editable review. */
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
   /** K6 (D6): retro bulk-discount percent writer (editable review only). */
@@ -958,7 +958,7 @@ export function ReviewScreen({
                   {section.kind === 'chapter' && editable && first && (
                     <button
                       type="button"
-                      onClick={() => onEdit(section.chapter.id, first.id)}
+                      onClick={() => onEdit(section.chapter.id, first.id, true)}
                       data-testid={`edit-${section.chapter.id}`}
                       className="inline-flex items-center gap-1 text-xs font-medium text-firm-brand-strong transition-colors hover:text-firm-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                     >

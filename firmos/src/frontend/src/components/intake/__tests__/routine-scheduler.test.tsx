@@ -153,18 +153,23 @@ describe('J3 routine scheduler screen', () => {
     )
   })
 
-  it('removing a standard card persists a B21 exclusion; add-on cards are not removable', () => {
+  it('removing a standard card confirms first, then persists a B21 exclusion (L1/H3)', () => {
     render(<Harness initial={base} />)
     fireEvent.click(screen.getByTestId('remove-client_questions'))
+    // L1 (H3/H4, 10_06 00:41:21): the X confirms before anything removes -
+    // "it goes poof and that can't happen."
+    expect(screen.getByTestId('confirm-delete-dialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('confirm-delete-confirm'))
     // The card is gone, the key leaves the map, and the exclusion persists -
     // the card never derives again (the J3 form of the B21 unselect).
     expect(screen.queryByTestId('routine-card-client_questions')).not.toBeInTheDocument()
     expect(scheduleNow().client_questions).toBeUndefined()
     expect(answersNow().excludedDefaultRules).toEqual(['client_questions'])
     expect(scheduleNow().categorize_transactions).toBeDefined()
-    // Answer-derived cards stay answer-owned: no remove affordance.
+    // L1 (H2): answer-derived cards are removable TOO (with confirm) - the
+    // removal syncs back to the answers.
     render(<Harness initial={{ ...base, hasPayroll: true, payrollFrequency: 'weekly' }} />)
-    expect(screen.queryByTestId('remove-payroll-handling')).not.toBeInTheDocument()
+    expect(screen.getByTestId('remove-payroll-handling')).toBeInTheDocument()
   })
 
   it('answer-derived cards render: payroll, behavior seeds, bills, custom rules', () => {

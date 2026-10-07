@@ -165,13 +165,16 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByTestId('chip-check').click()
   // A41: the two money-behavior cards come first, each its own screen.
   await advance(page, 'deposits-non-business')
-  // J2 (E1): a yes opens the blocking note overlay - empty cannot save.
+  // L1 (C2, 10_06): a yes applies and opens the IN-CARD note panel (never a
+  // blocking overlay); the gated Continue enforces the mandatory note.
   await page.getByTestId('option-yes').click()
-  await expect(page.getByTestId('behavior-note-dialog')).toBeVisible()
-  await expect(page.getByTestId('behavior-note-save')).toBeDisabled()
-  await page.getByTestId('behavior-note-input').fill('Owner covers a bill from his personal account some months')
-  await page.getByTestId('behavior-note-save').click()
-  // J4: the note saves and the overlay closes; Continue moves to the next card.
+  await expect(page.getByTestId('note-panel-deposits-non-business')).toBeVisible()
+  await expect(page.getByTestId('behavior-note-dialog')).toHaveCount(0)
+  await page.getByTestId('continue').click()
+  await expect(page.getByTestId('note-required-deposits-non-business')).toBeVisible()
+  await page.getByTestId('note-input-deposits-non-business').fill('Owner covers a bill from his personal account some months')
+  await page.getByTestId('note-input-deposits-non-business').blur()
+  // Continue moves to the next card once the note is in.
   await advance(page, 'personal-on-business')
   await pick(page, 'option-no', 'personal-card') // never personal spend on business accounts (A41)
   await pick(page, 'option-no', 'record-deposits') // no business spend on a personal card (B18)
@@ -372,11 +375,17 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByTestId('question-screen')).toHaveCount(0)
   await overlay.getByLabel('Internal notes (optional)').fill('Wants the close by the 10th.')
+  // L1 (G1, 10_06): the section Edit WALKS the chapter - Continue advances
+  // to the next question (the routine scheduler) instead of closing.
   await overlay.getByTestId('continue').click()
-  await expect(overlay).toHaveCount(0)
+  await expect(overlay).toHaveAttribute('data-question', 'routine-scheduler')
+  await expect(overlay.getByTestId('edit-walk-progress')).toHaveText('2 of 2')
   // The review updated in place; the wizard behind never moved.
   await expect(page.getByTestId('question-screen')).toHaveCount(0)
   await expect(page.getByTestId('review-screen').getByText('Wants the close by the 10th.')).toBeVisible()
+  // The last walk question's Continue closes the overlay.
+  await overlay.getByTestId('continue').click()
+  await expect(overlay).toHaveCount(0)
 
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })

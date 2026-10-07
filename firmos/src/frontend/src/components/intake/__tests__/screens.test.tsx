@@ -1059,8 +1059,9 @@ describe('J2 pay-bills screen (E6)', () => {
     expect(screen.getAllByTestId('list-chip')).toHaveLength(2)
     expect(answersNow().billPayLocations).toEqual(['Vendor websites', 'Bank bill pay'])
 
-    // Rows remove.
+    // Rows remove - confirming first (L1/H4: no delete without the dialog).
     fireEvent.click(screen.getByLabelText('Remove Vendor websites'))
+    fireEvent.click(screen.getByTestId('confirm-delete-confirm'))
     expect(answersNow().billPayLocations).toEqual(['Bank bill pay'])
 
     // Flipping to no retires the list with the answer (never stale).

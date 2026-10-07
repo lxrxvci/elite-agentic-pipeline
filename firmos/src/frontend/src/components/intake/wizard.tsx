@@ -32,7 +32,6 @@ import type { PayrollProviderRow } from '@/server/payroll-providers'
 import { cn } from '@/shared/lib/utils'
 
 import type { StaffOption } from './convert-dialog'
-import { BehaviorNoteDialog } from './behavior-note-dialog'
 import { EditQuestionDialog, type EditTarget } from './edit-overlay'
 import { NotesRail } from './notes-rail'
 import { QuoteHiddenCard, QuotePanel } from './quote-panel'
@@ -172,7 +171,8 @@ export function IntakeWizard({
   // J2 (E1-E3): the money-behavior card whose yes-pick is waiting on its
   // mandatory explanation note. Set = the blocking overlay is open; the yes
   // answer is not applied until the note saves.
-  const [notePrompt, setNotePrompt] = useState<{ chapterId: string; questionId: string } | null>(null)
+  // J2 (E1-E3): the mandatory explanation note rides the in-card panel
+  // (L1/C2, 10_06 00:12:26) - no wizard-level overlay state anymore.
   // J4 (V1): the review screen's edit buttons open this overlay - the
   // question's hero card in a dialog, editing in place. The wizard behind
   // never navigates.
@@ -420,23 +420,11 @@ export function IntakeWizard({
     (questionId: string, value: string) => {
       const q = screen?.kind === 'question' ? findQuestion(screen.chapterId, screen.questionId) : undefined
       if (!q || q.id !== questionId) return
-      // J2 (E1-E3): a yes on a money-behavior card opens the blocking note
-      // overlay INSTEAD of applying - the answer lands only when the note
-      // saves (behavior-note-dialog.tsx).
-      if (q.noteOnYes && value === 'yes') {
-        setNotePrompt(screen!.kind === 'question' ? { chapterId: screen.chapterId, questionId: q.id } : null)
-        return
-      }
       let patch = q.apply(answersRef.current, value)
-      // A no on a note-on-yes card retires the stored note with it.
-      if (q.noteOnYes && value === 'no') {
-        const notes = answersRef.current.behaviorNotes
-        if (notes && notes[q.id] != null) {
-          const rest = { ...notes }
-          delete rest[q.id]
-          patch = { ...patch, behaviorNotes: rest }
-        }
-      }
+      // L1 (C1, 10_06 00:13:55): a no on a note-on-yes card HIDES the note
+      // panel, never deletes the stored note - re-picking yes restores it.
+      // The note rides the in-card panel (note-on-yes-panel.tsx); Continue
+      // enforces the J2 mandatory rule there.
       // I1 custom "Other": re-picking a listed option drops the typed text.
       if (customAllowed(q) && value !== CUSTOM_OTHER_VALUE) {
         const custom = answersRef.current.customAnswers
@@ -460,22 +448,8 @@ export function IntakeWizard({
     [apply, screen],
   )
 
-  // J2 (E1-E3): the note saves the yes answer (plus form_data.behaviorNotes)
-  // and closes the overlay; "Go back" discards the pick entirely. J4 harness:
-  // no advance after the save either - the card shows its yes and waits for
-  // Continue like every other screen.
-  const saveBehaviorNote = useCallback(
-    (text: string) => {
-      if (!notePrompt) return
-      const q = findQuestion(notePrompt.chapterId, notePrompt.questionId)
-      if (!q) return
-      const patch = q.apply(answersRef.current, 'yes')
-      apply({ ...patch, behaviorNotes: { ...(answersRef.current.behaviorNotes ?? {}), [q.id]: text } })
-      setNotePrompt(null)
-    },
-    [notePrompt, apply],
-  )
-  const noteQuestion = notePrompt ? findQuestion(notePrompt.chapterId, notePrompt.questionId) : undefined
+  // J2 (E1-E3): the mandatory explanation note rides the in-card panel
+  // (L1/C2, 10_06 00:12:26) - no wizard-level overlay state anymore.
 
   const jumpTo = useCallback(
     (chapterId: string, questionId: string) => {
@@ -509,8 +483,10 @@ export function IntakeWizard({
 
   // J4 (V1): review edits open the overlay, never the wizard. Closing flushes
   // the autosave so the edit is durable even if the intake is closed next.
-  const openEditor = useCallback((chapterId: string, questionId: string) => {
-    setEditTarget({ chapterId, questionId })
+  // L1 (G1): walk=true (the section-header Edit) steps through every question
+  // in the chapter; row pencils open their single question.
+  const openEditor = useCallback((chapterId: string, questionId: string, walk?: boolean) => {
+    setEditTarget({ chapterId, questionId, walk })
   }, [])
   const closeEditor = useCallback(() => {
     setEditTarget(null)
@@ -874,21 +850,6 @@ export function IntakeWizard({
           <NotesRail notes={answers.runningNotes ?? []} onAdd={addRunningNote} />
         </div>
       </div>
-
-      {/* J2 (E1-E3): the blocking explanation overlay behind a
-          money-behavior yes. Rendered at the wizard root so it freezes the
-          whole page; the card underneath stays unanswered until the note
-          saves. */}
-      {noteQuestion?.noteOnYes && (
-        <BehaviorNoteDialog
-          questionId={noteQuestion.id}
-          config={noteQuestion.noteOnYes}
-          initialNote={answers.behaviorNotes?.[noteQuestion.id] ?? null}
-          open
-          onSave={saveBehaviorNote}
-          onCancel={() => setNotePrompt(null)}
-        />
-      )}
 
       {/* J4 (V1): the review screen's edit overlay - the question's hero
           card in a dialog, writing through the same apply/autosave path. */}

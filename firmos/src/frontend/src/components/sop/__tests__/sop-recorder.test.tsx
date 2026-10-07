@@ -208,6 +208,9 @@ describe('SopVideoList playback + delete', () => {
     expect(screen.getByTestId('sop-video-9')).toHaveTextContent('2.0 MB')
 
     fireEvent.click(screen.getByTestId('sop-video-delete-9'))
+    // L1 (H4): the delete confirms first - the action only fires from the dialog.
+    expect(deleteSopVideoAction).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('confirm-delete-confirm'))
     await waitFor(() => expect(deleteSopVideoAction).toHaveBeenCalledWith(9))
     await waitFor(() => expect(onDeleted).toHaveBeenCalledWith(9))
   })

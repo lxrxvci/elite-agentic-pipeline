@@ -9,6 +9,7 @@ import type { InstitutionRow } from '@/server/institutions'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 import { cn } from '@/shared/lib/utils'
 
+import { ConfirmDeleteDialog } from './confirm-delete-dialog'
 import {
   accountItemError,
   ASSET_TYPE_LABELS,
@@ -533,11 +534,23 @@ export function AccountCountScreen({
 }) {
   const def = q.accountCount!
   const [error, setError] = useState<string | null>(null)
+  // L1 (H4, 10_06 00:31:41): account removals confirm first - per-card X and
+  // shrinking the count below entered rows alike.
+  const [pendingDelete, setPendingDelete] = useState<{ name: string; remove: () => void } | null>(null)
 
   const setCount = (raw: number) => {
     const count = Math.max(0, Math.min(20, Math.floor(Number.isFinite(raw) ? raw : 0)))
     if (count === items.length) return
     if (count < items.length) {
+      const firstDropped = items[count]
+      const hasEntered = items.slice(count).some((it) => it.name || it.institution || it.last4)
+      if (hasEntered) {
+        setPendingDelete({
+          name: firstDropped?.name || `account ${count + 1} and below`,
+          remove: () => onCommit(items.slice(0, count)),
+        })
+        return
+      }
       onCommit(items.slice(0, count))
       return
     }
@@ -620,7 +633,12 @@ export function AccountCountScreen({
               institutions={institutions}
               onAddInstitution={onAddInstitution}
               onChange={(patch) => updateAt(i, patch)}
-              onRemove={() => removeAt(i)}
+              onRemove={() =>
+                setPendingDelete({
+                  name: item.name || `account ${i + 1}`,
+                  remove: () => removeAt(i),
+                })
+              }
             />
           ))}
         </div>
@@ -638,6 +656,19 @@ export function AccountCountScreen({
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
       </div>
+
+      {/* L1 (H4, 10_06 00:31:41): every account removal confirms first. */}
+      <ConfirmDeleteDialog
+        open={pendingDelete != null}
+        itemName={pendingDelete?.name ?? ''}
+        consequence={`This removes ${pendingDelete?.name} from the accounts. The estimate's per-account math updates.`}
+        confirmLabel="Remove"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          pendingDelete?.remove()
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }

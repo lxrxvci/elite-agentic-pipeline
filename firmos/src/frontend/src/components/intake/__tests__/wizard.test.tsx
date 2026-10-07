@@ -774,25 +774,23 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
     renderWizard(beforeBehavior)
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
 
-    // Picking yes opens the blocking overlay instead of advancing.
+    // L1 (C2, 10_06 00:12:26): picking yes applies it and opens the IN-CARD
+    // note panel (drop-down tied to the hero card), never a blocking overlay.
     fireEvent.click(screen.getByTestId('option-yes'))
-    expect(screen.getByTestId('behavior-note-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
-
-    // Empty cannot save (the button is disabled) and Escape cannot dismiss.
-    expect(screen.getByTestId('behavior-note-save')).toBeDisabled()
-    fireEvent.keyDown(screen.getByTestId('behavior-note-dialog'), { key: 'Escape' })
-    expect(screen.getByTestId('behavior-note-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
-
-    // Saving the note applies the yes + note and closes the overlay; the
-    // walk still moves only on Continue (J4 harness).
-    fireEvent.change(screen.getByTestId('behavior-note-input'), {
-      target: { value: 'Owner covers a bill from his personal account some months' },
-    })
-    fireEvent.click(screen.getByTestId('behavior-note-save'))
+    expect(screen.getByTestId('note-panel-deposits-non-business')).toBeInTheDocument()
     expect(screen.queryByTestId('behavior-note-dialog')).toBeNull()
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
+
+    // The J2 mandatory rule: Continue refuses while the note is empty.
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(screen.getByTestId('note-required-deposits-non-business')).toBeInTheDocument()
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
+
+    // Typing + blur commits the note to the card; Continue advances (J4).
+    fireEvent.change(screen.getByTestId('note-input-deposits-non-business'), {
+      target: { value: 'Owner covers a bill from his personal account some months' },
+    })
+    fireEvent.blur(screen.getByTestId('note-input-deposits-non-business'))
     fireEvent.click(screen.getByTestId('continue'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'personal-on-business')
 
@@ -807,16 +805,26 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
     )
   })
 
-  it('go back discards the yes pick entirely; a later no retires a stored note', async () => {
+  it('toggle_off_hides_never_deletes_the_note (C1); a later no advances cleanly', async () => {
     vi.useFakeTimers()
     renderWizard(beforeBehavior)
     fireEvent.click(screen.getByTestId('option-yes'))
-    fireEvent.click(screen.getByTestId('behavior-note-cancel'))
-    // Nothing applied: still on the card, no selection.
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
-    expect(screen.getByTestId('option-yes')).not.toHaveAttribute('data-selected', 'true')
+    fireEvent.change(screen.getByTestId('note-input-deposits-non-business'), {
+      target: { value: 'Owner covers a bill from his personal account some months' },
+    })
+    fireEvent.blur(screen.getByTestId('note-input-deposits-non-business'))
 
-    // A no applies in place and clears any prior note; Continue advances.
+    // L1 (C1, 10_06 00:13:55): toggling no HIDES the panel - the note stays
+    // stored; toggling back to yes restores every word.
+    fireEvent.click(screen.getByTestId('option-no'))
+    expect(screen.queryByTestId('note-panel-deposits-non-business')).toBeNull()
+    fireEvent.click(screen.getByTestId('option-yes'))
+    expect(screen.getByTestId('note-panel-deposits-non-business')).toBeInTheDocument()
+    expect(screen.getByTestId('note-input-deposits-non-business')).toHaveValue(
+      'Owner covers a bill from his personal account some months',
+    )
+
+    // A final no applies in place and Continue advances without the gate.
     fireEvent.click(screen.getByTestId('option-no'))
     await act(async () => {
       vi.advanceTimersByTime(1_000)
@@ -832,7 +840,10 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
       patch: { formData?: { depositsNonBusiness?: boolean; behaviorNotes?: Record<string, string> } }
     }
     expect(last.patch.formData?.depositsNonBusiness).toBe(false)
-    expect(last.patch.formData?.behaviorNotes?.['deposits-non-business']).toBeUndefined()
+    // C1: the note stays stored (hidden) after the final no - never deleted.
+    expect(last.patch.formData?.behaviorNotes?.['deposits-non-business']).toBe(
+      'Owner covers a bill from his personal account some months',
+    )
   })
 })
 

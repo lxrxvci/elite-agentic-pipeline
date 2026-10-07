@@ -190,6 +190,22 @@ function toQuoteInput(
     quantity: item.quantity,
   }));
 
+  // L1 (H1, 10_06 00:37:30): recurring custom work PRICES in the estimate -
+  // a billable custom rule ("Walk my dog, monthly, $150") was landing on the
+  // routine scheduler but never reaching the quote. Frequency scaling is the
+  // engine's (weekly x4 / daily x22 / quarterly /3 / annual /12).
+  for (const [j, rule] of (answers.customRecurringRules ?? []).entries()) {
+    if (rule.isBillable !== true || rule.unitPrice == null) continue;
+    const price = Number(rule.unitPrice);
+    if (!Number.isFinite(price) || price < 0) continue;
+    customItems.push({
+      key: `custom_rule_${j + 1}`,
+      product_name: rule.title,
+      unit_price: price,
+      frequency: rule.scheduleType,
+    });
+  }
+
   // C10 specialty reports: see specialtyReportsFromIntake (only priced
   // definitions reach the engine). J2: the same `today` threads into the
   // missed-count derivation so the quote and the template agree.

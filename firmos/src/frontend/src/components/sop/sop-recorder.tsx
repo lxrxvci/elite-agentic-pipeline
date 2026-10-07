@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import type { SopVideoRow } from '@/server/sop-videos'
+import { ConfirmDeleteDialog } from '../intake/confirm-delete-dialog'
 // Server actions load dynamically inside the handlers (the same seam the
 // drawer uses) so jsdom tests render without a database.
 import { cn } from '@/shared/lib/utils'
@@ -387,6 +388,9 @@ export function SopVideoList({
   onDeleted: (videoId: number) => void
 }) {
   const [busyId, setBusyId] = React.useState<number | null>(null)
+  // L1 (H4, 10_06 00:31:41): video deletes confirm first - the bytes are
+  // gone for good once Remove lands.
+  const [pendingDelete, setPendingDelete] = React.useState<SopVideoSummary | null>(null)
 
   const remove = async (videoId: number) => {
     setBusyId(videoId)
@@ -403,39 +407,51 @@ export function SopVideoList({
 
   if (videos.length === 0) return null
   return (
-    <ul className="space-y-3" data-testid="sop-video-list">
-      {videos.map((v) => (
-        <li key={v.id} className="rounded-lg border border-border bg-card p-2.5" data-testid={`sop-video-${v.id}`}>
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption -- staff training capture, no caption track */}
-          <video
-            src={`/api/sop-videos/${v.id}`}
-            controls
-            preload="metadata"
-            className="w-full rounded-md bg-black"
-          />
-          <div className="mt-1.5 flex items-center justify-between gap-2 px-0.5">
-            <span className="min-w-0 truncate text-xs font-medium text-foreground" title={v.title}>
-              {v.title}
-              <span className="tnum ml-1.5 text-muted-foreground">
-                {v.durationSecs != null && `${formatElapsed(v.durationSecs)} · `}
-                {formatVideoSize(v.sizeBytes)}
+    <>
+      <ul className="space-y-3" data-testid="sop-video-list">
+        {videos.map((v) => (
+          <li key={v.id} className="rounded-lg border border-border bg-card p-2.5" data-testid={`sop-video-${v.id}`}>
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption -- staff training capture, no caption track */}
+            <video
+              src={`/api/sop-videos/${v.id}`}
+              controls
+              preload="metadata"
+              className="w-full rounded-md bg-black"
+            />
+            <div className="mt-1.5 flex items-center justify-between gap-2 px-0.5">
+              <span className="min-w-0 truncate text-xs font-medium text-foreground" title={v.title}>
+                {v.title}
+                <span className="tnum ml-1.5 text-muted-foreground">
+                  {v.durationSecs != null && `${formatElapsed(v.durationSecs)} · `}
+                  {formatVideoSize(v.sizeBytes)}
+                </span>
               </span>
-            </span>
-            {canEdit && (
-              <button
-                type="button"
-                aria-label={`Delete ${v.title}`}
-                data-testid={`sop-video-delete-${v.id}`}
-                disabled={busyId === v.id}
-                onClick={() => void remove(v.id)}
-                className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-status-overdue focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
-                <Trash2 className="h-3.5 w-3.5" aria-hidden />
-              </button>
-            )}
-          </div>
-        </li>
-      ))}
-    </ul>
+              {canEdit && (
+                <button
+                  type="button"
+                  aria-label={`Delete ${v.title}`}
+                  data-testid={`sop-video-delete-${v.id}`}
+                  disabled={busyId === v.id}
+                  onClick={() => setPendingDelete(v)}
+                  className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-status-overdue focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+      <ConfirmDeleteDialog
+        open={pendingDelete != null}
+        itemName={pendingDelete?.title ?? ''}
+        consequence="This deletes the recording permanently - there is no undo."
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) void remove(pendingDelete.id)
+          setPendingDelete(null)
+        }}
+      />
+    </>
   )
 }

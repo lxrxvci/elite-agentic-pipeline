@@ -6,6 +6,7 @@ import { Pencil, Plus, Send, Trash2, Video } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { InstitutionSelect } from '@/components/intake/account-screens'
+import { ConfirmDeleteDialog } from '@/components/intake/confirm-delete-dialog'
 import { SopRecorderDialog, SopVideoList, type SopVideoSummary } from '@/components/sop/sop-recorder'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -86,6 +87,8 @@ export function SopAdmin({ sops, clients, institutions, merchantProcessors, acco
   const [videosTarget, setVideosTarget] = useState<SopTemplateItem | null>(null)
   const [recorderTarget, setRecorderTarget] = useState<SopTemplateItem | null>(null)
   const [busy, setBusy] = useState(false)
+  // L1 (H4, 10_06 00:31:41): SOP template deletes confirm first.
+  const [pendingDelete, setPendingDelete] = useState<SopTemplateItem | null>(null)
 
   // H3: banks + merchant processors share one key dropdown; processor rows
   // get negative ids so the two serial sequences never collide. Add-new
@@ -283,7 +286,7 @@ export function SopAdmin({ sops, clients, institutions, merchantProcessors, acco
                       size="sm"
                       aria-label={`Delete ${sop.title}`}
                       disabled={busy}
-                      onClick={() => remove(sop)}
+                      onClick={() => setPendingDelete(sop)}
                     >
                       <Trash2 aria-hidden className="h-3.5 w-3.5" />
                     </Button>
@@ -474,6 +477,18 @@ export function SopAdmin({ sops, clients, institutions, merchantProcessors, acco
           }}
         />
       )}
+
+      {/* L1 (H4, 10_06 00:31:41): template deletes confirm first. */}
+      <ConfirmDeleteDialog
+        open={pendingDelete != null}
+        itemName={pendingDelete?.title ?? ''}
+        consequence="This deletes the SOP and its recordings. Client manual entries are kept and unlinked."
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) void remove(pendingDelete)
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }
