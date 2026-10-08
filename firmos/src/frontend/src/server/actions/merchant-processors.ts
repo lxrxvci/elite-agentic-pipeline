@@ -1,9 +1,11 @@
 'use server'
 
 import { requireStaff } from '@/server/auth/guards'
+import { logEvent } from '@/server/audit'
 import {
   addMerchantProcessor,
   listMerchantProcessors,
+  renameMerchantProcessor,
   type MerchantProcessorRow,
 } from '@/server/merchant-processors'
 
@@ -44,6 +46,33 @@ export async function addMerchantProcessorAction(
   }
   try {
     return { ok: true, data: await addMerchantProcessor(name) }
+  } catch (error) {
+    return { ok: false, error: messageOf(error) }
+  }
+}
+
+/** L2 (B3, 10_06 00:10:01): the pencil rename on the processor stack. */
+export async function renameMerchantProcessorAction(
+  id: number,
+  name: string,
+): Promise<MerchantProcessorActionResult<MerchantProcessorRow>> {
+  let userId: number | null = null
+  try {
+    const user = await requireStaff()
+    userId = user.id
+  } catch {
+    return { ok: false, error: 'Your session expired - sign in again.' }
+  }
+  try {
+    const row = await renameMerchantProcessor(id, name)
+    await logEvent({
+      userId,
+      action: 'merchant_processor_renamed',
+      entityType: 'merchant_processor',
+      entityId: id,
+      metadata: { name: row.name },
+    })
+    return { ok: true, data: row }
   } catch (error) {
     return { ok: false, error: messageOf(error) }
   }

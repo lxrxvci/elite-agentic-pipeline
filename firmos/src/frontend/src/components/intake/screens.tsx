@@ -24,6 +24,8 @@ import { ConfirmDeleteDialog } from './confirm-delete-dialog'
 import { CustomWorkAdder } from './custom-work'
 import { ContactPicker, type ContactPickerHit } from './contact-picker'
 import { NoteOnYesPanel } from './note-on-yes-panel'
+import { PayrollServicesScreen } from './payroll-services'
+import { ProcessorStackScreen } from './processor-stack'
 import { dateTextDigits, dateTextToIso, isoToDateText, maskDateText } from './date-text'
 import { formatPhone, phoneDigits } from './format'
 import { RoutineSchedulerScreen } from './routine-scheduler'
@@ -182,34 +184,44 @@ export function MultiChips({
   values: string[]
   onToggle: (value: string) => void
 }) {
+  // L2 (B2, 10_06 00:09:18-00:23:20): every multiple-choice list is a
+  // vertical stack - "how much easier is it to just look up and down in a
+  // straight line." Click selects, click again deselects.
   return (
-    <div className="flex flex-wrap gap-2" role="group" aria-label="Choices">
+    <ul className="divide-y divide-border rounded-xl border border-border bg-card" role="group" aria-label="Choices" data-testid="multi-stack">
       {options.map((o) => {
         const selected = values.includes(o.value)
         return (
-          <button
-            key={o.value}
-            type="button"
-            aria-pressed={selected}
-            data-testid={`chip-${o.value}`}
-            data-selected={selected || undefined}
-            onClick={() => onToggle(o.value)}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-sm font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-              selected
-                ? 'border-firm-brand bg-accent text-accent-foreground'
-                : 'border-border bg-card text-foreground hover:border-firm-brand/60 hover:bg-accent/50',
-            )}
-          >
-            {selected && <Check className="h-3.5 w-3.5" aria-hidden />}
-            <span>
-              {o.label}
-              {o.sub && <span className="ml-1.5 text-xs font-normal text-muted-foreground">{o.sub}</span>}
-            </span>
-          </button>
+          <li key={o.value}>
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={selected}
+              data-testid={`chip-${o.value}`}
+              data-selected={selected || undefined}
+              onClick={() => onToggle(o.value)}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              <span
+                className={cn(
+                  'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+                  selected ? 'border-firm-brand bg-firm-brand text-white' : 'border-input bg-card',
+                )}
+                aria-hidden
+              >
+                {selected && <Check className="h-3 w-3" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={cn('block text-sm', selected ? 'font-medium text-foreground' : 'text-muted-foreground')}>
+                  {o.label}
+                </span>
+                {o.sub && <span className="mt-0.5 block text-xs text-muted-foreground">{o.sub}</span>}
+              </span>
+            </button>
+          </li>
         )
       })}
-    </div>
+    </ul>
   )
 }
 
@@ -239,6 +251,8 @@ export function ServicesScreen({
   customTaskCatalog,
   onAddCustomTaskTitle,
   industrySuggestions = [],
+  industries = [],
+  onTagIndustry,
 }: {
   q: QuestionDef
   values: string[]
@@ -257,6 +271,10 @@ export function ServicesScreen({
   onAddCustomTaskTitle?: (name: string) => void
   /** K6 (D2): industry-driven suggestions - suggestive, never auto-added. */
   industrySuggestions?: { id: number; serviceKey: string; explainer: string }[]
+  /** L2 (H7): the industries list behind the custom-work industry tag. */
+  industries?: OptionListValueLite[]
+  /** L2 (H7): a tagged custom joins the industry suggestion engine. */
+  onTagIndustry?: (industry: string, title: string) => void
 }) {
   const grouping = q.services!
   const registryStandards = grouping.standards
@@ -284,7 +302,15 @@ export function ServicesScreen({
   // L1 (H1): custom work lists HERE, in the add-ons section - not only on the
   // master schedule ("Walk My Dog is showing up on the scheduler, not on the
   // add-ons tab"). Recurring rules show cadence + price; one-time its fee.
-  const customAddons: { key: string; title: string; cadence: string; price: number | null; remove: () => void }[] = onCustomWork
+  const customAddons: {
+    key: string
+    title: string
+    cadence: string
+    price: number | null
+    industry: string | null
+    edit: { kind: 'rule' | 'item'; index: number }
+    remove: () => void
+  }[] = onCustomWork
     ? [
         ...(answers.customRecurringRules ?? []).map((r, i) => {
           const priceNum = r.unitPrice == null ? null : Number(r.unitPrice)
@@ -293,6 +319,8 @@ export function ServicesScreen({
             title: r.title,
             cadence: FREQUENCY_LABELS[String(r.scheduleType)] ?? String(r.scheduleType),
             price: r.isBillable && priceNum != null && Number.isFinite(priceNum) ? priceNum : null,
+            industry: r.industry ?? null,
+            edit: { kind: 'rule' as const, index: i },
             remove: () =>
               onCustomWork({
                 customRecurringRules: (answers.customRecurringRules ?? []).filter((_, j) => j !== i),
@@ -304,6 +332,8 @@ export function ServicesScreen({
           title: c.productName,
           cadence: c.frequency === 'one_time' ? 'One-time' : (FREQUENCY_LABELS[c.frequency] ?? c.frequency),
           price: c.unitPrice,
+          industry: null,
+          edit: { kind: 'item' as const, index: i },
           remove: () =>
             onCustomWork({
               customItems: (answers.customItems ?? []).filter((_, j) => j !== i),
@@ -311,8 +341,82 @@ export function ServicesScreen({
         })),
       ]
     : []
+  // L2 (H7, 10_06 00:41:21): custom add-ons are editable - name, cadence,
+  // price, industry tag ("databases, editable, standard").
+  const [editingAddon, setEditingAddon] = useState<{ kind: 'rule' | 'item'; index: number } | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editCadence, setEditCadence] = useState('monthly')
+  const [editPrice, setEditPrice] = useState('')
+  const [editIndustry, setEditIndustry] = useState('')
+
+  const openAddonEdit = (target: { kind: 'rule' | 'item'; index: number }) => {
+    if (target.kind === 'rule') {
+      const r = (answers.customRecurringRules ?? [])[target.index]
+      if (!r) return
+      setEditName(r.title)
+      setEditCadence(String(r.scheduleType))
+      setEditPrice(r.unitPrice == null ? '' : String(r.unitPrice))
+      setEditIndustry(r.industry ?? '')
+    } else {
+      const c = (answers.customItems ?? [])[target.index]
+      if (!c) return
+      setEditName(c.productName)
+      setEditCadence('one_time')
+      setEditPrice(String(c.unitPrice))
+      setEditIndustry('')
+    }
+    setEditingAddon(target)
+  }
+
+  const saveAddonEdit = () => {
+    if (!editingAddon || !onCustomWork) return
+    const name = editName.trim()
+    if (name === '') return
+    const priceNum = editPrice.trim() === '' ? null : Number(editPrice)
+    if (priceNum != null && (!Number.isFinite(priceNum) || priceNum < 0)) return
+    if (editingAddon.kind === 'rule') {
+      const prior = (answers.customRecurringRules ?? [])[editingAddon.index]
+      onCustomWork({
+        customRecurringRules: (answers.customRecurringRules ?? []).map((r, j) =>
+          j === editingAddon.index
+            ? {
+                ...r,
+                title: name,
+                scheduleType: editCadence as 'weekly' | 'monthly' | 'quarterly' | 'annual',
+                ...(priceNum != null ? { isBillable: true, unitPrice: priceNum } : { isBillable: false, unitPrice: null }),
+                industry: editIndustry.trim() !== '' ? editIndustry.trim() : null,
+              }
+            : r,
+        ),
+      })
+      // A tagged (or renamed-and-tagged) custom refreshes the suggestion.
+      if (editIndustry.trim() !== '') onTagIndustry?.(editIndustry.trim(), name)
+    } else {
+      onCustomWork({
+        customItems: (answers.customItems ?? []).map((c, j) =>
+          j === editingAddon.index && priceNum != null ? { ...c, productName: name, unitPrice: priceNum } : c,
+        ),
+      })
+    }
+    setEditingAddon(null)
+  }
   const toggle = (v: string) =>
     onCommit(addonValues.includes(v) ? addonValues.filter((x) => x !== v) : [...addonValues, v])
+
+  /** L2 (H7): a `custom:{title}` industry suggestion adds as a custom
+   *  recurring rule (monthly, unpriced - the user sets cadence/price in the
+   *  custom work list below), never as a service key. */
+  const addCustomSuggestion = (serviceKey: string) => {
+    if (!onCustomWork) return
+    const title = serviceKey.slice('custom:'.length)
+    if ((answers.customRecurringRules ?? []).some((r) => r.title === title)) return
+    onCustomWork({
+      customRecurringRules: [
+        ...(answers.customRecurringRules ?? []),
+        { title, scheduleType: 'monthly', subtasks: [] },
+      ],
+    })
+  }
 
   return (
     <div className="space-y-5">
@@ -390,8 +494,13 @@ export function ServicesScreen({
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             From your answers
           </h2>
+          {/* L2 (B4, 10_06 00:34:12): this list IS alphabetical - "everything
+              in alphabetical order when applicable." ("Included in every
+              engagement" is the deliberate exception: workflow order.) */}
           <ul className="mt-2 divide-y divide-border rounded-xl border border-dashed border-border bg-muted/40 px-4">
-            {grouping.laterAddons.map((o) => {
+            {[...grouping.laterAddons]
+              .sort((a, b) => a.label.toLowerCase().localeCompare(b.label.toLowerCase()))
+              .map((o) => {
               const qualified = laterAddonQualified(o.value, answers)
               return (
                 <li key={o.value} className="flex items-baseline justify-between gap-3 py-2" data-testid={`later-${o.value}`}>
@@ -424,7 +533,11 @@ export function ServicesScreen({
           </h2>
           <ul className="mt-2 space-y-2">
             {industrySuggestions.map((s) => {
-              const on = addonValues.includes(s.serviceKey)
+              const isCustom = s.serviceKey.startsWith('custom:')
+              const customTitle = isCustom ? s.serviceKey.slice('custom:'.length) : null
+              const on = isCustom
+                ? (answers.customRecurringRules ?? []).some((r) => r.title === customTitle)
+                : addonValues.includes(s.serviceKey)
               return (
                 <li
                   key={s.id}
@@ -433,7 +546,8 @@ export function ServicesScreen({
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-foreground">
-                      {options.find((o) => o.value === s.serviceKey)?.label ??
+                      {customTitle ??
+                        options.find((o) => o.value === s.serviceKey)?.label ??
                         catalogRows?.find((r) => r.serviceKey === s.serviceKey)?.productName ??
                         s.serviceKey.replaceAll('_', ' ')}
                     </span>
@@ -445,7 +559,7 @@ export function ServicesScreen({
                     size="sm"
                     aria-pressed={on}
                     data-testid={`suggestion-add-${s.serviceKey}`}
-                    onClick={() => toggle(s.serviceKey)}
+                    onClick={() => (isCustom ? addCustomSuggestion(s.serviceKey) : toggle(s.serviceKey))}
                   >
                     {on ? 'Added' : 'Add'}
                   </Button>
@@ -466,36 +580,108 @@ export function ServicesScreen({
           </h2>
           {customAddons.length > 0 && (
             <ul className="mt-2 space-y-2" data-testid="custom-addon-list">
-              {customAddons.map((c) => (
-                <li
-                  key={c.key}
-                  className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-2.5"
-                  data-testid={`custom-addon-${c.title}`}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-foreground">{c.title}</span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">
-                      {c.cadence}
-                      {c.price != null && <span className="tnum"> · ${c.price}</span>}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${c.title}`}
-                    data-testid={`custom-addon-delete-${c.title}`}
-                    className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring"
-                    onClick={() =>
-                      setPendingDelete({
-                        name: c.title,
-                        consequence: `This removes "${c.title}" (${c.cadence.toLowerCase()}) from the add-ons, the routine schedule, and the estimate.`,
-                        remove: c.remove,
-                      })
-                    }
+              {customAddons.map((c) => {
+                const editing = editingAddon?.kind === c.edit.kind && editingAddon.index === c.edit.index
+                return (
+                  <li
+                    key={c.key}
+                    className="rounded-xl border border-border bg-card px-4 py-2.5"
+                    data-testid={`custom-addon-${c.title}`}
                   >
-                    <X className="h-3.5 w-3.5" aria-hidden />
-                  </button>
-                </li>
-              ))}
+                    {editing ? (
+                      <div className="flex flex-wrap items-center gap-2" data-testid="custom-addon-edit-form">
+                        <input
+                          aria-label="Name"
+                          className={inputCls}
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                        />
+                        {c.edit.kind === 'rule' ? (
+                          <select
+                            aria-label="Cadence"
+                            data-testid="custom-addon-edit-cadence"
+                            className={`${inputCls} appearance-none`}
+                            value={editCadence}
+                            onChange={(e) => setEditCadence(e.target.value)}
+                          >
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="quarterly">Quarterly</option>
+                            <option value="annual">Annual</option>
+                          </select>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">One-time</span>
+                        )}
+                        <input
+                          aria-label="Price"
+                          className={`${inputCls} tnum`}
+                          placeholder="$ (optional)"
+                          inputMode="numeric"
+                          value={editPrice}
+                          onChange={(e) => setEditPrice(e.target.value)}
+                        />
+                        {c.edit.kind === 'rule' && (
+                          <select
+                            aria-label="Industry tag (optional)"
+                            data-testid="custom-addon-edit-industry"
+                            className={`${inputCls} appearance-none`}
+                            value={editIndustry}
+                            onChange={(e) => setEditIndustry(e.target.value)}
+                          >
+                            <option value="">Every industry</option>
+                            {industries.map((v) => (
+                              <option key={v.id} value={v.name}>
+                                {v.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        <Button type="button" variant="action" size="sm" data-testid="custom-addon-edit-save" onClick={saveAddonEdit}>
+                          Save
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setEditingAddon(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-foreground">{c.title}</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">
+                            {c.cadence}
+                            {c.price != null && <span className="tnum"> · ${c.price}</span>}
+                            {c.industry && <span> · {c.industry}</span>}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          aria-label={`Edit ${c.title}`}
+                          data-testid={`custom-addon-edit-${c.title}`}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                          onClick={() => openAddonEdit(c.edit)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Delete ${c.title}`}
+                          data-testid={`custom-addon-delete-${c.title}`}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring"
+                          onClick={() =>
+                            setPendingDelete({
+                              name: c.title,
+                              consequence: `This removes "${c.title}" (${c.cadence.toLowerCase()}) from the add-ons, the routine schedule, and the estimate.`,
+                              remove: c.remove,
+                            })
+                          }
+                        >
+                          <X className="h-3.5 w-3.5" aria-hidden />
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
           <div className="mt-2">
@@ -504,6 +690,8 @@ export function ServicesScreen({
               onApply={onCustomWork}
               onAddToCatalog={onAddCustomTaskTitle}
               catalog={customTaskCatalog}
+              industries={industries}
+              onTagIndustry={onTagIndustry}
             />
           </div>
         </section>
@@ -1144,54 +1332,6 @@ export function RepeatableScreen({
                 ))}
               </div>
             )}
-            {/* K4 (C6/C7, 09_30 00:22:01): the alphabetized tile grid - one
-                tap adds the processor (no name re-entry), tapping again
-                removes it; the dropdown below stays for the comparison. */}
-            {rep.processorTiles && processors && processors.length > 0 && (
-              <div className="mb-3 flex flex-wrap gap-1.5" data-testid="processor-tiles">
-                {[...processors]
-                  .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
-                  .map((p) => {
-                    const added = items.some(
-                      (i) => i.processorId === p.id || String(i.processor ?? '').toLowerCase() === p.name.toLowerCase(),
-                    )
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        aria-pressed={added}
-                        data-testid={`processor-tile-${p.id}`}
-                        data-selected={added || undefined}
-                        onClick={() => {
-                          setError(null)
-                          if (added) {
-                            onCommit(
-                              items.filter(
-                                (i) =>
-                                  !(
-                                    i.processorId === p.id ||
-                                    String(i.processor ?? '').toLowerCase() === p.name.toLowerCase()
-                                  ),
-                              ),
-                            )
-                          } else {
-                            onCommit([...items, { processor: p.name, processorId: p.id, name: p.name }])
-                          }
-                        }}
-                        className={cn(
-                          'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-                          added
-                            ? 'border-firm-brand bg-accent text-accent-foreground'
-                            : 'border-border bg-card text-foreground hover:border-firm-brand/60 hover:bg-accent/50',
-                        )}
-                      >
-                        {added && <Check className="h-3 w-3" aria-hidden />}
-                        {p.name}
-                      </button>
-                    )
-                  })}
-              </div>
-            )}
             <FieldGrid
               fields={rep.itemFields}
               value={draft}
@@ -1618,6 +1758,8 @@ export function QuestionScreen({
   onAddOptionListValue,
   servicesCatalog,
   industrySuggestions,
+  onJumpTo,
+  onTagIndustry,
 }: {
   q: QuestionDef
   answers: WizardAnswers
@@ -1646,6 +1788,10 @@ export function QuestionScreen({
   servicesCatalog?: ServiceCatalogRowLite[]
   /** K6 (D2): industry-driven suggestions for the services screen. */
   industrySuggestions?: { id: number; serviceKey: string; explainer: string }[]
+  /** L2 (H5): the wizard's chapter-rail jump (qualifier drop-downs). */
+  onJumpTo?: (chapterId: string, questionId: string) => void
+  /** L2 (H7): tagged customs join the industry suggestion engine. */
+  onTagIndustry?: (industry: string, title: string) => void
 }) {
   // J2 (P1): the required-multi empty-attempt message (payroll handling).
   const [requiredError, setRequiredError] = useState<string | null>(null)
@@ -1671,7 +1817,7 @@ export function QuestionScreen({
   // content screen before review. Continue commits.
   if (q.type === 'routine-scheduler') {
     return (
-      <RoutineSchedulerScreen q={q} answers={answers} onApply={onApply} onAdvance={onAdvance} />
+      <RoutineSchedulerScreen q={q} answers={answers} onApply={onApply} onAdvance={onAdvance} onJumpTo={onJumpTo} />
     )
   }
 
@@ -1798,6 +1944,21 @@ export function QuestionScreen({
     )
   }
 
+  // L2 (D1/D3, 10_06 00:16:31): the payroll-services question renders the
+  // core pick (they/us) then the DB-backed secondary stack.
+  if (q.type === 'multi' && q.payrollServices) {
+    return (
+      <PayrollServicesScreen
+        q={q}
+        answers={answers}
+        onApply={onApply}
+        onAdvance={onAdvance}
+        optionLists={optionLists}
+        onAddOptionListValue={onAddOptionListValue}
+      />
+    )
+  }
+
   // I4: the services screen (standards group + add-on toggles) replaces the
   // generic chip grid; the answer key and service_key wiring are unchanged.
   // N1: answers ride along so later-addon rows can badge answer-qualified scope.
@@ -1815,6 +1976,8 @@ export function QuestionScreen({
         onCustomWork={onApply}
         customTaskCatalog={optionLists?.custom_task_templates}
         onAddCustomTaskTitle={onAddOptionListValue ? (name) => void onAddOptionListValue('custom_task_templates', name) : undefined}
+        industries={optionLists?.industries}
+        onTagIndustry={onTagIndustry}
       />
     )
   }
@@ -2000,6 +2163,22 @@ export function QuestionScreen({
         onPickOption={onPickOption}
         optionLists={optionLists}
         onAddOptionListValue={onAddOptionListValue}
+      />
+    )
+  }
+
+  // L2 (B3, 10_06 00:10:01): the merchants question renders as ONE
+  // alphabetized vertical stack (click selects, pencil renames, add at the
+  // bottom) - the tile grid, dropdown, and name field are retired.
+  if (q.type === 'repeatable' && q.repeatable?.processorStack) {
+    return (
+      <ProcessorStackScreen
+        q={q}
+        answers={answers}
+        processors={merchantProcessors}
+        onAddProcessor={onAddMerchantProcessor}
+        onApply={onApply}
+        onAdvance={onAdvance}
       />
     )
   }

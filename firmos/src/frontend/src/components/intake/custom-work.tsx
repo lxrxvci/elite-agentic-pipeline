@@ -29,6 +29,8 @@ export function CustomWorkAdder({
   onApply,
   onAddToCatalog,
   catalog,
+  industries = [],
+  onTagIndustry,
 }: {
   answers: WizardAnswers
   onApply: (patch: Partial<WizardAnswers>) => void
@@ -36,11 +38,17 @@ export function CustomWorkAdder({
   onAddToCatalog?: (name: string) => void
   /** K3: prior custom task titles for the type-ahead. */
   catalog?: OptionListValueLite[]
+  /** L2 (H7, 10_06 00:38:20): the industries list for the optional tag -
+   *  "tagged → only shows when that industry is selected." */
+  industries?: OptionListValueLite[]
+  /** L2 (H7): tagged customs join the industry suggestion engine. */
+  onTagIndustry?: (industry: string, title: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [cadence, setCadence] = useState<string>('monthly')
   const [price, setPrice] = useState('')
+  const [industry, setIndustry] = useState('')
 
   const add = () => {
     const name = title.trim()
@@ -66,13 +74,18 @@ export function CustomWorkAdder({
             dayOfMonth: null,
             subtasks: [],
             ...(priceNum != null ? { isBillable: true, unitPrice: priceNum } : {}),
+            ...(industry.trim() !== '' ? { industry: industry.trim() } : {}),
           },
         ],
       })
+      // L2 (H7): a tagged recurring custom joins the industry suggestions -
+      // untagged ones stay a type-ahead for every intake.
+      if (industry.trim() !== '') onTagIndustry?.(industry.trim(), name)
     }
     onAddToCatalog?.(name)
     setTitle('')
     setPrice('')
+    setIndustry('')
     setOpen(false)
   }
 
@@ -130,6 +143,21 @@ export function CustomWorkAdder({
           value={price}
           onChange={(e) => setPrice(e.target.value)}
         />
+        {/* L2 (H7): the optional industry tag. */}
+        <select
+          aria-label="Industry tag (optional)"
+          data-testid="custom-work-industry"
+          className={`${inputCls} appearance-none`}
+          value={industry}
+          onChange={(e) => setIndustry(e.target.value)}
+        >
+          <option value="">Every industry</option>
+          {industries.map((v) => (
+            <option key={v.id} value={v.name}>
+              {v.name}
+            </option>
+          ))}
+        </select>
         <Button
           type="button"
           variant="outline"

@@ -36,7 +36,7 @@ import { cn } from '@/shared/lib/utils'
 
 import { inputCls } from './account-screens'
 import { RoutineCalendar } from './routine-calendar'
-import { closeTierDay, deriveRoutineTasks, removeRoutineTaskSync, type QuestionDef, type WizardAnswers } from './registry'
+import { closeTierDay, deriveRoutineTasks, findQuestion, removeRoutineTaskSync, type QuestionDef, type WizardAnswers } from './registry'
 import { ConfirmDeleteDialog } from './confirm-delete-dialog'
 
 /**
@@ -346,6 +346,45 @@ function ScheduleControls({
 
 // ── The task card ─────────────────────────────────────────────────────────
 
+/** L2 (H5): the drop-down naming the hero card that qualified this task. */
+function QualifierDropDown({
+  taskKey,
+  answers,
+  onJumpTo,
+}: {
+  taskKey: string
+  answers: WizardAnswers
+  onJumpTo?: (chapterId: string, questionId: string) => void
+}) {
+  const qualifier = qualifierFor(taskKey)
+  if (qualifier === 'standard') {
+    return (
+      <p className="mt-1.5 rounded-lg border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-testid={`qualifier-${taskKey}`}>
+        Included in every bookkeeping engagement - it is a standard, not an answer.
+      </p>
+    )
+  }
+  const question = findQuestion(qualifier.chapterId, qualifier.questionId)
+  if (!question) return null
+  const help = typeof question.help === 'function' ? question.help(answers) : question.help
+  return (
+    <div className="mt-1.5 rounded-lg border border-firm-brand/40 bg-accent/30 px-3 py-2" data-testid={`qualifier-${taskKey}`}>
+      <p className="text-xs font-semibold text-foreground">{question.title}</p>
+      {help && <p className="mt-0.5 text-[11px] text-muted-foreground">{help}</p>}
+      {onJumpTo && (
+        <button
+          type="button"
+          data-testid={`qualifier-jump-${taskKey}`}
+          onClick={() => onJumpTo(qualifier.chapterId, qualifier.questionId)}
+          className="mt-1.5 text-xs font-medium text-firm-brand-strong transition-colors hover:text-firm-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          Go to the card →
+        </button>
+      )}
+    </div>
+  )
+}
+
 function RoutineTaskCard({
   task,
   entry,
@@ -354,10 +393,14 @@ function RoutineTaskCard({
   dragging,
   controlsOpen,
   removable,
+  qualifierOpen,
+  answers,
   onToggleControls,
   onMove,
   onRemove,
   onPatch,
+  onToggleQualifier,
+  onJumpTo,
 }: {
   task: RoutineTaskDef
   entry: RoutineScheduleEntry
@@ -367,10 +410,15 @@ function RoutineTaskCard({
   controlsOpen: boolean
   /** Only the four standard routines un-seed from here (B21 exclusions). */
   removable: boolean
+  /** L2 (H5): the qualifier drop-down state + the wizard's chapter jump. */
+  qualifierOpen: boolean
+  answers: WizardAnswers
   onToggleControls: () => void
   onMove: (bucket: RoutineBucket, index: number) => void
   onRemove: () => void
   onPatch: (patch: Partial<RoutineScheduleEntry>) => void
+  onToggleQualifier: () => void
+  onJumpTo?: (chapterId: string, questionId: string) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.key,
@@ -398,7 +446,19 @@ function RoutineTaskCard({
           <GripVertical className="h-4 w-4" aria-hidden />
         </button>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-foreground">{task.title}</p>
+          {/* L2 (H5, 10_06 00:43:56): the title opens the qualifier
+              drop-down - "it should just drop down… the same hero card that
+              qualified record bills." */}
+          <button
+            type="button"
+            aria-expanded={qualifierOpen}
+            data-testid={`qualifier-toggle-${task.key}`}
+            onClick={onToggleQualifier}
+            className="rounded text-left text-sm font-medium text-foreground transition-colors hover:text-firm-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            {task.title}
+          </button>
+          {qualifierOpen && <QualifierDropDown taskKey={task.key} answers={answers} onJumpTo={onJumpTo} />}
           {/* K1 (E7, 09_30 00:57:44): full descriptions - "all of those are
               cut off and truncated... we need to be able to see what those
               are" for the team AND onboarding clients. */}
@@ -507,6 +567,40 @@ function RoutineTaskCard({
 export const OVERLAY_CURSOR_MARGIN_X = 20
 export const OVERLAY_CURSOR_MARGIN_Y = 12
 
+/**
+ * L2 (H5, 10_06 00:43:56-00:44:37): "it should just drop down… it should be
+ * the same hero card that qualified record bills." Every scheduled task
+ * links back to the question whose answer qualified it; standards explain
+ * themselves instead (they are in every bookkeeping engagement).
+ */
+export type TaskQualifier = { chapterId: string; questionId: string } | 'standard'
+
+const TASK_QUALIFIER_STATIC: Record<string, TaskQualifier> = {
+  categorize_transactions: 'standard',
+  reconcile_accounts: 'standard',
+  client_questions: 'standard',
+  send_reports: 'standard',
+  'eoy-tax-checklist': 'standard',
+  'merchant-reconciliation': { chapterId: 'income', questionId: 'merchants' },
+  'payroll-handling': { chapterId: 'income', questionId: 'payroll-services' },
+  'record-bills': { chapterId: 'reporting', questionId: 'record-bills' },
+  'pay-bills': { chapterId: 'reporting', questionId: 'pay-bills' },
+  'record-deposits': { chapterId: 'income', questionId: 'record-deposits' },
+  'deposits-non-business': { chapterId: 'income', questionId: 'deposits-non-business' },
+  'personal-on-business': { chapterId: 'income', questionId: 'personal-on-business' },
+  'personal-card': { chapterId: 'income', questionId: 'personal-card' },
+  '1099-collection': { chapterId: 'reporting', questionId: 'ten99-services' },
+  '1099-management': { chapterId: 'reporting', questionId: 'ten99-services' },
+}
+
+export function qualifierFor(key: string): TaskQualifier {
+  const known = TASK_QUALIFIER_STATIC[key]
+  if (known) return known
+  if (key.startsWith('specialty:')) return { chapterId: 'reporting', questionId: 'reports' }
+  if (key.startsWith('custom:')) return { chapterId: 'services', questionId: 'services' }
+  return 'standard'
+}
+
 export const snapOverlayToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
   if (!draggingNodeRect || !activatorEvent) return transform
   const start = getEventCoordinates(activatorEvent)
@@ -527,11 +621,14 @@ export function RoutineSchedulerScreen({
   answers,
   onApply,
   onAdvance,
+  onJumpTo,
 }: {
   q: QuestionDef
   answers: WizardAnswers
   onApply: (patch: Partial<WizardAnswers>) => void
   onAdvance: () => void
+  /** L2 (H5): the wizard's chapter-rail jump for the qualifier drop-down. */
+  onJumpTo?: (chapterId: string, questionId: string) => void
 }) {
   const tierDay = closeTierDay(answers)
   const tasks = deriveRoutineTasks(answers)
@@ -540,6 +637,7 @@ export function RoutineSchedulerScreen({
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [overlayWidth, setOverlayWidth] = useState<number | null>(null)
   const [openControls, setOpenControls] = useState<Record<string, boolean>>({})
+  const [openQualifiers, setOpenQualifiers] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
   // L1 (H2/H3/H4): the pending schedule deletion - every X confirms first,
   // and the removal writes back to the answers (two-way sync, 00:42:51).
@@ -641,12 +739,16 @@ export function RoutineSchedulerScreen({
               activeKey={activeKey}
               openControls={openControls}
               onToggleControls={(key) => setOpenControls((o) => ({ ...o, [key]: !o[key] }))}
+              openQualifiers={openQualifiers}
+              onToggleQualifier={(key) => setOpenQualifiers((o) => ({ ...o, [key]: !o[key] }))}
+              answers={answers}
               onMove={move}
               onRemove={(key) => {
                 const task = tasks.find((t) => t.key === key)
                 askRemove(key, task?.title ?? key)
               }}
               onPatch={patchEntry}
+              onJumpTo={onJumpTo}
             />
           ))}
         </div>
@@ -714,10 +816,14 @@ function BucketSection({
   keys,
   activeKey,
   openControls,
+  openQualifiers,
+  answers,
   onToggleControls,
+  onToggleQualifier,
   onMove,
   onRemove,
   onPatch,
+  onJumpTo,
 }: {
   bucket: RoutineBucket
   tasks: RoutineTaskDef[]
@@ -725,10 +831,14 @@ function BucketSection({
   keys: string[]
   activeKey: string | null
   openControls: Record<string, boolean>
+  openQualifiers: Record<string, boolean>
+  answers: WizardAnswers
   onToggleControls: (key: string) => void
+  onToggleQualifier: (key: string) => void
   onMove: (key: string, bucket: RoutineBucket, index: number) => void
   onRemove: (key: string) => void
   onPatch: (key: string, patch: Partial<RoutineScheduleEntry>) => void
+  onJumpTo?: (chapterId: string, questionId: string) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `bucket:${bucket}` })
   const byKey = new Map(tasks.map((t) => [t.key, t]))
@@ -763,10 +873,14 @@ function BucketSection({
                 dragging={activeKey === key}
                 controlsOpen={openControls[key] === true}
                 removable={true}
+                qualifierOpen={openQualifiers[key] === true}
+                answers={answers}
                 onToggleControls={() => onToggleControls(key)}
                 onMove={(b, i) => onMove(key, b, i)}
                 onRemove={() => onRemove(key)}
                 onPatch={(patch) => onPatch(key, patch)}
+                onToggleQualifier={() => onToggleQualifier(key)}
+                onJumpTo={onJumpTo}
               />
             )
           })}

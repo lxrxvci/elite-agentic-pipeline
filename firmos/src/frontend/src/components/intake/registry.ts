@@ -65,6 +65,24 @@ export interface WizardAnswers extends IntakeFormData {
 /** Monthly bookkeeping is the only recurring-books track; project and
  *  consulting (I1) both run as one-time engagements. */
 export const isBookkeeping = (a: WizardAnswers): boolean => (a.engagementType ?? 'bookkeeping') === 'bookkeeping'
+
+/** L2 (D1/D3, payroll-services question): payroll-flavored service keys. */
+const isPayrollServiceKey = (k: string): boolean => k.startsWith('payroll_') || k === 'process_payroll'
+
+/** L2 (D1/D3): the payroll-services question's value = core pick + static
+ *  secondary keys + custom payroll service names. */
+export const payrollServicesGet = (a: WizardAnswers): string[] => [
+  ...(a.payrollSelfProcessed === true ? ['self_processed'] : []),
+  ...(a.serviceKeys ?? []).filter(isPayrollServiceKey),
+  ...((a.payrollCustomServices ?? []) as string[]),
+]
+
+export const payrollServicesSummarize = (a: WizardAnswers): string | null => {
+  const parts = (a.serviceKeys ?? []).filter(isPayrollServiceKey).map(serviceLabel)
+  if (a.payrollSelfProcessed === true) parts.push('They process their own - we enter the reports')
+  parts.push(...((a.payrollCustomServices ?? []) as string[]))
+  return parts.length > 0 ? parts.join(', ') : null
+}
 const hasPayroll = (a: WizardAnswers): boolean =>
   isBookkeeping(a) && (a.hasPayroll === true || requiresOfficerPayroll(a))
 const takesCards = (a: WizardAnswers): boolean =>
@@ -150,6 +168,11 @@ export interface RepeatableDef {
    *  an alphabetized tile grid - one tap adds/removes the processor, no name
    *  re-entry (C7). The dropdown draft below stays for the comparison. */
   processorTiles?: boolean
+  /** L2 (B3, 10_06 00:10:01 - the comparison is settled): the merchants
+   *  question renders as ONE alphabetized vertical stack - click selects,
+   *  pencil renames, add at the bottom. Tiles, dropdown, and name field are
+   *  retired when this is set. */
+  processorStack?: boolean
   /** K4 (B6): how a picked contact maps onto THIS repeatable's item shape
    *  (the contacts card's shape is the default; owners carry role+name). */
   pickerItem?: (hit: {
@@ -215,6 +238,9 @@ export interface AccountCountDef {
   accountType: string
   /** The count stepper's accessible label: "Number of checking accounts". */
   countLabel: string
+  /** L2 (B1, 10_06 00:06:03-00:08:30): the stepper is gone - one "Add
+   *  {item}" button sits at the bottom of the list, like every other form. */
+  addLabel: string
   /** Name-field label on each mini-form ("Loan name"). Unused on
    *  deriveName cards (money accounts have no name field at all). */
   nameLabel?: string
@@ -280,6 +306,10 @@ export interface QuestionDef {
   /** I4: services-screen grouping (type 'multi') - the standards list plus
    *  modular add-ons; presentation only, the answer key is unchanged. */
   services?: ServicesGrouping
+  /** L2 (D1/D3, 10_06 00:16:31-00:21:42): the payroll-services question
+   *  (type 'multi') renders the core pick (they/us) then the DB-backed
+   *  secondary stack. */
+  payrollServices?: boolean
   /** J1 (P2/DB1): `select` questions backed by a database list render a
    *  dropdown + inline add-new instead of option cards (the payroll
    *  provider question reads payroll_providers). The stored answer is the
@@ -962,6 +992,7 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     answerKey: 'checkingAccounts',
     accountType: 'checking',
     countLabel: 'Number of checking accounts',
+    addLabel: 'Add a checking account',
     deriveName: true,
     askInstitution: true,
     askLast4: true,
@@ -972,6 +1003,7 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     answerKey: 'savingsAccounts',
     accountType: 'savings',
     countLabel: 'Number of savings accounts',
+    addLabel: 'Add a savings account',
     deriveName: true,
     askInstitution: true,
     askLast4: true,
@@ -982,6 +1014,7 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     answerKey: 'creditCardAccounts',
     accountType: 'credit_card',
     countLabel: 'Number of business credit cards',
+    addLabel: 'Add a business credit card',
     deriveName: true,
     askInstitution: true,
     askLast4: true,
@@ -995,6 +1028,7 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     answerKey: 'vehicleAssets',
     accountType: 'vehicle',
     countLabel: 'Number of vehicles',
+    addLabel: 'Add a vehicle',
     nameLabel: 'Description',
     namePlaceholder: '2022 Ford Transit van',
     askYear: true,
@@ -1009,6 +1043,7 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     answerKey: 'otherAssets',
     accountType: 'other_asset', // per-item assetType pick maps the real type
     countLabel: 'Number of other assets',
+    addLabel: 'Add an asset',
     nameLabel: 'What is it?',
     namePlaceholder: 'Espresso machine',
     askAssetType: true,
@@ -1027,6 +1062,7 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     answerKey: 'loanAccounts',
     accountType: 'loan',
     countLabel: 'Number of loans',
+    addLabel: 'Add a loan',
     nameLabel: 'Loan name',
     namePlaceholder: 'Delivery van loan',
     askLender: true,
@@ -2435,14 +2471,13 @@ export const CHAPTERS: ChapterDef[] = [
         required: true,
         when: takesCards,
         repeatable: {
-          // K4 (C6/C7): tiles + dropdown side by side - Jason picks the
-          // winner next call.
-          processorTiles: true,
+          // L2 (B3, 10_06 00:10:01): the comparison is settled - ONE
+          // alphabetized vertical stack with click-select, pencil rename,
+          // and the add button at the bottom. Tiles + dropdown are gone.
+          processorStack: true,
           addLabel: 'Add processor',
           itemFields: [
             { key: 'name', label: 'Name', kind: 'text', required: true, placeholder: 'Stripe' },
-            // J1 (E4): dropdown from the merchant_processors table with
-            // inline add-new; picking one pre-fills the account name.
             { key: 'processor', label: 'Processor', kind: 'processor', half: true },
           ],
           itemValid: (i) => !!str(i.name) && !!str(i.processor),
@@ -2625,50 +2660,34 @@ export const CHAPTERS: ChapterDef[] = [
       },
       {
         // J2 (P1, 00:29:31-00:31:33): payroll handling is MANDATORY when
-        // payroll runs - no skip without a selection - and the choices
-        // include "they process their own" (we just download and enter the
-        // reports). The self-processed pick is context, not a billable
-        // service: it rides form_data.payrollSelfProcessed, never
-        // serviceKeys, and it can never combine with us processing payroll.
+        // payroll runs - no skip without a selection. L2 (D1/D3, 10_06
+        // 00:16:31-00:21:42): TWO core picks in a vertical stack - "They
+        // process their own payroll" or "We process their payroll" - and the
+        // secondary services present only AFTER a core pick, never
+        // auto-selected, from the persistent payroll_services database.
         id: 'payroll-services',
         title: 'What should we do for payroll?',
         type: 'multi',
         required: true,
         when: hasPayroll,
+        payrollServices: true,
         // I2: the payroll add-on is prompted for corporate entities.
         badge: (a) => (requiresOfficerPayroll(a) ? 'Recommended - corporate officers must be on payroll' : null),
-        options: [
-          { value: 'process_payroll', label: 'Process payroll', sub: 'Quoted at review' },
-          { value: 'payroll_quarterly_filings', label: 'Quarterly filings' },
-          { value: 'payroll_state_local_payments', label: 'State and local payments' },
-          { value: 'payroll_hours_commission_calculations', label: 'Hours and commission calculations' },
-          { value: 'self_processed', label: 'They process their own payroll', sub: 'We just download and enter the reports' },
-        ],
-        get: (a) => [
-          ...(a.serviceKeys ?? []).filter((k) => k.startsWith('payroll_') || k === 'process_payroll'),
-          ...(a.payrollSelfProcessed === true ? ['self_processed'] : []),
-        ],
-        apply: (a, v) => {
-          const picked = new Set(v as string[])
-          // Self-processed and us-processing are mutually exclusive. When a
-          // toggle lands both, the NEW pick wins: the previously active one
-          // is the one that drops.
-          if (picked.has('self_processed') && picked.has('process_payroll')) {
-            if (a.payrollSelfProcessed === true) picked.delete('self_processed')
-            else picked.delete('process_payroll')
+        options: [],
+        get: payrollServicesGet,
+        // The screen commits structured patches directly (core + secondary);
+        // apply stays for branch replays of whole-value writes.
+        apply: (_a, v) => {
+          const values = (v as string[]) ?? []
+          const statics = values.filter((k) => k.startsWith('payroll_') || k === 'process_payroll')
+          const custom = values.filter((k) => !(k.startsWith('payroll_') || k === 'process_payroll' || k === 'self_processed'))
+          return {
+            payrollSelfProcessed: values.includes('self_processed'),
+            serviceKeys: statics,
+            payrollCustomServices: custom,
           }
-          const selfProcessed = picked.delete('self_processed') // true when it was present
-          const rest = (a.serviceKeys ?? []).filter((k) => !(k.startsWith('payroll_') || k === 'process_payroll'))
-          return { serviceKeys: [...rest, ...picked], payrollSelfProcessed: selfProcessed }
         },
-        summarize: (a) => {
-          if (!hasPayroll(a)) return null
-          const parts = (a.serviceKeys ?? [])
-            .filter((k) => k.startsWith('payroll_') || k === 'process_payroll')
-            .map(serviceLabel)
-          if (a.payrollSelfProcessed === true) parts.push('They process their own - we enter the reports')
-          return parts.length > 0 ? parts.join(', ') : null
-        },
+        summarize: payrollServicesSummarize,
       },
     ],
   },

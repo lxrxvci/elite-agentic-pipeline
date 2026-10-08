@@ -444,24 +444,29 @@ function AccountsHarness({
 describe('I3 account count cards (plan §1 screen 7)', () => {
   const checking = findQuestion('balance', 'checking-accounts')!
 
-  it('the count generates that many mini-forms, pre-stamped with locked statement proof', () => {
+  it('the add button appends one mini-form at a time, pre-stamped with locked statement proof (L2/B1: the stepper is gone)', () => {
     render(<AccountsHarness q={checking} initial={{}} />)
     expect(screen.queryByTestId('account-form-0')).toBeNull()
-    fireEvent.change(screen.getByTestId('count-input'), { target: { value: '2' } })
+    // L2 (B1, 10_06 00:06:03): no stepper - one "Add {item}" button at the bottom.
+    expect(screen.queryByTestId('count-input')).toBeNull()
+    expect(screen.getByTestId('add-account')).toHaveTextContent('Add a checking account')
+    fireEvent.click(screen.getByTestId('add-account'))
+    fireEvent.click(screen.getByTestId('add-account'))
     expect(screen.getByTestId('account-form-0')).toBeInTheDocument()
     expect(screen.getByTestId('account-form-1')).toBeInTheDocument()
     expect(screen.queryByTestId('account-form-2')).toBeNull()
     const committed = answersNow().checkingAccounts ?? []
     expect(committed).toHaveLength(2)
     expect(committed[0]).toMatchObject({ accountType: 'checking', proofCategory: 'statement' })
-    // Lowering the count truncates from the end.
-    fireEvent.change(screen.getByTestId('count-input'), { target: { value: '1' } })
+    // Removing the second (confirmed first, L1/H4) truncates from the end.
+    fireEvent.click(screen.getByTestId('remove-account-1'))
+    fireEvent.click(screen.getByTestId('confirm-delete-confirm'))
     expect(screen.queryByTestId('account-form-1')).toBeNull()
   })
 
   it('bank pick + last-4 + the login-access checkbox commit per mini-form (the name derives - no nickname field, J1/D1)', () => {
     render(<AccountsHarness q={checking} initial={{}} />)
-    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('add-account'))
     // D1: the nickname field is gone.
     expect(screen.queryByLabelText(/nickname/i)).toBeNull()
     fireEvent.click(screen.getByTestId('bank-select-0'))
@@ -484,7 +489,7 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
   it('add a new bank persists through the handler and appears in the same session dropdown', async () => {
     const onAddInstitution = vi.fn(async (name: string) => ({ id: 42, name }))
     render(<AccountsHarness q={checking} initial={{}} onAddInstitution={onAddInstitution} />)
-    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('add-account'))
     fireEvent.click(screen.getByTestId('bank-select-0'))
     fireEvent.click(screen.getByTestId('bank-add-toggle-0'))
     fireEvent.change(screen.getByTestId('bank-add-input'), { target: { value: 'Umpqua' } })
@@ -506,7 +511,8 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
   it('Continue allows missing identifiers at discovery with a soft note (K7/C1)', () => {
     const onAdvance = vi.fn()
     render(<AccountsHarness q={checking} initial={{}} onAdvance={onAdvance} />)
-    fireEvent.change(screen.getByTestId('count-input'), { target: { value: '2' } })
+    fireEvent.click(screen.getByTestId('add-account'))
+    fireEvent.click(screen.getByTestId('add-account'))
     fireEvent.click(screen.getByTestId('bank-select-0'))
     fireEvent.click(screen.getByTestId('bank-option-7'))
     fireEvent.change(screen.getByTestId('last4-0'), { target: { value: '4411' } })
@@ -518,7 +524,7 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
 
   it('the last-4 input is digits-only and rejects 3 or 5 digits (J1/D1)', () => {
     render(<AccountsHarness q={checking} initial={{}} />)
-    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('add-account'))
     const input = screen.getByTestId('last4-0')
     // Letters strip out; the field caps at 4 digits.
     fireEvent.change(input, { target: { value: 'ab44117' } })
@@ -533,7 +539,7 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
 
   it('money accounts show the locked proof note instead of a selector', () => {
     render(<AccountsHarness q={checking} initial={{}} />)
-    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('add-account'))
     expect(screen.getByTestId('proof-locked-0')).toHaveTextContent('Proof: bank statement')
     expect(screen.queryByTestId('proof-select-0')).toBeNull()
   })
@@ -541,7 +547,7 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
   it('vehicles ask description, year, financed/paid-in-full, and bill-of-sale proof - no value, never an institution (J1/D3/D5)', () => {
     const vehicles = findQuestion('balance', 'vehicles')!
     render(<AccountsHarness q={vehicles} initial={{}} />)
-    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('add-account'))
     expect(screen.queryByTestId('bank-select-0')).toBeNull()
     expect(screen.getByLabelText('Vehicle year 1')).toBeInTheDocument()
     // D3: the value estimate is gone.
@@ -559,7 +565,7 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
   it('vehicles block Continue until the financed pick is made (D5)', () => {
     const onAdvance = vi.fn()
     render(<AccountsHarness q={findQuestion('balance', 'vehicles')!} initial={{}} onAdvance={onAdvance} />)
-    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('add-account'))
     fireEvent.change(screen.getByLabelText('Description 1'), { target: { value: 'Toyota Tundra' } })
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).not.toHaveBeenCalled()
@@ -572,7 +578,7 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
   it('loans carry a lender + proof - no balance (J1/D3); the lender is a bank dropdown on statement proof, a write-in on owner-declared (D6)', () => {
     const loans = findQuestion('balance', 'loans')!
     render(<AccountsHarness q={loans} initial={{}} />)
-    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('add-account'))
     expect(screen.queryByTestId('bank-select-0')).toBeNull()
     // D3: no balance field anywhere on the card.
     expect(screen.queryByLabelText(/balance/i)).toBeNull()
@@ -608,7 +614,7 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
   it('other assets carry the typed bucket and a proof pick', () => {
     const other = findQuestion('balance', 'other-assets')!
     render(<AccountsHarness q={other} initial={{}} />)
-    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('add-account'))
     fireEvent.change(screen.getByTestId('asset-type-0'), { target: { value: 'goodwill' } })
     const committed = answersNow().otherAssets ?? []
     expect(committed[0]).toMatchObject({ assetType: 'goodwill', proofCategory: 'owner_declared' })
@@ -848,7 +854,7 @@ describe('merchants processor dropdown + the E5 required flag (J1)', () => {
   ]
   const merchantsQ = findQuestion('income', 'merchants')!
 
-  it('the processor dropdown writes name + processorId and pre-fills the account name', () => {
+  it('L2/B3: the vertical stack writes name + processorId with no name re-entry', () => {
     render(
       <Harness
         q={merchantsQ}
@@ -856,11 +862,9 @@ describe('merchants processor dropdown + the E5 required flag (J1)', () => {
         merchantProcessors={PROCESSORS}
       />,
     )
-    fireEvent.click(screen.getByTestId('processor-select-0'))
-    fireEvent.click(screen.getByTestId('processor-option-2'))
-    // The draft picked up both the name snapshot and the FK, and the account
-    // name pre-filled from the pick.
-    fireEvent.click(screen.getByTestId('add-another'))
+    // The dropdown draft is retired (L2/B3); a stack toggle commits directly.
+    expect(screen.queryByTestId('processor-select-0')).toBeNull()
+    fireEvent.click(screen.getByTestId('processor-toggle-Stripe'))
     expect(answersNow().merchantAccounts).toEqual([{ name: 'Stripe', processor: 'Stripe', processorId: 2 }])
   })
 
@@ -870,7 +874,7 @@ describe('merchants processor dropdown + the E5 required flag (J1)', () => {
     expect(screen.getByTestId('continue')).toHaveTextContent('Continue')
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent('Add at least one, or go back.')
+    expect(screen.getByRole('alert')).toHaveTextContent('Pick at least one processor, or go back.')
   })
 })
 
@@ -942,7 +946,7 @@ describe('owners "Same as the primary contact" shortcut (J1, C1)', () => {
 describe('financed vehicle routes to the loans card - UI half (J1, D5)', () => {
   it('committing a financed vehicle lands the linked entry on loanAccounts via the question apply', () => {
     render(<AccountsHarness q={findQuestion('balance', 'vehicles')!} initial={{}} />)
-    fireEvent.click(screen.getByTestId('count-plus'))
+    fireEvent.click(screen.getByTestId('add-account'))
     fireEvent.change(screen.getByLabelText('Description 1'), { target: { value: 'Toyota Tundra' } })
     fireEvent.change(screen.getByTestId('financed-select-0'), { target: { value: 'financed' } })
     fireEvent.click(screen.getByTestId('continue'))
@@ -1003,33 +1007,33 @@ describe('J2 payroll handling mandatory + self-processed (P1)', () => {
     const onAdvance = vi.fn()
     render(<Harness q={servicesQ} initial={{ hasPayroll: true, serviceKeys: [] }} onAdvance={onAdvance} />)
     expect(servicesQ.required).toBe(true)
-    // The self-processed option exists.
-    expect(screen.getByTestId('chip-self_processed')).toHaveTextContent('They process their own payroll')
+    // L2 (D1): the self-processed core exists in the two-pick stack.
+    expect(screen.getByTestId('payroll-core-self_processed')).toHaveTextContent('They process their own payroll')
 
-    // No selection -> Continue explains instead of skipping.
+    // No core pick -> Continue explains instead of skipping.
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent('Pick at least one before continuing.')
+    expect(screen.getByRole('alert')).toHaveTextContent('Pick who runs payroll first')
 
     // Self-processed is a valid answer and clears the message.
-    fireEvent.click(screen.getByTestId('chip-self_processed'))
+    fireEvent.click(screen.getByTestId('payroll-core-self_processed'))
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).toHaveBeenCalled()
   })
 
   it('self_processed rides payrollSelfProcessed, never serviceKeys, and never mixes with us processing', () => {
     render(<Harness q={servicesQ} initial={{ hasPayroll: true, serviceKeys: [] }} />)
-    fireEvent.click(screen.getByTestId('chip-self_processed'))
+    fireEvent.click(screen.getByTestId('payroll-core-self_processed'))
     expect(answersNow().payrollSelfProcessed).toBe(true)
     expect(answersNow().serviceKeys ?? []).toHaveLength(0)
 
-    // Picking "Process payroll" after drops the self-processed flag.
-    fireEvent.click(screen.getByTestId('chip-process_payroll'))
+    // Picking "We process their payroll" after drops the self-processed flag.
+    fireEvent.click(screen.getByTestId('payroll-core-process_payroll'))
     expect(answersNow().payrollSelfProcessed).toBe(false)
     expect(answersNow().serviceKeys).toContain('process_payroll')
 
     // And back: self-processed drops the process_payroll service key.
-    fireEvent.click(screen.getByTestId('chip-self_processed'))
+    fireEvent.click(screen.getByTestId('payroll-core-self_processed'))
     expect(answersNow().payrollSelfProcessed).toBe(true)
     expect(answersNow().serviceKeys ?? []).not.toContain('process_payroll')
   })

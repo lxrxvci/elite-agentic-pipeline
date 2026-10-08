@@ -97,6 +97,9 @@ export const INTAKE_OPTION_LIST_KEYS = [
   'bill_pay_locations',
   // K8 (B4): the roles database behind the contacts role type-ahead.
   'contact_roles',
+  // L2 (D3): the persistent payroll-services database behind the payroll
+  // secondary stack.
+  'payroll_services',
 ] as const
 
 /** I4 (plan §3D): the staff peek flag lives in sessionStorage - remembered
@@ -291,6 +294,20 @@ export function IntakeWizard({
     },
     [],
   )
+
+  // L2 (H7, 10_06 00:38:20): an industry-tagged custom add-on joins the
+  // suggestion engine - lazy action import keeps the db module out of the
+  // wizard bundle (and the jsdom tests). If the tag matches THIS intake's
+  // industry, the suggestions refetch so it surfaces immediately.
+  const tagIndustry = useCallback(async (industry: string, title: string) => {
+    const { tagCustomAddonIndustryAction, listIndustrySuggestionsAction } = await import(
+      '@/server/actions/industry-suggestions'
+    )
+    const res = await tagCustomAddonIndustryAction(industry, title)
+    if (!res.ok) return
+    const fresh = await listIndustrySuggestionsAction(answersRef.current.industry ?? null)
+    if (fresh.ok) setIndustrySuggestions(fresh.data)
+  }, [])
 
   const screens = useMemo(() => flattenScreens(answers), [answers])
   const idx = Math.min(screenIndex, screens.length - 1)
@@ -760,6 +777,8 @@ export function IntakeWizard({
                         onAddOptionListValue={addOptionListValue}
                         servicesCatalog={servicesCatalog}
                         industrySuggestions={industrySuggestions}
+                        onJumpTo={jumpTo}
+                        onTagIndustry={tagIndustry}
                       />
                     </div>
                     {note && (

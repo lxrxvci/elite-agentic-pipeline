@@ -141,7 +141,7 @@ describe('C6/C7: processor tiles', () => {
     { id: 1, name: 'Square' },
   ]
 
-  it('tiles are alphabetized and toggle the processor without a name re-entry', () => {
+  it('the comparison is settled (L2/B3): no tile grid - the alphabetized vertical stack is the UI', () => {
     function MerchantHarness() {
       const [answers, setAnswers] = useState<WizardAnswers>({ paymentMethods: ['card'] })
       return (
@@ -160,16 +160,17 @@ describe('C6/C7: processor tiles', () => {
     }
     render(<MerchantHarness />)
 
-    const tiles = screen.getByTestId('processor-tiles')
-    const buttons = tiles.querySelectorAll('button')
-    expect(buttons[0]).toHaveTextContent('Square') // alphabetized, not prop order
+    // L2 (B3, 10_06 00:10:01): tiles are retired - one vertical stack where
+    // click selects without a name re-entry (the l2-processor-stack spec
+    // covers select/deselect, pencil rename, and add).
+    expect(screen.queryByTestId('processor-tiles')).toBeNull()
+    expect(screen.getByTestId('processor-stack')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('processor-tile-1')) // Square
+    fireEvent.click(screen.getByTestId('processor-toggle-Square'))
     expect(answersNow().merchantAccounts).toEqual([
       expect.objectContaining({ processor: 'Square', processorId: 1, name: 'Square' }),
     ])
-    // Tapping a selected tile removes it.
-    fireEvent.click(screen.getByTestId('processor-tile-1'))
+    fireEvent.click(screen.getByTestId('processor-toggle-Square'))
     expect(answersNow().merchantAccounts).toEqual([])
   })
 })

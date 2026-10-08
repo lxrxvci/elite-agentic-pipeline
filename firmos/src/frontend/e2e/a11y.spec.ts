@@ -208,7 +208,7 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
 
   // D1: the mini-form with the bank dropdown open (InstitutionSelect +
   // inline add-new) scans clean...
-  await page.getByTestId('count-plus').click()
+  await page.getByTestId('add-account').click()
   await page.getByTestId('bank-select-0').click()
   await expect(page.getByRole('option', { name: 'Chase' })).toBeVisible()
   await settle()

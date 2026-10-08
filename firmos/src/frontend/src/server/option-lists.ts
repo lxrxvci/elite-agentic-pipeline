@@ -91,7 +91,9 @@ export const OPTION_LISTS: Record<string, OptionListDef> = {
     key: "contact_roles",
     label: "Contact roles",
     noun: "role",
-    seeds: ["Primary contact", "Bookkeeper (client-side)", "Office manager", "Billing contact"],
+    // L2 (B5, 10_06 00:03:57): "CPA, business owner, and primary or secondary
+    // contact" are the seeded roles; customs join from the intake or admin.
+    seeds: ["Primary contact", "Secondary contact", "CPA", "Business owner", "Bookkeeper (client-side)", "Office manager", "Billing contact"],
   },
   custom_task_templates: {
     key: "custom_task_templates",
@@ -130,6 +132,16 @@ export const OPTION_LISTS: Record<string, OptionListDef> = {
     label: "Engagement types",
     noun: "engagement type",
     seeds: [],
+  },
+  payroll_services: {
+    key: "payroll_services",
+    label: "Payroll services",
+    noun: "service",
+    // L2 (D3, 10_06 00:20:59): the secondary payroll service options - "those
+    // options need to have a database… persistent and can carry through…
+    // for all clients." The three canonical services seed it; customs join
+    // from the intake and stay for every future intake.
+    seeds: ["Quarterly filings", "State and local payments", "Hours and commission calculations"],
   },
 };
 

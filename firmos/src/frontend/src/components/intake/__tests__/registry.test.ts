@@ -1888,17 +1888,18 @@ describe('J2 payroll-services mandatory handling (P1, registry half)', () => {
 
   it('is required, offers self-processed, and keeps it out of serviceKeys', () => {
     expect(services.required).toBe(true)
-    expect(services.options?.map((o) => o.value)).toContain('self_processed')
-    // get() merges the flag into the rendered selection...
+    // L2 (D1): the two cores render from the dedicated screen (the options
+    // array retired with the generic multi) - get() still merges the flag.
     expect(services.get({ ...base, payrollSelfProcessed: true })).toEqual(['self_processed'])
     expect(services.get({ ...base, serviceKeys: ['payroll_quarterly_filings'], payrollSelfProcessed: true })).toEqual([
-      'payroll_quarterly_filings',
       'self_processed',
+      'payroll_quarterly_filings',
     ])
     // ...and apply() stores it off the service keys.
     expect(services.apply({ ...base, serviceKeys: [] }, ['self_processed', 'payroll_quarterly_filings'])).toEqual({
       serviceKeys: ['payroll_quarterly_filings'],
       payrollSelfProcessed: true,
+      payrollCustomServices: [],
     })
   })
 

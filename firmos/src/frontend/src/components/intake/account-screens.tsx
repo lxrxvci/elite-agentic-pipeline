@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowRight, Check, ChevronDown, Minus, Plus, X } from 'lucide-react'
+import { ArrowRight, Check, ChevronDown, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import type { IntakeAccountInput } from '@/server/intake'
@@ -538,30 +538,6 @@ export function AccountCountScreen({
   // shrinking the count below entered rows alike.
   const [pendingDelete, setPendingDelete] = useState<{ name: string; remove: () => void } | null>(null)
 
-  const setCount = (raw: number) => {
-    const count = Math.max(0, Math.min(20, Math.floor(Number.isFinite(raw) ? raw : 0)))
-    if (count === items.length) return
-    if (count < items.length) {
-      const firstDropped = items[count]
-      const hasEntered = items.slice(count).some((it) => it.name || it.institution || it.last4)
-      if (hasEntered) {
-        setPendingDelete({
-          name: firstDropped?.name || `account ${count + 1} and below`,
-          remove: () => onCommit(items.slice(0, count)),
-        })
-        return
-      }
-      onCommit(items.slice(0, count))
-      return
-    }
-    const blanks: IntakeAccountInput[] = Array.from({ length: count - items.length }, () => ({
-      name: '',
-      accountType: def.accountType,
-      proofCategory: def.defaultProof,
-    }))
-    onCommit([...items, ...blanks])
-  }
-
   const updateAt = (index: number, patch: Partial<IntakeAccountInput>) =>
     onCommit(items.map((item, i) => (i === index ? { ...item, ...patch } : item)))
 
@@ -581,47 +557,9 @@ export function AccountCountScreen({
 
   return (
     <div className="space-y-4">
-      {/* The count stepper: the number drives how many mini-forms render. */}
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          aria-label="One fewer"
-          data-testid="count-minus"
-          disabled={items.length === 0}
-          onClick={() => setCount(items.length - 1)}
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <Minus className="h-4 w-4" aria-hidden />
-        </button>
-        <input
-          aria-label={def.countLabel}
-          data-testid="count-input"
-          className={cn(inputCls, 'tnum h-9 w-16 text-center')}
-          type="number"
-          inputMode="numeric"
-          min={0}
-          max={20}
-          value={items.length}
-          onChange={(e) => {
-            // An emptied field would otherwise read as 0 and wipe the list.
-            if (e.target.value === '') return
-            setCount(Number(e.target.value))
-          }}
-        />
-        <button
-          type="button"
-          aria-label="One more"
-          data-testid="count-plus"
-          onClick={() => setCount(items.length + 1)}
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-        </button>
-        <span className="text-sm text-muted-foreground">
-          {items.length === 0 ? 'None - skip ahead if so' : `${items.length} to list`}
-        </span>
-      </div>
-
+      {/* L2 (B1, 10_06 00:06:03-00:08:30): the count stepper is gone - one
+          "Add {item}" button at the bottom of the list, "more like a list
+          like you're just adding onto that list." */}
       {items.length > 0 && (
         <div className="space-y-3">
           {items.map((item, i) => (
@@ -643,6 +581,22 @@ export function AccountCountScreen({
           ))}
         </div>
       )}
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          data-testid="add-account"
+          onClick={() => {
+            setError(null)
+            onCommit([...items, { name: '', accountType: def.accountType, proofCategory: def.defaultProof }])
+          }}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:border-firm-brand/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden />
+          {def.addLabel}
+        </button>
+        {items.length === 0 && <span className="text-sm text-muted-foreground">None - skip ahead if so</span>}
+      </div>
 
       {error && (
         <p className="text-sm font-medium text-status-overdue" role="alert">

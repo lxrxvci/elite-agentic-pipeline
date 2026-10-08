@@ -89,3 +89,36 @@ export async function addMerchantProcessor(name: string): Promise<MerchantProces
     .limit(1);
   return winner;
 }
+
+export class MerchantProcessorRenameCollisionError extends Error {
+  constructor(public readonly existingName: string) {
+    super(`"${existingName}" is already on the processor list.`);
+    this.name = "MerchantProcessorRenameCollisionError";
+  }
+}
+
+/**
+ * L2 (B3, 10_06 00:10:01): the pencil edit on the processor stack renames a
+ * row in place. Fold-deduped like add: renaming onto an existing name is a
+ * collision, never a merge (the J16 merge seam stays deliberate-later).
+ */
+export async function renameMerchantProcessor(id: number, name: string): Promise<MerchantProcessorRow> {
+  const trimmed = name.trim().replace(/\s+/g, " ");
+  if (trimmed === "") throw new MerchantProcessorNameError();
+
+  const collision = await db
+    .select({ id: merchantProcessors.id, name: merchantProcessors.name })
+    .from(merchantProcessors)
+    .where(sql`lower(${merchantProcessors.name}) = ${fold(trimmed)}`)
+    .limit(1);
+  if (collision.length > 0 && collision[0].id !== id) {
+    throw new MerchantProcessorRenameCollisionError(collision[0].name);
+  }
+
+  const [updated] = await db
+    .update(merchantProcessors)
+    .set({ name: trimmed })
+    .where(sql`${merchantProcessors.id} = ${id}`)
+    .returning({ id: merchantProcessors.id, name: merchantProcessors.name });
+  return updated;
+}

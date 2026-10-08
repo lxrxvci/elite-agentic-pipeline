@@ -106,3 +106,18 @@ describe("extraction parity (K3)", () => {
     expect(withLive.fields.find((f) => f.key === "referralSource")?.value).toBe("Chamber of Commerce");
   });
 });
+
+describe("L2/B5: roles_seed_cpa_owner_secondary (10_06 00:03:57)", () => {
+  it("contact_roles seeds CPA, business owner, and secondary contact", () => {
+    const seeds = OPTION_LISTS.contact_roles.seeds;
+    expect(seeds).toContain("CPA");
+    expect(seeds).toContain("Business owner");
+    expect(seeds).toContain("Secondary contact");
+    expect(seeds).toContain("Primary contact");
+  });
+
+  it("payroll_services seeds the three canonical services (L2/D3)", () => {
+    const seeds = OPTION_LISTS.payroll_services.seeds;
+    expect(seeds).toEqual(["Quarterly filings", "State and local payments", "Hours and commission calculations"]);
+  });
+});

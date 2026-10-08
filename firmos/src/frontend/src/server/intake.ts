@@ -172,6 +172,10 @@ export interface IntakeCustomRuleInput {
   weekInterval?: number | null;
   isBillable?: boolean;
   unitPrice?: string | number | null;
+  /** L2 (H7, 10_06 00:38:20): optional industry tag - a tagged custom add-on
+   *  only surfaces as a suggestion when that industry is selected; null =
+   *  offered for every intake. */
+  industry?: string | null;
   subtasks?: string[];
 }
 
@@ -312,6 +316,10 @@ export interface IntakeFormData {
    *  payroll" pick - we just download and enter the reports. Not a service
    *  key (nothing to bill); conversion notes it on the client record. */
   payrollSelfProcessed?: boolean;
+  /** L2 (D3): custom payroll services picked from the payroll_services list
+   *  (name-valued, unpriced - quoted at review, J14). Static payroll services
+   *  keep riding serviceKeys. */
+  payrollCustomServices?: string[];
   reportDefinitions?: IntakeReportDefinition[];
   estimated1099Count?: number | null;
   include1099Collection?: boolean;

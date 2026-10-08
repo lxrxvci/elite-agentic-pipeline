@@ -883,7 +883,7 @@ describe('N3 chapter rail navigation (meeting #3)', () => {
     // ...jump to chapter 5, answer there too (account edits commit at once).
     fireEvent.click(screen.getByTestId('chapter-jump-balance'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts')
-    fireEvent.change(screen.getByTestId('count-input'), { target: { value: '1' } })
+    fireEvent.click(screen.getByTestId('add-account'))
     fireEvent.click(screen.getByTestId('bank-select-0'))
     fireEvent.click(await screen.findByRole('option', { name: 'Chase' }))
     fireEvent.change(screen.getByTestId('last4-0'), { target: { value: '4411' } })

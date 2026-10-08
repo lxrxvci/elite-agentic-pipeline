@@ -115,7 +115,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // assets BEFORE loans; (D1): money accounts take bank + last-4, no nickname ──
   await advance(page, 'checking-accounts')
   // Checking: the count generates one mini-form; bank dropdown + last-4.
-  await page.getByTestId('count-input').fill('1')
+  await page.getByTestId('add-account').click()
   // D1: the nickname field is gone - the identifier is bank + last 4.
   await expect(page.getByLabel(/nickname/i)).toHaveCount(0)
   await page.getByTestId('bank-select-0').click()
@@ -129,7 +129,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await advance(page, 'savings-accounts')
   await advance(page, 'credit-cards') // no savings
   // Credit cards: one card at a bank that is not on the list yet - add it inline.
-  await page.getByTestId('count-plus').click()
+  await page.getByTestId('add-account').click()
   await page.getByTestId('bank-select-0').click()
   await page.getByTestId('bank-add-toggle-0').click()
   await page.getByTestId('bank-add-input').fill('E2E First Tech')
@@ -143,7 +143,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByTestId('last4-0').fill('1005')
   await advance(page, 'vehicles')
   // Vehicles: description/year + the financed pick (D5); bill-of-sale proof; no bank.
-  await page.getByTestId('count-plus').click()
+  await page.getByTestId('add-account').click()
   await page.getByLabel('Description 1').fill('2022 Ford Transit')
   await page.getByLabel('Vehicle year 1').fill('2022')
   await page.getByTestId('financed-select-0').selectOption('financed')
@@ -582,11 +582,13 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
 
   // ── The payroll add-on is prompted with a recommendation badge ──
   await expect(page.getByTestId('recommendation-badge')).toContainText('Recommended')
-  // J2 (P1): payroll handling is mandatory - Continue with no selection explains itself.
+  // L2 (D1): the core pick comes first - mandatory with no selection.
   await page.getByTestId('continue').click()
-  await expect(page.getByText('Pick at least one before continuing.')).toBeVisible()
+  await expect(page.getByText('Pick who runs payroll first')).toBeVisible()
   await expectQuestion(page, 'payroll-services')
-  await page.getByTestId('chip-payroll_quarterly_filings').click()
+  await page.getByTestId('payroll-core-process_payroll').click()
+  // Secondary services present after the core pick (never auto-selected).
+  await page.getByTestId('payroll-service-Quarterly filings').click()
   await advance(page, 'bk-frequency')
 
   // ── Reporting, then the N1 scope block at the end ──

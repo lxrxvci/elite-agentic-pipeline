@@ -56,6 +56,40 @@ export async function listIndustrySuggestions(industry: string | null | undefine
     .map((r) => ({ id: r.id, industryKey: r.industryKey, serviceKey: r.serviceKey, explainer: r.explainer }));
 }
 
+/**
+ * L2 (H7, 10_06 00:35:38-00:39:47): an industry-tagged custom add-on joins
+ * the suggestion engine - "tagged → only shows when that industry is
+ * selected; untagged → an option for every intake." Fold-deduped on
+ * industry + key; an existing row reactivates and refreshes its explainer.
+ */
+export async function addIndustrySuggestion(
+  industry: string,
+  serviceKey: string,
+  explainer: string,
+): Promise<IndustrySuggestionRow | null> {
+  const key = normalizeInstitutionKey(industry);
+  if (key == null || serviceKey.trim() === "") return null;
+  const existing = await db
+    .select()
+    .from(industrySuggestions)
+    .where(and(eq(industrySuggestions.serviceKey, serviceKey.trim())));
+  const match = existing.find((r) => normalizeInstitutionKey(r.industryKey) === key);
+  if (match) {
+    if (!match.isActive || match.explainer !== explainer) {
+      await db
+        .update(industrySuggestions)
+        .set({ isActive: true, explainer })
+        .where(eq(industrySuggestions.id, match.id));
+    }
+    return { id: match.id, industryKey: match.industryKey, serviceKey, explainer };
+  }
+  const [row] = await db
+    .insert(industrySuggestions)
+    .values({ industryKey: industry.trim(), serviceKey: serviceKey.trim(), explainer })
+    .returning();
+  return { id: row.id, industryKey: row.industryKey, serviceKey: row.serviceKey, explainer };
+}
+
 /** Job costing exists as an unpriced catalog custom add-on (D2's example). */
 export async function seedJobCostingService(): Promise<void> {
   const existing = await db
