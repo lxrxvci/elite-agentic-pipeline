@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { Quote } from '@firmos/domain'
 
@@ -19,13 +19,23 @@ vi.mock('@/server/actions/intake', () => ({
   submitIntakeForReview: vi.fn(async () => ({ ok: true, data: {} })),
 }))
 
-// The quote section's "Email proposal" button (correspondence hub).
-const sendIntakeQuoteEmailAction = vi.fn(async (_id: unknown) => ({
+// The quote section's "Email proposal" compose dialog (L4/K1): preview
+// prefills the rendered default, send delivers the (possibly edited) copy.
+const sendIntakeQuoteEmailAction = vi.fn(async (_id: unknown, _edits?: unknown) => ({
   ok: true as const,
   data: { correspondenceId: 5, to: 'wren@fernfeather.shop' },
 }))
+const previewIntakeQuoteEmailAction = vi.fn(async (_id: unknown) => ({
+  ok: true as const,
+  data: {
+    to: 'wren@fernfeather.shop',
+    subject: 'Your FirmOS proposal is ready',
+    body: 'Hi Wren,\n\nYour proposal is ready.\n\nTalk soon,\nThe FirmOS team',
+  },
+}))
 vi.mock('@/server/actions/correspondence', () => ({
-  sendIntakeQuoteEmailAction: (id: unknown) => sendIntakeQuoteEmailAction(id),
+  sendIntakeQuoteEmailAction: (id: unknown, edits?: unknown) => sendIntakeQuoteEmailAction(id, edits),
+  previewIntakeQuoteEmailAction: (id: unknown) => previewIntakeQuoteEmailAction(id),
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -308,6 +318,39 @@ describe('breakdown_shows_accounts_with_count_math (V5)', () => {
     expect(breakdown).toHaveTextContent('Amex Credit card · 7007')
   })
 
+  it('L4/G7: the recon factor is editable per account - excluding one reprices the factor', () => {
+    const onToggleReconAccount = vi.fn()
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={{ ...FIVE_ACCOUNTS, reconExcludedAccounts: ['Chase Savings · 1005'] } as WizardAnswers}
+        quote={ESTIMATE_QUOTE}
+        status="draft"
+        canConvert
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+        onPriceChange={() => {}}
+        onToggleReconAccount={onToggleReconAccount}
+      />,
+    )
+    expandSection('quote')
+    fireEvent.click(screen.getByTestId('breakdown-toggle-account_reconciliations'))
+    // The excluded account renders struck-through and unchecked; including
+    // it again reports included=true.
+    const breakdown = screen.getByTestId('breakdown-account_reconciliations')
+    const excludedToggle = screen.getByTestId('factor-toggle-Chase Savings · 1005')
+    expect(excludedToggle).toHaveAttribute('aria-checked', 'false')
+    expect(within(breakdown).getByText('Chase Savings · 1005')).toHaveClass('line-through')
+    const includedToggle = screen.getByTestId('factor-toggle-Chase Checking · 4411')
+    expect(includedToggle).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(includedToggle)
+    expect(onToggleReconAccount).toHaveBeenCalledWith('Chase Checking · 4411', false)
+    fireEvent.click(excludedToggle)
+    expect(onToggleReconAccount).toHaveBeenCalledWith('Chase Savings · 1005', true)
+  })
+
   it('bank feed management gets its own account breakdown (flat rate, no count math)', () => {
     renderReview({ answers: FIVE_ACCOUNTS, quote: ESTIMATE_QUOTE })
     expandSection('quote')
@@ -315,6 +358,96 @@ describe('breakdown_shows_accounts_with_count_math (V5)', () => {
     fireEvent.click(screen.getByTestId('breakdown-toggle-bank_feed_management'))
     const breakdown = screen.getByTestId('breakdown-bank_feed_management')
     expect(breakdown.querySelectorAll('[data-testid="breakdown-account"]')).toHaveLength(5)
+  })
+})
+
+/** L4 (G9, 10_06 01:21:18): "this annual report that's $225 per year - do I
+ *  divide that by 12 or do I just say this report's due in January? Let's
+ *  just include this on the January invoice… I should be able to click the
+ *  drop down here." */
+describe('annual_line_assigned_to_january (L4/G9)', () => {
+  const ANNUAL_REPORT_QUOTE: Quote = {
+    billingCycle: 1,
+    lines: [
+      { service_key: 'bank_feed_management', product_name: 'Bank Feed Management', unit_price: 100, quantity: 1, amount: 100, bucket: 'monthly', unpriced: false },
+      { service_key: 'specialty_report_1', product_name: 'Oregon Special Report', unit_price: 225, quantity: 1, amount: 225, bucket: 'annual', unpriced: false },
+    ],
+    totals: {
+      totalMonthly: 100,
+      totalQuarterly: 0,
+      annualExcludingFebruaryBilled: 225,
+      totalPayrollMonthly: 0,
+      totalFebruaryBilledAnnual: 0,
+      totalOneTime: 0,
+      effectiveMonthly: 100,
+    },
+  }
+
+  function renderAnnual(answers: WizardAnswers, onBillingMonthChange: (k: string, m: number | null) => void) {
+    return render(
+      <ReviewScreen
+        intakeId={1}
+        answers={answers}
+        quote={ANNUAL_REPORT_QUOTE}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+        onPriceChange={() => {}}
+        onBillingMonthChange={onBillingMonthChange}
+      />,
+    )
+  }
+
+  it('annual lines carry the billing-month drop-down; monthly lines never do', () => {
+    const onBillingMonthChange = vi.fn()
+    renderAnnual({ legalName: 'Annual Co', engagementType: 'bookkeeping' } as WizardAnswers, onBillingMonthChange)
+    expandSection('quote')
+    // Default: no assignment - the line spreads across the year.
+    const select = screen.getByTestId('bill-month-specialty_report_1')
+    expect(select).toHaveValue('')
+    expect(screen.queryByTestId('bill-month-badge-specialty_report_1')).toBeNull()
+    // Monthly-bucket lines are out of scope for G9.
+    expect(screen.queryByTestId('bill-month-bank_feed_management')).toBeNull()
+
+    fireEvent.change(select, { target: { value: '1' } })
+    expect(onBillingMonthChange).toHaveBeenCalledWith('specialty_report_1', 1)
+    fireEvent.change(select, { target: { value: '' } })
+    expect(onBillingMonthChange).toHaveBeenCalledWith('specialty_report_1', null)
+  })
+
+  it('an assigned line reads "billed each January" with the month selected', () => {
+    renderAnnual(
+      { legalName: 'Annual Co', engagementType: 'bookkeeping', billingMonths: { specialty_report_1: 1 } } as WizardAnswers,
+      () => {},
+    )
+    expandSection('quote')
+    expect(screen.getByTestId('bill-month-badge-specialty_report_1')).toHaveTextContent('billed each January')
+    expect(screen.getByTestId('bill-month-specialty_report_1')).toHaveValue('1')
+  })
+
+  it('the 1099s keep their fixed February rule - badge stays, no drop-down', () => {
+    const onBillingMonthChange = vi.fn()
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={FIVE_ACCOUNTS}
+        quote={ESTIMATE_QUOTE}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+        onPriceChange={() => {}}
+        onBillingMonthChange={onBillingMonthChange}
+      />,
+    )
+    expandSection('quote')
+    expect(screen.queryByTestId('bill-month-1099_collection')).toBeNull()
+    expect(screen.getByTestId('estimate-bucket-annual')).toHaveTextContent('billed each February')
   })
 })
 
@@ -344,7 +477,7 @@ describe('estimate_buckets_match_schedule (V6)', () => {
     // engine bucket (quarterly), with the ÷ 3 math visible.
     expect(quarterly).toHaveTextContent('Payroll Quarterly Filings')
     expect(screen.getByTestId('estimate-math-payroll_quarterly_filings')).toHaveTextContent(
-      '$45/quarter ÷ 3 = $15/mo',
+      '$45/quarter',
     )
     // 1099 collection is February-billed: annual bucket, off the monthly rate.
     expect(screen.getByTestId('estimate-bucket-annual')).toHaveTextContent('billed each February')
@@ -378,11 +511,18 @@ describe('one_time_fees_separate_from_recurring (V7)', () => {
     const retroBlock = screen.getByTestId('estimate-retro')
     expect(retroBlock).toHaveTextContent('Retroactive cleanup')
     expect(screen.getByTestId('retro-specialty_report_1_retro')).toHaveTextContent('$3,600')
-    // The retro project: months x rate math plus the per-period split.
-    const retro = screen.getByTestId('retro-retroactive_bookkeeping')
-    expect(retro).toHaveTextContent('$2,450')
-    expect(screen.getByTestId('one-time-math-retroactive_bookkeeping')).toHaveTextContent('7 months × $350/mo')
-    expect(screen.getByTestId('retro-periods')).toHaveTextContent('2025: 1 month · 2026: 6 months')
+    // L4 (G5): the cleanup is compartmentalized per year - each period its
+    // own priced line with its months x rate math.
+    const retro2025 = screen.getByTestId('retro-retroactive_bookkeeping_2025')
+    expect(retro2025).toHaveTextContent('2025 cleanup')
+    expect(retro2025).toHaveTextContent('$350')
+    expect(retro2025).toHaveTextContent('1 month × $350/mo')
+    const retro2026 = screen.getByTestId('retro-retroactive_bookkeeping_2026')
+    expect(retro2026).toHaveTextContent('2026 cleanup')
+    expect(retro2026).toHaveTextContent('$2,100')
+    expect(retro2026).toHaveTextContent('6 months × $350/mo')
+    // The block total reads the whole retro block (cleanup + missed filings).
+    expect(screen.getByTestId('retro-total')).toHaveTextContent('$6,050')
     // No double counting: the priced retro line never appears in recurring,
     // and no recurring bucket names one-time money.
     expect(screen.getByTestId('estimate-recurring')).not.toHaveTextContent('Retroactive')
@@ -417,9 +557,10 @@ describe('ReviewScreen quote email + plain amounts', () => {
     expect(row.querySelector('.line-through')).toBeNull()
   })
 
-  it('offers Email proposal to manager+ and sends through the action', async () => {
+  it('opens the compose dialog prefilled with the rendered default and sends the edited copy (L4/K1)', async () => {
     const user = (await import('@testing-library/user-event')).default.setup()
     sendIntakeQuoteEmailAction.mockClear()
+    previewIntakeQuoteEmailAction.mockClear()
     render(
       <ReviewScreen
         intakeId={7}
@@ -434,7 +575,28 @@ describe('ReviewScreen quote email + plain amounts', () => {
       />,
     )
     await user.click(screen.getByTestId('email-proposal'))
-    expect(sendIntakeQuoteEmailAction).toHaveBeenCalledWith(7)
+    // The dialog prefills from the preview action - the fully rendered
+    // default letter, nothing sent yet.
+    expect(await screen.findByTestId('quote-compose-dialog')).toBeInTheDocument()
+    expect(previewIntakeQuoteEmailAction).toHaveBeenCalledWith(7)
+    expect(screen.getByTestId('quote-compose-to')).toHaveTextContent('wren@fernfeather.shop')
+    expect(screen.getByTestId('quote-compose-subject')).toHaveValue('Your FirmOS proposal is ready')
+    expect(screen.getByTestId('quote-compose-body')).toHaveValue(
+      'Hi Wren,\n\nYour proposal is ready.\n\nTalk soon,\nThe FirmOS team',
+    )
+    expect(sendIntakeQuoteEmailAction).not.toHaveBeenCalled()
+
+    // Per-send edit, then submit - the edited copy is what sends.
+    fireEvent.change(screen.getByTestId('quote-compose-body'), { target: { value: 'Hi Wren - one-off edit.' } })
+    await user.click(screen.getByTestId('quote-compose-send'))
+    await waitFor(() =>
+      expect(sendIntakeQuoteEmailAction).toHaveBeenCalledWith(7, {
+        subject: 'Your FirmOS proposal is ready',
+        body: 'Hi Wren - one-off edit.',
+      }),
+    )
+    // After the first send the button reads Resend (D8).
+    await waitFor(() => expect(screen.getByTestId('email-proposal')).toHaveTextContent('Resend proposal'))
   })
 
   it('hides Email proposal from read-only reviewers', () => {

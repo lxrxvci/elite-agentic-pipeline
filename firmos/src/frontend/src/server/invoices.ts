@@ -235,6 +235,12 @@ export async function buildItemizedLineItems(
       continue;
     }
 
+    // L4 (G9, 10_06 01:21:18): the assigned billing month (1-12), set from
+    // the estimate's billing-month drop-down; invalid values are ignored.
+    const billMonthRaw = line.bill_month as number | null | undefined;
+    const billMonth =
+      billMonthRaw != null && billMonthRaw >= 1 && billMonthRaw <= 12 ? billMonthRaw : null;
+
     let quantity: number;
     switch (line.service_key) {
       case "account_reconciliations":
@@ -257,6 +263,12 @@ export async function buildItemizedLineItems(
         ) {
           if (febBilled) {
             quantity = line.quantity; // February-billed: fixed annual quantity
+          } else if (billMonth != null) {
+            // L4 (G9): an assigned billing month bills the line's FULL
+            // quantity on the invoice whose covered range includes that
+            // month ("this report's due in January"); every other invoice
+            // skips the line entirely - no ÷12 spread.
+            quantity = covered.some((m) => m.month === billMonth) ? line.quantity : 0;
           } else if ((line.anchor_month as number | null | undefined) != null) {
             quantity = occurrenceQuantity(line, covered); // anchored: sum covered months
           } else {

@@ -39,22 +39,42 @@ export function appUrl(): string {
  * K3 (J16): admin-editable subject/footnote overrides (email_templates
  * table). Merge tags interpolate at build time; an absent row (or empty
  * field) keeps the builder's default copy.
+ *
+ * L4 (K1, 10_06 01:01:28): the proposal mail's BODY is templated too -
+ * "customizable emails populate by default with pre-written copy using
+ * standard system dynamic tokens… with the option to edit the copy before
+ * sending." The body override lives on the same row; per-send edits come in
+ * as the compose dialog's editedSubject/editedBody (already interpolated).
  */
 export interface EmailTemplateOverride {
   subject?: string | null;
   footnote?: string | null;
+  /** quote_ready only: the letter body around the generated price block. */
+  body?: string | null;
 }
 
-/** Interpolate {{clientName}} / {{firmName}} / {{title}} / {{year}} merge tags. */
+/** Interpolate {{clientName}} / {{firmName}} / {{title}} / {{year}} /
+ *  {{price}} / {{contactFirstName}} / {{summary}} merge tags. */
 export function interpolateEmailCopy(
   template: string,
-  vars: { clientName?: string; firmName?: string; title?: string; year?: string | number },
+  vars: {
+    clientName?: string;
+    firmName?: string;
+    title?: string;
+    year?: string | number;
+    price?: string;
+    contactFirstName?: string;
+    summary?: string;
+  },
 ): string {
   return template
     .replace(/\{\{\s*clientName\s*\}\}/g, vars.clientName ?? "")
     .replace(/\{\{\s*firmName\s*\}\}/g, vars.firmName ?? firmName())
     .replace(/\{\{\s*title\s*\}\}/g, vars.title ?? "")
-    .replace(/\{\{\s*year\s*\}\}/g, String(vars.year ?? ""));
+    .replace(/\{\{\s*year\s*\}\}/g, String(vars.year ?? ""))
+    .replace(/\{\{\s*price\s*\}\}/g, vars.price ?? "")
+    .replace(/\{\{\s*contactFirstName\s*\}\}/g, vars.contactFirstName ?? "")
+    .replace(/\{\{\s*summary\s*\}\}/g, vars.summary ?? "");
 }
 
 export function escapeHtml(value: string): string {
@@ -190,35 +210,61 @@ export function missingInfoReminderEmail(input: {
 }
 
 /** (c) Quote / proposal mail: summary lines plus a review link (omitted
- *  when the portal is off - the summary stands alone). */
+ *  when the portal is off - the summary stands alone).
+ *
+ * L4 (K1, 10_06 01:01:28): the full default letter - greeting, scope
+ * summary, price block, closing, signature - as one editable body template
+ * with merge tags ({{contactFirstName}}, {{clientName}}, {{firmName}},
+ * {{summary}}, {{price}}). {{summary}} marks where the generated line-item
+ * block lands. The compose dialog prefills the interpolated body; sending
+ * untouched delivers exactly this default. */
+export const QUOTE_READY_DEFAULT_SUBJECT = "Your {{firmName}} proposal is ready";
+export const QUOTE_READY_DEFAULT_BODY = [
+  "Hi {{contactFirstName}},",
+  "Great news - your {{firmName}} proposal for {{clientName}} is ready. Here is the scope and pricing we put together for you:",
+  "{{summary}}",
+  "All together that comes to {{price}}. If anything looks off - or you would like to adjust the scope up or down - just reply to this email and we will fine-tune it together.",
+  "Talk soon,\nThe {{firmName}} team",
+].join("\n\n");
+
 export function quoteReadyEmail(input: {
   clientName: string;
+  contactFirstName?: string | null;
   lines: { name: string; amount: string }[];
   totalLabel: string;
   includePortalLink?: boolean;
   override?: EmailTemplateOverride;
+  /** K1: per-send edits from the compose dialog - already interpolated. */
+  editedSubject?: string | null;
+  editedBody?: string | null;
 }): BrandedEmail {
   const reviewUrl = `${appUrl()}/portal`;
-  const items = [...input.lines.map((l) => `${l.name} - ${l.amount}`), `Total: ${input.totalLabel}`];
-  const bodyText = [
-    "Hello,",
-    `Your proposal from ${firmName()} is ready. Here is the summary:`,
-  ].join("\n\n");
+  const summary = [...input.lines.map((l) => `${l.name} - ${l.amount}`), `Total: ${input.totalLabel}`]
+    .map((i) => `- ${i}`)
+    .join("\n");
+  const vars = {
+    clientName: input.clientName,
+    contactFirstName: input.contactFirstName ?? "there",
+    price: input.totalLabel,
+    summary,
+  };
+  const subject =
+    input.editedSubject ??
+    interpolateEmailCopy(input.override?.subject ?? QUOTE_READY_DEFAULT_SUBJECT, vars);
+  const bodyText =
+    input.editedBody ?? interpolateEmailCopy(input.override?.body ?? QUOTE_READY_DEFAULT_BODY, vars);
   return {
-    subject: interpolateEmailCopy(input.override?.subject ?? `Your ${firmName()} proposal is ready`, { clientName: input.clientName }),
+    subject,
     html: brandedEmail({
       heading: "Your proposal is ready",
       bodyText,
-      items,
       cta:
         input.includePortalLink === false
           ? undefined
           : { label: "Review your proposal", url: reviewUrl },
       footnote: input.override?.footnote ?? "Questions about any line? Reply to this email and we will walk through it together.",
     }),
-    text:
-      `${bodyText}\n\n${items.map((i) => `- ${i}`).join("\n")}` +
-      (input.includePortalLink === false ? "" : `\n\nReview your proposal: ${reviewUrl}`),
+    text: bodyText + (input.includePortalLink === false ? "" : `\n\nReview your proposal: ${reviewUrl}`),
   };
 }
 

@@ -31,7 +31,9 @@ export function QuoteTemplateButton() {
   const [loading, setLoading] = useState(false)
   const [allowed, setAllowed] = useState<boolean | null>(null)
   const [label, setLabel] = useState('Proposal email')
+  const [defaultBody, setDefaultBody] = useState<string | null>(null)
   const [subject, setSubject] = useState('')
+  const [body, setBody] = useState('')
   const [footnote, setFootnote] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -46,7 +48,9 @@ export function QuoteTemplateButton() {
     }
     const def = res.data.defs.find((d) => d.key === 'quote_ready')
     setLabel(def?.label ?? 'Proposal email')
+    setDefaultBody(def?.defaultBody ?? null)
     setSubject(res.data.overrides.quote_ready?.subject ?? '')
+    setBody(res.data.overrides.quote_ready?.body ?? '')
     setFootnote(res.data.overrides.quote_ready?.footnote ?? '')
     setAllowed(true)
   }
@@ -71,7 +75,8 @@ export function QuoteTemplateButton() {
           <DialogHeader>
             <DialogTitle>{label} template</DialogTitle>
             <DialogDescription>
-              The proposal email&apos;s subject and closing line. Merge tags: {'{{clientName}}'}, {'{{firmName}}'}.
+              The proposal email&apos;s subject, letter body, and closing line. Merge tags: {'{{clientName}}'},{' '}
+              {'{{firmName}}'}, {'{{contactFirstName}}'}, {'{{price}}'}, {'{{summary}}'} (the itemized price block).
               Leave a field blank to use the default.
             </DialogDescription>
           </DialogHeader>
@@ -100,6 +105,19 @@ export function QuoteTemplateButton() {
                 />
               </div>
               <div>
+                <label htmlFor="quote-template-body" className="text-xs font-medium text-muted-foreground">
+                  Letter body
+                </label>
+                <textarea
+                  id="quote-template-body"
+                  data-testid="quote-template-body"
+                  className="min-h-40 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  placeholder={defaultBody ?? 'Default letter body'}
+                />
+              </div>
+              <div>
                 <label htmlFor="quote-template-footnote" className="text-xs font-medium text-muted-foreground">
                   Closing line
                 </label>
@@ -125,6 +143,7 @@ export function QuoteTemplateButton() {
                   const { setEmailTemplateOverrideAction } = await import('@/server/actions/email-templates')
                   const res = await setEmailTemplateOverrideAction('quote_ready', {
                     subject: subject.trim() === '' ? null : subject.trim(),
+                    body: body.trim() === '' ? null : body.trim(),
                     footnote: footnote.trim() === '' ? null : footnote.trim(),
                   })
                   setBusy(false)

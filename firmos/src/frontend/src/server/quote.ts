@@ -15,9 +15,10 @@ import {
 } from "@firmos/domain";
 
 import { statementDayForIntakeAccount } from "./accounts-seed";
+import { accountLabel } from "@/shared/lib/account-label";
 import { getCustomServiceEntries } from "./services-catalog";
 import { localToday } from "./dates";
-import type { IntakeCustomItemInput, IntakeFormData, IntakeReportDefinition } from "./intake";
+import type { IntakeCustomItemInput, IntakeCustomRuleInput, IntakeFormData, IntakeReportDefinition } from "./intake";
 import { getPricingOverrides, getRateTiers } from "./pricing-config";
 
 /**
@@ -53,16 +54,27 @@ function defaultQuantityFor(key: string, answers: IntakeQuoteAnswers): number | 
         account_type: "merchant",
         statement_day: 31,
       }));
+      // L4 (G7, 10_06 01:16:53): excluded accounts drop out of the factor -
+      // "it pulls the four accounts but I can't select 25 per account." The
+      // exclusion list carries the normalized account labels (accountLabel).
+      const excluded = new Set((answers.reconExcludedAccounts ?? []).map((n) => n.trim().toLowerCase()));
       const all = [
         // I3: the proof category drives the statement day (statement-proof
         // accounts reconcile monthly; owner-declared/bill-of-sale don't).
         ...accounts.map((a) => ({
           account_type: a.accountType,
           statement_day: statementDayForIntakeAccount(a),
+          label: accountLabel({ institution: a.institution, accountType: a.accountType, last4: a.last4 }),
         })),
-        ...merchants,
+        ...merchants.map((m, i) => ({
+          account_type: m.account_type,
+          statement_day: m.statement_day,
+          label: (answers.merchantAccounts ?? [])[i]?.name ?? `Merchant ${i + 1}`,
+        })),
       ];
-      return all.filter((a) => isReconciliationBillableAccount(a)).length;
+      return all.filter(
+        (a) => isReconciliationBillableAccount(a) && !excluded.has(a.label.trim().toLowerCase()),
+      ).length;
     }
     case "class_tracking":
       return answers.qboClassNames?.length;
@@ -375,6 +387,11 @@ export function buildRecurringServicesTemplate(
   quote: Quote,
   customItems: IntakeCustomItemInput[] = [],
   specialtyReports: SpecialtyReportInput[] = [],
+  customRules: IntakeCustomRuleInput[] = [],
+  // L4 (G9, 10_06 01:21:18): billing-month assignments ride onto the
+  // template as bill_month - the invoice engine bills the line's full
+  // quantity in that month instead of spreading it across the year.
+  billingMonths: Record<string, number | null> = {},
 ): TemplateLineItem[] {
   return quote.lines.map((line) => {
     // J4 (V4): the equivalent per-cycle discount for a direct price
@@ -391,7 +408,26 @@ export function buildRecurringServicesTemplate(
     const customMatch = line.service_key.startsWith("custom_item_")
       ? customItems[Number(line.service_key.replace("custom_item_", "")) - 1]
       : undefined;
+    // L4 (G8, 10_06 01:04:50): weekly custom rules carry their weekday
+    // schedule onto the template line, so the invoice engine bills the
+    // actual weekday count per month ("5 Fridays in October, 4 in
+    // September") instead of the flat x4 estimate.
+    const ruleMatch = line.service_key.match(/^custom_rule_(\d+)$/);
+    const customRule = ruleMatch ? customRules[Number(ruleMatch[1]) - 1] : undefined;
+    const ruleScheduleFields = customRule
+      ? {
+          days_of_week: customRule.daysOfWeek ?? null,
+          day_of_month: customRule.dayOfMonth ?? null,
+          weekday: customRule.weekday ?? null,
+          week_of_month: customRule.weekOfMonth ?? null,
+          anchor_month: customRule.anchorMonth ?? null,
+        }
+      : {};
     const specialtyMatch = line.service_key.match(/^specialty_report_(\d+)(_retro)?$/);
+    // L4 (G9): an assigned billing month carries verbatim; the invoice
+    // engine's periodic branch bills the full quantity in only that month.
+    const assignedMonth = billingMonths[line.service_key];
+    const billMonthField = assignedMonth != null ? { bill_month: assignedMonth } : {};
     if (specialtyMatch) {
       const report = specialtyReports[Number(specialtyMatch[1]) - 1];
       const isRetro = specialtyMatch[2] != null;
@@ -402,6 +438,7 @@ export function buildRecurringServicesTemplate(
         quantity: line.quantity,
         discount,
         ...overrideField,
+        ...billMonthField,
         frequency: isRetro ? "one_time" : (report?.frequency ?? "monthly"),
         // L3 (F6, 10_06 00:30:45): the tier estimate rides the template -
         // "once an employee is selected their actual billing rate goes into
@@ -422,7 +459,9 @@ export function buildRecurringServicesTemplate(
       quantity: line.quantity,
       discount,
       ...overrideField,
-      frequency: customMatch?.frequency ?? BUCKET_FREQUENCY[line.bucket] ?? "monthly",
+      ...billMonthField,
+      frequency: customRule?.scheduleType ?? customMatch?.frequency ?? BUCKET_FREQUENCY[line.bucket] ?? "monthly",
+      ...ruleScheduleFields,
       notes: line.unpriced ? "Priced manually: no amount stated in HANDOFF §15." : null,
     };
   });

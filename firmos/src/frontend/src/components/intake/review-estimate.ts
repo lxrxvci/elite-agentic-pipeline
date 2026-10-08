@@ -2,6 +2,7 @@ import {
   QBO_TIER_LABEL,
   isFebruaryBilledService,
   isReconciliationBillableAccount,
+  parseDaysOfWeek,
   type Month,
   type Quote,
   type QuoteLine,
@@ -12,6 +13,7 @@ import { statementDayForIntakeAccount } from '@/shared/lib/account-types'
 import {
   ROUTINE_BUCKETS,
   isRoutineBucket,
+  weekdayOccurrencesInMonth,
   type RoutineBucket,
   type RoutineSchedule,
 } from '@/shared/lib/routine-schedule'
@@ -209,6 +211,10 @@ export interface EstimateBucketGroup {
   lines: EstimateLine[]
   /** Sum of the group's effective-monthly contributions. */
   perMonth: number
+  /** L4 (G2, 10_06 01:07:03): the annual bucket's honest total - annual
+   *  lines are NEVER amortized into a monthly figure ("an annual $150…
+   *  amortized into a monthly figure confuses"). Sum of the lines' cycle nets. */
+  perYear: number
 }
 
 export interface BucketedEstimate {
@@ -289,11 +295,26 @@ function lineMath(
   if (line.service_key.startsWith('custom_rule_')) {
     const rule = (answers.customRecurringRules ?? [])[Number(line.service_key.replace('custom_rule_', '')) - 1]
     const freq = rule?.scheduleType
-    if (freq === 'weekly') return `${rate}/week × 4 weeks = ${formatMoney(perMonth)}/mo`
+    // L4 (G8, 10_06 01:04:50): weekly work bills per actual weekday count
+    // in the month - "five Fridays in October… September only has four."
+    // The line shows the next two months' honest occurrence math.
+    if (freq === 'weekly') {
+      const days = parseDaysOfWeek(rule?.daysOfWeek ?? null)
+      const weekdays = days.length > 0 ? days : [5]
+      const now = new Date()
+      const thisMonth = { year: now.getFullYear(), month: now.getMonth() + 1 }
+      const nextMonth = thisMonth.month === 12 ? { year: thisMonth.year + 1, month: 1 } : { year: thisMonth.year, month: thisMonth.month + 1 }
+      const labelOf = (m: { year: number; month: number }) => new Date(m.year, m.month - 1, 1).toLocaleString('en-US', { month: 'short' })
+      const perMonthText = (m: { year: number; month: number }) => {
+        const occurrences = weekdayOccurrencesInMonth(m.year, m.month, weekdays)
+        return `${labelOf(m)}: ${occurrences} × ${rate} = ${formatMoney(round2(occurrences * (line.unit_price ?? 0)))}`
+      }
+      return `${rate}/week · billed by the month's weekday count (${perMonthText(thisMonth)} · ${perMonthText(nextMonth)})`
+    }
     if (freq === 'daily') return `${rate}/day × 22 days = ${formatMoney(perMonth)}/mo`
     if (freq === 'quarterly') return `${rate}/quarter ÷ 3 = ${formatMoney(perMonth)}/mo`
     if (freq === 'semi_annual') return `${rate}/6 months ÷ 6 = ${formatMoney(perMonth)}/mo`
-    if (freq === 'annual') return `${rate}/year ÷ 12 = ${formatMoney(perMonth)}/mo`
+    if (freq === 'annual') return `${rate}/year`
     return null // monthly custom rule: the price IS the monthly math
   }
   // Specialty reports recur on their own cadence.
@@ -301,14 +322,16 @@ function lineMath(
   if (specialty) {
     const months = line.quantity > 0 ? Math.round(cycle / line.quantity) : 1
     const cadence = CADENCE_BY_MONTHS[months]
-    if (cadence) return `${rate}/${cadence} ÷ ${months} = ${formatMoney(perMonth)}/mo`
+    if (cadence) return `${rate}/${cadence}`
     return `${rate}/mo`
   }
   switch (line.bucket) {
+    // L4 (G2, 10_06 01:07:03): cadence money shows at its own cadence -
+    // quarterly and annual are never amortized into a monthly figure.
     case 'quarterly':
-      return `${rate}/quarter ÷ 3 = ${formatMoney(perMonth)}/mo`
+      return `${rate}/quarter`
     case 'annual':
-      return `${rate}/year ÷ 12 = ${formatMoney(perMonth)}/mo`
+      return `${rate}/year`
     default:
       // Flat monthly services: the price IS the math.
       return null
@@ -316,11 +339,26 @@ function lineMath(
 }
 
 /** The retro cleanup's per-period split (V7): months by calendar year. */
-function retroPeriods(startMonth: Month, months: number): { label: string; months: number }[] {
+function retroPeriods(startMonth: Month, months: number, split: 'year' | 'quarter' = 'year'): { label: string; months: number }[] {
   const out: { label: string; months: number }[] = []
   let year = startMonth.year
   let month = startMonth.month
   let remaining = months
+  if (split === 'quarter') {
+    while (remaining > 0) {
+      const quarterStartMonth = Math.floor((month - 1) / 3) * 3 + 1
+      const inQuarter = Math.min(remaining, quarterStartMonth + 3 - month)
+      const quarterNumber = Math.floor((month - 1) / 3) + 1
+      out.push({ label: `${year} Q${quarterNumber}`, months: inQuarter })
+      remaining -= inQuarter
+      month += inQuarter
+      if (month > 12) {
+        year += 1
+        month = 1
+      }
+    }
+    return out
+  }
   while (remaining > 0) {
     const inYear = Math.min(remaining, 12 - month + 1)
     out.push({ label: String(year), months: inYear })
@@ -336,7 +374,7 @@ function retroPeriods(startMonth: Month, months: number): { label: string; month
  * leaves the recurring list (its one-time block owns it - no double
  * counting); zero-quantity lines are noise and drop out.
  */
-export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers): BucketedEstimate {
+export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers, retroSplit: 'year' | 'quarter' = 'year'): BucketedEstimate {
   const cycle = quote.billingCycle
   const schedule = answers.routineSchedule ?? null
   const byBucket = new Map<RoutineBucket, EstimateLine[]>()
@@ -392,25 +430,43 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers): Buc
     byBucket.set(bucket, list)
   }
 
-  // V7: the retroactive cleanup, one-time, split by period (2025 + 2026…).
-  // K6 (D7): missed past filings list beside it in the same retro block.
+  // L4 (G5, 10_06 01:15:27): the retro cleanup breaks into per-period
+  // PRICED LINES - "2025 cleanup — 6 mo × $350 = $2,100" - each period its
+  // own scope, billed on completion (matching the per-year projects at
+  // conversion). A flat override prices the whole cleanup, so it stays one
+  // bundled line (the J4/V4 rule).
   const retroItems: OneTimeItem[] = []
   const retro = quote.retroactive
   if (retro && retro.months > 0) {
     const retroLine = quote.lines.find((l) => l.service_key === 'retroactive_bookkeeping')
     const overridden = retroLine?.price_override != null
-    retroItems.push({
-      key: 'retroactive_bookkeeping',
-      name: 'Retroactive bookkeeping',
-      amount: retro.total,
-      standard: retro.baseTotal,
-      overridden,
-      unpriced: false,
-      math: overridden
-        ? null
-        : `${retro.months} month${retro.months === 1 ? '' : 's'} × ${formatMoney(retro.perMonthRate)}/mo${retro.discountPercent != null ? ` − ${retro.discountPercent}%` : ''}`,
-      periods: retroPeriods(retro.startMonth, retro.months),
-    })
+    if (overridden) {
+      retroItems.push({
+        key: 'retroactive_bookkeeping',
+        name: 'Retroactive bookkeeping',
+        amount: retro.total,
+        standard: retro.baseTotal,
+        overridden: true,
+        unpriced: false,
+        math: null,
+        periods: retroPeriods(retro.startMonth, retro.months, retroSplit),
+      })
+    } else {
+      const discountFactor = retro.discountPercent != null ? 1 - retro.discountPercent / 100 : 1
+      for (const p of retroPeriods(retro.startMonth, retro.months, retroSplit)) {
+        const base = round2(p.months * retro.perMonthRate)
+        retroItems.push({
+          key: `retroactive_bookkeeping_${p.label}`,
+          name: `${p.label} cleanup`,
+          amount: round2(base * discountFactor),
+          standard: base,
+          overridden: false,
+          unpriced: false,
+          math: `${p.months} month${p.months === 1 ? '' : 's'} × ${formatMoney(retro.perMonthRate)}/mo${retro.discountPercent != null ? ` − ${retro.discountPercent}%` : ''}`,
+          periods: null,
+        })
+      }
+    }
   }
   for (const line of quote.lines) {
     if (!/^specialty_report_\d+_retro$/.test(line.service_key) || line.quantity <= 0) continue
@@ -432,6 +488,7 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers): Buc
       bucket,
       lines,
       perMonth: round2(lines.reduce((acc, l) => acc + (l.perMonth ?? 0), 0)),
+      perYear: round2(lines.reduce((acc, l) => acc + (l.cycleNet ?? 0), 0)),
     }
   }).filter((g) => g.lines.length > 0)
 
@@ -439,7 +496,11 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers): Buc
     billingCycle: cycle,
     groups,
     oneTime,
-    oneTimeTotal: quote.totals.totalOneTime,
+    // L4 (G4, 10_06 01:14:26): one-time fees NEVER include the retro blocks -
+    // the engine's totalOneTime bundles them ("one-time fees $1,100 listing
+    // only QBO setup while silently including retroactive cleanup"). The
+    // header total is the plain one-time items only.
+    oneTimeTotal: round2(oneTime.reduce((acc, i) => acc + (i.amount ?? 0), 0)),
     retroItems,
     retroTotal: round2(retroItems.reduce((acc, i) => acc + (i.amount ?? 0), 0)),
     retroDiscountPercent: retro?.discountPercent ?? null,

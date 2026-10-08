@@ -4,12 +4,16 @@ import { db } from "@/db";
 import { emailTemplates } from "@/db/schema";
 import { logEvent } from "@/server/audit";
 import type { EmailTemplateOverride } from "@/server/email-templates";
+import { QUOTE_READY_DEFAULT_BODY } from "@/server/email-templates";
 
 /**
  * K3 (J16): admin-editable email copy. One row per template key; subject and
- * footnote override the branded builders' copy (with merge tags). Body
- * structure, branding, and item lists stay in code - the override surface is
- * the two pieces of copy a firm actually tunes.
+ * footnote override the branded builders' copy (with merge tags). Branding
+ * and the generated price block stay in code.
+ *
+ * L4 (K1, 10_06 01:01:28): quote_ready also carries an editable default
+ * BODY (greeting / summary / closing / signature with merge tags) - the
+ * compose dialog prefills it and the sender can edit per send.
  */
 
 export interface EmailTemplateDef {
@@ -18,6 +22,8 @@ export interface EmailTemplateDef {
   /** Shown in the editor as the current default (merge tags as-is). */
   defaultSubject: string;
   defaultFootnote: string;
+  /** K1: the editable letter body (quote_ready only). */
+  defaultBody?: string;
 }
 
 export const EMAIL_TEMPLATE_DEFS: readonly EmailTemplateDef[] = [
@@ -38,6 +44,7 @@ export const EMAIL_TEMPLATE_DEFS: readonly EmailTemplateDef[] = [
     label: "Proposal ready",
     defaultSubject: "Your {{firmName}} proposal is ready",
     defaultFootnote: "Questions about any line? Reply to this email and we will walk through it together.",
+    defaultBody: QUOTE_READY_DEFAULT_BODY,
   },
   {
     key: "waiting_on_client",
@@ -70,7 +77,7 @@ export async function getEmailTemplateOverrides(): Promise<Map<string, EmailTemp
   const rows = await db.select().from(emailTemplates);
   const map = new Map<string, EmailTemplateOverride>();
   for (const r of rows) {
-    map.set(r.key, { subject: r.subject, footnote: r.footnote });
+    map.set(r.key, { subject: r.subject, footnote: r.footnote, body: r.body });
   }
   return map;
 }
@@ -78,7 +85,7 @@ export async function getEmailTemplateOverrides(): Promise<Map<string, EmailTemp
 /** Upsert one template's overrides (audited). Null clears a field to default. */
 export async function setEmailTemplateOverride(
   key: string,
-  input: { subject: string | null; footnote: string | null },
+  input: { subject: string | null; footnote: string | null; body?: string | null },
   userId: number,
 ): Promise<void> {
   if (!EMAIL_TEMPLATE_DEFS.some((d) => d.key === key)) {
@@ -86,16 +93,22 @@ export async function setEmailTemplateOverride(
   }
   await db
     .insert(emailTemplates)
-    .values({ key, subject: input.subject, footnote: input.footnote, updatedById: userId })
+    .values({ key, subject: input.subject, footnote: input.footnote, body: input.body ?? null, updatedById: userId })
     .onConflictDoUpdate({
       target: emailTemplates.key,
-      set: { subject: input.subject, footnote: input.footnote, updatedById: userId, updatedAt: new Date() },
+      set: {
+        subject: input.subject,
+        footnote: input.footnote,
+        body: input.body ?? null,
+        updatedById: userId,
+        updatedAt: new Date(),
+      },
     });
   await logEvent({
     userId,
     action: "email_template_updated",
     entityType: "email_template",
     entityId: null,
-    metadata: { key, subject: input.subject, footnote: input.footnote },
+    metadata: { key, subject: input.subject, footnote: input.footnote, body: input.body ?? null },
   });
 }

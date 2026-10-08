@@ -223,6 +223,15 @@ export interface IntakeFormData {
   serviceKeys?: string[];
   /** Explicit unit counts per service key (accounts, classes, filings, ...). */
   serviceQuantities?: Record<string, number>;
+  /** L4 (G7, 10_06 01:16:53): normalized account labels excluded from the
+   *  reconciliation factor (the estimate's per-account checkboxes). */
+  reconExcludedAccounts?: string[];
+  /** L4 (G9, 10_06 01:21:18): per-line billing-month assignment, keyed by
+   *  service key (1-12). An annual line assigned a month bills its full
+   *  quantity on that month's invoice instead of spreading ÷12 ("this
+   *  report's due in January - include it on the January invoice").
+   *  Absent/null = the usual unanchored periodic spread. */
+  billingMonths?: Record<string, number | null>;
   /** Per-service discount capture (C1): flat dollars off per billing cycle,
    *  keyed by service key; the quote engine clamps each line at zero.
    *  Legacy - J4 (V4) presents direct price editing instead; stored

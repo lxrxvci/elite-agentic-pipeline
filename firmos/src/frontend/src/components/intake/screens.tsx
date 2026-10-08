@@ -35,6 +35,7 @@ import {
   FREQUENCY_LABELS,
   laterAddonQualified,
   mergeListOptions,
+  qualifyingFactorFor,
   type ServiceCatalogRowLite,
   type FieldDef,
   type OptionListValueLite,
@@ -253,6 +254,7 @@ export function ServicesScreen({
   industrySuggestions = [],
   industries = [],
   onTagIndustry,
+  onJumpTo,
 }: {
   q: QuestionDef
   values: string[]
@@ -275,6 +277,8 @@ export function ServicesScreen({
   industries?: OptionListValueLite[]
   /** L2 (H7): a tagged custom joins the industry suggestion engine. */
   onTagIndustry?: (industry: string, title: string) => void
+  /** L4 (G6): the wizard's chapter-rail jump for qualifying-factor links. */
+  onJumpTo?: (chapterId: string, questionId: string) => void
 }) {
   const grouping = q.services!
   const registryStandards = grouping.standards
@@ -441,6 +445,21 @@ export function ServicesScreen({
               <span className="min-w-0">
                 <span className="block text-sm font-medium text-accent-foreground">{s.label}</span>
                 {s.sub && <span className="mt-0.5 block text-xs text-muted-foreground">{s.sub}</span>}
+                {/* L4 (G6, 10_06 00:33:23): the REAL qualifying factor with a
+                    link back to the hero card that qualified this row. */}
+                {(() => {
+                  const factor = qualifyingFactorFor(s.value, answers)
+                  return factor ? (
+                    <button
+                      type="button"
+                      data-testid={`factor-${s.value}`}
+                      onClick={() => onJumpTo?.(factor.chapterId, factor.questionId)}
+                      className="mt-1 block text-left text-[11px] font-medium text-firm-brand-strong transition-colors hover:text-firm-brand focus-visible:outline-2 focus-visible:outline-ring"
+                    >
+                      {factor.reason} →
+                    </button>
+                  ) : null
+                })()}
               </span>
             </li>
           ))}
@@ -502,10 +521,22 @@ export function ServicesScreen({
               .sort((a, b) => a.label.toLowerCase().localeCompare(b.label.toLowerCase()))
               .map((o) => {
               const qualified = laterAddonQualified(o.value, answers)
+              const factor = qualified ? qualifyingFactorFor(o.value, answers) : null
               return (
                 <li key={o.value} className="flex items-baseline justify-between gap-3 py-2" data-testid={`later-${o.value}`}>
                   <span className="text-sm text-muted-foreground">{o.label}</span>
                   <span className="flex shrink-0 items-center gap-2">
+                    {/* L4 (G6): the real qualifying factor, linked back. */}
+                    {factor && (
+                      <button
+                        type="button"
+                        data-testid={`factor-${o.value}`}
+                        onClick={() => onJumpTo?.(factor.chapterId, factor.questionId)}
+                        className="text-[11px] font-medium text-firm-brand-strong transition-colors hover:text-firm-brand focus-visible:outline-2 focus-visible:outline-ring"
+                      >
+                        {factor.reason} →
+                      </button>
+                    )}
                     {qualified && (
                       <span
                         className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground"
@@ -1978,6 +2009,7 @@ export function QuestionScreen({
         onAddCustomTaskTitle={onAddOptionListValue ? (name) => void onAddOptionListValue('custom_task_templates', name) : undefined}
         industries={optionLists?.industries}
         onTagIndustry={onTagIndustry}
+        onJumpTo={onJumpTo}
       />
     )
   }

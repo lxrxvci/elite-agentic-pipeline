@@ -127,13 +127,15 @@ export const servicesCatalog = pgTable(
 /**
  * K3 (J16): admin-editable email copy. One row per template key; subject and
  * footnote overrides with {{clientName}}/{{firmName}} merge tags; absent
- * rows fall back to the branded builders' copy (email-templates.ts). Body
- * structure stays in code - item lists and interpolation keep working.
+ * rows fall back to the branded builders' copy (email-templates.ts).
+ * L4 (K1): `body` adds the quote_ready letter body (greeting/summary/
+ * closing/signature) to the override surface.
  */
 export const emailTemplates = pgTable("email_templates", {
   key: text("key").primaryKey(),
   subject: text("subject"),
   footnote: text("footnote"),
+  body: text("body"),
   updatedById: integer("updated_by_id").references((): AnyPgColumn => users.id),
   updatedAt: updatedAt(),
 });

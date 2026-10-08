@@ -281,6 +281,48 @@ describe.skipIf(!reachable)("invoices (G5 billing parity)", () => {
     expect(newFeb!.total).toBe("100.00");
   });
 
+  // L4 (G9, 10_06 01:21:18): "this annual report that's $225 per year - do I
+  // divide that by 12 or do I just say this report's due in January? Let's
+  // just include this on the January invoice."
+  it("L4/G9: an annual line with an assigned billing month bills its full quantity only that month", async () => {
+    const [client] = await db
+      .insert(clients)
+      .values({
+        legalName: "G9 BillMonth Fixture",
+        bookkeepingFrequency: "monthly",
+        billingFrequency: "monthly",
+        monthlyCloseTier: "15",
+        bookkeepingStartDate: "2025-06-01",
+        recurringServicesTemplate: [
+          tline("bank_feed_management", "Bank Feed Management", 100, 1),
+          // Assigned to January: bills the full $225 once, never spreads.
+          tline("specialty_report_1", "Oregon Special Report", 225, 1, {
+            frequency: "annual",
+            bill_month: 1,
+          }),
+          // Unassigned annual: the usual ÷12 spread ($10/mo) is unchanged.
+          tline("annual_meeting_minutes", "Annual Meeting Minutes", 120, 1, { frequency: "annual" }),
+        ],
+      })
+      .returning();
+
+    await generateMonthlyInvoices(2026, 1, TEST_TODAY);
+    const jan = await invoiceFor(client.id, 2026, 1);
+    expect(jan).not.toBeNull();
+    const janLines = byKey(await linesFor(jan!.id));
+    expect(janLines.get("specialty_report_1")).toMatchObject({ quantity: "1.00", amount: "225.00" });
+    expect(janLines.get("annual_meeting_minutes")).toMatchObject({ quantity: "0.08", amount: "10.00" });
+
+    await generateMonthlyInvoices(2026, 2, TEST_TODAY);
+    const feb = await invoiceFor(client.id, 2026, 2);
+    expect(feb).not.toBeNull();
+    const febLines = byKey(await linesFor(feb!.id));
+    // February skips the January-assigned line entirely.
+    expect(febLines.has("specialty_report_1")).toBe(false);
+    expect(febLines.get("annual_meeting_minutes")).toMatchObject({ quantity: "0.08", amount: "10.00" });
+    expect(feb!.total).toBe("110.00");
+  });
+
   it("is idempotent: a re-run skips every existing period", async () => {
     const first = await generateMonthlyInvoices(2026, 9, TEST_TODAY);
     expect(first.invoicesCreated).toBeGreaterThan(0);

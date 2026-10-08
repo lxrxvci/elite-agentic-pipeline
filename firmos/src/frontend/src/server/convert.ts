@@ -510,6 +510,12 @@ export async function convertIntakeToClient(
         },
         today,
       ),
+      // L4 (G8): the weekly custom rules' weekday schedules ride onto the
+      // template lines so invoicing bills real occurrence counts.
+      form.customRecurringRules ?? [],
+      // L4 (G9): billing-month assignments - an annual line bills its full
+      // quantity in the assigned month instead of spreading across the year.
+      form.billingMonths ?? {},
     );
     const stamps = quoteAmountStamps(quote);
 

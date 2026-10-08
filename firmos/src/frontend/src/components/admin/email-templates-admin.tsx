@@ -13,7 +13,9 @@ import type { EmailTemplateOverride } from '@/server/email-templates'
  * K3 (J16): the email copy editor on /admin/settings. Each template's
  * subject + footnote are editable with merge tags ({{clientName}},
  * {{firmName}}, {{title}}, {{year}}); clearing a field restores the default.
- * Body structure and branding stay in code. Saves are admin/owner + audited.
+ * L4 (K1): quote_ready also exposes its letter body ({{contactFirstName}},
+ * {{summary}}, {{price}}). Branding stays in code. Saves are admin/owner +
+ * audited.
  */
 
 export function EmailTemplatesAdmin({
@@ -27,23 +29,27 @@ export function EmailTemplatesAdmin({
   const [busy, setBusy] = React.useState(false)
   const active = defs.find((d) => d.key === activeKey) ?? defs[0]
   const [subject, setSubject] = React.useState('')
+  const [body, setBody] = React.useState('')
   const [footnote, setFootnote] = React.useState('')
 
   React.useEffect(() => {
     if (!active) return
     setSubject(overrides[active.key]?.subject ?? '')
+    setBody(overrides[active.key]?.body ?? '')
     setFootnote(overrides[active.key]?.footnote ?? '')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.key])
 
   if (!active) return null
   const current = overrides[active.key]
+  const bodyEditable = active.defaultBody != null
 
   async function save() {
     setBusy(true)
     const res = await setEmailTemplateOverrideAction(active.key, {
       subject: subject.trim() === '' ? null : subject.trim(),
       footnote: footnote.trim() === '' ? null : footnote.trim(),
+      ...(bodyEditable ? { body: body.trim() === '' ? null : body.trim() } : {}),
     })
     setBusy(false)
     if (!res.ok) {
@@ -59,7 +65,8 @@ export function EmailTemplatesAdmin({
         <h2 className="text-sm font-semibold text-foreground">Email copy</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
           Tune the subject and the closing line of the firm&apos;s templated emails. Leave a field blank to use the
-          default. Merge tags: {'{{clientName}}'}, {'{{firmName}}'}, {'{{title}}'}, {'{{year}}'}.
+          default. Merge tags: {'{{clientName}}'}, {'{{firmName}}'}, {'{{title}}'}, {'{{year}}'}; the proposal
+          email&apos;s body also takes {'{{contactFirstName}}'}, {'{{summary}}'}, {'{{price}}'}.
         </p>
       </header>
 
@@ -101,11 +108,31 @@ export function EmailTemplatesAdmin({
               <p className="mt-1 text-[11px] text-muted-foreground">Default: {active.defaultSubject}</p>
             )}
           </div>
+          {bodyEditable && (
+            <div>
+              <label htmlFor="email-body" className="mb-1 block text-xs font-medium text-muted-foreground">
+                Letter body
+              </label>
+              <textarea
+                id="email-body"
+                data-testid="email-body-input"
+                className="min-h-40 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder={active.defaultBody}
+              />
+              {current?.body == null && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Default body is pre-written with merge tags ({'{{contactFirstName}}'}, {'{{clientName}}'},{' '}
+                  {'{{firmName}}'}, {'{{summary}}'}, {'{{price}}'}) - edit here to replace it for every send.
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <label htmlFor="email-footnote" className="mb-1 block text-xs font-medium text-muted-foreground">
               Closing line (footnote)
-            </label>
-            <textarea
+            </label><textarea
               id="email-footnote"
               data-testid="email-footnote-input"
               className="min-h-16 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring"

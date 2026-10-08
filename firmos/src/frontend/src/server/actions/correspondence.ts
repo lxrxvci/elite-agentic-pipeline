@@ -6,6 +6,7 @@ import { requireRole, requireStaff } from '@/server/auth/guards'
 import {
   CorrespondenceError,
   markStaffCorrespondenceRead,
+  previewQuoteReadyEmail,
   sendComposerEmail,
   sendQuoteReadyEmail,
   sendWelcomeEmail,
@@ -107,15 +108,33 @@ export async function sendWelcomeEmailAction(
 /** "Email proposal" on the intake review screen: the quote mail. */
 export async function sendIntakeQuoteEmailAction(
   intakeId: number,
+  edits?: { subject?: string; body?: string },
 ): Promise<CorrespondenceActionResult<SentMailData>> {
   try {
     const user = await requireRole('owner', 'admin', 'manager')
     if (!Number.isInteger(intakeId) || intakeId <= 0) {
       return { ok: false, error: 'That intake no longer exists.' }
     }
-    const row = await sendQuoteReadyEmail(intakeId, user.id)
+    const row = await sendQuoteReadyEmail(intakeId, user.id, edits)
     revalidatePath(`/intake/${intakeId}`)
     return { ok: true, data: { correspondenceId: row.id, to: row.toEmail ?? '' } }
+  } catch (error) {
+    return { ok: false, error: messageOf(error) }
+  }
+}
+
+/** L4 (K1, 10_06 01:01:28): the compose dialog's prefill - the proposal
+ *  mail's default copy fully rendered (tokens interpolated), unsent. */
+export async function previewIntakeQuoteEmailAction(
+  intakeId: number,
+): Promise<CorrespondenceActionResult<{ to: string; subject: string; body: string }>> {
+  try {
+    await requireRole('owner', 'admin', 'manager')
+    if (!Number.isInteger(intakeId) || intakeId <= 0) {
+      return { ok: false, error: 'That intake no longer exists.' }
+    }
+    const preview = await previewQuoteReadyEmail(intakeId)
+    return { ok: true, data: preview }
   } catch (error) {
     return { ok: false, error: messageOf(error) }
   }

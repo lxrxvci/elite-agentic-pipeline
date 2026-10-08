@@ -20,7 +20,7 @@ function fail(error: unknown): { ok: false; error: string } {
 }
 
 export async function getEmailTemplatesAdminAction(): Promise<
-  ActionResult<{ defs: typeof EMAIL_TEMPLATE_DEFS; overrides: Record<string, { subject?: string | null; footnote?: string | null }> }>
+  ActionResult<{ defs: typeof EMAIL_TEMPLATE_DEFS; overrides: Record<string, { subject?: string | null; footnote?: string | null; body?: string | null }> }>
 > {
   try {
     await requireRole("admin", "owner");
@@ -33,7 +33,7 @@ export async function getEmailTemplatesAdminAction(): Promise<
 
 export async function setEmailTemplateOverrideAction(
   key: string,
-  input: { subject: string | null; footnote: string | null },
+  input: { subject: string | null; footnote: string | null; body?: string | null },
 ): Promise<ActionResult<{ done: true }>> {
   try {
     const user = await requireRole("admin", "owner");

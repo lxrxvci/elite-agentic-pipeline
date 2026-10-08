@@ -508,3 +508,20 @@ export function planRoutineSeeds(
   }
   return out
 }
+
+/**
+ * L4 (G8, 10_06 01:04:50): occurrences of a weekday set in a real month -
+ * "there's five Fridays in October… but September only has four Fridays."
+ * The estimate shows the honest per-month occurrence math; invoicing bills
+ * the same way (recurringBillingQuantityForMonth in the domain).
+ */
+export function weekdayOccurrencesInMonth(year: number, month: number, weekdays: number[]): number {
+  const set = new Set(weekdays)
+  if (set.size === 0) return 0
+  const days = new Date(year, month, 0).getDate()
+  let count = 0
+  for (let d = 1; d <= days; d++) {
+    if (set.has(new Date(year, month - 1, d).getDay())) count++
+  }
+  return count
+}

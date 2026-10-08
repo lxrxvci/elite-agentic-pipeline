@@ -434,10 +434,13 @@ describe('quote panel: QBO recommendation and priced retroactive', () => {
     const retro = screen.getByTestId('estimate-retro')
     expect(retro).toHaveTextContent('$1,120')
     expect(retro).toHaveTextContent('Retroactive cleanup')
-    expect(screen.getByTestId('one-time-math-retroactive_bookkeeping')).toHaveTextContent(
+    // L4 (G5, 10_06 01:15:27): the cleanup compartmentalizes per year - one
+    // priced line per period (all 7 months land in 2026 here).
+    const retro2026 = screen.getByTestId('retro-retroactive_bookkeeping_2026')
+    expect(retro2026).toHaveTextContent('2026 cleanup')
+    expect(screen.getByTestId('one-time-math-retroactive_bookkeeping_2026')).toHaveTextContent(
       '7 months × $160/mo',
     )
-    expect(screen.getByTestId('retro-periods')).toHaveTextContent('2026: 7 months')
     // Not double-rendered in the recurring buckets.
     expect(screen.getByTestId('estimate-recurring')).not.toHaveTextContent('Retroactive Bookkeeping')
   })

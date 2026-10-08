@@ -212,11 +212,14 @@ describe('D8: the proposal-email template action rides the review top-right (09_
     const subject = await screen.findByTestId('quote-template-subject')
     expect(subject).toHaveValue('Your bookkeeping quote')
 
+    // L4 (K1): the letter body is editable alongside subject + closing.
+    fireEvent.change(screen.getByTestId('quote-template-body'), { target: { value: 'Hi {{contactFirstName}} - custom letter.' } })
     fireEvent.change(screen.getByTestId('quote-template-footnote'), { target: { value: 'Reply with questions anytime.' } })
     fireEvent.click(screen.getByTestId('quote-template-save'))
     await waitFor(() =>
       expect(setEmailTemplateOverrideAction).toHaveBeenCalledWith('quote_ready', {
         subject: 'Your bookkeeping quote',
+        body: 'Hi {{contactFirstName}} - custom letter.',
         footnote: 'Reply with questions anytime.',
       }),
     )

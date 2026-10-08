@@ -799,6 +799,59 @@ export const SERVICES_LATER_ADDON_QUALIFIED: Record<string, (a: WizardAnswers) =
   merchant_account_reconciliation: (a) => a.includeMerchantReconciliation === true,
 }
 
+/**
+ * L4 (G6, 10_06 00:33:23-00:34:12): the REAL qualifying factor behind every
+ * services row - "it should show the qualifying factors that you clicked
+ * on… with the option to click them and go back and review them." The
+ * reason string reads like the answers themselves ("Payroll: Yes · Gusto ·
+ * Every two weeks"); the link jumps to the hero card that qualified it.
+ */
+export interface QualifyingFactor {
+  reason: string
+  chapterId: string
+  questionId: string
+}
+
+export function qualifyingFactorFor(serviceKey: string, a: WizardAnswers): QualifyingFactor | null {
+  switch (serviceKey) {
+    case 'bank_feed_management':
+    case 'account_reconciliations':
+    case 'reporting':
+      return { reason: 'Monthly bookkeeping engagement', chapterId: 'engagement', questionId: 'engagement' }
+    case 'payroll':
+    case 'process_payroll': {
+      const parts = ['Payroll: Yes']
+      if (str(a.payrollProvider)) parts.push(String(a.payrollProvider))
+      if (a.payrollFrequency) parts.push(FREQUENCY_LABELS[String(a.payrollFrequency)] ?? String(a.payrollFrequency))
+      return { reason: parts.join(' · '), chapterId: 'income', questionId: 'payroll-services' }
+    }
+    case 'record_bills':
+      return { reason: 'Record bills: Yes', chapterId: 'reporting', questionId: 'record-bills' }
+    case 'record_deposits':
+      return { reason: 'Record deposits: Yes', chapterId: 'income', questionId: 'record-deposits' }
+    case '1099_collection':
+    case '1099_full_management': {
+      const mode = a.include1099FullManagement === true ? 'full management' : 'collection'
+      const count = a.estimated1099Count != null ? ` · ~${a.estimated1099Count} filings` : ''
+      return { reason: `1099 work: ${mode}${count}`, chapterId: 'reporting', questionId: 'ten99-services' }
+    }
+    case 'specialty_reports': {
+      const n = (a.reportDefinitions ?? []).length
+      return { reason: `${n} special report${n === 1 ? '' : 's'} to track`, chapterId: 'reporting', questionId: 'reports' }
+    }
+    case 'merchant_account_reconciliation': {
+      const names = (a.merchantAccounts ?? []).map((m) => str(m.processor ?? m.name)).filter((n): n is string => n != null)
+      return {
+        reason: names.length > 0 ? `Processors: ${names.join(', ')}` : 'Card or online payments',
+        chapterId: 'income',
+        questionId: 'merchants',
+      }
+    }
+    default:
+      return null
+  }
+}
+
 /** True when this later-addon row was already qualified by the answers. */
 export const laterAddonQualified = (value: string, a: WizardAnswers): boolean =>
   SERVICES_LATER_ADDON_QUALIFIED[value]?.(a) ?? false

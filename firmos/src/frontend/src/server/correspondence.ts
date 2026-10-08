@@ -289,12 +289,27 @@ function moneyText(amount: number | null): string {
  * (c) Quote mail for an intake (pre-conversion, so the row links by
  * intake_id; conversion backfills client_id). Recipient: the intake's
  * primary contact, else its first contact with an email.
+ *
+ * L4 (K1, 10_06 01:01:28): preview and send share buildQuoteReadyMail - the
+ * compose dialog prefills the rendered default (tokens interpolated) and
+ * the sender's edits pass through as editedSubject/editedBody.
  */
-export async function sendQuoteReadyEmail(
+export interface QuoteReadyMailEdits {
+  subject?: string;
+  body?: string;
+}
+
+async function buildQuoteReadyMail(
   intakeId: number,
-  sentById: number | null,
+  edits?: QuoteReadyMailEdits,
   now: Date = new Date(),
-): Promise<CorrespondenceRow> {
+): Promise<{
+  intake: typeof clientIntakes.$inferSelect;
+  to: string;
+  subject: string;
+  bodyText: string;
+  html: string;
+}> {
   const [intake] = await db
     .select()
     .from(clientIntakes)
@@ -333,15 +348,36 @@ export async function sendQuoteReadyEmail(
   const mail = quoteReadyEmail({
     override: (await getEmailTemplateOverrides()).get("quote_ready"),
     clientName,
+    contactFirstName: target.firstName ?? null,
     lines,
     totalLabel: `${moneyText(quote.totals.effectiveMonthly)}/mo`,
     includePortalLink: await isPortalEnabled(),
+    editedSubject: edits?.subject?.trim() || undefined,
+    editedBody: edits?.body?.trim() || undefined,
   });
+  return { intake, to: target.email, subject: mail.subject, bodyText: mail.text, html: mail.html };
+}
+
+/** The compose dialog's prefill: the fully rendered default, nothing sent. */
+export async function previewQuoteReadyEmail(
+  intakeId: number,
+): Promise<{ to: string; subject: string; body: string }> {
+  const mail = await buildQuoteReadyMail(intakeId);
+  return { to: mail.to, subject: mail.subject, body: mail.bodyText };
+}
+
+export async function sendQuoteReadyEmail(
+  intakeId: number,
+  sentById: number | null,
+  edits?: QuoteReadyMailEdits,
+  now: Date = new Date(),
+): Promise<CorrespondenceRow> {
+  const mail = await buildQuoteReadyMail(intakeId, edits, now);
   return sendAndRecord({
-    clientId: intake.clientId ?? null,
-    to: target.email,
+    clientId: mail.intake.clientId ?? null,
+    to: mail.to,
     subject: mail.subject,
-    bodyText: mail.text,
+    bodyText: mail.bodyText,
     html: mail.html,
     template: "quote_ready",
     intakeId,

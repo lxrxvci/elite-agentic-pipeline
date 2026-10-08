@@ -7,7 +7,6 @@ import { toast } from 'sonner'
 import type { Quote } from '@firmos/domain'
 
 import { Button } from '@/components/ui/button'
-import { sendIntakeQuoteEmailAction } from '@/server/actions/correspondence'
 import { checkDuplicates, submitIntakeForReview } from '@/server/actions/intake'
 import type { DuplicateCandidate, IntakeAccountInput } from '@/server/intake'
 import { monthLabel } from '@/shared/lib/date-display'
@@ -20,6 +19,7 @@ import { ConvertDialog, type StaffOption } from './convert-dialog'
 import { formatMoney } from './format'
 import { noteLabel } from './notes-rail'
 import { PriceEditControl } from './price-edit'
+import { QuoteEmailCompose } from './quote-email-compose'
 import { QuoteTemplateButton } from './quote-template-button'
 import {
   BREAKDOWN_ACCOUNTS,
@@ -214,6 +214,12 @@ function ReviewAccounts({
 
 // ── V4-V7: the bucketed estimate ──────────────────────────────────────────
 
+/** L4 (G9): the billing-month drop-down's options (full month names). */
+const BILLING_MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const
+
 /** One recurring estimate line: name, math, optional account breakdown, and
  *  the direct price editor (V4). */
 function EstimateLineRow({
@@ -224,6 +230,8 @@ function EstimateLineRow({
   onPriceChange,
   breakdownOpen,
   onToggleBreakdown,
+  onToggleReconAccount,
+  onBillingMonthChange,
 }: {
   view: EstimateLine
   answers: WizardAnswers
@@ -232,9 +240,24 @@ function EstimateLineRow({
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
   breakdownOpen: boolean
   onToggleBreakdown: () => void
+  /** L4 (G7, 10_06 01:16:53): per-account factor editing on the
+   *  reconciliation line - which accounts count toward "4 accounts × $25". */
+  onToggleReconAccount?: (label: string, included: boolean) => void
+  /** L4 (G9, 10_06 01:21:18): billing-month assignment on annual lines -
+   *  "this report's due in January; include it on the January invoice"
+   *  (null = back to the monthly spread). */
+  onBillingMonthChange?: (serviceKey: string, month: number | null) => void
 }) {
   const breakdownFor = BREAKDOWN_ACCOUNTS[view.key]
   const breakdownAccounts = breakdownFor ? breakdownFor(answers) : []
+  // L4 (G7): the recon line's factor is editable - which accounts count.
+  const factorEditable = view.key === 'account_reconciliations' && priceEditable && onToggleReconAccount != null
+  const excludedLabels = new Set((answers.reconExcludedAccounts ?? []).map((n) => n.trim().toLowerCase()))
+  // L4 (G9): the assigned billing month (annual lines only; the 1099s'
+  // February rule is fixed and keeps its own badge).
+  const assignedMonth = answers.billingMonths?.[view.key] ?? null
+  const billMonthAssignable =
+    view.bucket === 'annual' && !view.februaryBilled && priceEditable && onBillingMonthChange != null
   const net = view.cycleNet
   return (
     <li className="group py-2" data-testid={`estimate-line-${view.key}`}>
@@ -244,6 +267,14 @@ function EstimateLineRow({
           {view.februaryBilled && (
             <span className="ml-2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
               billed each February
+            </span>
+          )}
+          {!view.februaryBilled && assignedMonth != null && (
+            <span
+              className="ml-2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground"
+              data-testid={`bill-month-badge-${view.key}`}
+            >
+              billed each {BILLING_MONTH_NAMES[assignedMonth - 1]}
             </span>
           )}
         </span>
@@ -264,6 +295,31 @@ function EstimateLineRow({
       {view.math && (
         <p className="tnum mt-0.5 text-xs text-muted-foreground" data-testid={`estimate-math-${view.key}`}>
           {view.math}
+        </p>
+      )}
+      {/* L4 (G9, 10_06 01:21:18): the billing-month drop-down - "When do we
+          bill this? … I should be able to click the drop down here." An
+          assigned month bills the full annual quantity on that month's
+          invoice; the default spreads it across the year. */}
+      {billMonthAssignable && (
+        <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+          Bill
+          <select
+            aria-label={`Billing month for ${view.name}`}
+            data-testid={`bill-month-${view.key}`}
+            value={assignedMonth ?? ''}
+            onChange={(e) =>
+              onBillingMonthChange!(view.key, e.target.value === '' ? null : Number(e.target.value))
+            }
+            className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            <option value="">spread across the year</option>
+            {BILLING_MONTH_NAMES.map((name, i) => (
+              <option key={name} value={i + 1}>
+                each {name}
+              </option>
+            ))}
+          </select>
         </p>
       )}
       {/* L3 (F5, 10_06 00:30:45): tier-priced lines carry the caveat -
@@ -295,11 +351,36 @@ function EstimateLineRow({
               data-testid={`breakdown-${view.key}`}
               className="mt-1 space-y-0.5 rounded-lg border border-border bg-muted/40 px-3 py-2"
             >
-              {breakdownAccounts.map((a, i) => (
-                <li key={`${a.name}-${i}`} className="text-xs text-foreground" data-testid="breakdown-account">
-                  {accountLabel(a)}
-                </li>
-              ))}
+              {breakdownAccounts.map((a, i) => {
+                // L4 (G7): the recon factor is editable - each account
+                // includes or excludes itself from the count (the line
+                // reprices live).
+                const label = accountLabel(a)
+                const included = !excludedLabels.has(label.trim().toLowerCase())
+                if (!factorEditable) {
+                  return (
+                    <li key={`${a.name}-${i}`} className="text-xs text-foreground" data-testid="breakdown-account">
+                      {label}
+                    </li>
+                  )
+                }
+                return (
+                  <li key={`${a.name}-${i}`} className="flex items-center gap-2 text-xs" data-testid="breakdown-account">
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={included}
+                      aria-label={`${included ? 'Exclude' : 'Include'} ${label} in the reconciliation count`}
+                      data-testid={`factor-toggle-${label}`}
+                      onClick={() => onToggleReconAccount!(label, !included)}
+                      className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors focus-visible:outline-2 focus-visible:outline-ring"
+                    >
+                      {included && <Check className="h-2.5 w-2.5 text-firm-brand" aria-hidden />}
+                    </button>
+                    <span className={cn(included ? 'text-foreground' : 'text-muted-foreground line-through')}>{label}</span>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </div>
@@ -336,6 +417,8 @@ function EstimateSection({
   answers,
   priceEditable,
   onPriceChange,
+  onToggleReconAccount,
+  onBillingMonthChange,
   onRetroDiscountChange,
   onCustomWork,
   customTaskCatalog,
@@ -345,6 +428,10 @@ function EstimateSection({
   answers: WizardAnswers
   priceEditable: boolean
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
+  /** L4 (G7): per-account factor editing on the recon line. */
+  onToggleReconAccount?: (label: string, included: boolean) => void
+  /** L4 (G9): billing-month assignment on annual lines. */
+  onBillingMonthChange?: (serviceKey: string, month: number | null) => void
   /** K6 (D6): the retro bulk-discount percent (null clears it). */
   onRetroDiscountChange?: (percent: number | null) => void
   /** K6 (D3/D4): custom one-time or recurring work added from the review. */
@@ -353,7 +440,10 @@ function EstimateSection({
   onAddCustomTaskTitle?: (name: string) => void
   customTaskCatalog?: { id: number; name: string }[]
 }) {
-  const estimate = buildBucketedEstimate(quote, answers)
+  // L4 (G5, 10_06 01:15:27): the retro block splits per YEAR (default) or
+  // per quarter - "compartmentalized by year… or by whatever frequency."
+  const [retroSplit, setRetroSplit] = useState<'year' | 'quarter'>('year')
+  const estimate = buildBucketedEstimate(quote, answers, retroSplit)
   // V5: breakdowns toggle independently of the section accordion (V2).
   const [openBreakdowns, setOpenBreakdowns] = useState<Record<string, boolean>>({})
   // D6: the retro bulk-discount input's local text (commits on blur/Enter).
@@ -415,7 +505,13 @@ function EstimateSection({
               <p className="flex items-baseline justify-between gap-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {ROUTINE_BUCKET_LABELS[group.bucket]}
                 <span className="tnum font-normal normal-case tracking-normal" data-testid={`estimate-bucket-total-${group.bucket}`}>
-                  {formatMoney(group.perMonth)}/mo
+                  {/* L4 (G2): cadence buckets total at their own cadence -
+                      quarterly/annual are never amortized into /mo. */}
+                  {group.bucket === 'quarterly'
+                    ? `${formatMoney(group.perYear)}/quarter`
+                    : group.bucket === 'annual'
+                      ? `${formatMoney(group.perYear)}/yr`
+                      : `${formatMoney(group.perMonth)}/mo`}
                 </span>
               </p>
               <ul className="mt-1 divide-y divide-border/60">
@@ -431,6 +527,8 @@ function EstimateSection({
                     onToggleBreakdown={() =>
                       setOpenBreakdowns((o) => ({ ...o, [view.key]: !o[view.key] }))
                     }
+                    onToggleReconAccount={onToggleReconAccount}
+                    onBillingMonthChange={onBillingMonthChange}
                   />
                 ))}
               </ul>
@@ -447,11 +545,32 @@ function EstimateSection({
       )}
 
       {/* K6 (D5/D6/D7): the retro block at the bottom - cleanup + missed
-          filings, with Jason's bulk discount on the whole block. */}
+          filings, with Jason's bulk discount on the whole block. L4 (G5):
+          per-period priced lines, split by year or quarter. */}
       {estimate.retroItems.length > 0 && (
         <div className="border-t border-border px-4 py-2.5" data-testid="estimate-retro">
           <p className="flex items-baseline justify-between gap-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Retroactive cleanup
+            <span>
+              Retroactive cleanup
+              {/* L4 (G5): year/quarter split toggle. */}
+              <span className="ml-2 inline-flex overflow-hidden rounded-md border border-border align-middle normal-case tracking-normal">
+                {(['year', 'quarter'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={retroSplit === mode}
+                    data-testid={`retro-split-${mode}`}
+                    onClick={() => setRetroSplit(mode)}
+                    className={cn(
+                      'px-2 py-0.5 text-[10px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring',
+                      retroSplit === mode ? 'bg-firm-brand text-white' : 'bg-card text-muted-foreground hover:bg-accent/60',
+                    )}
+                  >
+                    {mode === 'year' ? 'By year' : 'By quarter'}
+                  </button>
+                ))}
+              </span>
+            </span>
             <span className="tnum font-normal normal-case tracking-normal" data-testid="retro-total">
               {formatMoney(estimate.retroTotal)}
             </span>
@@ -556,6 +675,8 @@ function SectionBody({
   editable,
   onEdit,
   onPriceChange,
+  onToggleReconAccount,
+  onBillingMonthChange,
   onRetroDiscountChange,
   onCustomWork,
   customTaskCatalog,
@@ -567,6 +688,10 @@ function SectionBody({
   editable: boolean
   onEdit: (chapterId: string, questionId: string, walk?: boolean) => void
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
+  /** L4 (G7): per-account factor editing on the recon line. */
+  onToggleReconAccount?: (label: string, included: boolean) => void
+  /** L4 (G9): billing-month assignment on annual lines. */
+  onBillingMonthChange?: (serviceKey: string, month: number | null) => void
   onRetroDiscountChange?: (percent: number | null) => void
   onCustomWork?: (patch: Partial<WizardAnswers>) => void
   customTaskCatalog?: { id: number; name: string }[]
@@ -580,6 +705,8 @@ function SectionBody({
         answers={answers}
         priceEditable={editable && onPriceChange != null}
         onPriceChange={onPriceChange}
+        onToggleReconAccount={onToggleReconAccount}
+        onBillingMonthChange={onBillingMonthChange}
         onRetroDiscountChange={onRetroDiscountChange}
         onCustomWork={onCustomWork}
         customTaskCatalog={customTaskCatalog}
@@ -650,6 +777,8 @@ export function ReviewScreen({
   clientId,
   onEdit,
   onPriceChange,
+  onToggleReconAccount,
+  onBillingMonthChange,
   onRetroDiscountChange,
   onCustomWork,
   customTaskCatalog,
@@ -667,6 +796,10 @@ export function ReviewScreen({
   onEdit: (chapterId: string, questionId: string, walk?: boolean) => void
   /** V4: direct per-line price editing; present only on the editable review. */
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
+  /** L4 (G7): per-account factor editing on the recon line. */
+  onToggleReconAccount?: (label: string, included: boolean) => void
+  /** L4 (G9): billing-month assignment on annual lines (editable review). */
+  onBillingMonthChange?: (serviceKey: string, month: number | null) => void
   /** K6 (D6): retro bulk-discount percent writer (editable review only). */
   onRetroDiscountChange?: (percent: number | null) => void
   /** K6 (D3/D4): custom work writer (editable review only). */
@@ -680,7 +813,8 @@ export function ReviewScreen({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [convertOpen, setConvertOpen] = useState(false)
-  const [sendingQuote, setSendingQuote] = useState(false)
+  // L4 (K1): the proposal compose dialog (prefilled default, edit per send).
+  const [composeOpen, setComposeOpen] = useState(false)
   // K6 (F1, 09_30 01:00:58-01:02:53): the confirm-green model replaces the
   // V2 accordion - "It should default to all of them being open... you click
   // a check mark and it turns it green. Boom. And it closes it... when
@@ -740,7 +874,22 @@ export function ReviewScreen({
   /** V2's collapsed one-liner, per section. */
   const summaryFor = (section: SectionDef): string | null => {
     if (section.kind === 'quote') {
-      return quote ? `${formatMoney(quote.totals.effectiveMonthly)}/mo effective` : null
+      if (!quote) return null
+      // L4 (G3, 10_06 01:14:26): the condensed panel mirrors the grouped
+      // estimate - one-time top, the five frequency buckets middle, retro
+      // bottom; cadence totals at their own cadence (never amortized).
+      const estimate = buildBucketedEstimate(quote, answers)
+      const parts: string[] = []
+      if (estimate.oneTimeTotal > 0 || estimate.oneTime.length > 0) parts.push(`One-time ${formatMoney(estimate.oneTimeTotal)}`)
+      for (const g of estimate.groups) {
+        if (g.bucket === 'daily') parts.push(`Daily ${formatMoney(g.perMonth)}/mo`)
+        else if (g.bucket === 'weekly') parts.push(`Weekly ${formatMoney(g.perMonth)}/mo`)
+        else if (g.bucket === 'monthly') parts.push(`Monthly ${formatMoney(g.perMonth)}/mo`)
+        else if (g.bucket === 'quarterly') parts.push(`Quarterly ${formatMoney(g.perYear)}/quarter`)
+        else if (g.bucket === 'annual') parts.push(`Annual ${formatMoney(g.perYear)}/yr`)
+      }
+      if (estimate.retroTotal > 0 || estimate.retroItems.length > 0) parts.push(`Retro ${formatMoney(estimate.retroTotal)}`)
+      return parts.length > 0 ? parts.join(' · ') : `${formatMoney(quote.totals.effectiveMonthly)}/mo effective`
     }
     if (section.kind === 'notes') {
       const n = (answers.runningNotes ?? []).length
@@ -766,19 +915,8 @@ export function ReviewScreen({
   const titleFor = (section: SectionDef): string =>
     section.kind === 'quote' ? 'Estimate' : section.kind === 'notes' ? 'Running notes' : section.chapter.label
 
-  const sendQuote = async () => {
-    setSendingQuote(true)
-    try {
-      const res = await sendIntakeQuoteEmailAction(intakeId)
-      if (!res.ok) {
-        toast.error(res.error)
-        return
-      }
-      toast.success(`Proposal emailed to ${res.data.to}`)
-    } finally {
-      setSendingQuote(false)
-    }
-  }
+  // L4 (K1, 10_06 01:01:28): the proposal email composes before sending -
+  // the dialog prefills the rendered default copy, edits are per-send.
 
   const submit = async (force: boolean) => {
     setBusy(true)
@@ -873,17 +1011,19 @@ export function ReviewScreen({
             variant="outline"
             size="sm"
             data-testid="email-proposal"
-            disabled={sendingQuote}
-            onClick={async () => {
-              await sendQuote()
-              setProposalSent(true)
-            }}
+            onClick={() => setComposeOpen(true)}
           >
             <Mail className="h-3.5 w-3.5" aria-hidden />
-            {sendingQuote ? 'Sending…' : proposalSent ? 'Resend proposal' : 'Email proposal'}
+            {proposalSent ? 'Resend proposal' : 'Email proposal'}
           </Button>
         </div>
       )}
+      <QuoteEmailCompose
+        intakeId={intakeId}
+        open={composeOpen}
+        onOpenChange={setComposeOpen}
+        onSent={() => setProposalSent(true)}
+      />
       <div className="space-y-4">
         {sections.map((section) => {
           const isConfirmed = confirmed.has(section.id)
@@ -988,6 +1128,8 @@ export function ReviewScreen({
                     editable={editable}
                     onEdit={onEdit}
                     onPriceChange={onPriceChange}
+                    onToggleReconAccount={onToggleReconAccount}
+                    onBillingMonthChange={onBillingMonthChange}
                     onRetroDiscountChange={onRetroDiscountChange}
                     onCustomWork={onCustomWork}
                     customTaskCatalog={customTaskCatalog}

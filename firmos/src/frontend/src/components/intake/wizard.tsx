@@ -510,6 +510,23 @@ export function IntakeWizard({
     if (editable) void flushSave()
   }, [editable, flushSave])
 
+  // L4 (G7, 10_06 01:16:53): the reconciliation factor editor - which
+  // accounts count. Toggling an account writes reconExcludedAccounts; the
+  // debounced re-quote reprices the line live.
+  const toggleReconAccount = useCallback(
+    (label: string, included: boolean) => {
+      const current = answersRef.current.reconExcludedAccounts ?? []
+      const fold = label.trim().toLowerCase()
+      const next = included
+        ? current.filter((n) => n.trim().toLowerCase() !== fold)
+        : current.some((n) => n.trim().toLowerCase() === fold)
+          ? current
+          : [...current, label]
+      apply({ reconExcludedAccounts: next })
+    },
+    [apply],
+  )
+
   // J4 (V4): direct per-line price editing (per billing cycle). A number
   // writes the servicePrices override; null resets to the standard price,
   // clearing the override AND any legacy discount on that line.
@@ -524,6 +541,19 @@ export function IntakeWizard({
         prices[serviceKey] = dollars
       }
       apply({ servicePrices: prices, serviceDiscounts: discounts })
+    },
+    [apply],
+  )
+
+  // L4 (G9, 10_06 01:21:18): billing-month assignment on annual lines -
+  // "this report's due in January; include it on the January invoice"
+  // instead of spreading ÷12. Null clears the assignment (back to spread).
+  const changeBillingMonth = useCallback(
+    (serviceKey: string, month: number | null) => {
+      const months = { ...(answersRef.current.billingMonths ?? {}) }
+      if (month == null) delete months[serviceKey]
+      else months[serviceKey] = month
+      apply({ billingMonths: months })
     },
     [apply],
   )
@@ -806,6 +836,8 @@ export function IntakeWizard({
                 clientId={clientId}
                 onEdit={openEditor}
                 onPriceChange={changeServicePrice}
+                onToggleReconAccount={toggleReconAccount}
+                onBillingMonthChange={changeBillingMonth}
                 onRetroDiscountChange={(percent) => apply({ retroDiscountPercent: percent })}
                 onCustomWork={apply}
                 customTaskCatalog={optionLists.custom_task_templates ?? []}
