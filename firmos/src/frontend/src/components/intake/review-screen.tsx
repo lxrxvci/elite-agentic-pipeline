@@ -266,6 +266,14 @@ function EstimateLineRow({
           {view.math}
         </p>
       )}
+      {/* L3 (F5, 10_06 00:30:45): tier-priced lines carry the caveat -
+          "pricing may vary based on employee selected." The assigned
+          person's actual billing rate applies after conversion (F6). */}
+      {view.line.pricedByTiers && (
+        <p className="mt-0.5 text-[11px] italic text-muted-foreground" data-testid={`tier-caveat-${view.key}`}>
+          Estimated at the difficulty-tier rates - pricing may vary based on the employee selected.
+        </p>
+      )}
       {/* V5: the itemized account breakdown (count x rate math sits in the
           line above; the actual accounts list here). */}
       {breakdownFor && breakdownAccounts.length > 0 && (
@@ -605,7 +613,9 @@ function SectionBody({
           <div key={q.id} className="group flex items-baseline justify-between gap-4 py-2.5">
             <dt className="shrink-0 text-xs text-muted-foreground">{q.title}</dt>
             <dd className="flex items-baseline gap-1.5 text-right text-sm text-foreground">
-              <span>{text}</span>
+              {/* L3 (F7): bulleted summaries (specialty reports) keep their
+                  line breaks. */}
+              <span className="whitespace-pre-line">{text}</span>
               {editable && (
                 <RowEditButton
                   label={q.title}

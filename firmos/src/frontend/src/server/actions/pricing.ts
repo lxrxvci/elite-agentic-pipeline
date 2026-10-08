@@ -62,3 +62,18 @@ export async function setCommissionFloorRateAction(
     return fail(error);
   }
 }
+
+/** L3 (10_06 00:29:51): replace the difficulty-tier hourly rates. */
+export async function setRateTiersAction(
+  tiers: import("@/server/pricing-config").RateTiers,
+): Promise<ActionResult<import("@/server/pricing-config").RateTiers>> {
+  try {
+    const actor = await requireRole("admin", "owner");
+    const { setRateTiers } = await import("@/server/pricing-config");
+    const saved = await setRateTiers(tiers, actor.id);
+    revalidatePath("/admin/pricing");
+    return { ok: true, data: saved };
+  } catch (error) {
+    return fail(error);
+  }
+}

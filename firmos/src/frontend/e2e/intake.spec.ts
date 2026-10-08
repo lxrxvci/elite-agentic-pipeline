@@ -621,8 +621,8 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await expect(page.getByText('Yes · officers must be on payroll')).toBeVisible()
   await expect(page.getByText('E2E SurePayroll')).toBeVisible()
   await expect(page.getByText('Every two weeks')).toBeVisible()
-  // (exact: the quote lines render the product name "Payroll Quarterly Filings")
-  await expect(page.getByText('Payroll quarterly filings', { exact: true })).toBeVisible()
+  // (the review row joins the core + secondary: "Process payroll, Payroll quarterly filings")
+  await expect(page.getByText(/Payroll quarterly filings/)).toBeVisible()
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 

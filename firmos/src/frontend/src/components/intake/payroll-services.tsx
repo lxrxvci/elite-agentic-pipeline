@@ -60,9 +60,10 @@ export function PayrollServicesScreen({
         : null
   const secondaryStatic = (answers.serviceKeys ?? []).filter((k) => isPayrollKey(k) && k !== 'process_payroll')
   const secondaryCustom = (answers.payrollCustomServices ?? []) as string[]
-  // L2 (D3): custom payroll services from prior intakes return as
-  // first-class rows (fold-deduped against the static labels).
-  const extras = mergeListOptions([], 'payroll_services', optionLists).map((o) => o.value)
+  // L2 (D3): customs from prior intakes return as first-class rows -
+  // fold-deduped against the static labels (the seeded canonical three are
+  // the same labels, so they never double-render).
+  const secondaryOptions = mergeListOptions(STATIC_SECONDARY, 'payroll_services', optionLists)
 
   const commit = (nextCore: typeof core, nextStatic: string[], nextCustom: string[]) => {
     const rest = (answers.serviceKeys ?? []).filter((k) => !isPayrollKey(k))
@@ -159,7 +160,7 @@ export function PayrollServicesScreen({
             Additional services - optional
           </h2>
           <ul className="mt-2 divide-y divide-border rounded-xl border border-border bg-card" data-testid="payroll-secondary-stack">
-            {[...STATIC_SECONDARY.map((s) => ({ value: s.value, label: s.label })), ...extras.map((v) => ({ value: v, label: v }))].map(
+            {secondaryOptions.map(
               (row) => {
                 const selected = STATIC_VALUES.has(row.value)
                   ? secondaryStatic.includes(row.value)

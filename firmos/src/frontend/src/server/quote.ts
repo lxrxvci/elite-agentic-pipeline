@@ -18,7 +18,7 @@ import { statementDayForIntakeAccount } from "./accounts-seed";
 import { getCustomServiceEntries } from "./services-catalog";
 import { localToday } from "./dates";
 import type { IntakeCustomItemInput, IntakeFormData, IntakeReportDefinition } from "./intake";
-import { getPricingOverrides } from "./pricing-config";
+import { getPricingOverrides, getRateTiers } from "./pricing-config";
 
 /**
  * Intake quote mapping (HANDOFF §6.5/§15, routes_quotes.py).
@@ -135,14 +135,36 @@ export function specialtyReportsFromIntake(
   today: LocalDate = localToday(),
 ): SpecialtyReportInput[] {
   return (answers.reportDefinitions ?? [])
-    .map((r) => ({ def: r, missed: missedCountFor(r, today) }))
-    .filter(({ def, missed }) => def.estimatedHours != null || def.flatPrice != null || (missed ?? 0) > 0)
-    .map(({ def, missed }) => ({
+    .map((r) => {
+      // L3 (10_06): the three tier fields fold into tierHours; a mode never
+      // picked falls back to the populated fields (legacy rows).
+      const tierHours =
+        r.tierHours != null
+          ? r.tierHours
+          : (() => {
+              const fromItem = (k: string) => {
+                const v = (r as unknown as Record<string, unknown>)[k]
+                const n = typeof v === 'number' ? v : v == null || v === '' ? null : Number(v)
+                return n != null && Number.isFinite(n) && n > 0 ? n : null
+              }
+              const hours = {
+                bookkeeper: fromItem('tierBookkeeperHours'),
+                manager: fromItem('tierManagerHours'),
+                owner: fromItem('tierOwnerHours'),
+              }
+              return hours.bookkeeper != null || hours.manager != null || hours.owner != null ? hours : null
+            })()
+      const missed = missedCountFor(r, today)
+      return { def: r, missed, tierHours }
+    })
+    .filter(({ def, missed, tierHours }) => def.estimatedHours != null || def.flatPrice != null || tierHours != null || (missed ?? 0) > 0)
+    .map(({ def, missed, tierHours }) => ({
       name: def.name,
       frequency: def.frequency,
       estimatedHours: def.estimatedHours ?? null,
-      flatPrice: def.flatPrice ?? null,
+      flatPrice: def.pricingMode === 'hours' ? null : (def.flatPrice ?? null),
       hourlyRate: def.hourlyRate ?? null,
+      tierHours,
       missedFilings: missed,
     }));
 }
@@ -151,6 +173,7 @@ function toQuoteInput(
   answers: IntakeQuoteAnswers,
   today: LocalDate,
   customEntries?: Record<string, PricingEntry> | null,
+  rateTiers?: QuoteInput["rateTiers"],
 ): QuoteInput {
   const serviceKeys = answers.serviceKeys ?? [];
   const services: QuoteServiceInput[] = serviceKeys.map((key) => {
@@ -256,6 +279,8 @@ function toQuoteInput(
     servicePrices: answers.servicePrices ?? undefined,
     // K6 (D6): the retro bulk discount rides with the scope.
     retroDiscountPercent: answers.retroDiscountPercent ?? undefined,
+    // L3 (10_06): the admin difficulty tiers behind tier-hour report pricing.
+    rateTiers: rateTiers ?? undefined,
   };
 }
 
@@ -272,8 +297,9 @@ export function calculateIntakeQuote(
   today: LocalDate = localToday(),
   pricingOverrides?: PricingOverrides | null,
   customEntries?: Record<string, PricingEntry> | null,
+  rateTiers?: QuoteInput["rateTiers"],
 ): Quote {
-  return calculateQuote(toQuoteInput(answers, today, customEntries), pricingOverrides, customEntries);
+  return calculateQuote(toQuoteInput(answers, today, customEntries, rateTiers), pricingOverrides, customEntries);
 }
 
 /**
@@ -287,8 +313,13 @@ export async function calculateIntakeQuoteWithConfig(
   today: LocalDate = localToday(),
 ): Promise<Quote> {
   // K3: admin-created catalog services price alongside the canonical table.
-  const [overrides, customEntries] = await Promise.all([getPricingOverrides(), getCustomServiceEntries()]);
-  return calculateIntakeQuote(answers, today, overrides, customEntries);
+  // L3: the admin difficulty tiers price tier-hour specialty reports.
+  const [overrides, customEntries, rateTiers] = await Promise.all([
+    getPricingOverrides(),
+    getCustomServiceEntries(),
+    getRateTiers(),
+  ]);
+  return calculateIntakeQuote(answers, today, overrides, customEntries, rateTiers);
 }
 
 // ── Recurring services template (§6.5 price flow, step 2) ────────────────
@@ -372,7 +403,16 @@ export function buildRecurringServicesTemplate(
         discount,
         ...overrideField,
         frequency: isRetro ? "one_time" : (report?.frequency ?? "monthly"),
-        notes: line.unpriced ? "Priced manually: no amount stated in HANDOFF §15." : null,
+        // L3 (F6, 10_06 00:30:45): the tier estimate rides the template -
+        // "once an employee is selected their actual billing rate goes into
+        // the monthly invoicing." The assigned person's actual rate replaces
+        // this estimate at invoicing (Phase 4); until then the line shows
+        // the tier assumption.
+        notes: line.pricedByTiers
+          ? "Difficulty-tier estimate (admin tier rates) - the assigned employee's actual billing rate applies at invoicing."
+          : line.unpriced
+            ? "Priced manually: no amount stated in HANDOFF §15."
+            : null,
       };
     }
     return {

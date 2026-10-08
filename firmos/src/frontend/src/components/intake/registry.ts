@@ -660,7 +660,13 @@ const numOrNull = (v: unknown): number | null => {
  *  so no amount renders outside the review - the quote prices the report. */
 const specialtyPriceLabel = (i: Record<string, unknown>): string | null => {
   const flat = numOrNull(i.flatPrice)
-  if (flat != null && flat > 0) return 'flat price set'
+  if (flat != null && flat > 0 && i.pricingMode !== 'hours') return 'flat price set'
+  // L3 (10_06): tier hours price at the admin difficulty rates - the chip
+  // says so without a dollar figure (I4's no-money-before-review rule).
+  const tierHours = [i.tierBookkeeperHours, i.tierManagerHours, i.tierOwnerHours]
+    .map(numOrNull)
+    .filter((n): n is number => n != null && n > 0)
+  if (tierHours.length > 0) return 'tier hours set'
   const hours = numOrNull(i.estimatedHours)
   if (hours != null && hours > 0) return `${hours}h estimated`
   return null
@@ -2892,7 +2898,11 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'reports',
         title: 'Any special reports to track?',
-        help: 'Beyond the standard monthly package. Each runs on its own cadence with its own checklist; estimated hours price at the standard hourly rate on the quote, a flat price wins, and missed past filings price one-time at the same per-report price.',
+        // L3 (F8, 10_06 00:32:23): specialty work is outside the normal
+        // scope - "this is something that may actually change as we get into
+        // it." Tier estimates ride the admin difficulty rates; the assigned
+        // person's actual billing applies after conversion.
+        help: 'Beyond the standard monthly package. Each runs on its own cadence with its own checklist. Price it flat or by estimated hours per difficulty tier (bookkeeper, manager, owner at the admin tier rates). Specialty work can shift as we get into it - the estimate is a starting point, and the assigned person\u2019s actual billing applies after conversion.',
         type: 'repeatable',
         required: false,
         repeatable: {
@@ -2904,8 +2914,36 @@ export const CHAPTERS: ChapterDef[] = [
               options: ['monthly', 'quarterly', 'semi_annual', 'annual'].map((f) => ({ value: f, label: FREQUENCY_LABELS[f] })),
             },
             { key: 'dataSource', label: 'Data source (optional)', kind: 'text', half: true, placeholder: 'Client portal, QBO, …' },
-            { key: 'estimatedHours', label: 'Est. hours (optional)', kind: 'number', min: 0, max: 200, half: true, placeholder: '3' },
-            { key: 'flatPrice', label: 'Flat price per report (optional)', kind: 'number', min: 0, max: 100000, half: true, placeholder: '450' },
+            // L3 (10_06 00:25:07-00:29:51): "it should either be estimated
+            // number of hours or flat price per [report]." The mode pick
+            // reveals its own fields - flat price, or one hour input per
+            // difficulty tier (rates are the admin tiers, 00:29:51).
+            {
+              key: 'pricingMode', label: 'How should it be priced?', kind: 'select', half: true,
+              options: [
+                { value: 'hours', label: 'Estimated hours' },
+                { value: 'flat', label: 'Flat price per report' },
+              ],
+            },
+            {
+              key: 'flatPrice', label: 'Flat price per report', kind: 'number', min: 0, max: 100000, half: true, placeholder: '450',
+              visibleIf: (v) => v.pricingMode === 'flat',
+            },
+            // L3: "it should just have the three options available of
+            // bookkeeper, manager, owner, and then you put the estimated
+            // hours for each level" (00:29:51) - labeled Difficulty (00:28:49).
+            {
+              key: 'tierBookkeeperHours', label: 'Difficulty: bookkeeper hours', kind: 'number', min: 0, max: 500, half: true, placeholder: '2',
+              visibleIf: (v) => v.pricingMode === 'hours',
+            },
+            {
+              key: 'tierManagerHours', label: 'Manager hours', kind: 'number', min: 0, max: 500, half: true, placeholder: '1',
+              visibleIf: (v) => v.pricingMode === 'hours',
+            },
+            {
+              key: 'tierOwnerHours', label: 'Owner hours', kind: 'number', min: 0, max: 500, half: true, placeholder: '0.5',
+              visibleIf: (v) => v.pricingMode === 'hours',
+            },
             // J2 (meeting #3): the missed-filings count input became a
             // yes/no toggle; yes requires the most-recent-filing date (the
             // I1 date kind). The quote DERIVES the missed count from that
@@ -2940,8 +2978,17 @@ export const CHAPTERS: ChapterDef[] = [
             name: String(i.name),
             frequency: String(i.frequency),
             dataSource: str(i.dataSource),
+            // L3 (10_06): the pricing mode + tier hours fold into tierHours;
+            // legacy estimatedHours still coerces for old rows.
+            pricingMode: i.pricingMode === 'flat' || i.pricingMode === 'hours' ? i.pricingMode : null,
             estimatedHours: numOrNull(i.estimatedHours),
-            flatPrice: numOrNull(i.flatPrice),
+            flatPrice: i.pricingMode === 'hours' ? null : numOrNull(i.flatPrice),
+            tierHours: (() => {
+              const b = numOrNull(i.tierBookkeeperHours)
+              const m = numOrNull(i.tierManagerHours)
+              const o = numOrNull(i.tierOwnerHours)
+              return b != null || m != null || o != null ? { bookkeeper: b, manager: m, owner: o } : null
+            })(),
             // J2: boolean toggle + the last-filed date; a legacy numeric
             // count (extraction/pre-J2 intakes) passes through untouched.
             missedFilings:
@@ -2953,7 +3000,9 @@ export const CHAPTERS: ChapterDef[] = [
         }),
         summarize: (a) => {
           const rs = a.reportDefinitions ?? []
-          return rs.length > 0 ? rs.map((r) => r.name).join(', ') : null
+          // L3 (F7, 10_06 01:11:48): a vertical bulleted list, never
+          // comma-joined - "I hate the comma stuff to track."
+          return rs.length > 0 ? rs.map((r) => `• ${r.name}`).join('\n') : null
         },
       },
       {

@@ -43,7 +43,18 @@ const BASE = { hasPayroll: true } as WizardAnswers
 
 describe('L2/D1+D3: payroll_services_persist_globally_never_autoselected (10_06)', () => {
   it('two core picks in a stack; secondary presents only AFTER a core pick, never auto-selected', () => {
-    render(<Harness initial={BASE} optionLists={{ payroll_services: [] }} />)
+    render(
+      <Harness
+        initial={BASE}
+        optionLists={{
+          payroll_services: [
+            { id: 1, name: 'Quarterly filings' },
+            { id: 2, name: 'State and local payments' },
+            { id: 3, name: 'Hours and commission calculations' },
+          ],
+        }}
+      />,
+    )
     const core = screen.getByTestId('payroll-core-stack')
     expect(core.textContent).toContain('They process their own payroll')
     expect(core.textContent).toContain('We process their payroll')
@@ -54,9 +65,10 @@ describe('L2/D1+D3: payroll_services_persist_globally_never_autoselected (10_06)
     expect(answersNow().serviceKeys).toContain('process_payroll')
     const secondary = screen.getByTestId('payroll-secondary')
     expect(secondary).toBeInTheDocument()
-    // The three canonical services present, NONE selected (never auto).
+    // The three canonical services present ONCE (seeded labels fold-dedupe
+    // against the statics - never double-rendered), NONE selected.
     for (const label of ['Quarterly filings', 'State and local payments', 'Hours and commission calculations']) {
-      expect(secondary.textContent).toContain(label)
+      expect(screen.getAllByTestId(`payroll-service-${label}`)).toHaveLength(1)
     }
     expect(answersNow().serviceKeys?.filter((k) => k.startsWith('payroll_'))).toEqual([])
   })

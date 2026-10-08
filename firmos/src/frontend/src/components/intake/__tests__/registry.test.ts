@@ -685,8 +685,10 @@ describe('C10 specialty report capture', () => {
       name: 'Oregon Special Report',
       frequency: 'annual',
       dataSource: 'Client portal',
+      pricingMode: null,
       estimatedHours: null,
       flatPrice: 200,
+      tierHours: null,
       missedFilings: 18,
       lastFiledDate: null,
     })
@@ -708,8 +710,10 @@ describe('C10 specialty report capture', () => {
       name: 'Oregon Special Report',
       frequency: 'quarterly',
       dataSource: null,
+      pricingMode: null,
       estimatedHours: 2,
       flatPrice: null,
+      tierHours: null,
       missedFilings: true,
       lastFiledDate: '2026-03-31',
     })
@@ -736,7 +740,7 @@ describe('C10 specialty report capture', () => {
     // The pricing inputs still capture the numbers - they just never render
     // as text outside the review (the server quote prices the report).
     expect(reportsQ.repeatable!.itemFields.map((f) => f.key)).toEqual(
-      expect.arrayContaining(['estimatedHours', 'flatPrice', 'missedFilings', 'lastFiledDate']),
+      expect.arrayContaining(['pricingMode', 'flatPrice', 'tierBookkeeperHours', 'tierManagerHours', 'tierOwnerHours', 'missedFilings', 'lastFiledDate']),
     )
     // No dollar figure anywhere in the question's rendered copy.
     expect(JSON.stringify(reportsQ)).not.toMatch(/\$\d/)

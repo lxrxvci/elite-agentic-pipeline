@@ -298,6 +298,16 @@ export interface SpecialtyReportInput {
   flatPrice?: number | null;
   /** Hourly rate override; defaults to SPECIALTY_REPORT_DEFAULT_RATE. */
   hourlyRate?: number | null;
+  /**
+   * L3 (10_06): estimated hours per difficulty tier (bookkeeper/manager/
+   * owner). Prices Σ(hours x the tier rates); beats estimatedHours, loses
+   * to flatPrice.
+   */
+  tierHours?: {
+    bookkeeper?: number | null;
+    manager?: number | null;
+    owner?: number | null;
+  } | null;
   /** Unfiled past filings; each prices one-time at the per-report price. */
   missedFilings?: number | null;
 }
@@ -308,8 +318,31 @@ export interface SpecialtyReportInput {
  * neither - priced at review, never guessed (§15 convention for unnamed
  * amounts).
  */
-export function specialtyReportPrice(report: SpecialtyReportInput): number | null {
+export interface SpecialtyRateTiers {
+  bookkeeper: number;
+  manager: number;
+  owner: number;
+}
+
+/** Jason's defaults (10_06 00:27:38): $75 bookkeeper, $100 manager, $150 owner. */
+export const SPECIALTY_REPORT_DEFAULT_TIERS: SpecialtyRateTiers = { bookkeeper: 75, manager: 100, owner: 150 };
+
+export function specialtyReportPrice(
+  report: SpecialtyReportInput,
+  tiers: SpecialtyRateTiers = SPECIALTY_REPORT_DEFAULT_TIERS,
+): number | null {
   if (report.flatPrice != null && report.flatPrice > 0) return round2(report.flatPrice);
+  // L3 (10_06 00:29:51): hours x the difficulty-tier rates - "the
+  // bookkeeper does initial data entry… and then a manager reviews it or an
+  // owner reviews it."
+  const th = report.tierHours ?? null;
+  if (th && ((th.bookkeeper ?? 0) > 0 || (th.manager ?? 0) > 0 || (th.owner ?? 0) > 0)) {
+    return round2(
+      (th.bookkeeper ?? 0) * tiers.bookkeeper +
+        (th.manager ?? 0) * tiers.manager +
+        (th.owner ?? 0) * tiers.owner,
+    );
+  }
   if (report.estimatedHours != null && report.estimatedHours > 0) {
     return round2(report.estimatedHours * (report.hourlyRate ?? SPECIALTY_REPORT_DEFAULT_RATE));
   }
@@ -356,6 +389,9 @@ export interface QuoteInput {
    * tracking rows, not money).
    */
   specialtyReports?: SpecialtyReportInput[];
+  /** L3 (10_06): the admin difficulty-tier rates for tier-hour pricing;
+   *  the defaults apply when unset. */
+  rateTiers?: SpecialtyRateTiers | null;
 }
 
 /**
@@ -386,6 +422,9 @@ export interface QuoteLine {
   amount: number | null;
   bucket: PricingBucket;
   unpriced: boolean;
+  /** L3 (10_06): the price came from difficulty-tier hours - the estimate
+   *  shows "pricing may vary based on the employee selected" (F5). */
+  pricedByTiers?: boolean;
 }
 
 export interface QuoteTotals extends EffectiveMonthlyTotals {
@@ -550,7 +589,13 @@ export function calculateQuote(
   // full number. A report with neither hours nor a flat price emits an
   // unpriced line ("quoted at review"), never a guessed amount.
   for (const [i, report] of (input.specialtyReports ?? []).entries()) {
-    const price = specialtyReportPrice(report);
+    const price = specialtyReportPrice(report, input.rateTiers ?? undefined);
+    const tierPriced =
+      report.flatPrice == null &&
+      report.tierHours != null &&
+      ((report.tierHours.bookkeeper ?? 0) > 0 ||
+        (report.tierHours.manager ?? 0) > 0 ||
+        (report.tierHours.owner ?? 0) > 0);
     const months = SPECIALTY_REPORT_PERIOD_MONTHS[report.frequency] ?? 1;
     const quantity = cycle / months;
     lines.push({
@@ -562,6 +607,7 @@ export function calculateQuote(
       amount: price == null ? null : round2(price * quantity),
       bucket: "monthly",
       unpriced: price == null,
+      ...(tierPriced ? { pricedByTiers: true } : {}),
     });
     const missed = Math.max(0, Math.floor(report.missedFilings ?? 0));
     if (missed > 0) {

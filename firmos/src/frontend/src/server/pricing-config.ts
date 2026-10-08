@@ -250,3 +250,60 @@ export async function setCommissionTiers(
   });
   return next;
 }
+
+// ── Difficulty-tier hourly rates (L3, 10_06 00:27:38-00:30:45) ─────────────
+
+/**
+ * The hourly billing rates behind specialty-report "Difficulty" estimates:
+ * Bookkeeper / Manager / Owner, admin-configured ("you'll be able to set the
+ * pricing tiers in the admin console"). Matthew's constraint: tiers should
+ * sit ABOVE the actual employee cost rate; validation enforces non-negative
+ * finite amounts only - the firm's margin is its own call.
+ */
+export interface RateTiers {
+  bookkeeper: number;
+  manager: number;
+  owner: number;
+}
+
+const RATE_TIERS_KEY = "rate_tiers";
+
+/** Jason's defaults (10_06 00:27:38): $75 bookkeeper, $100 manager, $150 owner. */
+export const DEFAULT_RATE_TIERS: RateTiers = { bookkeeper: 75, manager: 100, owner: 150 };
+
+/** The configured tiers, or Jason's defaults when unset/invalid. */
+export async function getRateTiers(): Promise<RateTiers> {
+  const raw = await readSetting(RATE_TIERS_KEY);
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return DEFAULT_RATE_TIERS;
+  const candidate = raw as Record<string, unknown>;
+  const out: RateTiers = { ...DEFAULT_RATE_TIERS };
+  for (const tier of ["bookkeeper", "manager", "owner"] as const) {
+    const value = candidate[tier];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) out[tier] = round2(value);
+  }
+  return out;
+}
+
+/** Replace the tier table (all three required, finite, non-negative). Audit-logged. */
+export async function setRateTiers(tiers: RateTiers, actorId: number): Promise<RateTiers> {
+  for (const tier of ["bookkeeper", "manager", "owner"] as const) {
+    const value = tiers[tier];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > MAX_PRICE) {
+      throw new PricingConfigError(400, `The ${tier} rate must be a number between 0 and ${MAX_PRICE}`);
+    }
+  }
+  const previous = await getRateTiers();
+  const next: RateTiers = {
+    bookkeeper: round2(tiers.bookkeeper),
+    manager: round2(tiers.manager),
+    owner: round2(tiers.owner),
+  };
+  await writeSetting(RATE_TIERS_KEY, next, actorId);
+  await logEvent({
+    userId: actorId,
+    action: "rate_tiers_updated",
+    entityType: "app_settings",
+    metadata: { key: RATE_TIERS_KEY, previousTiers: previous, newTiers: next },
+  });
+  return next;
+}

@@ -437,3 +437,23 @@ describe.skipIf(!reachable)("pricing config (admin-editable pricing + commission
     expect(invoice!.total).toBe("100.00");
   });
 });
+
+describe.skipIf(!reachable)("L3: tier_rates_admin_editable_defaults_75_100_150 (10_06 00:27:38)", () => {
+  it("defaults to Jason's tiers when unset; setRateTiers persists and validates", async () => {
+    const { getRateTiers, setRateTiers, DEFAULT_RATE_TIERS, PricingConfigError } = await import("@/server/pricing-config");
+
+    expect(DEFAULT_RATE_TIERS).toEqual({ bookkeeper: 75, manager: 100, owner: 150 });
+    const fallback = await getRateTiers();
+    expect(fallback).toEqual(DEFAULT_RATE_TIERS);
+
+    const saved = await setRateTiers({ bookkeeper: 85, manager: 110, owner: 175 }, 1);
+    expect(saved).toEqual({ bookkeeper: 85, manager: 110, owner: 175 });
+    expect(await getRateTiers()).toEqual(saved);
+
+    await expect(setRateTiers({ bookkeeper: -5, manager: 100, owner: 150 }, 1)).rejects.toBeInstanceOf(
+      PricingConfigError,
+    );
+    // The failed write left the good tiers in place.
+    expect(await getRateTiers()).toEqual(saved);
+  });
+});

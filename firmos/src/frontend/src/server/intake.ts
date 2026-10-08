@@ -147,6 +147,20 @@ export interface IntakeReportDefinition {
   /** Hourly rate override; the quote engine's default rate applies otherwise. */
   hourlyRate?: number | null;
   /**
+   * L3 (10_06 00:25:07-00:29:51): the pricing mode pick - "calculate on
+   * estimated hours" or "calculate a flat price per report." Hours mode
+   * prices per difficulty tier (bookkeeper/manager/owner hour fields);
+   * legacy rows without a mode infer it from the populated fields.
+   */
+  pricingMode?: "flat" | "hours" | null;
+  /** L3: estimated hours per difficulty tier (hours mode). The line prices
+   *  Σ(hours x the admin tier rates, defaults $75/$100/$150). */
+  tierHours?: {
+    bookkeeper?: number | null;
+    manager?: number | null;
+    owner?: number | null;
+  } | null;
+  /**
    * J2 (meeting #3): the wizard captures a yes/no - true means past filings
    * were missed and lastFiledDate carries the most recent filing; the quote
    * derives the missed COUNT from that date x the cadence through today
