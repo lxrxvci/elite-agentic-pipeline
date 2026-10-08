@@ -18,8 +18,9 @@ describe.skipIf(!reachable)("industry-tagged custom add-ons (L2/H7)", () => {
     const row = await addIndustrySuggestion("Medical / therapy practice", key, "A custom add-on from a prior intake.");
     expect(row).toBeTruthy();
 
-    // Surfaces for the matching industry (fold-insensitive)...
-    const hit = await listIndustrySuggestions("medical therapy practice");
+    // Surfaces for the matching industry (the wizard passes the industry
+    // answer verbatim from the industries list; the fold matches it)...
+    const hit = await listIndustrySuggestions("Medical / therapy practice");
     expect(hit.some((s) => s.serviceKey === key)).toBe(true);
     // ...and never for a different industry.
     const miss = await listIndustrySuggestions("construction");
