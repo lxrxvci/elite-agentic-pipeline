@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { convertIntake } from '@/server/actions/intake'
+import type { ConversionTaskPlanItem } from '@/server/convert'
 
 export interface StaffOption {
   id: number
@@ -36,6 +37,12 @@ const selectCls =
  * notes: assignment is a post-conversion admin action on the client record);
  * server errors (bad state, concurrent conversion) render verbatim as human
  * messages.
+ *
+ * L6 (I4/I5, 10_06 00:59:13): "once we convert… we'll do the task
+ * assigning, we'll finalize the days of the week." The dialog lists the
+ * engagement's scheduled tasks with a per-task employee picker (defaulting
+ * to the seat picks above) and each candidate's open-work count as the
+ * staggering hint. Days carry over from the proposed schedule.
  */
 export function ConvertDialog({
   intakeId,
@@ -57,13 +64,47 @@ export function ConvertDialog({
   const [bookkeeperId, setBookkeeperId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // L6 (I5): the per-task plan loads on open (lazy - the dialog is rare).
+  const [plan, setPlan] = useState<ConversionTaskPlanItem[] | null>(null)
+  const [planLoaded, setPlanLoaded] = useState(false)
+  const [picked, setPicked] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    if (!open || planLoaded) return
+    let cancelled = false
+    void (async () => {
+      const { getConversionTaskPlan } = await import('@/server/actions/intake')
+      const res = await getConversionTaskPlan(intakeId)
+      if (cancelled) return
+      setPlanLoaded(true)
+      if (res.ok) setPlan(res.data.items.length > 0 ? res.data.items : null)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, intakeId, planLoaded])
+
+  const employees = useMemo(() => [...managers, ...bookkeepers], [managers, bookkeepers])
+  /** A row's effective assignee: its explicit pick, else the seat default. */
+  const rowValue = (item: ConversionTaskPlanItem): string =>
+    picked[item.key] ?? (item.seat === 'manager' ? managerId : bookkeeperId)
+  const openCountOf = (v: string): number | null =>
+    v === '' ? null : (employees.find((e) => String(e.id) === v)?.openCount ?? null)
 
   const confirm = async () => {
     setBusy(true)
     setError(null)
+    // L6 (I5): explicit per-task picks ride the conversion (empty rows fall
+    // back to the seat default server-side).
+    const taskAssignees: Record<string, number> = {}
+    for (const item of plan ?? []) {
+      const v = rowValue(item)
+      if (v !== '') taskAssignees[item.key] = Number(v)
+    }
     const res = await convertIntake(intakeId, {
       managerId: managerId === '' ? null : Number(managerId),
       bookkeeperId: bookkeeperId === '' ? null : Number(bookkeeperId),
+      taskAssignees,
     })
     setBusy(false)
     if (!res.ok) {
@@ -127,8 +168,53 @@ export function ConvertDialog({
           </div>
         </div>
 
+        {/* L6 (I5): per-task assignment with the workload hint - "see what
+            the admin's schedule looks like" before committing. */}
+        {plan && plan.length > 0 && (
+          <div className="mt-2" data-testid="convert-task-plan">
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+              Task assignment <span className="font-normal">(days carry over from the proposed schedule)</span>
+            </p>
+            <ul className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+              {plan.map((item) => {
+                const v = rowValue(item)
+                const open = openCountOf(v)
+                return (
+                  <li
+                    key={item.key}
+                    className="flex items-center gap-2 rounded-lg border border-border px-2.5 py-1.5"
+                    data-testid={`convert-task-${item.key}`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium text-foreground">{item.title}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">{item.cadence}</span>
+                    </span>
+                    <select
+                      aria-label={`Assign ${item.title}`}
+                      data-testid={`convert-task-assignee-${item.key}`}
+                      className="h-8 w-40 appearance-none rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                      value={v}
+                      onChange={(e) => setPicked((p) => ({ ...p, [item.key]: e.target.value }))}
+                    >
+                      <option value="">Assign later</option>
+                      {employees.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.name}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="tnum w-14 shrink-0 text-right text-[10px] text-muted-foreground" data-testid={`convert-task-load-${item.key}`}>
+                      {open == null ? '' : `${open} open`}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
+
         <p className="text-xs text-muted-foreground">
-          You can assign the team after conversion from the client record.
+          Anything left unassigned can be staffed after conversion from the client record.
         </p>
 
         {error && (

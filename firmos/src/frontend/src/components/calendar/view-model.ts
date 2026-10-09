@@ -45,36 +45,38 @@ export function monthOf(iso: string): { year: number; month: number } {
   return { year: d.year, month: d.month }
 }
 
-/** Canonical /calendar URL for a view + anchor day. */
-export function calendarHref(view: CalendarView, anchorIso: string): string {
+/** Canonical /calendar URL for a view + anchor day. L6 (I4): the employee
+ *  filter rides the URL so a filtered view is shareable. */
+export function calendarHref(view: CalendarView, anchorIso: string, assigneeId?: number | null): string {
   const { year, month } = monthOf(anchorIso)
-  return `/calendar?view=${view}&month=${year}-${String(month).padStart(2, '0')}&day=${anchorIso}`
+  const base = `/calendar?view=${view}&month=${year}-${String(month).padStart(2, '0')}&day=${anchorIso}`
+  return assigneeId != null ? `${base}&assignee=${assigneeId}` : base
 }
 
 /**
  * Nav targets. Month view steps whole months (anchored on today's day when
  * the target month contains today, else the 1st); week view steps 7 days.
  */
-export function prevHref(view: CalendarView, anchorIso: string, todayIso: string): string {
-  if (view === 'week') return calendarHref('week', addDaysIso(anchorIso, -7))
+export function prevHref(view: CalendarView, anchorIso: string, todayIso: string, assigneeId?: number | null): string {
+  if (view === 'week') return calendarHref('week', addDaysIso(anchorIso, -7), assigneeId)
   const { year, month } = monthOf(anchorIso)
   const prev = new Date(Date.UTC(year, month - 2, 1))
   const py = prev.getUTCFullYear()
   const pm = prev.getUTCMonth() + 1
   const t = parseLocalDate(todayIso)
   const day = py === t.year && pm === t.month ? t.day : 1
-  return calendarHref('month', isoOf({ year: py, month: pm, day }))
+  return calendarHref('month', isoOf({ year: py, month: pm, day }), assigneeId)
 }
 
-export function nextHref(view: CalendarView, anchorIso: string, todayIso: string): string {
-  if (view === 'week') return calendarHref('week', addDaysIso(anchorIso, 7))
+export function nextHref(view: CalendarView, anchorIso: string, todayIso: string, assigneeId?: number | null): string {
+  if (view === 'week') return calendarHref('week', addDaysIso(anchorIso, 7), assigneeId)
   const { year, month } = monthOf(anchorIso)
   const next = new Date(Date.UTC(year, month, 1))
   const ny = next.getUTCFullYear()
   const nm = next.getUTCMonth() + 1
   const t = parseLocalDate(todayIso)
   const day = ny === t.year && nm === t.month ? t.day : 1
-  return calendarHref('month', isoOf({ year: ny, month: nm, day }))
+  return calendarHref('month', isoOf({ year: ny, month: nm, day }), assigneeId)
 }
 
 /** "2:30 PM" from a "HH:MM" 24-hour value (display only). */

@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/db";
 import { contactClientLinks, contacts } from "@/db/schema";
 import { convertIntakeToClient } from "@/server/convert";
-import { createIntake, submitIntakeForReview, updateIntake, type IntakePatch } from "@/server/intake";
+import { createIntake, submitIntakeForReview, updateIntake, type IntakePatch, markIntakeAccepted, } from "@/server/intake";
 import { seedDatabase } from "@/server/seed";
 
 import { dbReachable, TEST_TODAY } from "./helpers";
@@ -61,6 +61,8 @@ describe.skipIf(!reachable)("custom roles convert with their labels (B4)", () =>
     const row = await createIntake(intakeWithRoles());
     await updateIntake(row.id, {});
     await submitIntakeForReview(row.id);
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(row.id);
     const result = await convertIntakeToClient(row.id, { managerId: mgr.id, bookkeeperId: bk.id }, mgr.id, TEST_TODAY);
 
     const wren = (await db.select().from(contacts).where(eq(contacts.email, "wren@roletest.io")))[0];

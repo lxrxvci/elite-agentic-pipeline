@@ -5,7 +5,7 @@ import { tasks, users } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { accountItemError, ACCOUNT_COUNT_DEFS } from "@/components/intake/registry";
 import { convertIntakeToClient, ConversionError } from "@/server/convert";
-import { createIntake, submitIntakeForReview, updateIntake, type IntakePatch } from "@/server/intake";
+import { createIntake, submitIntakeForReview, updateIntake, type IntakePatch, markIntakeAccepted, } from "@/server/intake";
 import { seedDatabase } from "@/server/seed";
 
 import { dbReachable, TEST_TODAY } from "./helpers";
@@ -53,6 +53,8 @@ describe.skipIf(!reachable)("C1: the conversion gate (DB)", () => {
     await submitIntakeForReview(row.id);
 
     const mgr = (await db.select().from(users).where(eq(users.email, "dana@blueledgerbooks.com")).limit(1))[0];
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(row.id);
     const err = await convertIntakeToClient(row.id, { managerId: mgr.id }, mgr.id, TEST_TODAY).catch((e) => e);
     expect(err).toBeInstanceOf(ConversionError);
     expect(String(err.message)).toContain("pick the bank");
@@ -76,6 +78,8 @@ describe.skipIf(!reachable)("C1: the conversion gate (DB)", () => {
     await updateIntake(row.id, {});
     await submitIntakeForReview(row.id);
     const mgr = (await db.select().from(users).where(eq(users.email, "dana@blueledgerbooks.com")).limit(1))[0];
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(row.id);
     const result = await convertIntakeToClient(row.id, { managerId: mgr.id }, mgr.id, TEST_TODAY);
     expect(result.clientId).toBeGreaterThan(0);
   });
@@ -104,6 +108,8 @@ describe.skipIf(!reachable)("C3: asset-driven onboarding tasks (09_30 00:17:55)"
     await updateIntake(row.id, {});
     await submitIntakeForReview(row.id);
     const mgr = (await db.select().from(users).where(eq(users.email, "dana@blueledgerbooks.com")).limit(1))[0];
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(row.id);
     const result = await convertIntakeToClient(row.id, { managerId: mgr.id }, mgr.id, TEST_TODAY);
 
     const created = await db.select().from(tasks).where(eq(tasks.clientId, result.clientId));

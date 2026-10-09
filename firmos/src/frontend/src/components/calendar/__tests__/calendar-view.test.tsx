@@ -127,7 +127,8 @@ describe('CalendarViewRoot (month view)', () => {
   it('fetches the clicked day through the day action and updates the detail card', async () => {
     renderCalendar()
     await userEvent.click(screen.getByTestId('calendar-day-2026-08-20'))
-    await waitFor(() => expect(mockGetDay).toHaveBeenCalledWith('2026-08-20'))
+    // L6 (I4): the day drill passes the employee filter (null = whole team).
+    await waitFor(() => expect(mockGetDay).toHaveBeenCalledWith('2026-08-20', null))
     await waitFor(() =>
       expect(screen.getByTestId('calendar-day-2026-08-20')).toHaveAttribute('aria-pressed', 'true'),
     )

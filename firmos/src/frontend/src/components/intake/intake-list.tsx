@@ -51,8 +51,9 @@ export function IntakeList({
   const router = useRouter()
   const [convertRow, setConvertRow] = useState<IntakeListRow | null>(null)
 
-  const purgatory = rows.filter((r) => r.status === 'pending_review')
-  const rest = rows.filter((r) => r.status !== 'pending_review')
+  // L6 (I3): accepted intakes are still awaiting conversion - same queue.
+  const purgatory = rows.filter((r) => r.status === 'pending_review' || r.status === 'accepted')
+  const rest = rows.filter((r) => r.status !== 'pending_review' && r.status !== 'accepted')
 
   if (rows.length === 0) {
     return (

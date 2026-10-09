@@ -77,7 +77,15 @@ function meetingDay(startsAt: Date, timeZone: string): string {
   return formatLocalDate({ year: p.year, month: p.month, day: p.day });
 }
 
-export async function getCalendarRange(start: LocalDate, end: LocalDate): Promise<CalendarDayItems[]> {
+export async function getCalendarRange(
+  start: LocalDate,
+  end: LocalDate,
+  // L6 (I4, 10_06 00:59:13): the employee toggle - "toggle by employee
+  // essentially that's assigned to that task." Work items filter to the
+  // resolved assignee; meetings always show (they're shared events).
+  opts: { assigneeId?: number | null } = {},
+): Promise<CalendarDayItems[]> {
+  const assigneeFilter = opts.assigneeId ?? null;
   const timeZone = process.env.FIRMOS_TIMEZONE?.trim() || "America/New_York";
   const startStr = formatLocalDate(start);
   const endStr = formatLocalDate(end);
@@ -161,8 +169,16 @@ export async function getCalendarRange(start: LocalDate, end: LocalDate): Promis
     .orderBy(asc(meetings.startsAt), asc(meetings.id));
 
   const workByDay = new Map<string, CalendarWorkItem[]>();
-  const pushWork = (dueDate: string | null, item: Omit<CalendarWorkItem, "dueDate">) => {
+  const pushWork = (
+    dueDate: string | null,
+    item: Omit<CalendarWorkItem, "dueDate">,
+    resolvedAssigneeId: number | null,
+  ) => {
     if (dueDate == null || dueDate < startStr || dueDate > endStr) return;
+    // L6 (I4): the employee toggle filters on the RESOLVED assignee (task
+    // rows carry their own; feed/recon/report rows inherit the client's
+    // bookkeeper/manager).
+    if (assigneeFilter != null && resolvedAssigneeId !== assigneeFilter) return;
     const list = workByDay.get(dueDate) ?? [];
     list.push({ ...item, dueDate });
     workByDay.set(dueDate, list);
@@ -181,7 +197,7 @@ export async function getCalendarRange(start: LocalDate, end: LocalDate): Promis
       clientName: clientName(t.clientId),
       title: t.title,
       assigneeName: staffName(t.assigneeId),
-    });
+    }, t.assigneeId);
   }
   for (const f of feedRows) {
     pushWork(f.dueDate, {
@@ -191,7 +207,7 @@ export async function getCalendarRange(start: LocalDate, end: LocalDate): Promis
       clientName: clientName(f.clientId),
       title: `Bank feed week of ${f.weekStartDate}`,
       assigneeName: staffName(clientBookkeeper.get(f.clientId) ?? null),
-    });
+    }, clientBookkeeper.get(f.clientId) ?? null);
   }
   for (const r of reconRows) {
     pushWork(r.dueDate, {
@@ -201,7 +217,7 @@ export async function getCalendarRange(start: LocalDate, end: LocalDate): Promis
       clientName: clientName(r.clientId),
       title: `Reconcile ${accountNameById.get(r.accountId) ?? "account"}`,
       assigneeName: staffName(clientBookkeeper.get(r.clientId) ?? null),
-    });
+    }, clientBookkeeper.get(r.clientId) ?? null);
   }
   for (const r of reportRows) {
     pushWork(r.dueDate, {
@@ -211,7 +227,7 @@ export async function getCalendarRange(start: LocalDate, end: LocalDate): Promis
       clientName: clientName(r.clientId),
       title: r.name,
       assigneeName: staffName(clientManager.get(r.clientId) ?? null),
-    });
+    }, clientManager.get(r.clientId) ?? null);
   }
 
   const meetingsByDay = new Map<string, CalendarMeetingItem[]>();
@@ -255,7 +271,10 @@ export async function getCalendarRange(start: LocalDate, end: LocalDate): Promis
 }
 
 /** One day's detail (the right-side drill card on /calendar). */
-export async function getCalendarDay(day: LocalDate): Promise<CalendarDayItems> {
-  const days = await getCalendarRange(day, day);
+export async function getCalendarDay(
+  day: LocalDate,
+  opts: { assigneeId?: number | null } = {},
+): Promise<CalendarDayItems> {
+  const days = await getCalendarRange(day, day, opts);
   return days[0];
 }

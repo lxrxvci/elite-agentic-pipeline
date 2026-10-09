@@ -30,6 +30,7 @@ import { uploadStatement } from "@/server/documents";
 import {
   createIntake,
   getIntake,
+  markIntakeAccepted,
   submitIntakeForReview,
   updateIntake,
   type IntakePatch,
@@ -235,6 +236,8 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
         accounts: [{ name: "Operating Checking", accountType: "checking", institution: "Chase", last4: "4411" }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, { managerId }, ownerId, CONVERSION_TODAY);
     expect(result.catchUpProjectsCreated).toBe(2);
 
@@ -271,6 +274,8 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
         accounts: [{ name: "Checking", accountType: "checking", institution: "Chase", last4: "4411" }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(cleanIntake);
     const clean = await convertIntakeToClient(cleanIntake, {}, ownerId, CONVERSION_TODAY);
     expect(clean.catchUpProjectsCreated).toBe(0);
     const cleanProjects = await db.select().from(projects).where(eq(projects.clientId, clean.clientId));
@@ -427,6 +432,8 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
         ],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(offlineIntake);
     const offline = await convertIntakeToClient(offlineIntake, {}, ownerId, CONVERSION_TODAY);
     const offlineTasks = await db
       .select()
@@ -461,6 +468,8 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
         ],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(onlineIntake);
     const online = await convertIntakeToClient(onlineIntake, {}, ownerId, CONVERSION_TODAY);
     const onlineTasks = await db
       .select()
@@ -483,6 +492,8 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
         accounts: [{ name: "Property A Mortgage", accountType: "mortgage", institution: "Mr. Cooper" }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, ownerId, CONVERSION_TODAY);
     const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     const template = client.recurringServicesTemplate as TemplateLineItem[];
@@ -628,6 +639,8 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
         accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411", statementDay: 31 }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, { managerId, bookkeeperId }, ownerId, CONVERSION_TODAY);
 
     // Nothing may be due before the catch-up anchor - the old system's wall of
@@ -828,6 +841,8 @@ describe.skipIf(!reachable)("jason regression suite (server layer)", () => {
       bookkeepingStartDate: "2026-08-01",
       formData: { serviceKeys: ["bank_feed_management"] },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, ownerId, CONVERSION_TODAY);
     const intake = await getIntake(intakeId);
     expect(intake.clientId).toBe(result.clientId);

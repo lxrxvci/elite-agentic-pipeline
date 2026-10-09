@@ -36,6 +36,7 @@ import { PRELIMINARY_REPORTS_NOTE } from "@/shared/lib/default-rules";
 import {
   createIntake,
   getIntake,
+  markIntakeAccepted,
   submitIntakeForReview,
   updateIntake,
   type IntakePatch,
@@ -76,6 +77,27 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     bookkeeperSofia = await userIdByEmail("sofia@blueledgerbooks.com");
   });
 
+  // L6 (I3, 10_06 00:58:22): "we're not going to commit to a day of the
+  // week schedule until the estimate is accepted." Conversion is gated on
+  // the accepted state - pending_review cannot convert.
+  it("L6/I3: day_commitment_blocked_before_acceptance", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Unaccepted Gate Co",
+      bookkeepingStartDate: "2026-01-01",
+    });
+    const intake = await getIntake(intakeId);
+    expect(intake.status).toBe("pending_review");
+    await expect(convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY)).rejects.toThrow(
+      /must be accepted before it can convert/,
+    );
+
+    // Acceptance opens the gate (pending_review -> accepted -> completed).
+    await markIntakeAccepted(intakeId);
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    expect(result.clientId).toBeGreaterThan(0);
+    expect((await getIntake(intakeId)).status).toBe("completed");
+  });
+
   it("converts the seeded pending_review intake into the full graph in one transaction", async () => {
     const [intake] = await db
       .select()
@@ -93,6 +115,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       TEST_TODAY,
     );
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intake.id);
     const result = await convertIntakeToClient(
       intake.id,
       { managerId: managerDana, bookkeeperId: bookkeeperSofia },
@@ -282,6 +306,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     expect(result.propertiesCreated).toBe(3);
 
@@ -312,6 +338,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: { serviceKeys: ["bank_feed_management"], isRealEstateClient: false },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     expect(result.propertiesCreated).toBe(0);
     const rows = await db.select().from(properties).where(eq(properties.clientId, result.clientId));
@@ -352,6 +380,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
     const byName = new Map(rows.map((a) => [a.name, a]));
@@ -411,6 +441,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
 
     // The bank selection resolved the account's institution from the FK.
@@ -455,6 +487,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         qboSubscriptionTier: "plus",
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     expect(client.qboUserCount).toBe(3);
@@ -468,6 +502,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       bookkeepingStartDate: "2026-01-01",
       formData: { serviceKeys: ["bank_feed_management"] },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     expect(client.qboUserCount).toBeNull();
@@ -479,6 +515,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       legalName: "Race Condition Co",
       bookkeepingStartDate: "2026-01-01",
     });
+    // L6 (I3): one acceptance covers both racers; the loser hits the lock.
+    await markIntakeAccepted(intakeId);
 
     const outcomes = await Promise.allSettled([
       // One racer assigns staff, the other converts unstaffed: the lock
@@ -510,6 +548,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       ],
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     await expect(
       convertIntakeToClient(intakeId, { managerId: managerDana, bookkeeperId: bookkeeperJorge }, managerDana, TEST_TODAY),
     ).rejects.toThrow();
@@ -521,7 +561,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
     expect(created).toHaveLength(0);
     const intake = await getIntake(intakeId);
     expect(intake.clientId).toBeNull();
-    expect(intake.status).toBe("pending_review");
+    // L6 (I3): the acceptance survives the rolled-back conversion.
+    expect(intake.status).toBe("accepted");
   });
 
   it("converts WITHOUT staff: full graph with null assignees (assignment is post-conversion)", async () => {
@@ -537,6 +578,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
 
     // Client record with null staff.
@@ -586,6 +629,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       bookkeepingStartDate: "2026-01-01",
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerDana },
@@ -621,6 +666,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         accounts: [{ name: "Checking", accountType: "checking", institution: "Chase", last4: "4411" }], // K7: identifiers complete (the conversion gate)
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
 
     const queue = await getUnifiedQueue(managerDana, TEST_TODAY);
@@ -638,6 +685,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       reportDefinitions: [{ name: "Monthly Financial Package", frequency: "monthly" }],
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerPriya, bookkeeperId: bookkeeperSofia },
@@ -683,6 +732,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         accounts: [{ name: "Checking", accountType: "checking", institution: "Chase", last4: "4411" }], // K7: identifiers complete (the conversion gate)
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerDana, bookkeeperId: bookkeeperJorge },
@@ -744,6 +795,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       bookkeepingFrequency: "monthly",
       bookkeepingStartDate: "2026-01-01",
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerDana, bookkeeperId: bookkeeperSofia },
@@ -778,6 +831,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       formData: { serviceKeys: ["bank_feed_management"] },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerPriya, bookkeeperId: bookkeeperSofia },
@@ -804,6 +859,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       bookkeepingFrequency: "monthly",
       bookkeepingStartDate: "2026-01-01",
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerDana, bookkeeperId: bookkeeperSofia },
@@ -833,6 +890,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerPriya, bookkeeperId: bookkeeperSofia },
@@ -865,6 +924,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         contacts: [{ entityName: "Cascade Tax Group", relationshipType: "cpa" }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerPriya, bookkeeperId: null },
@@ -896,6 +957,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerPriya, bookkeeperId: bookkeeperSofia },
@@ -934,6 +997,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerPriya, bookkeeperId: null },
@@ -970,6 +1035,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       taxStructure: "S-corp",
       formData: { serviceKeys: ["bank_feed_management"] },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(scorpId);
     const scorp = await convertIntakeToClient(scorpId, {}, managerPriya, TEST_TODAY);
     const [scorpClient] = await db.select().from(clients).where(eq(clients.id, scorp.clientId));
     expect(scorpClient.hasPayroll).toBe(true);
@@ -981,6 +1048,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       taxStructure: "LLC",
       formData: { llcSubclass: "llc_ccorp", serviceKeys: ["bank_feed_management"] },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(llcId);
     const llc = await convertIntakeToClient(llcId, {}, managerPriya, TEST_TODAY);
     const [llcClient] = await db.select().from(clients).where(eq(clients.id, llc.clientId));
     expect(llcClient.taxStructure).toBe("LLC");
@@ -994,6 +1063,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       taxStructure: "Sole proprietorship",
       formData: { serviceKeys: ["bank_feed_management"] },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
     const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     expect(client.hasPayroll).toBe(false);
@@ -1006,6 +1077,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       taxStructure: "Sole proprietorship",
       formData: { serviceKeys: ["bank_feed_management"] },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
     const [before] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     expect(before.hasPayroll).toBe(false);
@@ -1025,6 +1098,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       taxStructure: "S-corp",
       formData: { serviceKeys: ["bank_feed_management"], hasPayroll: true },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
     // The payroll answer was real - an entity edit alone must not erase it.
     await updateIntake(intakeId, {
@@ -1073,6 +1148,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         payrollProvider: "Gusto",
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
     const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     expect(client.hasPayroll).toBe(true);
@@ -1097,6 +1174,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         includeMerchantReconciliation: true,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(yesId);
     const yes = await convertIntakeToClient(yesId, {}, managerDana, TEST_TODAY);
     const yesRules = await db
       .select()
@@ -1117,6 +1196,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         includeMerchantReconciliation: false,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(noId);
     const no = await convertIntakeToClient(noId, {}, managerDana, TEST_TODAY);
     const noRules = await db
       .select()
@@ -1136,6 +1217,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         ],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
     const clientId = result.clientId;
 
@@ -1185,6 +1268,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         owners: [{ name: "Pat Miller", email: "pat@x.co", receivesReports: true }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
 
     // The wizard autosaves step slices through form_data.owners.
@@ -1211,6 +1296,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       engagementType: "project",
       formData: { serviceKeys: ["bank_feed_management"] },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
     const clientId = result.clientId;
     let [client] = await db.select().from(clients).where(eq(clients.id, clientId));
@@ -1271,6 +1358,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
         contacts: [{ entityName: "Cascade Tax Group", relationshipType: "cpa" }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerPriya, TEST_TODAY);
     const clientId = result.clientId;
     await db.update(clients).set({ cpaContactId: null }).where(eq(clients.id, clientId));
@@ -1339,6 +1428,8 @@ describe.skipIf(!reachable)("convertIntakeToClient + cascade", () => {
       },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(
       intakeId,
       { managerId: managerDana, bookkeeperId: bookkeeperSofia },
@@ -1467,6 +1558,8 @@ describe.skipIf(!reachable)("J1 conversion: contact dedup + account identifiers"
       owners: [{ name: "Wren Okafor", email: "wren@dedup.example", ownershipPercent: 100 }],
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     expect(result.contactsCreated).toBe(1); // only Wren is new
     expect(result.contactsLinked).toBe(3); // Carlos (contacts list + CPA card) + Wren (owner)
@@ -1507,6 +1600,8 @@ describe.skipIf(!reachable)("J1 conversion: contact dedup + account identifiers"
         contacts: [{ firstName: "Carlos", lastName: "Reyes", relationshipType: "related" }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     expect(result.contactsCreated).toBe(1);
     expect(result.contactsLinked).toBe(0);
@@ -1541,6 +1636,8 @@ describe.skipIf(!reachable)("J1 conversion: contact dedup + account identifiers"
         ],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
     const byName = new Map(rows.map((a) => [a.name, a]));
@@ -1581,6 +1678,8 @@ describe.skipIf(!reachable)("J1 conversion: contact dedup + account identifiers"
         ],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
     const byName = new Map(rows.map((a) => [a.name, a]));
@@ -1621,6 +1720,8 @@ describe.skipIf(!reachable)("J1 conversion: contact dedup + account identifiers"
         ],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
     const byName = new Map(rows.map((a) => [a.name, a]));
@@ -1648,6 +1749,8 @@ describe.skipIf(!reachable)("J1 conversion: contact dedup + account identifiers"
         merchantAccounts: [{ name: "Stripe", processor: "Stripe", processorId: stripe.id }, { name: "Toast", processorId: (await db.select().from(merchantProcessors).where(eq(merchantProcessors.name, "Toast")))[0].id }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const merchants = (await db.select().from(accounts).where(eq(accounts.clientId, result.clientId))).filter(
       (a) => a.accountType === "merchant",
@@ -1714,7 +1817,11 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
       formData: { ...(SCHEDULE_BASE.formData ?? {}), routineSchedule: schedule },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(legacyId);
     const legacy = await convertIntakeToClient(legacyId, { bookkeeperId: bookkeeperSofia }, managerDana, TEST_TODAY);
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(scheduledId);
     const scheduled = await convertIntakeToClient(
       scheduledId,
       { bookkeeperId: bookkeeperSofia },
@@ -1747,6 +1854,8 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
       legalName: "Tier Default Co",
       formData: { ...(SCHEDULE_BASE.formData ?? {}), routineSchedule: schedule },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rules = await rulesFor(result.clientId);
     expect(rules.get("Categorize Transactions")?.dayOfMonth).toBe(10);
@@ -1771,6 +1880,8 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
         },
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rules = await rulesFor(result.clientId);
     const rule = rules.get("Friday deposit sync")!;
@@ -1812,6 +1923,8 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
         },
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rules = await rulesFor(result.clientId);
     const rule = rules.get("Send Reports")!;
@@ -1855,7 +1968,11 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
         }), null),
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(untouchedId);
     const untouched = await convertIntakeToClient(untouchedId, {}, managerDana, TEST_TODAY);
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(scheduledId);
     const scheduled = await convertIntakeToClient(scheduledId, {}, managerDana, TEST_TODAY);
     expect((await rulesFor(untouched.clientId)).get("Payroll handling")).toBeUndefined();
     const rules = await rulesFor(scheduled.clientId);
@@ -1884,6 +2001,8 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
       legalName: "Excluded Routine Co",
       formData: { serviceKeys: ["bank_feed_management"], excludedDefaultRules: ["client_questions"], routineSchedule: schedule },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rules = await rulesFor(result.clientId);
     expect(rules.get("Client Questions")).toBeUndefined();
@@ -1904,6 +2023,8 @@ describe.skipIf(!reachable)("J3 routine-schedule conversion (meeting #3, R1-R5)"
         accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     expect(result.recurringRulesCreated).toBe(6); // 4 defaults + EOY (E9) + 1 custom
     const rules = await rulesFor(result.clientId);
@@ -2038,6 +2159,8 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
       formData: { ...formData, reportDefinitions, customRecurringRules, routineSchedule },
     });
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, { bookkeeperId: undefined }, managerDana, TEST_TODAY);
     const clientId = result.clientId;
     const [client] = await db.select().from(clients).where(eq(clients.id, clientId));
@@ -2147,6 +2270,8 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
         servicePrices: { bank_feed_management: 90 },
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     const template = client.recurringServicesTemplate as {
@@ -2214,6 +2339,8 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
         equityPerOwner: true,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
     const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
     const equityRows = rows
@@ -2242,6 +2369,8 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
         equitySetup: "grouped",
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(groupedId);
     const grouped = await convertIntakeToClient(groupedId, {}, managerDana, TEST_TODAY);
     const groupedRows = await db.select().from(accounts).where(eq(accounts.clientId, grouped.clientId));
     const groupedEquity = groupedRows.filter((r) =>
@@ -2262,6 +2391,8 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
         contacts: [{ firstName: "Lee", lastName: "Ray", email: "lee@equity-default.example", isPrimary: true }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(legacyId);
     const legacy = await convertIntakeToClient(legacyId, {}, managerDana, TEST_TODAY);
     const legacyRows = await db.select().from(accounts).where(eq(accounts.clientId, legacy.clientId));
     expect(

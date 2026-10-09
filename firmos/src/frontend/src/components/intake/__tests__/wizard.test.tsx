@@ -55,6 +55,7 @@ vi.mock('@/server/actions/intake', () => ({
   checkDuplicates: (input: unknown) => checkDuplicates(input),
   submitIntakeForReview: (id: unknown) => submitIntakeForReview(id),
   convertIntake: (id: unknown, staff: unknown) => convertIntake(id, staff),
+  acceptIntakeEstimate: vi.fn(async () => ({ ok: true as const, data: { status: 'accepted' } })),
 }))
 
 // The review screen's "Email proposal" button (correspondence hub) - mocked

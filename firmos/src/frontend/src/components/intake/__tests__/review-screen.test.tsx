@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Quote } from '@firmos/domain'
 
 import { ReviewScreen } from '../review-screen'
-import type { WizardAnswers } from '../registry'
+import { deriveRoutineTasks, type WizardAnswers } from '../registry'
+import { averageMonthlyStars } from '../routine-calendar'
 
 /**
  * J4 review & pricing rebuild (meeting #3, V1-V7, 00:58:28-01:06:58):
@@ -17,6 +18,7 @@ import type { WizardAnswers } from '../registry'
 vi.mock('@/server/actions/intake', () => ({
   checkDuplicates: vi.fn(async () => ({ ok: true, data: [] })),
   submitIntakeForReview: vi.fn(async () => ({ ok: true, data: {} })),
+  acceptIntakeEstimate: vi.fn(async () => ({ ok: true, data: { status: 'accepted' } })),
 }))
 
 // The quote section's "Email proposal" compose dialog (L4/K1): preview
@@ -134,7 +136,7 @@ function renderReview({
 }: {
   answers?: WizardAnswers
   quote?: Quote | null
-  status?: 'draft' | 'pending_review' | 'completed' | 'archived'
+  status?: 'draft' | 'pending_review' | 'accepted' | 'completed' | 'archived'
   canConvert?: boolean
   onEdit?: (chapterId: string, questionId: string) => void
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
@@ -605,6 +607,39 @@ describe('ReviewScreen quote email + plain amounts', () => {
   })
 })
 
+/** L6 (I3, 10_06 00:58:22): "we're not going to commit to a day of the
+ *  week schedule until the estimate is accepted." Conversion stays gated
+ *  until a manager marks the estimate accepted. */
+describe('day_commitment_blocked_before_acceptance (L6/I3)', () => {
+  it('pending_review: convert is disabled behind the acceptance gate', () => {
+    renderReview({ status: 'pending_review', canConvert: true, quote: DISCOUNT_QUOTE })
+    expect(screen.getByTestId('accept-estimate')).toBeInTheDocument()
+    expect(screen.getByTestId('convert-button')).toBeDisabled()
+    expect(screen.getByTestId('convert-gated-hint')).toHaveTextContent('accepts the estimate')
+  })
+
+  it('accepting marks the estimate through the action', async () => {
+    const user = (await import('@testing-library/user-event')).default.setup()
+    const { acceptIntakeEstimate } = await import('@/server/actions/intake')
+    renderReview({ status: 'pending_review', canConvert: true, quote: DISCOUNT_QUOTE })
+    await user.click(screen.getByTestId('accept-estimate'))
+    expect(acceptIntakeEstimate).toHaveBeenCalledWith(1)
+  })
+
+  it('accepted: the badge shows and convert unlocks', () => {
+    renderReview({ status: 'accepted', canConvert: true, quote: DISCOUNT_QUOTE })
+    expect(screen.getByTestId('accepted-badge')).toHaveTextContent('Estimate accepted')
+    expect(screen.getByTestId('convert-button')).toBeEnabled()
+    expect(screen.queryByTestId('accept-estimate')).toBeNull()
+  })
+
+  it('non-managers see neither gate control', () => {
+    renderReview({ status: 'pending_review', canConvert: false, quote: DISCOUNT_QUOTE })
+    expect(screen.queryByTestId('accept-estimate')).toBeNull()
+    expect(screen.queryByTestId('convert-button')).toBeNull()
+  })
+})
+
 describe('ReviewScreen I1 answer rendering', () => {
   it('shows custom Other text verbatim, the CPA card, the referral who, and no catch-up row', () => {
     render(
@@ -940,5 +975,36 @@ describe('custom_task_in_review_persists_to_catalog (K8, D4 closeout)', () => {
         customRecurringRules: [expect.objectContaining({ title: 'Quarterly sales-tax prep', scheduleType: 'quarterly' })],
       }),
     )
+  })
+})
+
+/** L6 (I1, 10_06 00:53:44): "every time I've done 450 on 10 stars I've
+ *  been burnt" - the estimate price carries the workload figure beside it. */
+describe('stars_appear_beside_estimate_price (L6/I1)', () => {
+  it('the estimate header shows the average monthly stars next to the price', () => {
+    const answers = {
+      legalName: 'Stars Co',
+      engagementType: 'bookkeeping',
+      monthlyCloseTier: '10',
+      bookkeepingFrequency: 'monthly',
+      bookkeepingStartDate: '2026-01-01',
+      recordDeposits: true,
+      routineSchedule: { 'record-deposits': { bucket: 'weekly', order: 0, weekdays: [5] } },
+    } as unknown as WizardAnswers
+    renderReview({ answers, quote: DISCOUNT_QUOTE })
+    const expected = averageMonthlyStars(
+      deriveRoutineTasks(answers),
+      answers.routineSchedule!,
+      new Date().getFullYear(),
+    )
+    expect(expected).toBeGreaterThan(0)
+    expect(screen.getByTestId('quote-stars')).toHaveTextContent(`≈ ${expected} ★/mo`)
+    expect(screen.getByTestId('quote-total')).toHaveTextContent('$75')
+  })
+
+  it('no schedule committed -> no stars figure', () => {
+    renderReview({ quote: DISCOUNT_QUOTE })
+    expect(screen.getByTestId('quote-total')).toBeInTheDocument()
+    expect(screen.queryByTestId('quote-stars')).toBeNull()
   })
 })

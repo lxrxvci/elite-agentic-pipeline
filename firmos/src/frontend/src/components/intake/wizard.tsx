@@ -114,7 +114,14 @@ function readPeekPreference(): boolean {
   }
 }
 
-export type IntakeStatusKey = 'new' | 'in_progress' | 'pending_review' | 'completed' | 'archived'
+export type IntakeStatusKey =
+  | 'new'
+  | 'in_progress'
+  | 'pending_review'
+  /** L6 (I3): the estimate is accepted; conversion is open. */
+  | 'accepted'
+  | 'completed'
+  | 'archived'
 
 export interface IntakeWizardProps {
   intakeId: number
@@ -601,7 +608,15 @@ export function IntakeWizard({
   }, [screen, chapters])
 
   const reviewStatus =
-    liveStatus === 'pending_review' ? 'pending_review' : liveStatus === 'completed' ? 'completed' : liveStatus === 'archived' ? 'archived' : 'draft'
+    liveStatus === 'pending_review'
+      ? 'pending_review'
+      : liveStatus === 'accepted'
+        ? 'accepted'
+        : liveStatus === 'completed'
+          ? 'completed'
+          : liveStatus === 'archived'
+            ? 'archived'
+            : 'draft'
 
   // Read-only intake (pending_review / completed / archived): review screen only.
   if (!editable) {

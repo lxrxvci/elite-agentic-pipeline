@@ -1,14 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, ChevronDown, Mail, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Quote } from '@firmos/domain'
 
 import { Button } from '@/components/ui/button'
 import { MaskedValue } from '@/components/ui/masked-value'
-import { checkDuplicates, submitIntakeForReview } from '@/server/actions/intake'
+import { acceptIntakeEstimate, checkDuplicates, submitIntakeForReview } from '@/server/actions/intake'
 import type { DuplicateCandidate, IntakeAccountInput } from '@/server/intake'
 import { monthLabel } from '@/shared/lib/date-display'
 import { maskTaxId } from '@/shared/lib/mask'
@@ -35,6 +36,7 @@ import {
   ACCOUNT_TYPE_LABELS,
   allAccounts,
   ASSET_TYPE_LABELS,
+  deriveRoutineTasks,
   PROOF_CATEGORY_LABELS,
   visibleChapters,
   visibleQuestions,
@@ -42,6 +44,7 @@ import {
   type QuestionDef,
   type WizardAnswers,
 } from './registry'
+import { averageMonthlyStars } from './routine-calendar'
 
 /**
  * The review chapter. J4 (meeting #3, V1-V7) as revised by K6 (09_30
@@ -948,7 +951,7 @@ export function ReviewScreen({
   intakeId: number
   answers: WizardAnswers
   quote: Quote | null
-  status: 'draft' | 'pending_review' | 'completed' | 'archived'
+  status: 'draft' | 'pending_review' | 'accepted' | 'completed' | 'archived'
   canConvert: boolean
   managers: StaffOption[]
   bookkeepers: StaffOption[]
@@ -976,6 +979,41 @@ export function ReviewScreen({
   const [convertOpen, setConvertOpen] = useState(false)
   // L4 (K1): the proposal compose dialog (prefilled default, edit per send).
   const [composeOpen, setComposeOpen] = useState(false)
+  // L6 (I3): the acceptance gate - conversion opens once the estimate is
+  // accepted; accepting flips the page's status server-side. The wizard's
+  // liveStatus is frozen at mount, so a successful accept also flips the
+  // local mirror (acceptedLocally) - the refresh then confirms it.
+  const [accepting, setAccepting] = useState(false)
+  const [acceptedLocally, setAcceptedLocally] = useState(false)
+  // The wizard's liveStatus is frozen at mount, so submit/accept mirror the
+  // server flips locally; router.refresh() then confirms them.
+  const [submittedLocally, setSubmittedLocally] = useState(false)
+  const effectiveStatus =
+    acceptedLocally || status === 'accepted'
+      ? 'accepted'
+      : submittedLocally
+        ? 'pending_review'
+        : status
+  const isAccepted = effectiveStatus === 'accepted'
+  const router = useRouter()
+  const acceptEstimate = async () => {
+    setAccepting(true)
+    try {
+      const res = await acceptIntakeEstimate(intakeId)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      toast.success('Estimate marked accepted - conversion is open.')
+      setAcceptedLocally(true)
+      // From the success screen, return to the review so the accepted state
+      // (convert unlocked) shows immediately; the refresh confirms it.
+      if (phase === 'submitted') setPhase('review')
+      router.refresh()
+    } finally {
+      setAccepting(false)
+    }
+  }
   // K6 (F1, 09_30 01:00:58-01:02:53): the confirm-green model replaces the
   // V2 accordion - "It should default to all of them being open... you click
   // a check mark and it turns it green. Boom. And it closes it... when
@@ -986,6 +1024,16 @@ export function ReviewScreen({
   const [proposalSent, setProposalSent] = useState(false)
 
   const editable = status === 'draft'
+
+  // L6 (I1, 10_06 00:53:44): the average month's stars beside the estimate
+  // price - the price↔workload gut check ("450 on 10 stars, always burnt").
+  const starsPerMonth = useMemo(() => {
+    const schedule = answers.routineSchedule
+    if (!schedule || Object.keys(schedule).length === 0) return null
+    const year = new Date().getFullYear()
+    const stars = averageMonthlyStars(deriveRoutineTasks(answers), schedule, year)
+    return stars > 0 ? stars : null
+  }, [answers])
 
   // ── The section list, in display order: chapters, then the estimate,
   //    then running notes. ──
@@ -1103,6 +1151,7 @@ export function ReviewScreen({
       setError(res.error)
       return
     }
+    setSubmittedLocally(true)
     setPhase('submitted')
   }
 
@@ -1134,13 +1183,26 @@ export function ReviewScreen({
           Submitted for review
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {answers.legalName} is in the review queue. A manager can convert it to a client.
+          {answers.legalName} is in the review queue. Once the client accepts the estimate, a
+          manager can convert it to a client.
         </p>
         <div className="mt-4 flex items-center justify-center gap-3">
+          {/* L6 (I3): the gate holds on the success screen too - acceptance
+              first, conversion after (00:58:22). */}
           {canConvert && (
-            <Button variant="action" onClick={() => setConvertOpen(true)} data-testid="convert-button">
-              Convert to client
-            </Button>
+            <>
+              <Button
+                variant="action"
+                onClick={() => void acceptEstimate()}
+                disabled={accepting}
+                data-testid="accept-estimate"
+              >
+                {accepting ? 'Marking…' : 'Mark estimate accepted'}
+              </Button>
+              <Button variant="outline" disabled data-testid="convert-button" aria-disabled="true">
+                Convert to client
+              </Button>
+            </>
           )}
           <Button asChild variant="outline">
             <Link href="/intake">Back to intakes</Link>
@@ -1164,7 +1226,7 @@ export function ReviewScreen({
     <div className="space-y-5" data-testid="review-screen">
       {/* K6 (D8, 09_30 01:07:50): the proposal email lives top-right -
           "that'll be your resend." After the first send it reads Resend. */}
-      {(status === 'draft' || status === 'pending_review') && canConvert && quote != null && phase === 'review' && (
+      {(effectiveStatus === 'draft' || effectiveStatus === 'pending_review' || effectiveStatus === 'accepted') && canConvert && quote != null && phase === 'review' && (
         <div className="flex justify-end gap-2">
           {/* K8 (D8): the email template options ride the same top-right row. */}
           <QuoteTemplateButton />
@@ -1265,6 +1327,19 @@ export function ReviewScreen({
                     <span className="tnum text-sm font-semibold text-money-strong" data-testid="quote-total">
                       {formatMoney(quote.totals.effectiveMonthly)}
                       <span className="ml-1 text-xs font-medium text-muted-foreground">/mo effective</span>
+                      {/* L6 (I1, 10_06 00:53:44): the workload figure beside
+                          the price - "every time I've done 450 on 10 stars
+                          I've been burnt." One star = one scheduled task
+                          occurrence; the average month's count. */}
+                      {starsPerMonth != null && (
+                        <span
+                          className="ml-2 rounded bg-accent px-1.5 py-0.5 text-[11px] font-semibold text-accent-foreground"
+                          data-testid="quote-stars"
+                          title="One star = one scheduled task occurrence; the average month's total across a year."
+                        >
+                          ≈ {starsPerMonth} ★/mo
+                        </span>
+                      )}
                     </span>
                   )}
                   {section.kind === 'chapter' && editable && first && (
@@ -1346,22 +1421,62 @@ export function ReviewScreen({
         </p>
       )}
 
-      {status === 'draft' && phase === 'review' && (
+      {status === 'draft' && !submittedLocally && phase === 'review' && (
         <Button variant="action" onClick={() => submit(false)} disabled={busy} data-testid="submit-intake">
           {busy ? 'Checking…' : 'Submit for review'}
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
       )}
 
-      {status === 'pending_review' && (
-        <div className="flex items-center gap-3" data-testid="pending-review-actions">
+      {effectiveStatus === 'pending_review' && phase === 'review' && (
+        <div className="flex flex-wrap items-center gap-3" data-testid="pending-review-actions">
+          {canConvert ? (
+            <>
+              {/* L6 (I3, 10_06 00:58:22): the estimate must be ACCEPTED
+                  before conversion - "we're not going to commit to a day of
+                  the week schedule until the estimate is accepted." */}
+              <Button
+                variant="action"
+                onClick={() => void acceptEstimate()}
+                disabled={accepting}
+                data-testid="accept-estimate"
+              >
+                {accepting ? 'Marking…' : 'Mark estimate accepted'}
+              </Button>
+              <span className="text-xs text-muted-foreground" data-testid="convert-gated-hint">
+                Conversion opens once the client accepts the estimate - the day-of-week schedule
+                finalizes then.
+              </span>
+              <Button variant="outline" disabled data-testid="convert-button" aria-disabled="true">
+                Convert to client
+              </Button>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Waiting on a manager to review and convert.
+            </p>
+          )}
+          <Button asChild variant="outline">
+            <Link href="/intake">Back to intakes</Link>
+          </Button>
+        </div>
+      )}
+
+      {isAccepted && phase === 'review' && (
+        <div className="flex flex-wrap items-center gap-3" data-testid="accepted-actions">
+          <span
+            className="rounded bg-status-on-track-bg px-2 py-1 text-[11px] font-semibold text-status-on-track"
+            data-testid="accepted-badge"
+          >
+            Estimate accepted
+          </span>
           {canConvert ? (
             <Button variant="action" onClick={() => setConvertOpen(true)} data-testid="convert-button">
               Convert to client
             </Button>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Waiting on a manager to review and convert.
+              Accepted - waiting on a manager to convert.
             </p>
           )}
           <Button asChild variant="outline">

@@ -170,10 +170,14 @@ export const relationshipTypeEnum = pgEnum("relationship_type", [
 
 // §6.8 - intake lifecycle: new → in_progress → pending_review → completed,
 // with archived as a side exit.
+// L5→L6 (I3, 10_06 00:58:22): accepted sits between review and conversion -
+// "we're not going to commit to a day-of-week schedule until the estimate is
+// accepted." Conversion (completed) is only reachable from accepted.
 export const intakeStatusEnum = pgEnum("intake_status", [
   "new",
   "in_progress",
   "pending_review",
+  "accepted",
   "completed",
   "archived",
 ]);

@@ -34,7 +34,7 @@ import {
 } from "@/server/correspondence";
 import { __clearEmailStashForTests, getLastEmailFor } from "@/server/email";
 import { parseResendInboundPayload, verifySvixSignature } from "@/server/email-inbound";
-import { createIntake, submitIntakeForReview, updateIntake } from "@/server/intake";
+import { createIntake, markIntakeAccepted, submitIntakeForReview, updateIntake } from "@/server/intake";
 import { missingInfoReminderJob } from "@/server/jobs";
 import { PortalDisabledError } from "@/server/portal";
 import { seedDatabase } from "@/server/seed";
@@ -247,6 +247,8 @@ describe.skipIf(!reachable)("correspondence hub", () => {
     const quoteRow = await sendQuoteReadyEmail(intake.id, danaId);
     expect(quoteRow.clientId).toBeNull();
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intake.id);
     const result = await convertIntakeToClient(intake.id, {}, danaId, TEST_TODAY);
     expect(result.welcomeEmailSent).toBe(true);
 

@@ -163,6 +163,45 @@ describe.skipIf(!reachable)("calendar + meetings (Phase 3C)", () => {
 
       await deleteMeeting(ownerId, evening.id);
     });
+
+    // L6 (I4, 10_06 00:59:13): "toggle by employee essentially that's
+    // assigned to that task" - the calendar filters work items to one
+    // assignee; meetings are shared and stay visible.
+    it("calendar_toggles_by_employee", async () => {
+      const staffRows = await db.select().from(users);
+      const jorge = staffRows.find((u) => u.email === "jorge@blueledgerbooks.com")!;
+      const sofia = staffRows.find((u) => u.email === "sofia@blueledgerbooks.com")!;
+      await db.insert(tasks).values([
+        { clientId: harborlineId, title: "Jorge's fixture task", dueDate: "2026-08-13", assigneeId: jorge.id },
+        { clientId: harborlineId, title: "Sofia's fixture task", dueDate: "2026-08-13", assigneeId: sofia.id },
+      ]);
+      const meeting = await createMeeting(ownerId, {
+        title: "Shared review",
+        clientId: harborlineId,
+        startsAt: AT("2026-08-13"),
+        endsAt: AT("2026-08-13", 18),
+      });
+
+      const day = { year: 2026, month: 8, day: 13 };
+      const all = await getCalendarRange(day, day);
+      const allTitles = all[0].workItems.map((w) => w.title);
+      expect(allTitles).toContain("Jorge's fixture task");
+      expect(allTitles).toContain("Sofia's fixture task");
+
+      const jorgeOnly = await getCalendarRange(day, day, { assigneeId: jorge.id });
+      const jorgeTitles = jorgeOnly[0].workItems.map((w) => w.title);
+      expect(jorgeTitles).toContain("Jorge's fixture task");
+      expect(jorgeTitles).not.toContain("Sofia's fixture task");
+      // Meetings are not assignment-filtered.
+      expect(jorgeOnly[0].meetings.map((m) => m.id)).toContain(meeting.id);
+
+      // The day drill honors the same filter.
+      const drill = await getCalendarDay(day, { assigneeId: sofia.id });
+      expect(drill.workItems.map((w) => w.title)).toContain("Sofia's fixture task");
+      expect(drill.workItems.map((w) => w.title)).not.toContain("Jorge's fixture task");
+
+      await deleteMeeting(ownerId, meeting.id);
+    });
   });
 
   describe("email the client the meeting info", () => {

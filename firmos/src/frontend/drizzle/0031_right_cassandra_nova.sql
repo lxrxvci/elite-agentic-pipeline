@@ -1,0 +1,1 @@
+ALTER TYPE "public"."intake_status" ADD VALUE 'accepted' BEFORE 'completed';

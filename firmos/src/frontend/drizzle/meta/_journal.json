@@ -218,6 +218,20 @@
       "when": 1791502509149,
       "tag": "0030_cheerful_the_call",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791509398088,
+      "tag": "0031_right_cassandra_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791511453675,
+      "tag": "0032_brainy_norman_osborn",
+      "breakpoints": true
     }
   ]
 }

@@ -133,10 +133,11 @@ export async function emailMeetingInfoAction(
 /** Stay-on-page day drill: the detail card fetches a day without navigating. */
 export async function getCalendarDayAction(
   dateIso: string,
+  assigneeId?: number | null,
 ): Promise<ActionResult<CalendarDayItems>> {
   try {
     await requireStaff();
-    return { ok: true, data: await getCalendarDay(parseLocalDate(dateIso)) };
+    return { ok: true, data: await getCalendarDay(parseLocalDate(dateIso), { assigneeId: assigneeId ?? null }) };
   } catch (error) {
     return fail(error);
   }

@@ -3315,7 +3315,10 @@ export const CHAPTERS: ChapterDef[] = [
         // conversion seeds exactly what the screen shows.
         id: ROUTINE_SCHEDULER_QUESTION_ID,
         title: 'Routine order and frequency',
-        help: 'Every recurring task for this engagement, in the order the work happens. Drag a card to reorder it or move it to another bucket; the schedule controls set exactly when it runs.',
+        // L6 (I3, 10_06 00:58:22): the schedule is PROPOSED until the client
+        // accepts the estimate - "we're not going to commit to a day of the
+        // week schedule until the estimate is accepted."
+        help: 'Every recurring task for this engagement, in the order the work happens. Drag a card to reorder it or move it to another bucket; the schedule controls set exactly when it runs. Days are proposed for now - they finalize once the client accepts the estimate.',
         type: 'routine-scheduler',
         required: false,
         when: isBookkeeping,

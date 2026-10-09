@@ -23,13 +23,15 @@ export function formatMoney(n: number): string {
   return Number.isInteger(n) ? usd.format(n) : usdCents.format(n)
 }
 
-export type IntakeStatusKey = 'new' | 'in_progress' | 'pending_review' | 'completed' | 'archived'
+export type IntakeStatusKey = 'new' | 'in_progress' | 'pending_review' | 'accepted' | 'completed' | 'archived'
 
 /** Intake lifecycle mapped onto the 6-status language (never color alone). */
 export const INTAKE_STATUS: Record<IntakeStatusKey, { status: WorkStatus; label: string }> = {
   new: { status: 'on_hold', label: 'New' },
   in_progress: { status: 'due_soon', label: 'In progress' },
   pending_review: { status: 'waiting_client', label: 'Pending review' },
+  // L6 (I3): accepted sits between review and conversion.
+  accepted: { status: 'on_track', label: 'Accepted' },
   completed: { status: 'on_track', label: 'Converted' },
   archived: { status: 'on_hold', label: 'Archived' },
 }

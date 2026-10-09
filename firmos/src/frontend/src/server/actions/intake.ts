@@ -4,10 +4,11 @@ import { revalidatePath } from 'next/cache'
 
 import { requireRole, requireStaff } from '@/server/auth/guards'
 import { cascadeIntakeToClient } from '@/server/cascade'
-import { convertIntakeToClient, type ConversionResult } from '@/server/convert'
+import { convertIntakeToClient, getConversionTaskPlan as getConversionTaskPlanRows, type ConversionResult, type ConversionTaskPlanItem } from '@/server/convert'
 import {
   createIntake,
   findDuplicates,
+  markIntakeAccepted,
   submitIntakeForReview as submitForReview,
   updateIntake,
   type DuplicateCandidate,
@@ -124,11 +125,52 @@ export async function checkDuplicates(input: {
   }
 }
 
+/** L6 (I3, 10_06 00:58:22): mark the estimate accepted (the client said yes)
+ *  - conversion stays gated until this happens. Manager-and-above, like
+ *  conversion itself. */
+export async function acceptIntakeEstimate(
+  intakeId: number,
+): Promise<ActionResult<{ status: string }>> {
+  try {
+    await requireRole('owner', 'admin', 'manager')
+  } catch {
+    return { ok: false, error: 'Accepting an estimate requires a manager role or above.' }
+  }
+  try {
+    const row = await markIntakeAccepted(intakeId)
+    revalidatePath(`/intake/${intakeId}`)
+    revalidatePath('/intake')
+    return { ok: true, data: { status: row.status } }
+  } catch (error) {
+    return { ok: false, error: messageOf(error) }
+  }
+}
+
+/** L6 (I5, 10_06 00:59:13): the conversion dialog's per-task assignment
+ *  list - the seeds conversion will write, with seat defaults and proposed
+ *  cadences. Manager-and-above, like conversion itself. */
+export async function getConversionTaskPlan(
+  intakeId: number,
+): Promise<ActionResult<{ items: ConversionTaskPlanItem[] }>> {
+  try {
+    await requireRole('owner', 'admin', 'manager')
+  } catch {
+    return { ok: false, error: 'Conversion planning requires a manager role or above.' }
+  }
+  try {
+    const items = (await getConversionTaskPlanRows(intakeId)) ?? []
+    return { ok: true, data: { items } }
+  } catch (error) {
+    return { ok: false, error: messageOf(error) }
+  }
+}
+
 /** Conversion is a manager-and-above decision; staff assignment is optional
- *  at conversion and happens post-conversion from the client record. */
+ *  at conversion and happens post-conversion from the client record.
+ *  L6 (I5): per-task assignee overrides ride staff.taskAssignees. */
 export async function convertIntake(
   intakeId: number,
-  staff: { managerId?: number | null; bookkeeperId?: number | null },
+  staff: { managerId?: number | null; bookkeeperId?: number | null; taskAssignees?: Record<string, number> },
 ): Promise<ActionResult<ConversionResult>> {
   let userId: number
   try {

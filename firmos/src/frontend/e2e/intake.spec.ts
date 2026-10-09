@@ -392,11 +392,18 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 
+  // L6 (I3): conversion waits for the estimate's acceptance - the convert
+  // button stays disabled until a manager marks it accepted.
+  await expect(page.getByTestId('convert-button')).toBeDisabled()
+  await page.getByTestId('accept-estimate').click()
+  await expect(page.getByTestId('convert-button')).toBeEnabled({ timeout: 10_000 })
+
   // ── Convert (mara is owner): staff assignment is optional here ──
   await page.getByTestId('convert-button').click()
   await expect(page.getByTestId('convert-dialog')).toBeVisible()
   await expect(
-    page.getByText('You can assign the team after conversion from the client record.'),
+    // L6 (I5): the assignment hint copy changed with the per-task picker.
+    page.getByText('Anything left unassigned can be staffed after conversion from the client record.'),
   ).toBeVisible()
   // Convert with no staff selected: the button is enabled either way.
   await page.getByTestId('convert-confirm').click()
@@ -479,7 +486,9 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 
-  // ── Converts on the project track ──
+  // ── Converts on the project track (after acceptance - L6/I3) ──
+  await page.getByTestId('accept-estimate').click()
+  await expect(page.getByTestId('convert-button')).toBeEnabled({ timeout: 10_000 })
   await page.getByTestId('convert-button').click()
   await page.getByTestId('convert-confirm').click()
   await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname), { timeout: 20_000 })
@@ -631,6 +640,9 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 
   // ── Convert: the client record carries payroll (server suite pins the stamp) ──
+  // L6 (I3): acceptance unlocks conversion.
+  await page.getByTestId('accept-estimate').click()
+  await expect(page.getByTestId('convert-button')).toBeEnabled({ timeout: 10_000 })
   await page.getByTestId('convert-button').click()
   await page.getByTestId('convert-confirm').click()
   await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname), { timeout: 20_000 })

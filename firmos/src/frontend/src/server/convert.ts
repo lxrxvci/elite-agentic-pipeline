@@ -1,4 +1,4 @@
-import { sql, inArray } from "drizzle-orm";
+import { eq, sql, inArray } from "drizzle-orm";
 import {
   addDays,
   closeTierDueDate,
@@ -38,6 +38,9 @@ import {
 import { accountLabel, normalizeLast4 } from "@/shared/lib/account-label";
 import {
   planRoutineSeeds,
+  resolveRoutineEntries,
+  routineEntrySummary,
+  ROUTINE_BUCKET_LABELS,
   type RoutineSchedule,
 } from "@/shared/lib/routine-schedule";
 import { DEPRECIATION_FIELDS, type DepreciationBreakdown } from "@/shared/lib/proforma";
@@ -121,6 +124,10 @@ export class ConversionError extends Error {
 export interface ConversionStaff {
   managerId?: number | null;
   bookkeeperId?: number | null;
+  /** L6 (I5, 10_06 00:59:13): per-task assignee overrides from the
+   *  conversion dialog ("we'll do the task assigning once we convert"),
+   *  keyed by the routine task's key; absent keys keep the seat default. */
+  taskAssignees?: Record<string, number>;
 }
 
 export interface ConversionResult {
@@ -267,7 +274,7 @@ export async function insertCustomRules(
   dbOrTx: DbOrTx,
   clientId: number,
   rules: IntakeCustomRuleInput[],
-  staff: { managerId: number | null; bookkeeperId: number | null },
+  staff: ConversionStaff,
   bookkeepingStartDate: string | null,
   today: LocalDate,
 ): Promise<number> {
@@ -324,6 +331,53 @@ export async function insertCustomRules(
 // ── J3 scheduler path (meeting #3, R1-R5, 00:39:26-00:54:05) ─────────────
 
 /**
+ * L6 (I5, 10_06 00:59:13): the conversion dialog's per-task assignment
+ * list - the exact seeds conversion will write (planRoutineSeeds parity),
+ * each with its seat default and proposed cadence. Null when the intake
+ * never touched the scheduler (the legacy seeding path has no task keys).
+ */
+export interface ConversionTaskPlanItem {
+  key: string;
+  title: string;
+  seat: "manager" | "bookkeeper";
+  cadence: string;
+}
+
+export async function getConversionTaskPlan(intakeId: number): Promise<ConversionTaskPlanItem[] | null> {
+  const [intake] = await db
+    .select()
+    .from(clientIntakes)
+    .where(eq(clientIntakes.id, intakeId))
+    .limit(1);
+  if (!intake) throw new ConversionError(`intake not found: ${intakeId}`);
+  const form = (intake.formData ?? {}) as IntakeFormData;
+  const routineSchedule = form.routineSchedule;
+  if (routineSchedule == null || Object.keys(routineSchedule).length === 0) return null;
+
+  const answers: WizardAnswers = {
+    ...form,
+    taxStructure: intake.taxStructure,
+    bookkeepingFrequency: intake.bookkeepingFrequency ?? form.bookkeepingFrequency ?? null,
+    monthlyCloseTier: intake.monthlyCloseTier ?? form.monthlyCloseTier ?? null,
+    bookkeepingStartDate: intake.bookkeepingStartDate ?? form.bookkeepingStartDate ?? null,
+    reportDefinitions: reportDefinitionsOf(intake),
+    customRecurringRules:
+      (intake.customRecurringRules as IntakeCustomRuleInput[] | null) ?? form.customRecurringRules ?? [],
+  };
+  const tierRaw = Number(intake.monthlyCloseTier ?? form.monthlyCloseTier);
+  const tierDay = tierRaw === 5 || tierRaw === 10 ? tierRaw : 15;
+  const tasks = deriveRoutineTasks(answers);
+  const entries = resolveRoutineEntries(tasks, routineSchedule);
+  return planRoutineSeeds(tasks, routineSchedule, { tierDay }).map((seed) => {
+    const entry = entries[seed.key];
+    const cadence = entry
+      ? `${ROUTINE_BUCKET_LABELS[entry.bucket]} · ${routineEntrySummary(entry)}`
+      : seed.scheduleType;
+    return { key: seed.key, title: seed.title, seat: seed.assignee, cadence };
+  });
+}
+
+/**
  * Every entry in form_data.routineSchedule becomes one recurring rule with
  * the cadence the "Routine order and frequency" screen showed. The derived
  * card list (registry.deriveRoutineTasks) mirrors the legacy seeding rules,
@@ -337,7 +391,7 @@ async function seedFromRoutineSchedule(
   intake: IntakeRow,
   form: IntakeFormData,
   routineSchedule: RoutineSchedule,
-  staff: { managerId: number | null; bookkeeperId: number | null },
+  staff: ConversionStaff,
   today: LocalDate,
 ): Promise<number> {
   const tierRaw = Number(intake.monthlyCloseTier ?? form.monthlyCloseTier);
@@ -389,7 +443,11 @@ async function seedFromRoutineSchedule(
         isCustom: seed.isCustom,
         isBillable: seed.isBillable,
         unitPrice: seed.unitPrice == null ? null : String(seed.unitPrice),
-        assigneeId: seed.assignee === "manager" ? staff.managerId : staff.bookkeeperId,
+        // L6 (I5): a per-task pick from the conversion dialog wins; the
+        // seat default (manager/bookkeeper pick) applies otherwise.
+        assigneeId:
+          staff.taskAssignees?.[seed.key] ??
+          (seed.assignee === "manager" ? staff.managerId : staff.bookkeeperId),
       })
       .returning();
     if (seed.subtasks.length > 0) {
@@ -427,8 +485,11 @@ export async function convertIntakeToClient(
     try {
       assertIntakeTransition(intake.status, "completed");
     } catch {
+      // L6 (I3, 10_06 00:58:22): conversion requires the accepted state -
+      // the day-of-week schedule and task assignments finalize only after
+      // the client accepts the estimate.
       throw new ConversionError(
-        `intake ${intakeId} must be in pending_review to convert (status: ${intake.status})`,
+        `intake ${intakeId} must be accepted before it can convert (status: ${intake.status}) - mark the estimate accepted first`,
       );
     }
 

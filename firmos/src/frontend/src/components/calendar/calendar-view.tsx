@@ -64,6 +64,10 @@ interface CalendarViewProps {
   todayIso: string
   timeZone: string
   clients: CalendarClientOption[]
+  /** L6 (I4, 10_06 00:59:13): the employee toggle - filter work items to
+   *  one assignee; null/absent = the whole team. */
+  staff?: { id: number; name: string }[]
+  assigneeId?: number | null
 }
 
 const MONTH_LONG = [
@@ -98,6 +102,8 @@ export function CalendarViewRoot({
   todayIso,
   timeZone,
   clients,
+  staff = [],
+  assigneeId = null,
 }: CalendarViewProps) {
   const router = useRouter()
   const [detail, setDetail] = useState<CalendarDayItems>(initialDay)
@@ -121,7 +127,7 @@ export function CalendarViewRoot({
       return
     }
     setLoadingDay(iso)
-    const res = await getCalendarDayAction(iso)
+    const res = await getCalendarDayAction(iso, assigneeId)
     setLoadingDay(null)
     if (!res.ok) {
       toast.error(res.error)
@@ -133,7 +139,7 @@ export function CalendarViewRoot({
 
   async function refreshDetail() {
     cacheRef.current.delete(detailDate)
-    const res = await getCalendarDayAction(detailDate)
+    const res = await getCalendarDayAction(detailDate, assigneeId)
     if (res.ok) {
       cacheRef.current.set(detailDate, res.data)
       setDetail(res.data)
@@ -256,7 +262,7 @@ export function CalendarViewRoot({
                 key={t.key}
                 role="tab"
                 aria-selected={view === t.key}
-                href={calendarHref(t.key, detailDate)}
+                href={calendarHref(t.key, detailDate, assigneeId)}
                 data-testid={`calendar-view-${t.key}`}
                 className={cn(
                   'rounded-full px-4 py-1.5 text-xs font-semibold transition-colors duration-150',
@@ -269,19 +275,38 @@ export function CalendarViewRoot({
               </Link>
             ))}
           </div>
+          {/* L6 (I4): the employee toggle - "toggle by employee essentially
+              that's assigned to that task" (00:59:13). */}
+          <select
+            aria-label="Filter by employee"
+            data-testid="calendar-assignee-filter"
+            className="h-8 appearance-none rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            value={assigneeId ?? ''}
+            onChange={(e) => {
+              const v = e.target.value === '' ? null : Number(e.target.value)
+              router.push(calendarHref(view, detailDate, v))
+            }}
+          >
+            <option value="">Whole team</option>
+            {staff.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
           <div className="flex items-center gap-1">
             <Button asChild variant="outline" size="sm" className="h-8 w-8 px-0">
-              <Link href={prevHref(view, anchor, todayIso)} aria-label={view === 'week' ? 'Previous week' : 'Previous month'}>
+              <Link href={prevHref(view, anchor, todayIso, assigneeId)} aria-label={view === 'week' ? 'Previous week' : 'Previous month'}>
                 <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="h-8 px-3 text-xs">
-              <Link href={calendarHref(view, todayIso)} data-testid="calendar-today">
+              <Link href={calendarHref(view, todayIso, assigneeId)} data-testid="calendar-today">
                 Today
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="h-8 w-8 px-0">
-              <Link href={nextHref(view, anchor, todayIso)} aria-label={view === 'week' ? 'Next week' : 'Next month'}>
+              <Link href={nextHref(view, anchor, todayIso, assigneeId)} aria-label={view === 'week' ? 'Next week' : 'Next month'}>
                 <ChevronRight className="h-3.5 w-3.5" aria-hidden />
               </Link>
             </Button>

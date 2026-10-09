@@ -19,6 +19,7 @@ import { convertIntakeToClient, NON_BUSINESS_DEPOSITS_REVIEW_TITLE, OWNER_DRAWS_
 import {
   createIntake,
   getIntake,
+  markIntakeAccepted,
   submitIntakeForReview,
   updateIntake,
   type IntakeFormData,
@@ -113,6 +114,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
     const quote = await calculateIntakeQuoteWithConfig((intake.formData ?? {}) as IntakeFormData, TEST_TODAY);
     expect(quote.totals.effectiveMonthly).toBe(75);
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, ownerId, TEST_TODAY);
     const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     const template = client.recurringServicesTemplate as TemplateLineItem[];
@@ -185,6 +188,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
     expect(quote.totals.effectiveMonthly).toBe(566.67);
     expect(quote.totals.totalOneTime).toBe(3600);
 
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, { bookkeeperId }, ownerId, TEST_TODAY);
 
     // Template lines: the report's OWN frequency + the one-time retro line.
@@ -257,6 +262,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
         personalCardForBusiness: true,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(withCard);
     const result = await convertIntakeToClient(withCard, { bookkeeperId }, ownerId, TEST_TODAY);
     const rules = await db
       .select()
@@ -282,6 +289,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
         personalCardForBusiness: false,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(withoutCard);
     const clean = await convertIntakeToClient(withoutCard, {}, ownerId, TEST_TODAY);
     const cleanRules = await db
       .select()
@@ -307,6 +316,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
         personalOnBusiness: true,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(flagged);
     const result = await convertIntakeToClient(flagged, { bookkeeperId }, ownerId, TEST_TODAY);
     const rules = await db
       .select()
@@ -345,6 +356,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
         personalOnBusiness: false,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(declined);
     const declinedResult = await convertIntakeToClient(declined, {}, ownerId, TEST_TODAY);
     const declinedRules = await db
       .select()
@@ -363,6 +376,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
         accounts: [{ name: "Operating", accountType: "checking", institution: "Chase", last4: "4411" }],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(legacy);
     const legacyResult = await convertIntakeToClient(legacy, {}, ownerId, TEST_TODAY);
     const legacyRules = await db
       .select()
@@ -386,6 +401,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
         excludedDefaultRules: ["client_questions", "send_reports"],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, ownerId, TEST_TODAY);
     const rules = await db
       .select()
@@ -590,6 +607,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
         hasPayroll: true,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, ownerId, TEST_TODAY);
     const [client] = await db.select().from(clients).where(eq(clients.id, result.clientId));
     expect(client.hasPayroll).toBe(true);
@@ -841,6 +860,8 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
         },
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, { bookkeeperId }, ownerId, TEST_TODAY);
     const rules = await db
       .select()
@@ -868,6 +889,8 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
         personalCardForBusiness: true,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(legacyId);
     const legacy = await convertIntakeToClient(legacyId, { bookkeeperId }, ownerId, TEST_TODAY);
     const legacyRules = await db
       .select()
@@ -894,6 +917,8 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
         billPayLocations: ["Vendor websites", "Bank bill pay"],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(payId);
     const payResult = await convertIntakeToClient(payId, {}, ownerId, TEST_TODAY);
     const payNotes = await db
       .select()
@@ -915,6 +940,8 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
         payBills: false,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(recordOnlyId);
     const recordOnly = await convertIntakeToClient(recordOnlyId, {}, ownerId, TEST_TODAY);
     const recordNotes = await db
       .select()
@@ -939,6 +966,8 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
         payrollSelfProcessed: true,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, ownerId, TEST_TODAY);
     const notes = await db.select().from(clientNotes).where(eq(clientNotes.clientId, result.clientId));
     expect(notes.map((n) => n.body)).toContain(
@@ -967,6 +996,8 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
         sendPreliminaryReports: true,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(yesId);
     const yesResult = await convertIntakeToClient(yesId, {}, ownerId, TEST_TODAY);
     const yesRules = await db
       .select()
@@ -988,6 +1019,8 @@ describe.skipIf(!reachable)("J2 interaction-fix wave (server layer)", () => {
         sendPreliminaryReports: false,
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(noId);
     const noResult = await convertIntakeToClient(noId, {}, ownerId, TEST_TODAY);
     const noRules = await db
       .select()

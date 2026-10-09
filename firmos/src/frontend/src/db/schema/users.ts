@@ -188,3 +188,26 @@ export const bumperLaneOverrideRequests = pgTable(
     index("bumper_lane_override_requests_status_idx").on(t.status),
   ],
 );
+
+/**
+ * L6 (I6, 10_06 00:51:01): the skill-tree data model - one row per staff
+ * user x difficulty tier (the L3 rate tiers: bookkeeper | manager | owner)
+ * with a manual 1-5 proficiency level set by admin/owner. Nothing auto-
+ * assigns from this yet; it's the data the later workload/skill recommender
+ * reads ("the system will evaluate current workloads and required skills to
+ * recommend appropriate employees").
+ */
+export const userSkills = pgTable(
+  "user_skills",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "cascade" }),
+    tier: text("tier").notNull(),
+    level: integer("level").notNull(),
+    updatedById: integer("updated_by_id").references((): AnyPgColumn => users.id),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("user_skills_user_tier_unique").on(t.userId, t.tier)],
+);

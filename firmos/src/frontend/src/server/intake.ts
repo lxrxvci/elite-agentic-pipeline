@@ -406,7 +406,11 @@ export type IntakeStatus = IntakeRow["status"];
 const ALLOWED_TRANSITIONS: Record<IntakeStatus, readonly IntakeStatus[]> = {
   new: ["in_progress", "pending_review", "archived"],
   in_progress: ["new", "pending_review", "archived"],
-  pending_review: ["in_progress", "completed", "archived"],
+  // L6 (I3, 10_06 00:58:22): the estimate must be ACCEPTED before
+  // conversion - "we're not going to commit to a day-of-week schedule until
+  // the estimate is accepted." pending_review no longer converts directly.
+  pending_review: ["in_progress", "accepted", "archived"],
+  accepted: ["pending_review", "completed", "archived"],
   // Converted intakes have no transitions; archive is a pre-completion exit.
   completed: [],
   archived: [],
@@ -623,6 +627,24 @@ export async function submitIntakeForReview(intakeId: number): Promise<IntakeRow
   const [row] = await db
     .update(clientIntakes)
     .set({ status: "pending_review", submittedAt: new Date(), updatedAt: new Date() })
+    .where(eq(clientIntakes.id, intakeId))
+    .returning();
+  return row;
+}
+
+/**
+ * L6 (I3, 10_06 00:58:22): pending_review -> accepted - the client accepted
+ * the estimate. Only an accepted intake converts: day-level scheduling and
+ * task assignment finalize at conversion, never before acceptance ("we're
+ * not going to commit to a day of the week schedule until the estimate is
+ * accepted").
+ */
+export async function markIntakeAccepted(intakeId: number): Promise<IntakeRow> {
+  const existing = await getIntake(intakeId);
+  assertIntakeTransition(existing.status, "accepted");
+  const [row] = await db
+    .update(clientIntakes)
+    .set({ status: "accepted", updatedAt: new Date() })
     .where(eq(clientIntakes.id, intakeId))
     .returning();
   return row;

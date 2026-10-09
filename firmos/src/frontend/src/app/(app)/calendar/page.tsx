@@ -1,12 +1,12 @@
 import type { Metadata } from 'next'
-import { asc } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import { formatLocalDate, parseLocalDate } from '@firmos/domain'
 
 import { CalendarViewRoot } from '@/components/calendar/calendar-view'
 import type { CalendarClientOption } from '@/components/calendar/meeting-dialog'
 import { monthGridRange, weekRange, type CalendarView } from '@/components/calendar/view-model'
 import { db } from '@/db'
-import { clients } from '@/db/schema'
+import { clients, users } from '@/db/schema'
 import { requireStaff } from '@/server/auth/guards'
 import { getCalendarDay, getCalendarRange } from '@/server/calendar'
 import { localToday } from '@/server/dates'
@@ -29,7 +29,7 @@ const MONTH_RE = /^(\d{4})-(\d{2})$/
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string; month?: string; day?: string }>
+  searchParams: Promise<{ view?: string; month?: string; day?: string; assignee?: string }>
 }) {
   await requireStaff()
   const params = await searchParams
@@ -46,12 +46,24 @@ export default async function CalendarPage({
       ? Number(monthParam[2])
       : today.month
 
+  // L6 (I4, 10_06 00:59:13): the employee toggle - filter work items to one
+  // assignee ("toggle by employee… assigned to that task").
+  const staffRows = await db
+    .select({ id: users.id, firstName: users.firstName, lastName: users.lastName })
+    .from(users)
+    .where(eq(users.isActive, true))
+    .orderBy(asc(users.firstName))
+  const staffIdSet = new Set(staffRows.map((u) => u.id))
+  const assigneeParam = params.assignee && /^\d+$/.test(params.assignee) ? Number(params.assignee) : null
+  const assigneeId =
+    assigneeParam != null && staffIdSet.has(assigneeParam) ? assigneeParam : null
+
   const range =
     view === 'week' ? weekRange(selectedDate) : monthGridRange(viewYear, viewMonth)
 
   const [days, initialDay, clientRows] = await Promise.all([
-    getCalendarRange(parseLocalDate(range.start), parseLocalDate(range.end)),
-    getCalendarDay(parseLocalDate(selectedDate)),
+    getCalendarRange(parseLocalDate(range.start), parseLocalDate(range.end), { assigneeId }),
+    getCalendarDay(parseLocalDate(selectedDate), { assigneeId }),
     db
       .select({ id: clients.id, legalName: clients.legalName, dbaName: clients.dbaName })
       .from(clients)
@@ -61,6 +73,11 @@ export default async function CalendarPage({
   const clientOptions: CalendarClientOption[] = clientRows.map((c) => ({
     id: c.id,
     name: c.dbaName ?? c.legalName,
+  }))
+
+  const staffOptions = staffRows.map((u) => ({
+    id: u.id,
+    name: `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `Staff ${u.id}`,
   }))
 
   return (
@@ -74,6 +91,8 @@ export default async function CalendarPage({
       todayIso={todayIso}
       timeZone={firmTimezone()}
       clients={clientOptions}
+      staff={staffOptions}
+      assigneeId={assigneeId}
     />
   )
 }

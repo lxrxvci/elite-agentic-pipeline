@@ -15,7 +15,7 @@ import {
 import { toSessionUser, type SessionUser } from "@/server/auth/guards";
 import { convertIntakeToClient } from "@/server/convert";
 import { computeMissingInfoReminders } from "@/server/correspondence";
-import { createIntake, submitIntakeForReview, updateIntake, type IntakePatch } from "@/server/intake";
+import { createIntake, submitIntakeForReview, updateIntake, type IntakePatch, markIntakeAccepted, } from "@/server/intake";
 import { missingInfoReminderJob } from "@/server/jobs";
 import { PortalAccessDeniedError, PortalDisabledError } from "@/server/portal";
 import { seedDatabase } from "@/server/seed";
@@ -372,6 +372,8 @@ describe.skipIf(!reachable)("credential vault (Phase 3B)", () => {
         ],
       },
     });
+    // L6 (I3): conversion requires the accepted state first.
+    await markIntakeAccepted(intakeId);
     const result = await convertIntakeToClient(intakeId, {}, mara.id, TEST_TODAY);
     expect(result.credentialsExpectedCreated).toBe(2);
 

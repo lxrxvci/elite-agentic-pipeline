@@ -17,6 +17,7 @@ import { ReviewScreen } from '../review-screen'
 vi.mock('@/server/actions/intake', () => ({
   checkDuplicates: vi.fn(async () => ({ ok: true, data: [] })),
   submitIntakeForReview: vi.fn(async () => ({ ok: true, data: {} })),
+  acceptIntakeEstimate: vi.fn(async () => ({ ok: true, data: { status: 'accepted' } })),
 }))
 vi.mock('@/server/actions/correspondence', () => ({
   sendIntakeQuoteEmailAction: vi.fn(async () => ({ ok: true as const, data: { correspondenceId: 5, to: 'wren@example.com' } })),
