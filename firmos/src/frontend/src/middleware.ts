@@ -21,7 +21,10 @@ export function middleware(request: NextRequest) {
   const authed = hasSessionCookie(request);
 
   if (pathname === "/login") {
-    if (authed) return NextResponse.redirect(new URL("/", request.url));
+    // The page itself validates the session and bounces signed-in users to
+    // /. NEVER presence-bounce here: a stale/expired cookie would loop
+    // /login -> / (middleware: cookie present) -> /login (guard: session
+    // invalid) -> ERR_TOO_MANY_REDIRECTS (10_09 prod incident).
     return NextResponse.next();
   }
 
