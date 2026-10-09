@@ -230,16 +230,18 @@ export async function buildItemizedLineItems(
     }
 
     // §6.5: 1099 services bill only in February of years after the anchor year.
+    // L4 (G9, 10_06 01:23:41): an explicit billing-month assignment WINS over
+    // the February rule - "I should be able to select that… click the drop
+    // down here." Unassigned 1099s keep February + the anchor-year rule.
     const febBilled = isFebruaryBilledService(line.service_key);
-    if (febBilled && !februaryBilledDue(line.service_key, { year, month }, anchorYear)) {
-      continue;
-    }
-
-    // L4 (G9, 10_06 01:21:18): the assigned billing month (1-12), set from
-    // the estimate's billing-month drop-down; invalid values are ignored.
+    // L4 (G9): the assigned billing month (1-12), set from the estimate's
+    // billing-month drop-down; invalid values are ignored.
     const billMonthRaw = line.bill_month as number | null | undefined;
     const billMonth =
       billMonthRaw != null && billMonthRaw >= 1 && billMonthRaw <= 12 ? billMonthRaw : null;
+    if (febBilled && billMonth == null && !februaryBilledDue(line.service_key, { year, month }, anchorYear)) {
+      continue;
+    }
 
     let quantity: number;
     switch (line.service_key) {
@@ -261,14 +263,15 @@ export async function buildItemizedLineItems(
           line.frequency === "semi_annual" ||
           line.frequency === "annual"
         ) {
-          if (febBilled) {
-            quantity = line.quantity; // February-billed: fixed annual quantity
-          } else if (billMonth != null) {
+          if (billMonth != null) {
             // L4 (G9): an assigned billing month bills the line's FULL
             // quantity on the invoice whose covered range includes that
             // month ("this report's due in January"); every other invoice
-            // skips the line entirely - no ÷12 spread.
+            // skips the line entirely - no ÷12 spread. Wins over the §6.5
+            // February rule when explicitly set (01:23:41).
             quantity = covered.some((m) => m.month === billMonth) ? line.quantity : 0;
+          } else if (febBilled) {
+            quantity = line.quantity; // February-billed: fixed annual quantity
           } else if ((line.anchor_month as number | null | undefined) != null) {
             quantity = occurrenceQuantity(line, covered); // anchored: sum covered months
           } else {

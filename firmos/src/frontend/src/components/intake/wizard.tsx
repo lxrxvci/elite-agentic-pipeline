@@ -151,6 +151,10 @@ export function IntakeWizard({
   // The status at mount drives editability for the whole session: after a
   // submit, revalidatePath flips the prop to pending_review, but the wizard
   // must keep showing its success state instead of clobbering it.
+  // L6 (I3): submit/accept mirror their server flips through ReviewScreen's
+  // submittedLocally/acceptedLocally; this mount-frozen status is the other
+  // half of that contract - do NOT rehydrate it from the prop without
+  // preserving the submitted-success screen.
   const [liveStatus] = useState(status)
   const editable = liveStatus === 'new' || liveStatus === 'in_progress'
   const [answers, setAnswers] = useState<WizardAnswers>(initialAnswers)

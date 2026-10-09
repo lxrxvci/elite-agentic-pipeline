@@ -323,6 +323,35 @@ describe.skipIf(!reachable)("invoices (G5 billing parity)", () => {
     expect(feb!.total).toBe("110.00");
   });
 
+  // L4 (G9, 10_06 01:23:41): "I should be able to select that… click the
+  // drop down here" - an explicit assignment moves even a §6.5
+  // February-billed 1099 line off February.
+  it("L4/G9: an assigned month overrides the 1099 February rule", async () => {
+    const [client] = await db
+      .insert(clients)
+      .values({
+        legalName: "G9 1099 Override Fixture",
+        bookkeepingFrequency: "monthly",
+        billingFrequency: "monthly",
+        monthlyCloseTier: "15",
+        bookkeepingStartDate: "2025-06-01",
+        recurringServicesTemplate: [
+          tline("1099_collection", "1099 Collection", 50, 1, { frequency: "annual", bill_month: 1 }),
+        ],
+      })
+      .returning();
+
+    await generateMonthlyInvoices(2026, 1, TEST_TODAY);
+    const jan = await invoiceFor(client.id, 2026, 1);
+    const janLines = byKey(await linesFor(jan!.id));
+    expect(janLines.get("1099_collection")).toMatchObject({ quantity: "1.00", amount: "50.00" });
+
+    await generateMonthlyInvoices(2026, 2, TEST_TODAY);
+    const feb = await invoiceFor(client.id, 2026, 2);
+    // February no longer bills it - January was the explicit pick.
+    expect(feb).toBeNull();
+  });
+
   it("is idempotent: a re-run skips every existing period", async () => {
     const first = await generateMonthlyInvoices(2026, 9, TEST_TODAY);
     expect(first.invoicesCreated).toBeGreaterThan(0);

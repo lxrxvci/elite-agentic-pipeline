@@ -408,28 +408,26 @@ function EstimateLineRow({
   // L4 (G7): the recon line's factor is editable - which accounts count.
   const factorEditable = view.key === 'account_reconciliations' && priceEditable && onToggleReconAccount != null
   const excludedLabels = new Set((answers.reconExcludedAccounts ?? []).map((n) => n.trim().toLowerCase()))
-  // L4 (G9): the assigned billing month (annual lines only; the 1099s'
-  // February rule is fixed and keeps its own badge).
+  // L4 (G9): the assigned billing month (annual lines). The 1099s' §6.5
+  // February rule is the DEFAULT (selectable like any annual line -
+  // 01:23:41 "I should be able to click the drop down here"); an explicit
+  // pick wins, and February-billed lines can never spread.
   const assignedMonth = answers.billingMonths?.[view.key] ?? null
+  const effectiveMonth = assignedMonth ?? (view.februaryBilled ? 2 : null)
   const billMonthAssignable =
-    view.bucket === 'annual' && !view.februaryBilled && priceEditable && onBillingMonthChange != null
+    view.bucket === 'annual' && priceEditable && onBillingMonthChange != null
   const net = view.cycleNet
   return (
     <li className="group py-2" data-testid={`estimate-line-${view.key}`}>
       <div className="flex items-baseline justify-between gap-4">
         <span className="min-w-0 text-sm text-foreground">
           {view.name}
-          {view.februaryBilled && (
-            <span className="ml-2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
-              billed each February
-            </span>
-          )}
-          {!view.februaryBilled && assignedMonth != null && (
+          {effectiveMonth != null && (
             <span
               className="ml-2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground"
               data-testid={`bill-month-badge-${view.key}`}
             >
-              billed each {BILLING_MONTH_NAMES[assignedMonth - 1]}
+              billed each {BILLING_MONTH_NAMES[effectiveMonth - 1]}
             </span>
           )}
         </span>
@@ -462,13 +460,14 @@ function EstimateLineRow({
           <select
             aria-label={`Billing month for ${view.name}`}
             data-testid={`bill-month-${view.key}`}
-            value={assignedMonth ?? ''}
+            value={effectiveMonth ?? ''}
             onChange={(e) =>
               onBillingMonthChange!(view.key, e.target.value === '' ? null : Number(e.target.value))
             }
             className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
           >
-            <option value="">spread across the year</option>
+            {/* February-billed (§6.5) lines never spread - month picks only. */}
+            {!view.februaryBilled && <option value="">spread across the year</option>}
             {BILLING_MONTH_NAMES.map((name, i) => (
               <option key={name} value={i + 1}>
                 each {name}

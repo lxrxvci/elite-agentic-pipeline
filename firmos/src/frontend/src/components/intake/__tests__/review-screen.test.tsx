@@ -430,7 +430,7 @@ describe('annual_line_assigned_to_january (L4/G9)', () => {
     expect(screen.getByTestId('bill-month-specialty_report_1')).toHaveValue('1')
   })
 
-  it('the 1099s keep their fixed February rule - badge stays, no drop-down', () => {
+  it('the 1099s default to February but the month is selectable (01:23:41)', () => {
     const onBillingMonthChange = vi.fn()
     render(
       <ReviewScreen
@@ -448,8 +448,15 @@ describe('annual_line_assigned_to_january (L4/G9)', () => {
       />,
     )
     expandSection('quote')
-    expect(screen.queryByTestId('bill-month-1099_collection')).toBeNull()
-    expect(screen.getByTestId('estimate-bucket-annual')).toHaveTextContent('billed each February')
+    // Unassigned: the §6.5 February badge and the drop-down preselects it.
+    expect(screen.getByTestId('bill-month-badge-1099_collection')).toHaveTextContent('billed each February')
+    expect(screen.getByTestId('bill-month-1099_collection')).toHaveValue('2')
+    // No "spread" option for February-billed lines - they bill once a year.
+    const options = Array.from(screen.getByTestId('bill-month-1099_collection').querySelectorAll('option'))
+    expect(options).toHaveLength(12)
+    // Moving it to January reports the assignment.
+    fireEvent.change(screen.getByTestId('bill-month-1099_collection'), { target: { value: '1' } })
+    expect(onBillingMonthChange).toHaveBeenCalledWith('1099_collection', 1)
   })
 })
 
