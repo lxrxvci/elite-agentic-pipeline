@@ -3,6 +3,7 @@ import { parseDaysOfWeek } from '@firmos/domain'
 import type { IntakeAccountInput, IntakeContactInput, IntakePatch, IntakeProofCategory } from '@/server/intake'
 import type { IntakeFormData, IntakeRow } from '@/server/intake'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
+import { EQUITY_BREAKDOWN_OPTIONS } from '@/shared/lib/account-types'
 import {
   DEFAULT_RECURRING_RULES,
   EOY_TAX_CHECKLIST_ITEMS,
@@ -127,6 +128,9 @@ export interface FieldDef {
    *  holds; hidden fields are skipped by validation too (the last-filed
    *  date hides while the missed-filings toggle is off). */
   visibleIf?: (values: Record<string, unknown>) => boolean
+  /** L5 (J1, 10_06 01:07:49): password-style masked entry with a
+   *  hide/unhide toggle (the EIN). Stored raw; display masks only. */
+  masked?: boolean
   /** K3 (DB1/J1): an option_list_values key backing this field - `select`
    *  fields render the list with inline add-new; text fields get a
    *  type-ahead datalist and their value persists to the list on commit. */
@@ -294,6 +298,10 @@ export interface QuestionDef {
   /** One-sentence explainer; a function resolves it from the current answers
    *  (I2: the EIN note for sole props, the owner-count rule, ...). */
   help?: string | ((a: WizardAnswers) => string | null)
+  /** L5 (J2, 10_06 01:09:04): the accounting-equation eyebrow on balance
+   *  chapter cards ("Assets · current", "Liabilities", "Equity") - "a box
+   *  within the box… a little more delineated on what those are." */
+  section?: string
   type: QuestionType
   options?: SelectOption[]
   /** I3: checklist options derived from the current answers (the online
@@ -894,6 +902,11 @@ export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   investment: 'Investment',
   vehicle_loan: 'Vehicle loan',
   loans_from_shareholders: 'Loan from shareholders',
+  // L5 (J3): the equity types (seeded + extraction rows) group under the
+  // review's Equity box.
+  owner_contributions: 'Owner contributions',
+  owner_distributions: 'Owner distributions',
+  other_equity: 'Equity',
   other: 'Other',
 }
 
@@ -1930,7 +1943,11 @@ export const CHAPTERS: ChapterDef[] = [
             : 'Used for 1099s and duplicate checks. You can add it later.',
         type: 'fields',
         required: false,
-        fields: [{ key: 'taxId', label: 'EIN (optional)', kind: 'text', placeholder: '12-3456789' }],
+        fields: [
+          // L5 (J1): masked entry with a hide/unhide toggle - "like a
+          // password… hide it or unhide it so you can see the actual number."
+          { key: 'taxId', label: 'EIN (optional)', kind: 'text', placeholder: '12-3456789', masked: true },
+        ],
         get: (a) => a.taxId,
         apply: (_a, v) => v as Partial<WizardAnswers>,
         summarize: (a) => (str(a.taxId) ? 'EIN on file' : null),
@@ -2347,6 +2364,7 @@ export const CHAPTERS: ChapterDef[] = [
     questions: [
       {
         id: 'checking-accounts',
+        section: 'Assets · current',
         title: 'How many business checking accounts do you have?',
         // J1 (D1): no nickname - the identifier is the bank + last 4.
         help: 'Every account the business spends or receives money through. Each one is reconciled monthly against its bank statement. The bank and the last 4 digits identify it.',
@@ -2359,6 +2377,7 @@ export const CHAPTERS: ChapterDef[] = [
       },
       {
         id: 'savings-accounts',
+        section: 'Assets · current',
         title: 'And how many savings accounts?',
         help: 'Reserve, tax, or rainy-day accounts - at any bank. Same monthly reconciliation.',
         type: 'account-count',
@@ -2370,6 +2389,7 @@ export const CHAPTERS: ChapterDef[] = [
       },
       {
         id: 'credit-cards',
+        section: 'Assets · current',
         title: 'How many business credit cards?',
         help: 'Cards the business spends on. Each card statement reconciles monthly.',
         type: 'account-count',
@@ -2381,6 +2401,7 @@ export const CHAPTERS: ChapterDef[] = [
       },
       {
         id: 'vehicles',
+        section: 'Assets · long-term',
         title: 'Any vehicles the business owns?',
         // J1 (D5, 00:23:23): financed routes a linked entry onto the loans
         // card. D3: no value estimate - the year is plenty.
@@ -2400,6 +2421,7 @@ export const CHAPTERS: ChapterDef[] = [
       },
       {
         id: 'other-assets',
+        section: 'Assets · long-term',
         title: 'Anything else of value?',
         help: 'Equipment, furniture, money anyone owes the business, goodwill from buying the business, investments. If it matters to the books, list it.',
         type: 'account-count',
@@ -2411,6 +2433,7 @@ export const CHAPTERS: ChapterDef[] = [
       },
       {
         id: 'loans',
+        section: 'Liabilities',
         title: 'Any loans the business owes on?',
         // J1 (D3): the balance is never asked (researched later). D6: the
         // lender picks from the bank list when statements exist; an
@@ -2421,6 +2444,49 @@ export const CHAPTERS: ChapterDef[] = [
         accountCount: ACCOUNT_COUNT_DEFS[5],
         get: (a) => a.loanAccounts ?? [],
         apply: (_a, v) => ({ loanAccounts: v as IntakeAccountInput[] }),
+        summarize: () => null,
+      },
+      {
+        // L5 (J3, 10_06 01:10:10): "Is everything just grouped into owner's
+        // equity? Are we doing contributions, distributions, net investment
+        // gain/loss? Are we breaking it down by owner? … we need to know how
+        // detailed that needs to be, as part of the setup."
+        id: 'equity-setup',
+        title: 'How should we set up the equity accounts?',
+        help: 'The owner side of the balance sheet. One grouped account keeps it simple; a breakdown tracks what owners put in, what they take out, and investment gains or losses as their own accounts.',
+        type: 'select',
+        required: true,
+        section: 'Equity',
+        options: [
+          { value: 'grouped', label: "One grouped owner's equity account", sub: 'Everything equity rolls into a single account - simplest to keep.' },
+          { value: 'breakdown', label: 'Break it down', sub: 'Separate accounts for contributions, distributions, and net investment gain/loss.' },
+        ],
+        get: (a) => a.equitySetup,
+        apply: (_a, v) => ({ equitySetup: v as 'grouped' | 'breakdown' }),
+        summarize: () => null,
+      },
+      {
+        id: 'equity-breakdown',
+        title: 'Which equity accounts should we track?',
+        help: 'Each pick becomes its own account on the balance sheet at setup.',
+        type: 'multi',
+        required: true,
+        section: 'Equity',
+        when: (a) => a.equitySetup === 'breakdown',
+        options: EQUITY_BREAKDOWN_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+        get: (a) => a.equityBreakdown ?? [],
+        apply: (_a, v) => ({ equityBreakdown: v as string[] }),
+        summarize: () => null,
+      },
+      {
+        id: 'equity-per-owner',
+        title: 'Track equity per owner?',
+        help: 'Each owner gets their own set of equity accounts - the books show who put in and took out what.',
+        type: 'select',
+        required: true,
+        section: 'Equity',
+        when: (a) => (a.owners ?? []).length > 1,
+        ...yesNo('equityPerOwner', { yes: 'Yes - one set per owner', no: 'No - one shared set' }),
         summarize: () => null,
       },
     ],

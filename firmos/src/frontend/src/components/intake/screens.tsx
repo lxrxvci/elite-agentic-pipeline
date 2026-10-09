@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowRight, Check, Info, Pencil, Plus, X } from 'lucide-react'
+import { ArrowRight, Check, Eye, EyeOff, Info, Pencil, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -80,6 +80,16 @@ export function QuestionHero({
   const badge = q.badge?.(answers) ?? null
   return (
     <>
+      {/* L5 (J2, 10_06 01:09:04): the accounting-equation eyebrow -
+          "assets kind of grouped together… a box within the box." */}
+      {q.section && (
+        <p
+          className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-firm-brand-strong"
+          data-testid="question-section"
+        >
+          {q.section}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2.5">
         <Title className="font-display text-2xl font-semibold tracking-tight text-foreground">
           {q.title}
@@ -857,8 +867,44 @@ export function DateTextInput({
   )
 }
 
-function FieldInput({
+/** L5 (J1): the password-style masked text input with a hide/unhide eye. */
+function MaskedTextInput({
   def,
+  value,
+  onChange,
+}: {
+  def: FieldDef
+  value: unknown
+  onChange: (key: string, v: unknown) => void
+}) {
+  const [show, setShow] = useState(false)
+  return (
+    <span className="relative block">
+      <input
+        aria-label={def.label}
+        className={cn(inputCls, 'tnum pr-10')}
+        type={show ? 'text' : 'password'}
+        autoComplete="off"
+        placeholder={def.placeholder}
+        value={value == null ? '' : String(value)}
+        onChange={(e) => onChange(def.key, e.target.value)}
+        data-testid={`masked-input-${def.key}`}
+      />
+      <button
+        type="button"
+        aria-label={show ? `Hide ${def.label}` : `Show ${def.label}`}
+        aria-pressed={show}
+        data-testid={`masked-toggle-${def.key}`}
+        onClick={() => setShow((s) => !s)}
+        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        {show ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+      </button>
+    </span>
+  )
+}
+
+function FieldInput({  def,
   value,
   onChange,
   processors,
@@ -877,10 +923,14 @@ function FieldInput({
   /** K3: option_list_values rows behind optionsFromList text fields. */
   optionLists?: Record<string, OptionListValueLite[]>
 }) {
+  // L5 (J1, 10_06 01:07:49): masked fields (the EIN) type password-style
+  // with a hide/unhide toggle - the stored value stays raw text.
+  if (def.kind === 'text' && def.masked) {
+    return <MaskedTextInput def={def} value={value} onChange={onChange} />
+  }
   // K3 (DB1/J1): a list-backed text field type-aheads the list; its value
   // persists to the list when the screen commits (FieldsScreen/Repeatable).
-  if (def.kind === 'text' && def.optionsFromList) {
-    const listId = `dl-${def.key}`
+  if (def.kind === 'text' && def.optionsFromList) {    const listId = `dl-${def.key}`
     return (
       <>
         <input

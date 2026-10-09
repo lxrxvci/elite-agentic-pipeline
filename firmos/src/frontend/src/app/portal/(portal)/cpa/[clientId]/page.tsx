@@ -17,6 +17,8 @@ import {
 } from '@/server/portal'
 import { getStatementsGrid } from '@/server/statements'
 import { monthLabel } from '@/shared/lib/date-display'
+import { maskTaxId } from '@/shared/lib/mask'
+import { MaskedValue } from '@/components/ui/masked-value'
 import { WorkStatusBadge } from '@/shared/ui/work'
 
 export const metadata: Metadata = { title: 'Client detail - FirmOS portal' }
@@ -85,7 +87,15 @@ export default async function CpaClientDetailPage({
           ).map(([label, value]) => (
             <div key={label} className="flex justify-between gap-4 sm:justify-start">
               <dt className="text-muted-foreground">{label}</dt>
-              <dd className="font-medium capitalize text-foreground">{value ?? 'Not set'}</dd>
+              <dd className="font-medium capitalize text-foreground">
+                {/* L5 (J1, 10_06 01:07:49): the Tax ID masks password-style
+                    with a hide/unhide toggle, here as on intake and review. */}
+                {label === 'Tax ID' && value ? (
+                  <MaskedValue value={value} masked={maskTaxId(value)} label="Tax ID" testid="cpa-tax-id" />
+                ) : (
+                  (value ?? 'Not set')
+                )}
+              </dd>
             </div>
           ))}
         </dl>

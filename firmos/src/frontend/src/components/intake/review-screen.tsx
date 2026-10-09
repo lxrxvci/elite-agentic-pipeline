@@ -7,9 +7,12 @@ import { toast } from 'sonner'
 import type { Quote } from '@firmos/domain'
 
 import { Button } from '@/components/ui/button'
+import { MaskedValue } from '@/components/ui/masked-value'
 import { checkDuplicates, submitIntakeForReview } from '@/server/actions/intake'
 import type { DuplicateCandidate, IntakeAccountInput } from '@/server/intake'
 import { monthLabel } from '@/shared/lib/date-display'
+import { maskTaxId } from '@/shared/lib/mask'
+import { equitySeedPlan } from '@/shared/lib/account-types'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 import { ROUTINE_BUCKET_LABELS } from '@/shared/lib/routine-schedule'
 import { cn } from '@/shared/lib/utils'
@@ -84,7 +87,38 @@ const ACCOUNT_GROUP_QUESTION: Record<string, string> = {
   other_asset: 'other-assets',
   vehicle_loan: 'loans',
   loan: 'loans',
+  // L5 (J3): legacy equity rows edit the equity setup question.
+  owner_contributions: 'equity-setup',
+  owner_distributions: 'equity-setup',
+  other_equity: 'equity-setup',
 }
+
+/** L5 (J2, 10_06 01:09:04): the accounting-equation boxes - "here's your
+ *  assets, here's your liabilities, and here's your equity as individual
+ *  sections… a box within the box." */
+type BalanceBoxKey = 'assets' | 'liabilities' | 'equity'
+const BALANCE_BOX_ORDER: readonly { key: BalanceBoxKey; label: string }[] = [
+  { key: 'assets', label: 'Assets' },
+  { key: 'liabilities', label: 'Liabilities' },
+  { key: 'equity', label: 'Equity' },
+]
+const TYPE_TO_BOX: Record<string, BalanceBoxKey> = {
+  checking: 'assets',
+  savings: 'assets',
+  credit_card: 'assets',
+  vehicle: 'assets',
+  fixed_assets: 'assets',
+  investment: 'assets',
+  other_asset: 'assets',
+  vehicle_loan: 'liabilities',
+  loan: 'liabilities',
+  loans_from_shareholders: 'liabilities',
+  owner_contributions: 'equity',
+  owner_distributions: 'equity',
+  other_equity: 'equity',
+}
+/** J2: within Assets, current (money) accounts group before long-term. */
+const CURRENT_ASSET_TYPES: ReadonlySet<string> = new Set(['checking', 'savings', 'credit_card'])
 
 function accountDetailLine(a: IntakeAccountInput): string | null {
   const parts: string[] = []
@@ -99,6 +133,206 @@ function accountDetailLine(a: IntakeAccountInput): string | null {
   if (a.balance != null) parts.push(`balance ${formatMoney(a.balance)}`)
   if (a.value != null) parts.push(`value ${formatMoney(a.value)}`)
   return parts.length > 0 ? parts.join(' · ') : null
+}
+
+/** One account row: label, detail, badges, edit pencil (V1). */
+function AccountRow({
+  a,
+  type,
+  i,
+  editable,
+  onEdit,
+}: {
+  a: IntakeAccountInput
+  type: string
+  i: number
+  editable: boolean
+  onEdit: (chapterId: string, questionId: string, walk?: boolean) => void
+}) {
+  const detail = accountDetailLine(a)
+  const hasLast4 = normalizeLast4(a.last4) != null
+  return (
+    <li className="group flex flex-wrap items-baseline gap-x-2 gap-y-1" data-testid="review-account-row">
+      <span className="text-sm font-medium text-foreground">{accountLabel(a)}</span>
+      {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
+      {a.institution && !hasLast4 && (
+        <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
+          {a.institution}
+        </span>
+      )}
+      {a.fromVehicle != null && (
+        <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
+          Vehicle loan
+        </span>
+      )}
+      <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+        {PROOF_CATEGORY_LABELS[a.proofCategory ?? ''] ?? 'Statement'}
+      </span>
+      {a.grantLoginAccess === true && (
+        <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
+          Online access
+        </span>
+      )}
+      {editable && (
+        <RowEditButton
+          label={`${ACCOUNT_TYPE_LABELS[type] ?? type} accounts`}
+          testid={`edit-account-row-${type}-${i}`}
+          onClick={() => onEdit('balance', ACCOUNT_GROUP_QUESTION[type] ?? 'checking-accounts')}
+        />
+      )}
+    </li>
+  )
+}
+
+/** The per-type group inside a box: type header + count + rows. */
+function AccountTypeGroup({
+  type,
+  list,
+  editable,
+  onEdit,
+}: {
+  type: string
+  list: IntakeAccountInput[]
+  editable: boolean
+  onEdit: (chapterId: string, questionId: string, walk?: boolean) => void
+}) {
+  return (
+    <div className="py-1.5" data-testid="review-account-group" data-type={type}>
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {ACCOUNT_TYPE_LABELS[type] ?? type}
+        <span className="tnum ml-1.5">{list.length}</span>
+      </p>
+      <ul className="mt-1.5 space-y-1.5">
+        {list.map((a, i) => (
+          <AccountRow key={`${a.name}-${i}`} a={a} type={type} i={i} editable={editable} onEdit={onEdit} />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/** I3: accounts grouped by type, each row carrying its institution and
+ *  proof-category badges plus the online-access flag.
+ *  J1 (D2): the primary text is the bank -> type -> last4 standard
+ *  (accountLabel); legacy rows without a last-4 keep the old name and the
+ *  institution badge. J4 (V1): every row edits its type's count card.
+ *  L5 (J2): the groups nest inside the accounting-equation boxes - Assets
+ *  (current, then long-term), Liabilities, Equity; the Equity box lists the
+ *  intake's planned equity accounts (J3) plus any legacy equity rows. */
+function ReviewAccounts({
+  answers,
+  editable,
+  onEdit,
+}: {
+  answers: WizardAnswers
+  editable: boolean
+  onEdit: (chapterId: string, questionId: string, walk?: boolean) => void
+}) {
+  const accounts = allAccounts(answers)
+  // L5 (J3): the equity accounts conversion will seed, straight from the
+  // intake answers; null when the equity question was never answered.
+  const equityPlan = equitySeedPlan(answers)
+  if (accounts.length === 0 && !equityPlan) return null
+  const groups = new Map<string, IntakeAccountInput[]>()
+  for (const a of accounts) {
+    const t = (a.accountType ?? 'other').trim().toLowerCase()
+    const list = groups.get(t) ?? []
+    list.push(a)
+    groups.set(t, list)
+  }
+  const typeOrder = (x: string, y: string) => {
+    const ix = REVIEW_ACCOUNT_TYPE_ORDER.indexOf(x)
+    const iy = REVIEW_ACCOUNT_TYPE_ORDER.indexOf(y)
+    return (ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy)
+  }
+  const boxOf = (box: BalanceBoxKey) =>
+    [...groups.entries()]
+      .filter(([t]) => (TYPE_TO_BOX[t] ?? 'assets') === box)
+      .sort(([x], [y]) => typeOrder(x, y))
+
+  const assetGroups = boxOf('assets')
+  const currentAssets = assetGroups.filter(([t]) => CURRENT_ASSET_TYPES.has(t))
+  const longTermAssets = assetGroups.filter(([t]) => !CURRENT_ASSET_TYPES.has(t))
+  const liabilityGroups = boxOf('liabilities')
+  const equityGroups = boxOf('equity')
+
+  return (
+    <div className="space-y-3 px-4 py-2.5" data-testid="review-accounts">
+      {BALANCE_BOX_ORDER.map(({ key, label }) => {
+        if (key === 'assets' && assetGroups.length === 0) return null
+        if (key === 'liabilities' && liabilityGroups.length === 0) return null
+        return (
+          <div
+            key={key}
+            className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2"
+            data-testid={`balance-box-${key}`}
+          >
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground">{label}</p>
+            {key === 'assets' && (
+              <div className="mt-1 space-y-2">
+                {currentAssets.length > 0 && (
+                  <div data-testid="balance-box-assets-current">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Current</p>
+                    <div className="divide-y divide-border/50">
+                      {currentAssets.map(([t, list]) => (
+                        <AccountTypeGroup key={t} type={t} list={list} editable={editable} onEdit={onEdit} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {longTermAssets.length > 0 && (
+                  <div data-testid="balance-box-assets-long-term">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Long-term</p>
+                    <div className="divide-y divide-border/50">
+                      {longTermAssets.map(([t, list]) => (
+                        <AccountTypeGroup key={t} type={t} list={list} editable={editable} onEdit={onEdit} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {key === 'liabilities' && (
+              <div className="mt-1 divide-y divide-border/50">
+                {liabilityGroups.map(([t, list]) => (
+                  <AccountTypeGroup key={t} type={t} list={list} editable={editable} onEdit={onEdit} />
+                ))}
+              </div>
+            )}
+            {key === 'equity' && (
+              <div className="mt-1" data-testid="balance-box-equity-body">
+                {equityGroups.length > 0 && (
+                  <div className="divide-y divide-border/50">
+                    {equityGroups.map(([t, list]) => (
+                      <AccountTypeGroup key={t} type={t} list={list} editable={editable} onEdit={onEdit} />
+                    ))}
+                  </div>
+                )}
+                {equityPlan && (
+                  <ul className="mt-1 space-y-1" data-testid="equity-plan">
+                    {equityPlan.map((row) => (
+                      <li key={row.name} className="flex items-baseline gap-2 text-sm" data-testid="equity-plan-row">
+                        <span className="font-medium text-foreground">{row.name}</span>
+                        <span className="text-[10px] text-muted-foreground">seeds at conversion</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {!equityPlan && equityGroups.length === 0 && (
+                  <p className="mt-1 flex items-center gap-1.5 text-xs italic text-muted-foreground" data-testid="equity-empty">
+                    No equity setup yet
+                    {editable && (
+                      <RowEditButton label="Equity setup" testid="edit-equity" onClick={() => onEdit('balance', 'equity-setup')} />
+                    )}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 /** V1: the row-level edit affordance - hover/focus reveal on pointer
@@ -126,88 +360,6 @@ function RowEditButton({
   )
 }
 
-/** I3: accounts grouped by type, each row carrying its institution and
- *  proof-category badges plus the online-access flag.
- *  J1 (D2): the primary text is the bank -> type -> last4 standard
- *  (accountLabel); legacy rows without a last-4 keep the old name and the
- *  institution badge. J4 (V1): every row edits its type's count card. */
-function ReviewAccounts({
-  answers,
-  editable,
-  onEdit,
-}: {
-  answers: WizardAnswers
-  editable: boolean
-  onEdit: (chapterId: string, questionId: string, walk?: boolean) => void
-}) {
-  const accounts = allAccounts(answers)
-  if (accounts.length === 0) return null
-  const groups = new Map<string, IntakeAccountInput[]>()
-  for (const a of accounts) {
-    const t = (a.accountType ?? 'other').trim().toLowerCase()
-    const list = groups.get(t) ?? []
-    list.push(a)
-    groups.set(t, list)
-  }
-  const ordered = [...groups.entries()].sort(([x], [y]) => {
-    const ix = REVIEW_ACCOUNT_TYPE_ORDER.indexOf(x)
-    const iy = REVIEW_ACCOUNT_TYPE_ORDER.indexOf(y)
-    return (ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy)
-  })
-  return (
-    <div className="divide-y divide-border px-4" data-testid="review-accounts">
-      {ordered.map(([type, list]) => (
-        <div key={type} className="py-2.5" data-testid="review-account-group" data-type={type}>
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {ACCOUNT_TYPE_LABELS[type] ?? type}
-            <span className="tnum ml-1.5">{list.length}</span>
-          </p>
-          <ul className="mt-1.5 space-y-1.5">
-            {list.map((a, i) => {
-              const detail = accountDetailLine(a)
-              const hasLast4 = normalizeLast4(a.last4) != null
-              return (
-                <li
-                  key={`${a.name}-${i}`}
-                  className="group flex flex-wrap items-baseline gap-x-2 gap-y-1"
-                  data-testid="review-account-row"
-                >
-                  <span className="text-sm font-medium text-foreground">{accountLabel(a)}</span>
-                  {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
-                  {a.institution && !hasLast4 && (
-                    <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
-                      {a.institution}
-                    </span>
-                  )}
-                  {a.fromVehicle != null && (
-                    <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
-                      Vehicle loan
-                    </span>
-                  )}
-                  <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    {PROOF_CATEGORY_LABELS[a.proofCategory ?? ''] ?? 'Statement'}
-                  </span>
-                  {a.grantLoginAccess === true && (
-                    <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
-                      Online access
-                    </span>
-                  )}
-                  {editable && (
-                    <RowEditButton
-                      label={`${ACCOUNT_TYPE_LABELS[type] ?? type} accounts`}
-                      testid={`edit-account-row-${type}-${i}`}
-                      onClick={() => onEdit('balance', ACCOUNT_GROUP_QUESTION[type] ?? 'checking-accounts')}
-                    />
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-      ))}
-    </div>
-  )
-}
 
 /** J1 (D5): a loan entry auto-routed from a financed vehicle carries the
  *  fromVehicle marker - rendered as a "Vehicle loan" badge above. */
@@ -740,9 +892,18 @@ function SectionBody({
           <div key={q.id} className="group flex items-baseline justify-between gap-4 py-2.5">
             <dt className="shrink-0 text-xs text-muted-foreground">{q.title}</dt>
             <dd className="flex items-baseline gap-1.5 text-right text-sm text-foreground">
-              {/* L3 (F7): bulleted summaries (specialty reports) keep their
-                  line breaks. */}
-              <span className="whitespace-pre-line">{text}</span>
+              {/* L5 (J1, 10_06 01:07:49): the EIN masks password-style with a
+                  hide/unhide toggle - "we can verify what that is." */}
+              {q.id === 'tax-id' && typeof answers.taxId === 'string' && answers.taxId.trim() !== '' ? (
+                <MaskedValue
+                  value={answers.taxId}
+                  masked={maskTaxId(answers.taxId)}
+                  label="EIN"
+                  testid="review-ein"
+                />
+              ) : (
+                <span className="whitespace-pre-line">{text}</span>
+              )}
               {editable && (
                 <RowEditButton
                   label={q.title}
@@ -835,10 +996,11 @@ export function ReviewScreen({
       .map((q) => ({ q, text: q.summarize(answers) }))
       .filter((r) => r.text != null)
     // I3: the balance chapter's rows all fold into the grouped accounts
-    // section; render it whenever accounts exist.
+    // section; render it whenever accounts exist. L5 (J3): an answered
+    // equity setup also keeps the section (the Equity box lists the plan).
     const isAccountsChapter = chapter.id === 'balance'
     if (rows.length === 0 && !isAccountsChapter) continue
-    if (isAccountsChapter && allAccounts(answers).length === 0) continue
+    if (isAccountsChapter && allAccounts(answers).length === 0 && !answers.equitySetup) continue
     sections.push({ kind: 'chapter', id: chapter.id, chapter, questions })
   }
   if (quote && quote.lines.length > 0) {

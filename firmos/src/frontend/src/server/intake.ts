@@ -232,6 +232,17 @@ export interface IntakeFormData {
    *  report's due in January - include it on the January invoice").
    *  Absent/null = the usual unanchored periodic spread. */
   billingMonths?: Record<string, number | null>;
+  /** L5 (J3, 10_06 01:10:10): the equity setup - "is everything just
+   *  grouped into owner's equity? Are we doing contributions, distributions,
+   *  net investment gain/loss? Are we breaking it down by owner?" Drives
+   *  the equity accounts seeded at conversion (unanswered = the §6.8
+   *  default contributions + distributions pair). */
+  equitySetup?: "grouped" | "breakdown";
+  /** Which accounts a breakdown seeds: contributions | distributions |
+   *  net_investment. */
+  equityBreakdown?: string[];
+  /** Break the equity accounts down per owner (asked only when owners > 1). */
+  equityPerOwner?: boolean;
   /** Per-service discount capture (C1): flat dollars off per billing cycle,
    *  keyed by service key; the quote engine clamps each line at zero.
    *  Legacy - J4 (V4) presents direct price editing instead; stored

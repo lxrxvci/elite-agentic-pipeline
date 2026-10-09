@@ -526,6 +526,8 @@ describe('firstUnansweredScreen (resume)', () => {
       recordBills: false,
       recordDeposits: false,
       sendPreliminaryReports: false,
+      // L5 (J3): a complete bookkeeping intake answers the equity setup.
+      equitySetup: 'grouped',
     }
     const screens = flattenScreens(full)
     expect(screens[firstUnansweredScreen(full)]).toEqual({ kind: 'review' })
@@ -550,6 +552,7 @@ describe('firstUnansweredScreen (resume)', () => {
       recordBills: false,
       recordDeposits: false,
       sendPreliminaryReports: false,
+      equitySetup: 'grouped',
     }
     const screens = flattenScreens(nearlyFull)
     expect(screens[firstUnansweredScreen(nearlyFull)]).toMatchObject({ questionId: 're-yes' })
@@ -1050,6 +1053,7 @@ describe('scorp_selection_requires_payroll_provider (I2)', () => {
       personalCardForBusiness: false,
       depositsNonBusiness: false,
       personalOnBusiness: false,
+      equitySetup: 'grouped',
     }
     // Payroll itself reads answered (the auto-flag); the provider does not.
     const screens = flattenScreens(a)
@@ -1152,6 +1156,8 @@ describe('I3 sequential account count cards (plan §1 screen 7)', () => {
   it('the balance chapter runs one count card per type - J1 (D4): assets BEFORE loans', () => {
     const balance = CHAPTERS.find((c) => c.id === 'balance')!
     const questions = visibleQuestions(balance, base)
+    // L5 (J3): the equity setup questions follow the count cards (the
+    // breakdown/per-owner follow-ups stay hidden until qualified).
     expect(questions.map((q) => q.id)).toEqual([
       'checking-accounts',
       'savings-accounts',
@@ -1159,8 +1165,9 @@ describe('I3 sequential account count cards (plan §1 screen 7)', () => {
       'vehicles',
       'other-assets',
       'loans',
+      'equity-setup',
     ])
-    expect(questions.every((q) => q.type === 'account-count')).toBe(true)
+    expect(questions.slice(0, 6).every((q) => q.type === 'account-count')).toBe(true)
   })
 
   it('statement day is never captured in intake - it is a conversion-time concern', () => {

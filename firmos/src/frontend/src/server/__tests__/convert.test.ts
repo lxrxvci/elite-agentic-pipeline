@@ -2192,4 +2192,83 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
     // ...and the added account repriced the reconciliation line.
     expect(resynced.find((l) => l.service_key === "account_reconciliations")?.quantity).toBe(2);
   });
+
+  // L5 (J3, 10_06 01:10:10): "is everything just grouped into owner's
+  // equity? Are we doing contributions, distributions, net investment
+  // gain/loss? Are we breaking it down by owner?" The intake's equity
+  // answers drive the seeded equity accounts.
+  it("L5/J3: equity_answers_seed_accounts_at_conversion - breakdown per owner", async () => {
+    const intakeId = await reviewableIntake({
+      legalName: "Equity Seed Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "15",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        contacts: [
+          { firstName: "Wren", lastName: "Okafor", email: "wren@equity-seed.example", isPrimary: true },
+        ],
+        owners: [{ name: "Wren Okafor" }, { name: "Daniel Reyes" }],
+        equitySetup: "breakdown",
+        equityBreakdown: ["contributions", "distributions", "net_investment"],
+        equityPerOwner: true,
+      },
+    });
+    const result = await convertIntakeToClient(intakeId, {}, managerDana, TEST_TODAY);
+    const rows = await db.select().from(accounts).where(eq(accounts.clientId, result.clientId));
+    const equityRows = rows
+      .filter((r) => ["owner_contributions", "owner_distributions", "other_equity"].includes(r.accountType))
+      .map((r) => r.name)
+      .sort();
+    expect(equityRows).toEqual([
+      "Net Investment Gain/Loss - Daniel Reyes",
+      "Net Investment Gain/Loss - Wren Okafor",
+      "Owner Contributions - Daniel Reyes",
+      "Owner Contributions - Wren Okafor",
+      "Owner Distributions - Daniel Reyes",
+      "Owner Distributions - Wren Okafor",
+    ]);
+  });
+
+  it("L5/J3: grouped seeds a single owner's-equity account; unanswered keeps the default pair", async () => {
+    const groupedId = await reviewableIntake({
+      legalName: "Equity Grouped Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "15",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        contacts: [{ firstName: "Pat", lastName: "Doe", email: "pat@equity-grouped.example", isPrimary: true }],
+        equitySetup: "grouped",
+      },
+    });
+    const grouped = await convertIntakeToClient(groupedId, {}, managerDana, TEST_TODAY);
+    const groupedRows = await db.select().from(accounts).where(eq(accounts.clientId, grouped.clientId));
+    const groupedEquity = groupedRows.filter((r) =>
+      ["owner_contributions", "owner_distributions", "other_equity"].includes(r.accountType),
+    );
+    expect(groupedEquity.map((r) => r.name)).toEqual(["Owner's Equity"]);
+    expect(groupedEquity[0]!.proofCategory).toBe("owner_declared");
+    expect(groupedEquity[0]!.statementDay).toBeNull();
+
+    // Legacy path: no equity answer -> the §6.8 default pair, unchanged.
+    const legacyId = await reviewableIntake({
+      legalName: "Equity Default Co",
+      bookkeepingFrequency: "monthly",
+      monthlyCloseTier: "15",
+      bookkeepingStartDate: "2026-01-01",
+      formData: {
+        serviceKeys: ["bank_feed_management"],
+        contacts: [{ firstName: "Lee", lastName: "Ray", email: "lee@equity-default.example", isPrimary: true }],
+      },
+    });
+    const legacy = await convertIntakeToClient(legacyId, {}, managerDana, TEST_TODAY);
+    const legacyRows = await db.select().from(accounts).where(eq(accounts.clientId, legacy.clientId));
+    expect(
+      legacyRows
+        .filter((r) => ["owner_contributions", "owner_distributions", "other_equity"].includes(r.accountType))
+        .map((r) => r.name)
+        .sort(),
+    ).toEqual(["Owner Contributions", "Owner Distributions"]);
+  });
 });

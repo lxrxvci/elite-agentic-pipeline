@@ -146,3 +146,61 @@ export const DEFAULT_SEED_ACCOUNT_TYPES: readonly string[] = [
   "owner_contributions",
   "owner_distributions",
 ];
+
+// ── L5 (J3, 10_06 01:10:10): the intake-driven equity setup ───────────────
+//
+// "Is everything just grouped into owner's equity? Are we doing
+// contributions, distributions, net investment gain/loss? Are we breaking
+// it down by owner?" The intake's equity answers decide what conversion
+// seeds; an unanswered intake keeps the §6.8 default pair above.
+
+export interface EquitySeedRow {
+  type: string;
+  name: string;
+}
+
+/** The breakdown picks (values are the stored answer strings). */
+export const EQUITY_BREAKDOWN_OPTIONS = [
+  { value: "contributions", label: "Contributions" },
+  { value: "distributions", label: "Distributions" },
+  { value: "net_investment", label: "Net investment gain/loss" },
+] as const;
+
+const EQUITY_PICK_SEED: Record<string, { type: string; label: string }> = {
+  contributions: { type: "owner_contributions", label: "Owner Contributions" },
+  distributions: { type: "owner_distributions", label: "Owner Distributions" },
+  net_investment: { type: "other_equity", label: "Net Investment Gain/Loss" },
+};
+
+/**
+ * The equity accounts conversion seeds for this intake. Returns null when
+ * the equity question was never answered (legacy intakes keep the §6.8
+ * default pair). A grouped setup seeds one owner's-equity account; a
+ * breakdown seeds each picked account; per-owner multiplies the rows by
+ * owner ("Owner Contributions - Wren Okafor").
+ */
+export function equitySeedPlan(form: {
+  equitySetup?: string | null;
+  equityBreakdown?: string[] | null;
+  equityPerOwner?: boolean | null;
+  owners?: readonly { name?: string | null }[] | null;
+}): EquitySeedRow[] | null {
+  if (form.equitySetup !== "grouped" && form.equitySetup !== "breakdown") return null;
+  const owners = (form.owners ?? []).map((o) => (o.name ?? "").trim()).filter((n) => n !== "");
+  const perOwner = form.equityPerOwner === true && owners.length > 1;
+  if (form.equitySetup === "grouped") {
+    return perOwner
+      ? owners.map((o) => ({ type: "other_equity", name: `Owner's Equity - ${o}` }))
+      : [{ type: "other_equity", name: "Owner's Equity" }];
+  }
+  const picks =
+    form.equityBreakdown && form.equityBreakdown.length > 0
+      ? form.equityBreakdown
+      : ["contributions", "distributions"];
+  const chosen = EQUITY_BREAKDOWN_OPTIONS.map((o) => o.value)
+    .filter((v) => picks.includes(v))
+    .map((v) => EQUITY_PICK_SEED[v]!);
+  return perOwner
+    ? owners.flatMap((o) => chosen.map((d) => ({ type: d.type, name: `${d.label} - ${o}` })))
+    : chosen.map((d) => ({ type: d.type, name: d.label }));
+}

@@ -52,6 +52,7 @@ import {
 
 import {
   defaultStatementDayFor,
+  equitySeedPlan,
   proofCategoryFor,
   seedDefaultAccounts,
   statementDayForIntakeAccount,
@@ -953,7 +954,18 @@ export async function convertIntakeToClient(
       insertedAccounts.push(merchantAccount);
       accountsCreated += 1;
     }
-    const seededAccounts = await seedDefaultAccounts(clientId, { openDate: intake.bookkeepingStartDate }, tx as DbOrTx);
+    // L5 (J3, 10_06 01:10:10): the intake's equity answers decide the
+    // equity seeds (grouped / breakdown / per-owner); an unanswered intake
+    // keeps the §6.8 default pair (owner contributions + distributions).
+    const equityPlan = equitySeedPlan(form);
+    const seededAccounts = await seedDefaultAccounts(
+      clientId,
+      {
+        openDate: intake.bookkeepingStartDate,
+        ...(equityPlan ? { rows: equityPlan } : {}),
+      },
+      tx as DbOrTx,
+    );
     insertedAccounts.push(...seededAccounts);
     accountsCreated += seededAccounts.length;
 

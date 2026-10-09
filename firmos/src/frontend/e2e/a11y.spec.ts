@@ -241,6 +241,10 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
     await page.getByTestId('continue').click()
     await expect(question).toHaveAttribute('data-question', id)
   }
+  // L5 (J3): the equity setup card follows the loans card - grouped setup.
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'equity-setup')
+  await page.getByTestId('option-grouped').click()
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 're-yes')
   await page.getByTestId('option-no').click()

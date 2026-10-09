@@ -156,7 +156,9 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByTestId('from-vehicle-0')).toHaveText('From the vehicles card')
   await page.getByTestId('lender-select-0').click()
   await page.getByRole('option', { name: 'Chase' }).click()
-  await advance(page, 're-yes')
+  // L5 (J3): the equity setup card follows the loans card - grouped setup.
+  await advance(page, 'equity-setup')
+  await pick(page, 'option-grouped', 're-yes')
 
   // ── Real estate: not a real-estate client (detail questions stay hidden) ──
   await pick(page, 'option-no', 'payment-methods')
@@ -539,7 +541,9 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await advance(page, 'vehicles')
   await advance(page, 'other-assets')
   await advance(page, 'loans')
-  await advance(page, 're-yes')
+  // L5 (J3): the equity setup card follows the loans card - grouped setup.
+  await advance(page, 'equity-setup')
+  await pick(page, 'option-grouped', 're-yes')
   await pick(page, 'option-no', 'payment-methods')
   await page.getByTestId('chip-check').click()
   await advance(page, 'deposits-non-business') // A41: the money-behavior cards first

@@ -209,6 +209,8 @@ const completeAnswers: WizardAnswers = {
   accountingMethod: 'cash',
   recordBills: false,
   sendPreliminaryReports: false,
+  // L5 (J3): a complete bookkeeping intake answers the equity setup.
+  equitySetup: 'grouped',
 }
 
 beforeEach(() => {
@@ -757,6 +759,8 @@ describe('J2/B1 spacebar regression (meeting #3, 00:04:23)', () => {
 describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
   // Answers complete through the income chapter's payment methods, so the
   // wizard resumes exactly at the deposits-non-business card.
+  // L5 (J3): the balance chapter's required equity-setup card answers too -
+  // it sits before income and would otherwise become the resume point.
   const beforeBehavior: WizardAnswers = {
     legalName: 'Test Co',
     contacts: [{ firstName: 'Wren', isPrimary: true }],
@@ -770,6 +774,7 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
     isExistingClient: false,
     bookkeepingStartDate: '2026-01-01',
     isRealEstateClient: false,
+    equitySetup: 'grouped',
     paymentMethods: ['check'],
   }
 
