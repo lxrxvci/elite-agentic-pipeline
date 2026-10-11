@@ -63,6 +63,7 @@ VALID_STAGE_FLOW: list[str] = [
     "discovery",
     "shaping",
     "rfc_adr",
+    "critique",
     "design_build",
     "ci_cd",
     "deploy_release",
