@@ -33,6 +33,10 @@ export interface LineBillingConfig {
    *  "we're just going to have a flat monthly fee for that weekly task"
    *  (01:00:03); the unit becomes "month" (01:02:14). */
   flatMonthly?: boolean
+  /** M4 (10_10, 01:12:43): "normal billing frequency or its own invoice" -
+   *  flagged lines bill on their own invoice row, never bundled with the
+   *  engagement's regular invoice (uniform across every billing scenario). */
+  ownInvoice?: boolean
 }
 
 /** Per-line overrides from form_data.lineBilling (service key → partial). */
@@ -118,6 +122,7 @@ export function resolveLineBilling(
     billDay: override.billDay !== undefined ? override.billDay : (defaults.billDay ?? null),
     billMonth: override.billMonth !== undefined ? override.billMonth : (defaults.billMonth ?? null),
     flatMonthly: override.flatMonthly ?? (calcFrequency === 'monthly' && defaults.calcFrequency === 'weekly' ? true : defaults.flatMonthly),
+    ownInvoice: override.ownInvoice ?? defaults.ownInvoice,
   }
 }
 

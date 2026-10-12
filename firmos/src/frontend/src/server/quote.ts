@@ -452,6 +452,9 @@ export function buildRecurringServicesTemplate(
       bill_day: billing.billDay ?? null,
       bill_month: billing.billMonth ?? null,
       ...(billing.flatMonthly === true ? { flat_monthly: true } : {}),
+      // M4 (01:12:43): "normal billing frequency or its own invoice" -
+      // flagged lines split onto their own invoice row at generation.
+      ...(billing.ownInvoice === true ? { own_invoice: true } : {}),
     }
     // J4 (V4): the equivalent per-cycle discount for a direct price
     // override, derived from the line's GROSS (unit price x quantity - the

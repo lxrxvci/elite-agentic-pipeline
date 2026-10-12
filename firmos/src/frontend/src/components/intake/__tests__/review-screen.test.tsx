@@ -1095,3 +1095,74 @@ describe('M3: the billing grid and frequency totals (10_10 00:55:12-01:03:54)', 
     expect(screen.getByTestId('billing-total-annual')).toHaveTextContent('$50/yr')
   })
 })
+
+/** M4 (10_10, 00:56:00): the 12-month billing calendar on the estimate. */
+describe('M4: the Next-12-months panel (10_10 00:56:00)', () => {
+  const PROJECTION_QUOTE: Quote = {
+    billingCycle: 1,
+    lines: [
+      { service_key: 'bank_feed_management', product_name: 'Bank Feed Management', unit_price: 100, quantity: 1, amount: 100, bucket: 'monthly', unpriced: false },
+      { service_key: 'record_bills', product_name: 'Record Bills', unit_price: 25, quantity: 1, amount: 25, bucket: 'monthly', unpriced: false },
+      { service_key: '1099_collection', product_name: '1099 Collection', unit_price: 50, quantity: 1, amount: 50, bucket: 'annual', unpriced: false },
+    ],
+    totals: {
+      totalMonthly: 125,
+      totalQuarterly: 0,
+      annualExcludingFebruaryBilled: 0,
+      totalPayrollMonthly: 0,
+      totalFebruaryBilledAnnual: 50,
+      totalOneTime: 0,
+      effectiveMonthly: 125,
+    },
+  }
+  const SCHEDULE: NonNullable<WizardAnswers['routineSchedule']> = {
+    'record-bills': { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
+  }
+
+  it('twelve month rows; the current month counts Fridays; the 1099 lands in February', () => {
+    const now = new Date()
+    const anchorId = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    renderReview({
+      answers: { ...FIVE_ACCOUNTS, routineSchedule: SCHEDULE },
+      quote: PROJECTION_QUOTE,
+      onPriceChange: () => {},
+      onLineBilling: () => {},
+    })
+    expandSection('quote')
+    const panel = screen.getByTestId('billing-projection')
+    // 12 month rows.
+    expect(within(panel).getAllByTestId(/^projection-toggle-/).length).toBe(12)
+    // The anchor month totals Fridays x $25 + $100.
+    const fridays = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+      .filter((d) => d <= new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())
+      .filter((d) => new Date(now.getFullYear(), now.getMonth(), d).getDay() === 5).length
+    expect(screen.getByTestId(`projection-${anchorId}`)).toHaveTextContent(`$${100 + fridays * 25}`)
+    // Expand the anchor month: the lines drill shows the occurrence amount.
+    fireEvent.click(screen.getByTestId(`projection-toggle-${anchorId}`))
+    expect(within(screen.getByTestId(`projection-lines-${anchorId}`)).getByText(/Record Bills/)).toBeInTheDocument()
+    // The 1099's row is February (of the next year when anchor > Feb).
+    const febYear = now.getMonth() + 1 <= 2 ? now.getFullYear() : now.getFullYear() + 1
+    const feb = screen.getByTestId(`projection-${febYear}-02`)
+    expect(feb).toHaveTextContent('$250')
+  })
+
+  it('own-invoice lines group with the marker and their own monthly total (01:12:43)', () => {
+    const now = new Date()
+    const anchorId = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    renderReview({
+      answers: {
+        ...FIVE_ACCOUNTS,
+        routineSchedule: SCHEDULE,
+        lineBilling: { record_bills: { ownInvoice: true } },
+      } as unknown as WizardAnswers,
+      quote: PROJECTION_QUOTE,
+      onPriceChange: () => {},
+      onLineBilling: () => {},
+    })
+    expandSection('quote')
+    const row = screen.getByTestId(`projection-${anchorId}`)
+    expect(row).toHaveTextContent('own invoice')
+    fireEvent.click(screen.getByTestId(`projection-toggle-${anchorId}`))
+    expect(within(screen.getByTestId(`projection-lines-${anchorId}`)).getAllByText('own invoice').length).toBeGreaterThan(0)
+  })
+})

@@ -34,8 +34,10 @@ import { QuoteTemplateButton } from './quote-template-button'
 import {
   billingTotalsFor,
   BREAKDOWN_ACCOUNTS,
+  buildBillingProjection,
   buildBucketedEstimate,
   lineCycleLabel,
+  projectionMonthLabel,
   quoteLineNet,
   type EstimateLine,
 } from './review-estimate'
@@ -741,7 +743,11 @@ function EstimateSection({
   // "total weekly invoicing… total monthly invoicing… total annual
   // billing." The single effective-monthly number was "too subtle."
   const now = new Date()
-  const billingTotals = billingTotalsFor(estimate.groups, { year: now.getFullYear(), month: now.getMonth() + 1 })
+  const anchor = { year: now.getFullYear(), month: now.getMonth() + 1 }
+  const billingTotals = billingTotalsFor(estimate.groups, anchor)
+  // M4 (A8, 10_10 00:56:00): the 12-month forward billing calendar.
+  const projection = buildBillingProjection(estimate.groups, estimate.oneTime, estimate.retroItems, answers, anchor)
+  const [openMonths, setOpenMonths] = useState<ReadonlySet<string>>(new Set())
   const frequencyTotals = (
     [
       { key: 'weekly', label: 'Weekly invoicing', suffix: '/wk' },
@@ -963,6 +969,80 @@ function EstimateSection({
           Billed every {quote.billingCycle} months - shown at the effective monthly rate.
         </p>
       )}
+      {/* M4 (A8, 10_10 00:56:00): "why don't we just have it show billing
+          calendar for the next 12 months?" - every month computed from the
+          lines' billing models; annual fees land in their month; own-invoice
+          lines group separately (01:12:43). */}
+      <div className="border-t border-border px-4 py-2.5" data-testid="billing-projection">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Next 12 months
+        </p>
+        <ul className="mt-1 divide-y divide-border/60">
+          {projection.map((m) => {
+            const id = `${m.year}-${String(m.month).padStart(2, '0')}`
+            const open = openMonths.has(id)
+            const total = m.normalTotal + m.ownInvoiceTotal
+            return (
+              <li key={id} className="py-1.5" data-testid={`projection-${id}`}>
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  aria-controls={`projection-lines-${id}`}
+                  data-testid={`projection-toggle-${id}`}
+                  onClick={() =>
+                    setOpenMonths((cur) => {
+                      const next = new Set(cur)
+                      if (next.has(id)) next.delete(id)
+                      else next.add(id)
+                      return next
+                    })
+                  }
+                  className="flex w-full items-baseline justify-between gap-3 text-left focus-visible:outline-2 focus-visible:outline-ring"
+                >
+                  <span className="flex items-baseline gap-1.5 text-sm text-foreground">
+                    <ChevronDown className={cn('h-3 w-3 self-center transition-transform', open && 'rotate-180')} aria-hidden />
+                    {projectionMonthLabel(m.year, m.month)}
+                  </span>
+                  <span className="tnum text-sm font-medium text-foreground">
+                    {total > 0 ? formatMoney(total) : '—'}
+                    {m.ownInvoiceTotal > 0 && (
+                      <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                        ({formatMoney(m.ownInvoiceTotal)} own invoice)
+                      </span>
+                    )}
+                  </span>
+                </button>
+                {open && (
+                  <ul
+                    id={`projection-lines-${id}`}
+                    data-testid={`projection-lines-${id}`}
+                    className="mt-1 space-y-0.5 rounded-lg border border-border bg-muted/40 px-3 py-2"
+                  >
+                    {m.lines.length === 0 && (
+                      <li className="text-xs italic text-muted-foreground">Nothing billed this month.</li>
+                    )}
+                    {m.lines.map((l) => (
+                      <li key={`${id}-${l.key}`} className="flex items-baseline justify-between gap-3 text-xs" data-testid="projection-line">
+                        <span className="min-w-0 text-foreground">
+                          {l.name}
+                          {l.note && <span className="ml-1.5 text-[10px] text-muted-foreground">{l.note}</span>}
+                          {l.ownInvoice && (
+                            <span className="ml-1.5 rounded bg-accent px-1 py-0.5 text-[10px] font-semibold text-accent-foreground">
+                              own invoice
+                            </span>
+                          )}
+                        </span>
+                        <span className="tnum shrink-0 font-medium text-foreground">{formatMoney(l.amount)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      </div>
+
       {/* K6 (D4, 09_30 01:08:26): custom one-time or recurring work enters
           from the services review area - "that's where the services review
           area, we would have the option to enter in custom one time or

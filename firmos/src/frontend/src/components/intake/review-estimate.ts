@@ -578,3 +578,129 @@ export function billingTotalsFor(
   }
   return totals
 }
+
+// ── M4: the 12-month forward billing projection (10_10 00:56:00) ─────────
+
+export interface ProjectionLine {
+  key: string
+  name: string
+  amount: number
+  ownInvoice: boolean
+  /** Annual/quarterly lines note their landing month ("billed each January"). */
+  note?: string
+}
+
+export interface ProjectionMonth {
+  year: number
+  month: number
+  normalTotal: number
+  ownInvoiceTotal: number
+  lines: ProjectionLine[]
+}
+
+/** "Oct 2026" (year always present - annual lines must never "skip" months
+ *  (01:11:08). */
+export function projectionMonthLabel(year: number, month: number): string {
+  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  return `${names[month - 1]} ${year}`
+}
+
+const PROJECTION_MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const
+
+/** Sundays in a month = the weekly series' invoice count for it. */
+function sundaysInMonth(year: number, month: number): number {
+  return weekdayOccurrencesInMonth(year, month, [0])
+}
+
+/**
+ * The next 12 months of billing, computed per line from its resolved
+ * billing model (00:56:00, 00:56:54): weekly occurrences per actual month,
+ * monthly amounts, quarterly in anchor months, annual fees landing in their
+ * month ("January adds the $50 1099"), weekly-BILLED lines totaled as that
+ * month's weekly invoices, one-time and retro fees landing on the first
+ * invoice. Own-invoice lines group separately (01:12:43).
+ */
+export function buildBillingProjection(
+  groups: EstimateBucketGroup[],
+  oneTime: OneTimeItem[],
+  retroItems: OneTimeItem[],
+  answers: WizardAnswers,
+  anchor: { year: number; month: number },
+  monthCount = 12,
+): ProjectionMonth[] {
+  const recurring: EstimateLine[] = groups.flatMap((g) => g.lines)
+  const startMonth = (() => {
+    const raw = answers.bookkeepingStartDate
+    if (typeof raw === 'string') {
+      const m = /^\d{4}-(\d{2})-\d{2}$/.exec(raw)
+      if (m) return Number(m[1])
+    }
+    return 1
+  })()
+
+  const out: ProjectionMonth[] = []
+  for (let i = 0; i < monthCount; i++) {
+    const d = new Date(anchor.year, anchor.month - 1 + i, 1)
+    const year = d.getFullYear()
+    const month = d.getMonth() + 1
+    const lines: ProjectionLine[] = []
+
+    for (const view of recurring) {
+      const unit = view.line.price_override ?? view.line.unit_price
+      if (unit == null) continue
+      const cfg = view.billing
+      const ownInvoice = cfg.ownInvoice === true
+      const qty = view.line.quantity
+      let amount = 0
+      let note: string | undefined
+
+      if (cfg.billingFrequency === 'weekly') {
+        // The month's weekly series: each week's invoice at the weekly amount.
+        amount = round2Billing(
+          sundaysInMonth(year, month) *
+            billingAmountForPeriod(cfg, unit, qty, 'weekly', { year, month }),
+        )
+        note = `${sundaysInMonth(year, month)} weekly invoices`
+      } else if (cfg.billingFrequency === 'monthly') {
+        amount = round2Billing(billingAmountForPeriod(cfg, unit, qty, 'monthly', { year, month }))
+      } else if (cfg.billingFrequency === 'quarterly') {
+        const anchorMonth = cfg.billMonth ?? startMonth
+        if ((((month - anchorMonth) % 3) + 3) % 3 === 0) {
+          amount = round2Billing(billingAmountForPeriod(cfg, unit, qty, 'quarterly', { year, month }))
+          note = 'quarterly'
+        }
+      } else {
+        // annual: the full calc-year amount lands in its month.
+        const billMonth = cfg.billMonth ?? 1
+        if (month === billMonth) {
+          amount = round2Billing(billingAmountForPeriod(cfg, unit, qty, 'annual', { year, month: 1 }))
+          note = `billed each ${PROJECTION_MONTH_NAMES[billMonth - 1]}`
+        }
+      }
+
+      if (amount > 0) lines.push({ key: view.key, name: view.name, amount, ownInvoice, note })
+    }
+
+    // One-time and retro fees land on the FIRST invoice (the anchor month).
+    if (i === 0) {
+      for (const item of oneTime) {
+        if (item.amount != null && item.amount > 0) {
+          lines.push({ key: item.key, name: item.name, amount: round2Billing(item.amount), ownInvoice: false, note: 'one-time' })
+        }
+      }
+      for (const item of retroItems) {
+        if (item.amount != null && item.amount > 0) {
+          lines.push({ key: item.key, name: item.name, amount: round2Billing(item.amount), ownInvoice: false, note: 'one-time' })
+        }
+      }
+    }
+
+    const normalTotal = round2Billing(lines.filter((l) => !l.ownInvoice).reduce((a, l) => a + l.amount, 0))
+    const ownInvoiceTotal = round2Billing(lines.filter((l) => l.ownInvoice).reduce((a, l) => a + l.amount, 0))
+    out.push({ year, month, normalTotal, ownInvoiceTotal, lines })
+  }
+  return out
+}

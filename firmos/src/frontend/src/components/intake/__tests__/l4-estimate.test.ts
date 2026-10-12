@@ -130,3 +130,115 @@ describe('L4/G8: weekly lines show occurrence math (10_06 01:04:50)', () => {
     expect(line?.math).not.toContain('× 4 weeks')
   })
 })
+
+/**
+ * M4 (10_10, 00:56:00-01:12:43): the 12-month forward billing projection -
+ * every month computed from the line's billing model, annual fees landing
+ * in their month, own-invoice lines grouped separately.
+ */
+describe('M4: the 12-month billing projection (10_10 00:56:00)', () => {
+  const PROJECTION_QUOTE: Quote = {
+    billingCycle: 1,
+    lines: [
+      { service_key: 'bank_feed_management', product_name: 'Bank Feed Management', unit_price: 100, quantity: 1, amount: 100, bucket: 'monthly', unpriced: false },
+      { service_key: 'record_bills', product_name: 'Record Bills', unit_price: 25, quantity: 1, amount: 25, bucket: 'monthly', unpriced: false },
+      { service_key: '1099_collection', product_name: '1099 Collection', unit_price: 50, quantity: 1, amount: 50, bucket: 'annual', unpriced: false },
+    ],
+    totals: {
+      totalMonthly: 125,
+      totalQuarterly: 0,
+      annualExcludingFebruaryBilled: 0,
+      totalPayrollMonthly: 0,
+      totalFebruaryBilledAnnual: 50,
+      totalOneTime: 0,
+      effectiveMonthly: 125,
+    },
+  }
+
+  const SCHEDULE: NonNullable<WizardAnswers['routineSchedule']> = {
+    'record-bills': { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
+  }
+
+  it('twelve_month_preview_counts_occurrences: Fridays per actual month; monthly lines flat; 1099 lands in February', async () => {
+    const { buildBillingProjection } = await import('../review-estimate')
+    const estimate = buildBucketedEstimate(PROJECTION_QUOTE, { ...ANSWERS, routineSchedule: SCHEDULE })
+    const projection = buildBillingProjection(estimate.groups, estimate.oneTime, estimate.retroItems, ANSWERS, { year: 2026, month: 10 })
+
+    expect(projection).toHaveLength(12)
+    const byLabel = new Map(projection.map((m) => [`${m.year}-${m.month}`, m]))
+    // October 2026: 5 Fridays × $25 + $100 monthly.
+    expect(byLabel.get('2026-10')!.normalTotal).toBe(225)
+    // November: 4 Fridays.
+    expect(byLabel.get('2026-11')!.normalTotal).toBe(200)
+    // The 1099 ($50, February default) lands ONLY in February.
+    expect(byLabel.get('2026-10')!.lines.some((l) => l.key === '1099_collection')).toBe(false)
+    expect(byLabel.get('2027-2')!.lines.some((l) => l.key === '1099_collection' && l.amount === 50)).toBe(true)
+    expect(byLabel.get('2027-2')!.normalTotal).toBe(250)
+  })
+
+  it('annual_fee_lands_in_january_on_preview: an assigned January line shows there with its note', async () => {
+    const { buildBillingProjection } = await import('../review-estimate')
+    const answers = {
+      ...ANSWERS,
+      routineSchedule: SCHEDULE,
+      billingMonths: { '1099_collection': 1 },
+    } as unknown as WizardAnswers
+    const estimate = buildBucketedEstimate(PROJECTION_QUOTE, answers)
+    const projection = buildBillingProjection(estimate.groups, estimate.oneTime, estimate.retroItems, answers, { year: 2026, month: 10 })
+    const jan = projection.find((m) => m.year === 2027 && m.month === 1)!
+    const fee = jan.lines.find((l) => l.key === '1099_collection')!
+    expect(fee.amount).toBe(50)
+    expect(fee.note).toBe('billed each January')
+    // February keeps the other lines but no 1099 (moved to January).
+    const feb = projection.find((m) => m.year === 2027 && m.month === 2)!
+    expect(feb.lines.some((l) => l.key === '1099_collection')).toBe(false)
+  })
+
+  it('own_invoice_lines_group_separately (01:12:43)', async () => {
+    const { buildBillingProjection } = await import('../review-estimate')
+    const answers = {
+      ...ANSWERS,
+      routineSchedule: SCHEDULE,
+      lineBilling: { record_bills: { ownInvoice: true } },
+    } as unknown as WizardAnswers
+    const estimate = buildBucketedEstimate(PROJECTION_QUOTE, answers)
+    const projection = buildBillingProjection(estimate.groups, estimate.oneTime, estimate.retroItems, answers, { year: 2026, month: 10 })
+    const oct = projection[0]!
+    // record_bills ($125 Oct) sits in its own invoice total, not the normal one.
+    expect(oct.ownInvoiceTotal).toBe(125)
+    expect(oct.normalTotal).toBe(100)
+    expect(oct.lines.find((l) => l.key === 'record_bills')!.ownInvoice).toBe(true)
+  })
+
+  it('a weekly-BILLED line totals as that month\u2019s weekly invoices', async () => {
+    const { buildBillingProjection } = await import('../review-estimate')
+    const answers = {
+      ...ANSWERS,
+      routineSchedule: SCHEDULE,
+      lineBilling: { record_bills: { billingFrequency: 'weekly' } },
+    } as unknown as WizardAnswers
+    const estimate = buildBucketedEstimate(PROJECTION_QUOTE, answers)
+    const projection = buildBillingProjection(estimate.groups, estimate.oneTime, estimate.retroItems, answers, { year: 2026, month: 10 })
+    const oct = projection[0]!
+    // October 2026 has 4 Sundays (4, 11, 18, 25) -> 4 weekly invoices x $25.
+    const line = oct.lines.find((l) => l.key === 'record_bills')!
+    expect(line.amount).toBe(100)
+    expect(line.note).toBe('4 weekly invoices')
+  })
+
+  it('one-time and retro fees land on the first invoice only', async () => {
+    const { buildBillingProjection } = await import('../review-estimate')
+    const withOneTime: Quote = {
+      ...PROJECTION_QUOTE,
+      lines: [
+        ...PROJECTION_QUOTE.lines,
+        { service_key: 'qbo_setup', product_name: 'QBO Setup', unit_price: 150, quantity: 1, amount: 150, bucket: 'one_time', unpriced: false },
+      ],
+      totals: { ...PROJECTION_QUOTE.totals, totalOneTime: 150 },
+    }
+    const estimate = buildBucketedEstimate(withOneTime, { ...ANSWERS, routineSchedule: SCHEDULE })
+    const projection = buildBillingProjection(estimate.groups, estimate.oneTime, estimate.retroItems, ANSWERS, { year: 2026, month: 10 })
+    expect(projection[0]!.lines.some((l) => l.key === 'qbo_setup' && l.amount === 150 && l.note === 'one-time')).toBe(true)
+    expect(projection[1]!.lines.some((l) => l.key === 'qbo_setup')).toBe(false)
+  })
+})
