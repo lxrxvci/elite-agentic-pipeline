@@ -724,11 +724,13 @@ export function RoutineSchedulerScreen({
     <div className="space-y-4" data-testid="routine-scheduler">
       <DndContext sensors={sensors} modifiers={[snapOverlayToCursor]} autoScroll onDragStart={onDragStart} onDragEnd={onDragEnd}>
         {/* Buckets stack full-width: the per-card controls need the room.
-            L1 (H6, 10_06 00:39:05): the board scrolls INSIDE its own bounded
-            container, so dnd-kit's autoScroll works during a drag and the
-            overlay's grab-point math stays true (the old whole-page scroll
-            broke collision + overlay alignment once the list overflowed). */}
-        <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1" data-testid="routine-bucket-scroll">
+            M2 (B6, 10_10 00:31:43-00:32:56): ONE scrollbar - the page's.
+            The L1 inner container made two ("the scroll thing is still
+            bugged") and let the wheel scroll the un-registered outer page
+            mid-drag, separating the card from the cursor. On the document
+            scroller, dnd-kit's autoScroll AND wheel scrolls both update the
+            drag overlay, so the card stays glued to the pointer. */}
+        <div className="space-y-3" data-testid="routine-bucket-scroll">
           {ROUTINE_BUCKETS.map((bucket) => (
             <BucketSection
               key={bucket}

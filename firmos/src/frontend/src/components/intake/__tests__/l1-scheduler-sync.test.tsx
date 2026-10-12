@@ -87,11 +87,11 @@ describe('L1/H2: scheduler_x_unticks_the_service (10_06 00:42:51)', () => {
     expect(screen.getByTestId('remove-eoy-tax-checklist')).toBeInTheDocument()
   })
 
-  it('L1/H6: the board scrolls inside its own bounded container (drag auto-scroll works)', () => {
+  it('M2/B6 (revises L1/H6): the board scrolls with the page - one scrollbar, no inner container (10_10 00:31:43)', () => {
     render(<Harness initial={BASE} />)
     const scroll = screen.getByTestId('routine-bucket-scroll')
-    expect(scroll.className).toContain('overflow-y-auto')
-    expect(scroll.className).toContain('max-h-')
+    expect(scroll.className).not.toContain('overflow-y-auto')
+    expect(scroll.className).not.toContain('max-h-')
   })
 })
 

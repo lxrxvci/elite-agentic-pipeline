@@ -239,3 +239,14 @@ function within(bucket: HTMLElement): string[] {
     el.getAttribute('data-testid')!.slice('routine-card-'.length),
   )
 }
+
+// M2 (B6, 10_10 00:31:43): "There's two scroll bars now." The board scrolls
+// with the page - never inside a bounded container of its own.
+describe('M2/B6: one_scrollbar_only', () => {
+  it('the bucket board has no inner overflow container', () => {
+    render(<Harness initial={base} />)
+    const wrap = screen.getByTestId('routine-bucket-scroll')
+    expect(wrap.className).not.toContain('overflow-y-auto')
+    expect(wrap.className).not.toContain('max-h')
+  })
+})
