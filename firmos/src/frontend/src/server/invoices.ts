@@ -37,6 +37,7 @@ import { localToday } from "./dates";
 import { toDomainClient, type ClientRow } from "./domain-adapters";
 import { firmLocalWallToUtc, firmTimezone } from "./notifications";
 import { getPricingOverrides } from "./pricing-config";
+import { weekdayOccurrencesInMonth } from "@/shared/lib/routine-schedule";
 import type { TemplateLineItem } from "./quote";
 
 /**
@@ -171,6 +172,79 @@ const PERIOD_SPREAD_MONTHS: Record<string, number> = {
   annual: 12,
 };
 
+/**
+ * M3 (10_10, 01:03:54): quantity for a line carrying the resolved billing
+ * model (bill_frequency + calc_frequency + calc_weekdays stamped at
+ * conversion). Actual counts per period - never a smoothed average
+ * (01:09:53): weekly/daily-calc bills its real weekday occurrences;
+ * monthly-calc counts months; annual-calc divides.
+ */
+function configQuantityForMonth(
+  line: TemplateLineItem,
+  period: "monthly" | "quarterly" | "annual",
+  year: number,
+  month: number,
+  startMonth: number,
+): number {
+  const calcFreq = line.calc_frequency as string | undefined;
+  const calcWeekdays = (line.calc_weekdays as number[] | null) ?? [5];
+  const qty = line.quantity;
+  const monthlyFamily = line.flat_monthly === true || calcFreq == null || calcFreq === "monthly";
+  // The monthly SHARE of a unit: specialty report lines arrive
+  // cycle-normalized (occurrences per month already - the template comment
+  // on quote.ts); every other line arrives as a per-cadence count, divided
+  // to the month by its calc frequency.
+  const specialty = /^specialty_report_\d+(_retro)?$/.test(line.service_key);
+  const monthlyShare = specialty
+    ? qty
+    : monthlyFamily
+      ? qty
+      : calcFreq === "quarterly"
+        ? qty / 3
+        : calcFreq === "annual"
+          ? qty / 12
+          : qty;
+
+  // Flat monthly (01:00:03): occurrences never apply at any billing period -
+  // the unit is the month ("your unit now becomes month", 01:02:14).
+  if (line.flat_monthly === true) {
+    if (period === "monthly") return monthlyShare;
+    if (period === "quarterly") return monthlyShare * 3;
+    return monthlyShare * 12;
+  }
+
+  if (period === "monthly") {
+    if (calcFreq === "weekly" || calcFreq === "daily") {
+      return weekdayOccurrencesInMonth(year, month, calcWeekdays) * qty;
+    }
+    return monthlyShare;
+  }
+  if (period === "quarterly") {
+    const anchor = (line.bill_month as number | null) ?? startMonth;
+    if ((((month - anchor) % 3) + 3) % 3 !== 0) return 0;
+    if (calcFreq === "weekly" || calcFreq === "daily") {
+      const quarterMonths = [0, 1, 2].map((i) => {
+        const d = new Date(year, month - 1 + i, 1);
+        return { year: d.getFullYear(), month: d.getMonth() + 1 };
+      });
+      return quarterMonths.reduce(
+        (t, m) => t + weekdayOccurrencesInMonth(m.year, m.month, calcWeekdays) * qty,
+        0,
+      );
+    }
+    return monthlyShare * 3;
+  }
+  // annual: the full calc-year amount lands in the assigned month.
+  const billMonth = (line.bill_month as number | null) ?? 1;
+  if (month !== billMonth) return 0;
+  if (calcFreq === "weekly" || calcFreq === "daily") {
+    let total = 0;
+    for (let m = 1; m <= 12; m++) total += weekdayOccurrencesInMonth(year, m, calcWeekdays) * qty;
+    return total;
+  }
+  return monthlyShare * 12;
+}
+
 export async function buildItemizedLineItems(
   client: ClientRow,
   year: number,
@@ -190,6 +264,10 @@ export async function buildItemizedLineItems(
   const anchorYear = client.bookkeepingStartDate
     ? parseLocalDate(client.bookkeepingStartDate).year
     : year;
+  // M3: quarterly billing anchors on this when the line picks no month.
+  const startMonth = client.bookkeepingStartDate
+    ? parseLocalDate(client.bookkeepingStartDate).month
+    : 1;
 
   // Admin pricing overrides (owner call notes): they reprice non-manual
   // template lines at invoice time, so a rate change bills on the next
@@ -256,7 +334,24 @@ export async function buildItemizedLineItems(
         quantity = locationCount * billingCycle;
         break;
       default:
-        if (line.frequency === "weekly" || line.frequency === "daily") {
+        // M3: weekly-BILLED lines never land on the monthly invoice - the
+        // weekly run bills them (M3.5).
+        if ((line.bill_frequency as string | undefined) === "weekly") {
+          quantity = 0;
+        } else if (
+          (line.bill_frequency as string | undefined) != null &&
+          !febBilled
+        ) {
+          // M3 config path: the line's resolved calc/billing frequencies
+          // drive the quantity (§6.5 febBilled stays on the legacy branch).
+          quantity = configQuantityForMonth(
+            line,
+            line.bill_frequency as "monthly" | "quarterly" | "annual",
+            year,
+            month,
+            startMonth,
+          );
+        } else if (line.frequency === "weekly" || line.frequency === "daily") {
           quantity = occurrenceQuantity(line, covered);
         } else if (
           line.frequency === "quarterly" ||
@@ -628,6 +723,178 @@ export interface GenerateSummary {
 /** Net 15 from the 1st of the target month (§6.5). */
 export function net15DueDate(year: number, month: number): string {
   return formatLocalDate(addDays({ year, month, day: 1 }, 15));
+}
+
+export interface GenerateWeeklySummary {
+  weekStart: string;
+  invoicesCreated: number;
+  skippedExisting: number;
+  skippedNoWeeklyLines: number;
+  failures: GenerateFailure[];
+}
+
+/** The Sunday starting the week containing `day` (the schedule's week grid). */
+export function weekStartSunday(day: LocalDate): LocalDate {
+  const dow = new Date(Date.UTC(day.year, day.month - 1, day.day)).getUTCDay();
+  return addDays(day, -dow);
+}
+
+/**
+ * M3 (10_10, 01:00:46 + 00:59:22): weekly-BILLED lines invoice weekly -
+ * "we're going to charge your card every week, calculated on a weekly
+ * basis." One invoice per client per week from the template's
+ * bill_frequency "weekly" rows, at Jason's weekly amounts (weekly/daily
+ * calc: each selected weekday once; monthly-family calc prorates x12/52,
+ * his cross-frequency rule at 01:04:37). Idempotent per week via the notes
+ * marker; isAutoGenerated stays false so the (client, year, month)
+ * generated-unique index - which guards the monthly row - never collides
+ * with the weekly series (the milestone rows' precedent).
+ */
+export async function generateWeeklyInvoices(
+  day: LocalDate,
+  today: LocalDate = localToday(),
+): Promise<GenerateWeeklySummary> {
+  void today;
+  const start = weekStartSunday(day);
+  const weekStart = formatLocalDate(start);
+  const marker = `weekly:${weekStart}`;
+  const summary: GenerateWeeklySummary = {
+    weekStart,
+    invoicesCreated: 0,
+    skippedExisting: 0,
+    skippedNoWeeklyLines: 0,
+    failures: [],
+  };
+
+  const pricingOverrides = await getPricingOverrides();
+  const allClients = await db.select().from(clients);
+  for (const client of allClients) {
+    if (!generatesRecurringWork(toDomainClient(client))) continue;
+    try {
+      const template = Array.isArray(client.recurringServicesTemplate)
+        ? (client.recurringServicesTemplate as TemplateLineItem[])
+        : [];
+      const weeklyLines = template.filter(
+        (l) => l && (l.bill_frequency as string | undefined) === "weekly",
+      );
+      if (weeklyLines.length === 0) {
+        summary.skippedNoWeeklyLines += 1;
+        continue;
+      }
+      const [existing] = await db
+        .select({ id: invoices.id })
+        .from(invoices)
+        .where(and(eq(invoices.clientId, client.id), eq(invoices.notes, marker)))
+        .limit(1);
+      if (existing) {
+        summary.skippedExisting += 1;
+        continue;
+      }
+
+      const specs: InvoiceLineSpec[] = [];
+      let discountTotal = 0;
+      for (const line of weeklyLines) {
+        const unitPrice =
+          line.manual_edit === true ? line.unit_price : (pricingOverrides[line.service_key] ?? line.unit_price);
+        if (unitPrice == null) continue;
+        const calcFreq = (line.calc_frequency as string | undefined) ?? "weekly";
+        const calcWeekdays = (line.calc_weekdays as number[] | null) ?? [5];
+        const specialty = /^specialty_report_\d+(_retro)?$/.test(line.service_key);
+        const monthlyShare = specialty
+          ? line.quantity
+          : calcFreq === "quarterly"
+            ? line.quantity / 3
+            : calcFreq === "annual"
+              ? line.quantity / 12
+              : line.quantity;
+        // Weekly/daily calc: each selected weekday bills once this week
+        // ("calculated on a weekly basis"); monthly-family prorates x12/52.
+        const quantity =
+          calcFreq === "weekly" || calcFreq === "daily"
+            ? line.quantity * calcWeekdays.length
+            : (monthlyShare * 12) / 52;
+        const amount = round2(unitPrice * quantity);
+        if (amount <= 0) continue;
+        const perLineDiscount = Number(line.discount ?? 0);
+        if (perLineDiscount > 0) {
+          const factor = line.quantity > 0 ? quantity / line.quantity : 1;
+          discountTotal -= Math.min(perLineDiscount * factor, amount);
+        }
+        specs.push({
+          lineType: "recurring",
+          serviceKey: line.service_key,
+          description: line.product_name,
+          quantity: round2(quantity),
+          unitPrice,
+          discount: perLineDiscount,
+          amount,
+        });
+      }
+      if (specs.length === 0) {
+        summary.skippedNoWeeklyLines += 1;
+        continue;
+      }
+      const billableSubtotal = round2(specs.reduce((sum, l) => sum + l.amount, 0));
+      if (discountTotal !== 0) {
+        const total = round2(Math.max(discountTotal, -billableSubtotal));
+        specs.push({
+          lineType: "other",
+          serviceKey: SECTION_DISCOUNT_KEY,
+          description: "Preferred Customer Discount",
+          quantity: 1,
+          unitPrice: total,
+          discount: 0,
+          amount: total,
+        });
+      }
+      const total = round2(specs.reduce((sum, l) => sum + l.amount, 0));
+      if (total <= 0) {
+        summary.skippedNoWeeklyLines += 1;
+        continue;
+      }
+
+      const [inserted] = await db
+        .insert(invoices)
+        .values({
+          clientId: client.id,
+          invoiceNumber: `INV-W${weekStart.replaceAll("-", "")}-${client.id}`,
+          status: "draft",
+          year: start.year,
+          month: start.month,
+          // M3: NOT the monthly generated row - the weekly series shares the
+          // month with the monthly invoice and with itself (milestone precedent).
+          isAutoGenerated: false,
+          issueDate: weekStart,
+          dueDate: formatLocalDate(addDays(start, 15)),
+          total: total.toFixed(2),
+          notes: marker,
+        })
+        .returning({ id: invoices.id });
+      await db.insert(invoiceLineItems).values(
+        specs.map((l, position) => ({
+          invoiceId: inserted.id,
+          lineType: l.lineType,
+          serviceKey: l.serviceKey,
+          description: l.description,
+          quantity: l.quantity.toFixed(2),
+          unitPrice: l.unitPrice.toFixed(2),
+          discount: l.discount.toFixed(2),
+          amount: l.amount.toFixed(2),
+          taskId: l.taskId ?? null,
+          position,
+        })),
+      );
+      summary.invoicesCreated += 1;
+    } catch (err) {
+      console.error(`[weekly-invoices] client ${client.id} (${client.legalName}) failed:`, err);
+      summary.failures.push({
+        clientId: client.id,
+        clientName: client.legalName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return summary;
 }
 
 export async function generateMonthlyInvoices(

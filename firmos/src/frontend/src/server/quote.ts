@@ -1,5 +1,6 @@
 import {
   calculateQuote,
+  isFebruaryBilledService,
   isReconciliationBillableAccount,
   parseLocalDate,
   PRICING,
@@ -13,6 +14,13 @@ import {
   type QuoteServiceInput,
   type SpecialtyReportInput,
 } from "@firmos/domain";
+import {
+  defaultLineBilling,
+  resolveLineBilling,
+  type LineBillingConfig,
+} from "@/shared/lib/line-billing";
+import type { RoutineSchedule } from "@/shared/lib/routine-schedule";
+import { taskKeysFor } from "@/components/intake/review-estimate";
 
 import { statementDayForIntakeAccount } from "./accounts-seed";
 import { accountLabel } from "@/shared/lib/account-label";
@@ -392,8 +400,59 @@ export function buildRecurringServicesTemplate(
   // template as bill_month - the invoice engine bills the line's full
   // quantity in that month instead of spreading it across the year.
   billingMonths: Record<string, number | null> = {},
+  // M3 (10_10, 01:03:54): the per-line billing model rides too - the
+  // resolved calc/billing frequencies and date selectors stamp onto every
+  // template line ("Billing frequency is different than frequency").
+  lineBilling: Record<string, Partial<LineBillingConfig>> = {},
+  billingDefaults: { closingFrequency?: string; routineSchedule?: RoutineSchedule | null } = {},
 ): TemplateLineItem[] {
+  const schedule = billingDefaults.routineSchedule ?? null
+  const closingFrequency = billingDefaults.closingFrequency ?? 'monthly'
   return quote.lines.map((line) => {
+    // M3: the line's resolved billing model (defaults from its cadence, the
+    // schedule's weekdays, the closing frequency, and any L4 month
+    // assignment; form_data overrides on top).
+    const scheduleEntry = taskKeysFor(line)
+      .map((k) => schedule?.[k])
+      .find((e) => e != null)
+    // The display bucket's source order mirrors the estimate's: the
+    // committed schedule wins; a specialty report's OWN frequency is next
+    // (the engine normalizes annual reports into the monthly cycle);
+    // the engine bucket falls back last.
+    const specialtyPreMatch = line.service_key.match(/^specialty_report_(\d+)(_retro)?$/)
+    const reportFrequency = specialtyPreMatch
+      ? specialtyReports[Number(specialtyPreMatch[1]) - 1]?.frequency
+      : undefined
+    const bucketForLine =
+      line.bucket === 'annual' || line.bucket === 'quarterly'
+        ? line.bucket
+        : (scheduleEntry?.bucket ??
+          (reportFrequency === 'annual' || reportFrequency === 'quarterly' ? reportFrequency : 'monthly'))
+    // §6.5 keeps its meaning here: bill_month stamps only EXPLICIT
+    // assignments (L4's map or an M3 override) - the February default is
+    // an estimate-display default, never stamped, so the invoice's
+    // anchor-year rule for unassigned 1099s survives.
+    const explicitMonth = billingMonths[line.service_key] ?? null
+    const billing = resolveLineBilling(
+      defaultLineBilling({
+        bucket: bucketForLine,
+        scheduleWeekdays: scheduleEntry?.weekdays ?? null,
+        closingFrequency,
+        billMonth: explicitMonth,
+      }),
+      {
+        ...(lineBilling[line.service_key] ?? {}),
+        ...(explicitMonth != null ? { billMonth: explicitMonth } : {}),
+      },
+    )
+    const billingFields = {
+      bill_frequency: billing.billingFrequency,
+      calc_frequency: billing.calcFrequency,
+      calc_weekdays: billing.calcWeekdays ?? null,
+      bill_day: billing.billDay ?? null,
+      bill_month: billing.billMonth ?? null,
+      ...(billing.flatMonthly === true ? { flat_monthly: true } : {}),
+    }
     // J4 (V4): the equivalent per-cycle discount for a direct price
     // override, derived from the line's GROSS (unit price x quantity - the
     // retro line's amount already IS the override after repricing, so
@@ -439,6 +498,7 @@ export function buildRecurringServicesTemplate(
         discount,
         ...overrideField,
         ...billMonthField,
+        ...billingFields,
         frequency: isRetro ? "one_time" : (report?.frequency ?? "monthly"),
         // L3 (F6, 10_06 00:30:45): the tier estimate rides the template -
         // "once an employee is selected their actual billing rate goes into
@@ -460,6 +520,7 @@ export function buildRecurringServicesTemplate(
       discount,
       ...overrideField,
       ...billMonthField,
+      ...billingFields,
       frequency: customRule?.scheduleType ?? customMatch?.frequency ?? BUCKET_FREQUENCY[line.bucket] ?? "monthly",
       ...ruleScheduleFields,
       notes: line.unpriced ? "Priced manually: no amount stated in HANDOFF §15." : null,

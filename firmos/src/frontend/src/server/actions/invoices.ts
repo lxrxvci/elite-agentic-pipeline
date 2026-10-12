@@ -9,6 +9,7 @@ import {
   InvoiceError,
   byEmployeeBillingReport,
   generateMonthlyInvoices,
+  generateWeeklyInvoices,
   getPendingBillableTasks,
   markInvoicePaid,
   markOverdueInvoices,
@@ -17,6 +18,7 @@ import {
   voidInvoice,
   type EmployeeBillingRow,
   type GenerateSummary,
+  type GenerateWeeklySummary,
   type InvoiceRow,
   type MarkOverdueSummary,
   type PendingBillableTask,
@@ -189,5 +191,19 @@ export async function byEmployeeBillingReportAction(
     return { ok: true, data: await byEmployeeBillingReport(year, month) };
   } catch (error) {
     return failure(error, "Couldn't load the billing report - try again.");
+  }
+}
+
+/** M3: the weekly billing run on demand (manager+) - same idempotency as
+ *  the cron: one invoice per client per week, existing weeks skipped. */
+export async function generateWeeklyInvoicesAction(): Promise<ActionResult<GenerateWeeklySummary>> {
+  const user = await requireManagerUser();
+  if (!user) return UNAUTHORIZED;
+  try {
+    const summary = await generateWeeklyInvoices(localToday());
+    revalidatePath("/invoices");
+    return { ok: true, data: summary };
+  } catch (error) {
+    return failure(error, "Couldn't generate the weekly invoices - try again.");
   }
 }

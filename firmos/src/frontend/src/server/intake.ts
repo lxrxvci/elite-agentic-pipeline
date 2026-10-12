@@ -232,6 +232,14 @@ export interface IntakeFormData {
    *  report's due in January - include it on the January invoice").
    *  Absent/null = the usual unanchored periodic spread. */
   billingMonths?: Record<string, number | null>;
+  /** M3 (10_10, 01:03:54): per-line billing model overrides, keyed by
+   *  service key - "Billing frequency is different than frequency." Each
+   *  entry overrides the defaults (calc = the line's natural cadence,
+   *  billing = the closing frequency) field-by-field. */
+  lineBilling?: Record<
+    string,
+    Partial<import("@/shared/lib/line-billing").LineBillingConfig>
+  >;
   /** L5 (J3, 10_06 01:10:10): the equity setup - "is everything just
    *  grouped into owner's equity? Are we doing contributions, distributions,
    *  net investment gain/loss? Are we breaking it down by owner?" Drives

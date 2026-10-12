@@ -578,6 +578,13 @@ export async function convertIntakeToClient(
       // L4 (G9): billing-month assignments - an annual line bills its full
       // quantity in the assigned month instead of spreading across the year.
       form.billingMonths ?? {},
+      // M3 (10_10, 01:03:54): the per-line billing model rides onto the
+      // template (calc/billing frequencies + date selectors).
+      form.lineBilling ?? {},
+      {
+        closingFrequency: intake.bookkeepingFrequency ?? form.bookkeepingFrequency ?? undefined,
+        routineSchedule: form.routineSchedule ?? null,
+      },
     );
     const stamps = quoteAmountStamps(quote);
 

@@ -23,6 +23,8 @@ import {
 import { sendPushToUser } from "./push";
 import { getUnifiedQueue, type WorkCard } from "./queue";
 import { runRecurringOnce, backfillRecurringInstanceSubtasks, type RecurringSummary } from "./recurring";
+import { generateWeeklyInvoices, type GenerateWeeklySummary } from "./invoices";
+import { localToday } from "./dates";
 import { getStatementQueue } from "./statements";
 import { runStaleCleanup, type StaleCleanupResult } from "./time-tracking";
 import { computeW9ReminderPlans, sendW9Reminder } from "./w9";
@@ -699,4 +701,10 @@ export async function deferredPushJob(now: Date = new Date()): Promise<DeferredP
     }
   }
   return summary;
+}
+
+/** M3 (10_10): the weekly billing run - one invoice per client per week
+ *  from bill_frequency "weekly" template lines (idempotent by week). */
+export async function weeklyInvoicesJob(now: Date = new Date()): Promise<GenerateWeeklySummary> {
+  return generateWeeklyInvoices(localToday(now));
 }

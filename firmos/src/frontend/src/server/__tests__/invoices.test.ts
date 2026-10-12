@@ -18,6 +18,8 @@ import {
   buildItemizedLineItems,
   byEmployeeBillingReport,
   generateMonthlyInvoices,
+  generateWeeklyInvoices,
+  weekStartSunday,
   getPendingBillableTasks,
   markInvoicePaid,
   markOverdueInvoices,
@@ -350,6 +352,135 @@ describe.skipIf(!reachable)("invoices (G5 billing parity)", () => {
     const feb = await invoiceFor(client.id, 2026, 2);
     // February no longer bills it - January was the explicit pick.
     expect(feb).toBeNull();
+  });
+
+  // M3 (10_10, the pricing engine core): "Billing frequency is different
+  // than frequency" (01:03:54) - the resolved calc/billing model stamps
+  // onto template lines at conversion and drives every invoice quantity.
+  describe("M3: calc/billing frequencies drive invoice quantities (01:03:54)", () => {
+    async function clientWith(lines: TemplateLineItem[], name: string) {
+      const [client] = await db
+        .insert(clients)
+        .values({
+          legalName: name,
+          bookkeepingFrequency: "monthly",
+          billingFrequency: "monthly",
+          monthlyCloseTier: "15",
+          bookkeepingStartDate: "2025-06-01",
+          recurringServicesTemplate: lines,
+        })
+        .returning();
+      return client;
+    }
+
+    it("weekly-calc billed monthly: October's 5 Fridays vs November's 4 (01:08:10)", async () => {
+      const client = await clientWith(
+        [
+          tline("record_bills", "Record Bills", 25, 1, {
+            bill_frequency: "monthly",
+            calc_frequency: "weekly",
+            calc_weekdays: [5],
+          }),
+        ],
+        "M3 WeeklyCalc Co",
+      );
+      await generateMonthlyInvoices(2026, 10, TEST_TODAY);
+      const oct = byKey(await linesFor((await invoiceFor(client.id, 2026, 10))!.id));
+      expect(oct.get("record_bills")).toMatchObject({ quantity: "5.00", amount: "125.00" });
+      await generateMonthlyInvoices(2026, 11, TEST_TODAY);
+      const nov = byKey(await linesFor((await invoiceFor(client.id, 2026, 11))!.id));
+      expect(nov.get("record_bills")).toMatchObject({ quantity: "4.00", amount: "100.00" });
+    });
+
+    it("daily-calc Mon/Wed/Fri billed monthly: October = 13 days = $325 (01:14:09)", async () => {
+      const client = await clientWith(
+        [
+          tline("record_deposits", "Record Deposits", 25, 1, {
+            bill_frequency: "monthly",
+            calc_frequency: "daily",
+            calc_weekdays: [1, 3, 5],
+          }),
+        ],
+        "M3 DailyCalc Co",
+      );
+      await generateMonthlyInvoices(2026, 10, TEST_TODAY);
+      const oct = byKey(await linesFor((await invoiceFor(client.id, 2026, 10))!.id));
+      expect(oct.get("record_deposits")).toMatchObject({ quantity: "13.00", amount: "325.00" });
+    });
+
+    it("monthly-calc billed annually: $25/mo becomes $300 in January only (01:06:53)", async () => {
+      const client = await clientWith(
+        [
+          tline("bank_feed_management", "Bank Feed Management", 25, 1, {
+            bill_frequency: "annual",
+            calc_frequency: "monthly",
+            bill_month: 1,
+          }),
+        ],
+        "M3 AnnualBill Co",
+      );
+      await generateMonthlyInvoices(2026, 1, TEST_TODAY);
+      const jan = byKey(await linesFor((await invoiceFor(client.id, 2026, 1))!.id));
+      expect(jan.get("bank_feed_management")).toMatchObject({ quantity: "12.00", amount: "300.00" });
+      await generateMonthlyInvoices(2026, 2, TEST_TODAY);
+      expect(await invoiceFor(client.id, 2026, 2)).toBeNull();
+    });
+
+    it("annual-calc specialty report billed monthly: $600/yr is $50 every month (01:11:08)", async () => {
+      const client = await clientWith(
+        [
+          tline("specialty_report_1", "Oregon Special Report", 600, 1 / 12, {
+            bill_frequency: "monthly",
+            calc_frequency: "annual",
+          }),
+        ],
+        "M3 AnnualCalc Co",
+      );
+      await generateMonthlyInvoices(2026, 5, TEST_TODAY);
+      const may = byKey(await linesFor((await invoiceFor(client.id, 2026, 5))!.id));
+      expect(may.get("specialty_report_1")).toMatchObject({ amount: "50.00" });
+    });
+
+    it("flat-monthly mode: a weekly task bills the flat fee regardless of Fridays (01:00:03)", async () => {
+      const client = await clientWith(
+        [
+          tline("record_bills", "Record Bills", 300, 1, {
+            bill_frequency: "monthly",
+            calc_frequency: "weekly",
+            calc_weekdays: [5],
+            flat_monthly: true,
+          }),
+        ],
+        "M3 FlatMonthly Co",
+      );
+      await generateMonthlyInvoices(2026, 10, TEST_TODAY);
+      const oct = byKey(await linesFor((await invoiceFor(client.id, 2026, 10))!.id));
+      expect(oct.get("record_bills")).toMatchObject({ quantity: "1.00", amount: "300.00" });
+      await generateMonthlyInvoices(2026, 11, TEST_TODAY);
+      const nov = byKey(await linesFor((await invoiceFor(client.id, 2026, 11))!.id));
+      expect(nov.get("record_bills")).toMatchObject({ quantity: "1.00", amount: "300.00" });
+    });
+
+    it("a weekly-BILLED line never lands on the monthly invoice (01:00:46)", async () => {
+      const client = await clientWith(
+        [
+          tline("record_bills", "Record Bills", 25, 1, {
+            bill_frequency: "weekly",
+            calc_frequency: "weekly",
+            calc_weekdays: [5],
+          }),
+          tline("bank_feed_management", "Bank Feed Management", 100, 1, {
+            bill_frequency: "monthly",
+            calc_frequency: "monthly",
+          }),
+        ],
+        "M3 WeeklyBilled Co",
+      );
+      await generateMonthlyInvoices(2026, 10, TEST_TODAY);
+      const oct = byKey(await linesFor((await invoiceFor(client.id, 2026, 10))!.id));
+      expect(oct.has("record_bills")).toBe(false);
+      expect(oct.get("bank_feed_management")).toMatchObject({ amount: "100.00" });
+    });
   });
 
   it("is idempotent: a re-run skips every existing period", async () => {
@@ -694,5 +825,82 @@ describe.skipIf(!reachable)("invoices (G5 billing parity)", () => {
       quantity: 4,
       amount: 100,
     });
+  });
+});
+
+// M3.5 (10_10, 01:00:46 + 00:59:22): "we're going to charge your card
+// every week, calculated on a weekly basis" - weekly-BILLED lines invoice
+// per week, idempotent, coexisting with the monthly invoice.
+describe.skipIf(!reachable)("M3.5: weekly-billed lines invoice weekly", () => {
+  beforeAll(async () => {
+    await seedDatabase(TEST_TODAY);
+  });
+
+  it("weekStartSunday lands on the week's Sunday", () => {
+    // Friday Oct 9 2026 -> Sunday Oct 4.
+    expect(weekStartSunday({ year: 2026, month: 10, day: 9 })).toEqual({ year: 2026, month: 10, day: 4 });
+    // A Sunday stays itself.
+    expect(weekStartSunday({ year: 2026, month: 10, day: 11 })).toEqual({ year: 2026, month: 10, day: 11 });
+  });
+
+  it("one invoice per week, each selected weekday billed once; idempotent; monthly row unaffected", async () => {
+    const [client] = await db
+      .insert(clients)
+      .values({
+        legalName: "M3 Weekly Series Co",
+        bookkeepingFrequency: "monthly",
+        billingFrequency: "monthly",
+        monthlyCloseTier: "15",
+        bookkeepingStartDate: "2025-06-01",
+        recurringServicesTemplate: [
+          tline("record_bills", "Record Bills", 25, 1, {
+            bill_frequency: "weekly",
+            calc_frequency: "weekly",
+            calc_weekdays: [5],
+          }),
+          tline("bank_feed_management", "Bank Feed Management", 100, 1, {
+            bill_frequency: "monthly",
+            calc_frequency: "monthly",
+          }),
+        ],
+      })
+      .returning();
+
+    const first = await generateWeeklyInvoices({ year: 2026, month: 10, day: 9 });
+    expect(first.invoicesCreated).toBe(1);
+    expect(first.weekStart).toBe("2026-10-04");
+    const weekly = await invoiceFor(client.id, 2026, 10);
+    expect(weekly).not.toBeNull();
+    expect(weekly!.notes).toBe("weekly:2026-10-04");
+    // M3: the weekly row is NOT the generated monthly row (the unique index
+    // guards the monthly series only - they share October freely).
+    expect(weekly!.isAutoGenerated).toBe(false);
+    expect(weekly!.total).toBe("25.00");
+    const weeklyLines = byKey(await linesFor(weekly!.id));
+    expect(weeklyLines.get("record_bills")).toMatchObject({ quantity: "1.00", amount: "25.00" });
+
+    // Idempotent: the same week never generates twice.
+    const again = await generateWeeklyInvoices({ year: 2026, month: 10, day: 9 });
+    expect(again.invoicesCreated).toBe(0);
+    expect(again.skippedExisting).toBe(1);
+
+    // The monthly invoice generates alongside (record_bills is weekly-billed,
+    // so it stays OFF the monthly invoice - M3.4's rule).
+    await generateMonthlyInvoices(2026, 10, TEST_TODAY);
+    const [monthly] = await db
+      .select()
+      .from(invoices)
+      .where(
+        and(
+          eq(invoices.clientId, client.id),
+          eq(invoices.year, 2026),
+          eq(invoices.month, 10),
+          eq(invoices.isAutoGenerated, true),
+        ),
+      );
+    expect(monthly).toBeTruthy();
+    const monthlyLines = byKey(await linesFor(monthly.id));
+    expect(monthlyLines.has("record_bills")).toBe(false);
+    expect(monthlyLines.get("bank_feed_management")).toMatchObject({ amount: "100.00" });
   });
 });

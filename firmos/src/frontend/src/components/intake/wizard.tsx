@@ -576,15 +576,14 @@ export function IntakeWizard({
     [apply],
   )
 
-  // L4 (G9, 10_06 01:21:18): billing-month assignment on annual lines -
-  // "this report's due in January; include it on the January invoice"
-  // instead of spreading ÷12. Null clears the assignment (back to spread).
-  const changeBillingMonth = useCallback(
-    (serviceKey: string, month: number | null) => {
-      const months = { ...(answersRef.current.billingMonths ?? {}) }
-      if (month == null) delete months[serviceKey]
-      else months[serviceKey] = month
-      apply({ billingMonths: months })
+  // M3 (10_10, 01:03:54): the per-line billing model - calc frequency,
+  // billing frequency, and the date selectors. Each write merges into the
+  // line's override; the estimate recalcs live client-side.
+  const changeLineBilling = useCallback(
+    (serviceKey: string, patch: Partial<import('@/shared/lib/line-billing').LineBillingConfig>) => {
+      const all = { ...(answersRef.current.lineBilling ?? {}) }
+      all[serviceKey] = { ...(all[serviceKey] ?? {}), ...patch }
+      apply({ lineBilling: all })
     },
     [apply],
   )
@@ -876,7 +875,7 @@ export function IntakeWizard({
                 onEdit={openEditor}
                 onPriceChange={changeServicePrice}
                 onToggleReconAccount={toggleReconAccount}
-                onBillingMonthChange={changeBillingMonth}
+                onLineBilling={changeLineBilling}
                 onRetroDiscountChange={(percent) => apply({ retroDiscountPercent: percent })}
                 onCustomWork={apply}
                 customTaskCatalog={optionLists.custom_task_templates ?? []}

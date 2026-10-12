@@ -11,6 +11,14 @@ import {
 import type { IntakeAccountInput } from '@/server/intake'
 import { statementDayForIntakeAccount } from '@/shared/lib/account-types'
 import {
+  billingAmountForPeriod,
+  defaultLineBilling,
+  resolveLineBilling,
+  round2 as round2Billing,
+  type BillingFrequency,
+  type LineBillingConfig,
+} from '@/shared/lib/line-billing'
+import {
   ROUTINE_BUCKETS,
   isRoutineBucket,
   weekdayOccurrencesInMonth,
@@ -138,7 +146,7 @@ const SERVICE_TASK_KEYS: Record<string, readonly string[]> = {
   payroll_corrections: ['payroll-handling'],
 }
 
-function taskKeysFor(line: QuoteLine): string[] {
+export function taskKeysFor(line: QuoteLine): string[] {
   const direct = SERVICE_TASK_KEYS[line.service_key]
   if (direct) return [...direct]
   if (/^specialty_report_\d+(_retro)?$/.test(line.service_key)) {
@@ -182,6 +190,9 @@ export interface EstimateLine {
   name: string
   line: QuoteLine
   bucket: RoutineBucket
+  /** M3 (10_10, 01:03:54): the resolved billing model - calc frequency,
+   *  billing frequency, and the date selectors (overrides over defaults). */
+  billing: import('@/shared/lib/line-billing').LineBillingConfig
   /** Net per billing cycle (override ?? net of discount), clamped. */
   cycleNet: number | null
   /** The standard per-cycle amount before any override/discount. */
@@ -416,11 +427,31 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers, retr
 
     const perMonth = perMonthFor(line, net, cycle)
     if (line.unpriced && !overridden) unpricedRecurringCount += 1
+    // M3: the line's billing model - defaults from its cadence + the
+    // schedule's weekdays + the closing frequency (L4's bill_month carried),
+    // with any form_data overrides resolved on top.
+    const scheduleEntry = taskKeysFor(line)
+      .map((k) => schedule?.[k])
+      .find((e) => e != null)
+    const billing = resolveLineBilling(
+      defaultLineBilling({
+        bucket,
+        scheduleWeekdays: scheduleEntry?.weekdays ?? null,
+        closingFrequency: answers.bookkeepingFrequency ?? 'monthly',
+        // L4 (G9): an explicit L4 assignment carries; §6.5 1099s default to
+        // February (selectable like any annual line, 10_06 01:23:41).
+        billMonth:
+          answers.billingMonths?.[line.service_key] ??
+          (isFebruaryBilledService(line.service_key) ? 2 : null),
+      }),
+      answers.lineBilling?.[line.service_key],
+    )
     const view: EstimateLine = {
       key: line.service_key,
       name,
       line,
       bucket,
+      billing,
       cycleNet: net,
       standard: line.amount,
       overridden,
@@ -511,4 +542,39 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers, retr
     retroDiscountPercent: retro?.discountPercent ?? null,
     unpricedRecurringCount,
   }
+}
+
+// ── M3: the frequency-grouped invoicing totals (10_10 00:55:12) ───────────
+
+export interface BillingTotals {
+  weekly: number
+  monthly: number
+  quarterly: number
+  annual: number
+}
+
+/**
+ * The sidebar totals grouped by BILLING frequency - "total weekly
+ * invoicing… total monthly invoicing… total annual billing" (00:55:12).
+ * The single effective-monthly number was "too subtle"; these are the
+ * prominent figures. Each line bills at its resolved config's billing
+ * frequency, prorated by Jason's cross-frequency rules; annual-billed lines
+ * land their full calc-annual amount (assigned month noted in the UI).
+ */
+export function billingTotalsFor(
+  groups: EstimateBucketGroup[],
+  anchor: { year: number; month: number },
+): BillingTotals {
+  const totals: BillingTotals = { weekly: 0, monthly: 0, quarterly: 0, annual: 0 }
+  for (const group of groups) {
+    for (const view of group.lines) {
+      const unit = view.line.price_override ?? view.line.unit_price
+      if (unit == null) continue
+      const period = view.billing.billingFrequency
+      totals[period] = round2Billing(
+        totals[period] + billingAmountForPeriod(view.billing, unit, view.line.quantity, period, anchor),
+      )
+    }
+  }
+  return totals
 }

@@ -14,6 +14,12 @@ import type { DuplicateCandidate, IntakeAccountInput } from '@/server/intake'
 import { monthLabel } from '@/shared/lib/date-display'
 import { maskTaxId } from '@/shared/lib/mask'
 import { equitySeedPlan } from '@/shared/lib/account-types'
+import {
+  occurrenceMathLabel,
+  type BillingFrequency,
+  type CalcFrequency,
+  type LineBillingConfig,
+} from '@/shared/lib/line-billing'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 import { ROUTINE_BUCKET_LABELS } from '@/shared/lib/routine-schedule'
 import { cn } from '@/shared/lib/utils'
@@ -26,6 +32,7 @@ import { PriceEditControl } from './price-edit'
 import { QuoteEmailCompose } from './quote-email-compose'
 import { QuoteTemplateButton } from './quote-template-button'
 import {
+  billingTotalsFor,
   BREAKDOWN_ACCOUNTS,
   buildBucketedEstimate,
   lineCycleLabel,
@@ -369,6 +376,9 @@ function RowEditButton({
 
 // ── V4-V7: the bucketed estimate ──────────────────────────────────────────
 
+/** M3: the calc-weekday selectors' day names (Sunday-first). */
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const
+
 /** L4 (G9): the billing-month drop-down's options (full month names). */
 const BILLING_MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -386,7 +396,7 @@ function EstimateLineRow({
   breakdownOpen,
   onToggleBreakdown,
   onToggleReconAccount,
-  onBillingMonthChange,
+  onLineBilling,
 }: {
   view: EstimateLine
   answers: WizardAnswers
@@ -398,24 +408,27 @@ function EstimateLineRow({
   /** L4 (G7, 10_06 01:16:53): per-account factor editing on the
    *  reconciliation line - which accounts count toward "4 accounts × $25". */
   onToggleReconAccount?: (label: string, included: boolean) => void
-  /** L4 (G9, 10_06 01:21:18): billing-month assignment on annual lines -
-   *  "this report's due in January; include it on the January invoice"
-   *  (null = back to the monthly spread). */
-  onBillingMonthChange?: (serviceKey: string, month: number | null) => void
+  /** M3 (10_10, 01:03:54): the per-line billing model writer - calc
+   *  frequency, billing frequency, and the date selectors. */
+  onLineBilling?: (serviceKey: string, patch: Partial<LineBillingConfig>) => void
 }) {
   const breakdownFor = BREAKDOWN_ACCOUNTS[view.key]
   const breakdownAccounts = breakdownFor ? breakdownFor(answers) : []
   // L4 (G7): the recon line's factor is editable - which accounts count.
   const factorEditable = view.key === 'account_reconciliations' && priceEditable && onToggleReconAccount != null
   const excludedLabels = new Set((answers.reconExcludedAccounts ?? []).map((n) => n.trim().toLowerCase()))
-  // L4 (G9): the assigned billing month (annual lines). The 1099s' §6.5
-  // February rule is the DEFAULT (selectable like any annual line -
-  // 01:23:41 "I should be able to click the drop down here"); an explicit
-  // pick wins, and February-billed lines can never spread.
-  const assignedMonth = answers.billingMonths?.[view.key] ?? null
-  const effectiveMonth = assignedMonth ?? (view.februaryBilled ? 2 : null)
-  const billMonthAssignable =
-    view.bucket === 'annual' && priceEditable && onBillingMonthChange != null
+  // M3 (10_10, 01:03:54): the line's billing model (resolved in the
+  // estimate: defaults from its cadence + closing frequency, form_data
+  // overrides on top). "Billing frequency is different than frequency."
+  const cfg = view.billing
+  const effectiveMonth = cfg.billingFrequency === 'annual' ? (cfg.billMonth ?? null) : null
+  const billingEditable = priceEditable && onLineBilling != null
+  const effectiveUnit = view.line.price_override ?? view.line.unit_price
+  const now = new Date()
+  const occurrenceLabel =
+    effectiveUnit != null
+      ? occurrenceMathLabel(cfg, effectiveUnit, now.getFullYear(), now.getMonth() + 1, (d) => WEEKDAY_NAMES[d] ?? 'Friday', (n) => formatMoney(n))
+      : null
   const net = view.cycleNet
   return (
     <li className="group py-2" data-testid={`estimate-line-${view.key}`}>
@@ -450,31 +463,150 @@ function EstimateLineRow({
           {view.math}
         </p>
       )}
-      {/* L4 (G9, 10_06 01:21:18): the billing-month drop-down - "When do we
-          bill this? … I should be able to click the drop down here." An
-          assigned month bills the full annual quantity on that month's
-          invoice; the default spreads it across the year. */}
-      {billMonthAssignable && (
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-          Bill
-          <select
-            aria-label={`Billing month for ${view.name}`}
-            data-testid={`bill-month-${view.key}`}
-            value={effectiveMonth ?? ''}
-            onChange={(e) =>
-              onBillingMonthChange!(view.key, e.target.value === '' ? null : Number(e.target.value))
-            }
-            className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-          >
-            {/* February-billed (§6.5) lines never spread - month picks only. */}
-            {!view.februaryBilled && <option value="">spread across the year</option>}
-            {BILLING_MONTH_NAMES.map((name, i) => (
-              <option key={name} value={i + 1}>
-                each {name}
-              </option>
-            ))}
-          </select>
+      {/* M3 (A2): occurrence math for weekly/daily-calc lines - "5 Fridays
+          × $25" for the current month (01:08:10). */}
+      {occurrenceLabel && (
+        <p className="tnum mt-0.5 text-xs text-muted-foreground" data-testid={`occurrence-math-${view.key}`}>
+          {occurrenceLabel} this month
         </p>
+      )}
+      {/* M3 (10_10, 01:03:54): the billing grid - "Billing frequency is
+          different than frequency." price × unit × calc frequency × billing
+          frequency, with the frequency-driven date selector (weekday for
+          weekly, day-of-month for monthly, month for annual). */}
+      {billingEditable && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground" data-testid={`billing-grid-${view.key}`}>
+          <label className="flex items-center gap-1.5">
+            Calculate
+            <select
+              aria-label={`Calculation frequency for ${view.name}`}
+              data-testid={`calc-freq-${view.key}`}
+              value={cfg.calcFrequency}
+              onChange={(e) => onLineBilling!(view.key, { calcFrequency: e.target.value as CalcFrequency })}
+              className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <option value="daily">per day</option>
+              <option value="weekly">per week</option>
+              <option value="monthly">per month</option>
+              <option value="quarterly">per quarter</option>
+              <option value="annual">per year</option>
+            </select>
+          </label>
+          {(cfg.calcFrequency === 'weekly' || cfg.calcFrequency === 'daily') && !cfg.flatMonthly && (
+            <label className="flex items-center gap-1.5">
+              on
+              {cfg.calcFrequency === 'weekly' ? (
+                <select
+                  aria-label={`Weekday for ${view.name}`}
+                  data-testid={`calc-weekday-${view.key}`}
+                  value={(cfg.calcWeekdays ?? [5])[0]}
+                  onChange={(e) => onLineBilling!(view.key, { calcWeekdays: [Number(e.target.value)] })}
+                  className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                >
+                  {WEEKDAY_NAMES.map((name, i) => (
+                    <option key={name} value={i}>
+                      {name}s
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="flex items-center gap-1" data-testid={`calc-days-${view.key}`}>
+                  {WEEKDAY_NAMES.map((name, i) => {
+                    const days = cfg.calcWeekdays ?? []
+                    const on = days.includes(i)
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        aria-pressed={on}
+                        aria-label={`${on ? 'Remove' : 'Add'} ${name}`}
+                        data-testid={`calc-day-${view.key}-${i}`}
+                        onClick={() =>
+                          onLineBilling!(view.key, {
+                            calcWeekdays: on ? days.filter((d) => d !== i) : [...days, i].sort(),
+                          })
+                        }
+                        className={cn(
+                          'rounded border px-1.5 py-0.5 text-[10px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-ring',
+                          on ? 'border-firm-brand bg-accent text-accent-foreground' : 'border-border text-muted-foreground',
+                        )}
+                      >
+                        {name.slice(0, 2)}
+                      </button>
+                    )
+                  })}
+                </span>
+              )}
+            </label>
+          )}
+          {cfg.calcFrequency === 'weekly' && (
+            <label className="flex cursor-pointer items-center gap-1.5" data-testid={`flat-monthly-wrap-${view.key}`}>
+              <input
+                type="checkbox"
+                aria-label={`Flat monthly fee for ${view.name}`}
+                data-testid={`flat-monthly-${view.key}`}
+                checked={cfg.flatMonthly === true}
+                onChange={(e) => onLineBilling!(view.key, { flatMonthly: e.target.checked })}
+                className="h-3.5 w-3.5 accent-[#007B7F]"
+              />
+              flat monthly fee
+            </label>
+          )}
+          <label className="flex items-center gap-1.5">
+            Bill
+            <select
+              aria-label={`Billing frequency for ${view.name}`}
+              data-testid={`bill-freq-${view.key}`}
+              value={cfg.billingFrequency}
+              onChange={(e) => onLineBilling!(view.key, { billingFrequency: e.target.value as BillingFrequency })}
+              className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <option value="weekly">weekly</option>
+              <option value="monthly">monthly</option>
+              <option value="quarterly">quarterly</option>
+              <option value="annual">annually</option>
+            </select>
+          </label>
+          {cfg.billingFrequency === 'monthly' && (
+            <label className="flex items-center gap-1.5">
+              on day
+              <input
+                type="number"
+                min={1}
+                max={31}
+                aria-label={`Billing day of month for ${view.name}`}
+                data-testid={`bill-day-${view.key}`}
+                value={cfg.billDay ?? ''}
+                placeholder="15"
+                onChange={(e) =>
+                  onLineBilling!(view.key, { billDay: e.target.value === '' ? null : Number(e.target.value) })
+                }
+                className="tnum w-14 rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus-visible:outline-2 focus-visible:outline-ring"
+              />
+            </label>
+          )}
+          {(cfg.billingFrequency === 'annual' || cfg.billingFrequency === 'quarterly') && (
+            <label className="flex items-center gap-1.5">
+              in
+              <select
+                aria-label={`Billing month for ${view.name}`}
+                data-testid={`bill-month-${view.key}`}
+                value={cfg.billMonth ?? ''}
+                onChange={(e) =>
+                  onLineBilling!(view.key, { billMonth: e.target.value === '' ? null : Number(e.target.value) })
+                }
+                className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                <option value="">…</option>
+                {BILLING_MONTH_NAMES.map((name, i) => (
+                  <option key={name} value={i + 1}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
       )}
       {/* L3 (F5, 10_06 00:30:45): tier-priced lines carry the caveat -
           "pricing may vary based on employee selected." The assigned
@@ -572,7 +704,7 @@ function EstimateSection({
   priceEditable,
   onPriceChange,
   onToggleReconAccount,
-  onBillingMonthChange,
+  onLineBilling,
   onRetroDiscountChange,
   onCustomWork,
   customTaskCatalog,
@@ -584,8 +716,8 @@ function EstimateSection({
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
   /** L4 (G7): per-account factor editing on the recon line. */
   onToggleReconAccount?: (label: string, included: boolean) => void
-  /** L4 (G9): billing-month assignment on annual lines. */
-  onBillingMonthChange?: (serviceKey: string, month: number | null) => void
+  /** M3: the per-line billing model writer. */
+  onLineBilling?: (serviceKey: string, patch: Partial<LineBillingConfig>) => void
   /** K6 (D6): the retro bulk-discount percent (null clears it). */
   onRetroDiscountChange?: (percent: number | null) => void
   /** K6 (D3/D4): custom one-time or recurring work added from the review. */
@@ -605,8 +737,35 @@ function EstimateSection({
     estimate.retroDiscountPercent != null ? String(estimate.retroDiscountPercent) : '',
   )
 
+  // M3 (A7, 10_10 00:55:12): the frequency-grouped invoicing totals -
+  // "total weekly invoicing… total monthly invoicing… total annual
+  // billing." The single effective-monthly number was "too subtle."
+  const now = new Date()
+  const billingTotals = billingTotalsFor(estimate.groups, { year: now.getFullYear(), month: now.getMonth() + 1 })
+  const frequencyTotals = (
+    [
+      { key: 'weekly', label: 'Weekly invoicing', suffix: '/wk' },
+      { key: 'monthly', label: 'Monthly invoicing', suffix: '/mo' },
+      { key: 'quarterly', label: 'Quarterly invoicing', suffix: '/qtr' },
+      { key: 'annual', label: 'Annual invoicing', suffix: '/yr' },
+    ] as const
+  ).filter((t) => billingTotals[t.key] > 0)
+
   return (
     <div data-testid="estimate">
+      {frequencyTotals.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-2.5" data-testid="billing-totals">
+          {frequencyTotals.map((t) => (
+            <span key={t.key} className="text-xs" data-testid={`billing-total-${t.key}`}>
+              <span className="text-muted-foreground">{t.label}</span>{' '}
+              <span className="tnum font-semibold text-money-strong">
+                {formatMoney(billingTotals[t.key])}
+                <span className="font-medium text-muted-foreground">{t.suffix}</span>
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
       {/* K6 (D5): one-time fees FIRST, recurring buckets in the middle, the
           retro block at the BOTTOM - "one-time fees at the top, recurring in
           the middle, retroactive at the end" (01:02:53). */}
@@ -682,7 +841,7 @@ function EstimateSection({
                       setOpenBreakdowns((o) => ({ ...o, [view.key]: !o[view.key] }))
                     }
                     onToggleReconAccount={onToggleReconAccount}
-                    onBillingMonthChange={onBillingMonthChange}
+                    onLineBilling={onLineBilling}
                   />
                 ))}
               </ul>
@@ -830,7 +989,7 @@ function SectionBody({
   onEdit,
   onPriceChange,
   onToggleReconAccount,
-  onBillingMonthChange,
+  onLineBilling,
   onRetroDiscountChange,
   onCustomWork,
   customTaskCatalog,
@@ -844,8 +1003,8 @@ function SectionBody({
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
   /** L4 (G7): per-account factor editing on the recon line. */
   onToggleReconAccount?: (label: string, included: boolean) => void
-  /** L4 (G9): billing-month assignment on annual lines. */
-  onBillingMonthChange?: (serviceKey: string, month: number | null) => void
+  /** M3: the per-line billing model writer. */
+  onLineBilling?: (serviceKey: string, patch: Partial<LineBillingConfig>) => void
   onRetroDiscountChange?: (percent: number | null) => void
   onCustomWork?: (patch: Partial<WizardAnswers>) => void
   customTaskCatalog?: { id: number; name: string }[]
@@ -860,7 +1019,7 @@ function SectionBody({
         priceEditable={editable && onPriceChange != null}
         onPriceChange={onPriceChange}
         onToggleReconAccount={onToggleReconAccount}
-        onBillingMonthChange={onBillingMonthChange}
+        onLineBilling={onLineBilling}
         onRetroDiscountChange={onRetroDiscountChange}
         onCustomWork={onCustomWork}
         customTaskCatalog={customTaskCatalog}
@@ -941,7 +1100,7 @@ export function ReviewScreen({
   onEdit,
   onPriceChange,
   onToggleReconAccount,
-  onBillingMonthChange,
+  onLineBilling,
   onRetroDiscountChange,
   onCustomWork,
   customTaskCatalog,
@@ -961,8 +1120,8 @@ export function ReviewScreen({
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
   /** L4 (G7): per-account factor editing on the recon line. */
   onToggleReconAccount?: (label: string, included: boolean) => void
-  /** L4 (G9): billing-month assignment on annual lines (editable review). */
-  onBillingMonthChange?: (serviceKey: string, month: number | null) => void
+  /** M3: the per-line billing model writer (editable review). */
+  onLineBilling?: (serviceKey: string, patch: Partial<LineBillingConfig>) => void
   /** K6 (D6): retro bulk-discount percent writer (editable review only). */
   onRetroDiscountChange?: (percent: number | null) => void
   /** K6 (D3/D4): custom work writer (editable review only). */
@@ -1365,7 +1524,7 @@ export function ReviewScreen({
                     onEdit={onEdit}
                     onPriceChange={onPriceChange}
                     onToggleReconAccount={onToggleReconAccount}
-                    onBillingMonthChange={onBillingMonthChange}
+                    onLineBilling={onLineBilling}
                     onRetroDiscountChange={onRetroDiscountChange}
                     onCustomWork={onCustomWork}
                     customTaskCatalog={customTaskCatalog}

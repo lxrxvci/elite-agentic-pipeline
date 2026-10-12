@@ -133,6 +133,7 @@ function renderReview({
   canConvert = false,
   onEdit = () => {},
   onPriceChange,
+  onLineBilling,
 }: {
   answers?: WizardAnswers
   quote?: Quote | null
@@ -140,6 +141,7 @@ function renderReview({
   canConvert?: boolean
   onEdit?: (chapterId: string, questionId: string) => void
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
+  onLineBilling?: (serviceKey: string, patch: Partial<import('@/shared/lib/line-billing').LineBillingConfig>) => void
 } = {}) {
   return render(
     <ReviewScreen
@@ -153,6 +155,7 @@ function renderReview({
       clientId={null}
       onEdit={onEdit}
       onPriceChange={onPriceChange}
+      onLineBilling={onLineBilling}
     />,
   )
 }
@@ -367,7 +370,7 @@ describe('breakdown_shows_accounts_with_count_math (V5)', () => {
  *  divide that by 12 or do I just say this report's due in January? Let's
  *  just include this on the January invoice… I should be able to click the
  *  drop down here." */
-describe('annual_line_assigned_to_january (L4/G9)', () => {
+describe('annual_line_assigned_to_january (L4/G9, M3 billing grid)', () => {
   const ANNUAL_REPORT_QUOTE: Quote = {
     billingCycle: 1,
     lines: [
@@ -385,7 +388,7 @@ describe('annual_line_assigned_to_january (L4/G9)', () => {
     },
   }
 
-  function renderAnnual(answers: WizardAnswers, onBillingMonthChange: (k: string, m: number | null) => void) {
+  function renderAnnual(answers: WizardAnswers, onLineBilling: (k: string, p: Partial<import('@/shared/lib/line-billing').LineBillingConfig>) => void) {
     return render(
       <ReviewScreen
         intakeId={1}
@@ -398,26 +401,28 @@ describe('annual_line_assigned_to_january (L4/G9)', () => {
         clientId={null}
         onEdit={() => {}}
         onPriceChange={() => {}}
-        onBillingMonthChange={onBillingMonthChange}
+        onLineBilling={onLineBilling}
       />,
     )
   }
 
-  it('annual lines carry the billing-month drop-down; monthly lines never do', () => {
-    const onBillingMonthChange = vi.fn()
-    renderAnnual({ legalName: 'Annual Co', engagementType: 'bookkeeping' } as WizardAnswers, onBillingMonthChange)
+  it('every line carries the M3 billing grid; the annual line defaults to annual billing with the month select', () => {
+    const onLineBilling = vi.fn()
+    renderAnnual({ legalName: 'Annual Co', engagementType: 'bookkeeping' } as WizardAnswers, onLineBilling)
     expandSection('quote')
-    // Default: no assignment - the line spreads across the year.
+    // The annual report: calc annual, bill annually, no month assigned yet.
+    expect(screen.getByTestId('calc-freq-specialty_report_1')).toHaveValue('annual')
+    expect(screen.getByTestId('bill-freq-specialty_report_1')).toHaveValue('annual')
     const select = screen.getByTestId('bill-month-specialty_report_1')
     expect(select).toHaveValue('')
     expect(screen.queryByTestId('bill-month-badge-specialty_report_1')).toBeNull()
-    // Monthly-bucket lines are out of scope for G9.
+    // The monthly line's grid defaults to monthly billing (day-of-month, not a month select).
+    expect(screen.getByTestId('bill-freq-bank_feed_management')).toHaveValue('monthly')
+    expect(screen.getByTestId('bill-day-bank_feed_management')).toBeInTheDocument()
     expect(screen.queryByTestId('bill-month-bank_feed_management')).toBeNull()
 
     fireEvent.change(select, { target: { value: '1' } })
-    expect(onBillingMonthChange).toHaveBeenCalledWith('specialty_report_1', 1)
-    fireEvent.change(select, { target: { value: '' } })
-    expect(onBillingMonthChange).toHaveBeenCalledWith('specialty_report_1', null)
+    expect(onLineBilling).toHaveBeenCalledWith('specialty_report_1', { billMonth: 1 })
   })
 
   it('an assigned line reads "billed each January" with the month selected', () => {
@@ -431,7 +436,7 @@ describe('annual_line_assigned_to_january (L4/G9)', () => {
   })
 
   it('the 1099s default to February but the month is selectable (01:23:41)', () => {
-    const onBillingMonthChange = vi.fn()
+    const onLineBilling = vi.fn()
     render(
       <ReviewScreen
         intakeId={1}
@@ -444,19 +449,19 @@ describe('annual_line_assigned_to_january (L4/G9)', () => {
         clientId={null}
         onEdit={() => {}}
         onPriceChange={() => {}}
-        onBillingMonthChange={onBillingMonthChange}
+        onLineBilling={onLineBilling}
       />,
     )
     expandSection('quote')
     // Unassigned: the §6.5 February badge and the drop-down preselects it.
     expect(screen.getByTestId('bill-month-badge-1099_collection')).toHaveTextContent('billed each February')
     expect(screen.getByTestId('bill-month-1099_collection')).toHaveValue('2')
-    // No "spread" option for February-billed lines - they bill once a year.
+    // Placeholder + the twelve months.
     const options = Array.from(screen.getByTestId('bill-month-1099_collection').querySelectorAll('option'))
-    expect(options).toHaveLength(12)
-    // Moving it to January reports the assignment.
+    expect(options).toHaveLength(13)
+    // Moving it to January writes the billing-model patch.
     fireEvent.change(screen.getByTestId('bill-month-1099_collection'), { target: { value: '1' } })
-    expect(onBillingMonthChange).toHaveBeenCalledWith('1099_collection', 1)
+    expect(onLineBilling).toHaveBeenCalledWith('1099_collection', { billMonth: 1 })
   })
 })
 
@@ -1013,5 +1018,80 @@ describe('stars_appear_beside_estimate_price (L6/I1)', () => {
     renderReview({ quote: DISCOUNT_QUOTE })
     expect(screen.getByTestId('quote-total')).toBeInTheDocument()
     expect(screen.queryByTestId('quote-stars')).toBeNull()
+  })
+})
+
+/** M3 (10_10, the pricing engine core): "Billing frequency is different
+ *  than frequency" (01:03:54) - the per-line grid, occurrence math, and
+ *  the frequency-grouped totals. */
+describe('M3: the billing grid and frequency totals (10_10 00:55:12-01:03:54)', () => {
+  const WEEKLY_SCHEDULE: NonNullable<WizardAnswers['routineSchedule']> = {
+    'record-bills': { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
+  }
+
+  it('calc_and_billing_frequency_are_independent - each select writes its own patch', () => {
+    const onLineBilling = vi.fn()
+    render(
+      <ReviewScreen
+        intakeId={1}
+        answers={{ ...FIVE_ACCOUNTS, routineSchedule: WEEKLY_SCHEDULE }}
+        quote={ESTIMATE_QUOTE}
+        status="draft"
+        canConvert={false}
+        managers={[]}
+        bookkeepers={[]}
+        clientId={null}
+        onEdit={() => {}}
+        onPriceChange={() => {}}
+        onLineBilling={onLineBilling}
+      />,
+    )
+    expandSection('quote')
+    // record_bills scheduled weekly: calc weekly (Fridays), billed monthly.
+    expect(screen.getByTestId('calc-freq-record_bills')).toHaveValue('weekly')
+    expect(screen.getByTestId('bill-freq-record_bills')).toHaveValue('monthly')
+    expect(screen.getByTestId('calc-weekday-record_bills')).toHaveValue('5')
+
+    fireEvent.change(screen.getByTestId('calc-freq-record_bills'), { target: { value: 'monthly' } })
+    expect(onLineBilling).toHaveBeenCalledWith('record_bills', { calcFrequency: 'monthly' })
+    fireEvent.change(screen.getByTestId('bill-freq-record_bills'), { target: { value: 'quarterly' } })
+    expect(onLineBilling).toHaveBeenCalledWith('record_bills', { billingFrequency: 'quarterly' })
+    fireEvent.click(screen.getByTestId('flat-monthly-record_bills'))
+    expect(onLineBilling).toHaveBeenCalledWith('record_bills', { flatMonthly: true })
+  })
+
+  it('occurrence math reads the current month\'s weekday count', () => {
+    renderReview({
+      answers: { ...FIVE_ACCOUNTS, routineSchedule: WEEKLY_SCHEDULE },
+      quote: ESTIMATE_QUOTE,
+      onPriceChange: () => {},
+      onLineBilling: () => {},
+    })
+    expandSection('quote')
+    const now = new Date()
+    const fridays = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+      .filter((d) => d <= new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())
+      .filter((d) => new Date(now.getFullYear(), now.getMonth(), d).getDay() === 5).length
+    expect(screen.getByTestId('occurrence-math-record_bills')).toHaveTextContent(`${fridays} Fridays × $25 this month`)
+  })
+
+  it('totals_group_by_billing_frequency - weekly/monthly/quarterly/annual invoicing subtotals', () => {
+    renderReview({
+      answers: { ...FIVE_ACCOUNTS, routineSchedule: WEEKLY_SCHEDULE },
+      quote: ESTIMATE_QUOTE,
+      onPriceChange: () => {},
+      onLineBilling: () => {},
+    })
+    expandSection('quote')
+    const now = new Date()
+    const fridays = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+      .filter((d) => d <= new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())
+      .filter((d) => new Date(now.getFullYear(), now.getMonth(), d).getDay() === 5).length
+    // Monthly invoicing: bank feed 100 + recon 125 + reporting 50 + bills (Fridays × 25) + payroll filings (45/3) + retro? no.
+    const monthly = 100 + 125 + 50 + fridays * 25 + 15
+    expect(screen.getByTestId('billing-total-monthly')).toHaveTextContent('Monthly invoicing')
+    expect(screen.getByTestId('billing-total-monthly')).toHaveTextContent(`$${monthly}`)
+    // Annual invoicing: the 1099 collection ($50, billed February).
+    expect(screen.getByTestId('billing-total-annual')).toHaveTextContent('$50/yr')
   })
 })

@@ -17,6 +17,7 @@ import {
   staleCleanupJob,
   statementOverdueJob,
   w9ReminderJob,
+  weeklyInvoicesJob,
 } from "./jobs";
 import { firmLocalParts } from "./notifications";
 
@@ -53,7 +54,8 @@ export type JobName =
   | "w9-reminders"
   | "mention-sms"
   | "deferred-push"
-  | "not-clocked-in-alert";
+  | "not-clocked-in-alert"
+  | "weekly-invoices";
 
 export type JobSchedule =
   | { kind: "every_tick" } // the loop's 5-minute cadence
@@ -89,6 +91,8 @@ export const JOB_SCHEDULE: readonly JobDefinition[] = [
   { name: "missing-info-reminders", run: missingInfoReminderJob, schedule: { kind: "daily", hour: 7, minute: 45 }, startup: "seed_yesterday" },
   // §18 + Phase 3C: the weekly W-9 chase (7-day cadence dedup inside).
   { name: "w9-reminders", run: w9ReminderJob, schedule: { kind: "daily", hour: 8, minute: 0 }, startup: "seed_yesterday" },
+  // M3: weekly-BILLED lines invoice weekly; the daily fire is idempotent.
+  { name: "weekly-invoices", run: weeklyInvoicesJob, schedule: { kind: "daily", hour: 8, minute: 15 }, startup: "run" },
   { name: "mention-sms", run: mentionEscalationJob, schedule: { kind: "every_tick" }, startup: "run" },
   { name: "deferred-push", run: deferredPushJob, schedule: { kind: "every_tick" }, startup: "run" },
   // F4: the check is cheap (three reads) and self-dedups per user/day; the

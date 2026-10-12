@@ -612,6 +612,8 @@ describe.skipIf(!reachable)("background jobs (HANDOFF §9, §16)", () => {
       "recurring",
       "resync-recurring",
       "stale-cleanup",
+      // M3: the weekly billing run joins the startup set (startup: run).
+      "weekly-invoices",
     ]);
 
     // Time-gated jobs seeded to "yesterday" rather than fired at 2 AM.
