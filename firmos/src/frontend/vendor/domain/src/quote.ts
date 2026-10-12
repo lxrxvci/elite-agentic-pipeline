@@ -105,6 +105,10 @@ export const PRICING: Record<string, PricingEntry> = {
   quickbooks_essentials: { product_name: "QuickBooks Essentials (pass-through)", group: "other", unit_price: 60, unit: "month", scaling: "flat_monthly", bucket: "monthly" },
   quickbooks_plus: { product_name: "QuickBooks Plus (pass-through)", group: "other", unit_price: 90, unit: "month", scaling: "flat_monthly", bucket: "monthly" },
   quickbooks_advanced: { product_name: "QuickBooks Advanced (pass-through)", group: "other", unit_price: 200, unit: "month", scaling: "flat_monthly", bucket: "monthly" },
+  // M6 (10_10 01:19:20): Jason's platform fee - "I'm only going to charge
+  // you $15 a month for this software… that money is going to me, not
+  // QuickBooks." Admin-configurable like every price in this table.
+  firmos_access: { product_name: "FirmOS Client Access", group: "other", unit_price: 15, unit: "month", scaling: "flat_monthly", bucket: "monthly" },
 };
 
 /**

@@ -902,11 +902,14 @@ describe('I3 review: accounts grouped by type with institution + proof badges', 
     expandSection('balance')
     const section = screen.getByTestId('review-accounts')
     const groups = section.querySelectorAll('[data-testid="review-account-group"]')
+    // M5 (E2, 10_10 00:39:19): GAAP order - current assets, long-term
+    // assets, then the credit card leads CURRENT liabilities and the loans
+    // close long-term liabilities.
     expect([...groups].map((g) => g.getAttribute('data-type'))).toEqual([
       'checking',
-      'credit_card',
       'vehicle',
       'fixed_assets', // the equipment bucket maps to fixed assets
+      'credit_card',
       'vehicle_loan',
       'loan',
     ])
@@ -920,13 +923,13 @@ describe('I3 review: accounts grouped by type with institution + proof badges', 
     expect(checking).toHaveTextContent('Online access')
 
     // The vehicle shows year + financed and the bill-of-sale badge.
-    expect(groups[2]).toHaveTextContent('Transit van')
-    expect(groups[2]).toHaveTextContent('2022 · Financed')
-    expect(groups[2]).toHaveTextContent('Bill of sale')
+    expect(groups[1]).toHaveTextContent('Transit van')
+    expect(groups[1]).toHaveTextContent('2022 · Financed')
+    expect(groups[1]).toHaveTextContent('Bill of sale')
 
     // Legacy rows (no last-4) keep the old name + institution badge; the
     // owner-declared loan carries its lender detail and badge.
-    const legacyCard = groups[1]
+    const legacyCard = groups[3]
     expect(legacyCard).toHaveTextContent('Amex Gold')
     expect(legacyCard).toHaveTextContent('Amex')
     const loan = groups[5]

@@ -75,7 +75,9 @@ describe('date-text field (I1, 00:33:00)', () => {
     expect(dateTextToIso('13/45/2026')).toBeNull() // impossible month and day
     expect(dateTextToIso('00/10/2026')).toBeNull()
     expect(dateTextToIso('12/31/1800')).toBeNull() // out of range
-    expect(dateTextToIso('01/05/26')).toBeNull() // incomplete
+    // M5 (C4, 10_10 00:06:33): a 2-digit year is COMPLETE - it reads 20YY.
+    expect(dateTextToIso('01/05/26')).toBe('2026-01-05')
+    expect(dateTextToIso('1/05/2026')).toBeNull() // single-digit month stays incomplete
     expect(dateTextToIso('')).toBeNull()
   })
 

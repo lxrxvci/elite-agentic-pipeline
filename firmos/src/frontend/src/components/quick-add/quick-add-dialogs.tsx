@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import {
   addQuickNoteAction,
@@ -144,9 +145,9 @@ export function QuickNoteDialog({ open, onOpenChange, options }: DialogProps) {
               the two-tap note flow is unchanged. */}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Priority" htmlFor="quick-note-priority">
-              <select
+              <NativeSelect
                 id="quick-note-priority"
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground"
+                className="h-9 px-2"
                 value={priority}
                 onChange={(e) => setPriority(e.target.value as QuickNotePriority)}
               >
@@ -154,7 +155,7 @@ export function QuickNoteDialog({ open, onOpenChange, options }: DialogProps) {
                 <option value="low">Low</option>
                 <option value="high">High</option>
                 <option value="urgent">Urgent</option>
-              </select>
+              </NativeSelect>
             </Field>
             <Field label="Due date (optional)" htmlFor="quick-note-due">
               <Input

@@ -48,6 +48,7 @@ import {
   findQuestion,
   firstUnansweredScreen,
   flattenScreens,
+  formContactHits,
   isCustomOtherPick,
   questionPosition,
   visibleChapters,
@@ -298,10 +299,20 @@ export function IntakeWizard({
   )
 
   // J1 (C5/C6/C7): the contact pickers' debounced server read.
+  // M5 (C3, 10_10 00:04:46): form-local entries lead the results - the
+  // main contact, owners, and CPA entered on THIS form are pickable before
+  // the database ("pull from a previous spot on the form").
   const contactSearch = useCallback(
     async (query: string): Promise<ContactLookupResults | null> => {
+      const local = formContactHits(answersRef.current, query)
       const res = await searchContactsAction(query)
-      return res.ok ? res.data : null
+      if (!res.ok) return null
+      const localFold = (n: string) =>
+        n.replace(/ \((this form's main contact|owner on this form|CPA on this form)\)$/, '').trim().toLowerCase()
+      const remote = res.data.contacts.filter(
+        (r) => !local.some((l) => localFold(l.name) === r.name.trim().toLowerCase()),
+      )
+      return { contacts: [...local, ...remote], clients: res.data.clients }
     },
     [],
   )

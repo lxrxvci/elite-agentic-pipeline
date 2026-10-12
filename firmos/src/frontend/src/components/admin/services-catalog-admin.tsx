@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Table,
   TableBody,
@@ -56,9 +57,6 @@ const BUCKET_OPTIONS = [
   { value: 'payroll_monthly', label: 'Payroll (monthly)' },
   { value: 'one_time', label: 'One-time' },
 ]
-
-const selectCls =
-  'h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-ring'
 
 export function ServicesCatalogAdmin({ rows }: { rows: ServiceCatalogRow[] }) {
   const [busy, setBusy] = React.useState(false)
@@ -138,26 +136,26 @@ export function ServicesCatalogAdmin({ rows }: { rows: ServiceCatalogRow[] }) {
             value={price}
             onChange={(e) => setPrice(e.target.value)}
           />
-          <select aria-label="Unit" className={selectCls} value={unit} onChange={(e) => setUnit(e.target.value)} data-testid="service-add-unit">
+          <NativeSelect aria-label="Unit" className="h-9 px-2" value={unit} onChange={(e) => setUnit(e.target.value)} data-testid="service-add-unit">
             {UNIT_OPTIONS.map((u) => (
               <option key={u} value={u}>{u}</option>
             ))}
-          </select>
-          <select aria-label="Quantity rule" className={selectCls} value={scaling} onChange={(e) => setScaling(e.target.value)}>
+          </NativeSelect>
+          <NativeSelect aria-label="Quantity rule" className="h-9 px-2" value={scaling} onChange={(e) => setScaling(e.target.value)}>
             {SCALING_OPTIONS.map((s) => (
               <option key={s.value} value={s.value}>{s.label}</option>
             ))}
-          </select>
-          <select aria-label="Billing bucket" className={selectCls} value={bucket} onChange={(e) => setBucket(e.target.value)}>
+          </NativeSelect>
+          <NativeSelect aria-label="Billing bucket" className="h-9 px-2" value={bucket} onChange={(e) => setBucket(e.target.value)}>
             {BUCKET_OPTIONS.map((b) => (
               <option key={b.value} value={b.value}>{b.label}</option>
             ))}
-          </select>
-          <select aria-label="Group" className={selectCls} value={group} onChange={(e) => setGroup(e.target.value)}>
+          </NativeSelect>
+          <NativeSelect aria-label="Group" className="h-9 px-2" value={group} onChange={(e) => setGroup(e.target.value)}>
             {GROUP_OPTIONS.map((g) => (
               <option key={g.value} value={g.value}>{g.label}</option>
             ))}
-          </select>
+          </NativeSelect>
           <label className="flex items-center gap-1.5 text-xs text-foreground">
             <input
               type="checkbox"

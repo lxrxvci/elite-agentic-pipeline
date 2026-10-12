@@ -159,7 +159,12 @@ describe('branch map', () => {
     const noStatus = visibleQuestions(software, { ...base, quickbooksStatus: null }).map((q) => q.id)
     expect(noStatus).not.toContain('qbo-users')
     expect(noStatus).not.toContain('qbo-tier')
-    for (const status of ['existing', 'desktop', 'none']) {
+    // M5 (C5, 10_10 00:25:29): an EXISTING QuickBooks skips both - only the
+    // desktop migration and no-QuickBooks paths still ask.
+    const existing = visibleQuestions(software, { ...base, quickbooksStatus: 'existing' }).map((q) => q.id)
+    expect(existing).not.toContain('qbo-users')
+    expect(existing).not.toContain('qbo-tier')
+    for (const status of ['desktop', 'none']) {
       const ids = visibleQuestions(software, { ...base, quickbooksStatus: status }).map((q) => q.id)
       expect(ids).toContain('qbo-users')
       expect(ids).toContain('qbo-tier')
@@ -337,6 +342,9 @@ describe('main-contact card (I1)', () => {
         entityName: null,
         email: 'wren@fernfeather.shop',
         phone: '5035550182',
+        // M5 (C2): the channel arrays always write (empty when no extras).
+        emails: [],
+        phones: [],
         isPrimary: true,
         relationshipType: 'primary_contact',
       },
@@ -346,6 +354,8 @@ describe('main-contact card (I1)', () => {
       contactName: 'Wren Okafor',
       contactPhone: '5035550182',
       contactEmail: 'wren@fernfeather.shop',
+      contactEmailsExtra: [],
+      contactPhonesExtra: [],
     })
     expect(mainContact.get({ ...base, ...applied })).toBe('Wren Okafor')
   })
@@ -461,7 +471,9 @@ describe('effectiveServiceKeys', () => {
       bookkeepingFrequency: 'monthly',
       monthlyCloseTier: '10',
     })
-    expect(keys).toEqual([])
+    // M6 (10_10 01:19:20): the FirmOS access line derives on every
+    // engagement - the assertion is no REPORTING service, not an empty set.
+    expect(keys).toEqual(['firmos_access'])
   })
 
   it('adds and removes derived services with their answers (E6/J2: record_bills rides recordBills, retro derives from the start date)', () => {

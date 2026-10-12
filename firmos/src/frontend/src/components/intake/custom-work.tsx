@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Plus } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { NativeSelect } from '@/components/ui/native-select'
 import { inputCls } from './account-screens'
 import type { OptionListValueLite, WizardAnswers } from './registry'
 
@@ -135,10 +136,10 @@ export function CustomWorkAdder({
             <option key={v.id} value={v.name} />
           ))}
         </datalist>
-        <select
+        <NativeSelect
           aria-label="Cadence"
           data-testid="custom-work-cadence"
-          className={`${inputCls} appearance-none`}
+          className="h-10"
           value={cadence}
           onChange={(e) => setCadence(e.target.value)}
         >
@@ -147,7 +148,7 @@ export function CustomWorkAdder({
               {o.label}
             </option>
           ))}
-        </select>
+        </NativeSelect>
         <input
           aria-label="Price (optional for recurring)"
           data-testid="custom-work-price"
@@ -158,10 +159,10 @@ export function CustomWorkAdder({
           onChange={(e) => setPrice(e.target.value)}
         />
         {/* L2 (H7): the optional industry tag. */}
-        <select
+        <NativeSelect
           aria-label="Industry tag (optional)"
           data-testid="custom-work-industry"
-          className={`${inputCls} appearance-none`}
+          className="h-10"
           value={industry}
           onChange={(e) => setIndustry(e.target.value)}
         >
@@ -171,7 +172,7 @@ export function CustomWorkAdder({
               {v.name}
             </option>
           ))}
-        </select>
+        </NativeSelect>
         <Button
           type="button"
           variant="outline"

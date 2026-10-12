@@ -59,3 +59,4 @@ Thumbs.db
 # Credential files — never commit
 .env.github-secrets
 neon-redis.md
+.vercel

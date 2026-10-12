@@ -43,6 +43,11 @@ export interface IntakeContactInput {
   entityName?: string | null;
   email?: string | null;
   phone?: string | null;
+  /** M5 (C2, 10_10 00:02:57): every address on file, primary first - the
+   *  scalar email/phone stay the canonical primary; these are the extras
+   *  ("different email for each business"). */
+  emails?: string[];
+  phones?: string[];
   /** Exactly one primary contact becomes the client's primary_contact. */
   isPrimary?: boolean;
   /** K8 (B4): any contact_roles label ("Office manager") or a legacy enum
@@ -251,6 +256,15 @@ export interface IntakeFormData {
   equityBreakdown?: string[];
   /** Break the equity accounts down per owner (asked only when owners > 1). */
   equityPerOwner?: boolean;
+  /** M5 (C6, 10_10 00:18:39): the accounting-method question was answered
+   *  with "I don't know" (accountingMethod stays null; the question reads
+   *  answered and the summary says "Confirm at setup"). */
+  accountingMethodAnswered?: boolean;
+  /** M5 (C7, 10_10 00:39:19): when deposits are recorded (recordDeposits),
+   *  does the client make the deposits themselves (true) or does the
+   *  firm (false)? Drives how the deposit service is quoted and who the
+   *  workflow assigns the task to. */
+  makeDeposits?: boolean;
   /** Per-service discount capture (C1): flat dollars off per billing cycle,
    *  keyed by service key; the quote engine clamps each line at zero.
    *  Legacy - J4 (V4) presents direct price editing instead; stored

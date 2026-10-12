@@ -17,6 +17,7 @@ import { CSS, getEventCoordinates } from '@dnd-kit/utilities'
 import { ArrowDown, ArrowRight, ArrowUp, ChevronDown, GripVertical, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   ROUTINE_BUCKET_LABELS,
   ROUTINE_BUCKETS,
@@ -496,10 +497,10 @@ function RoutineTaskCard({
           >
             <ArrowDown className="h-3.5 w-3.5" aria-hidden />
           </button>
-          <select
+          <NativeSelect
             aria-label={`Move ${task.title} to another bucket`}
             data-testid={`move-bucket-${task.key}`}
-            className="h-8 rounded-md border border-input bg-background px-1.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="h-8 px-1.5 text-xs"
             value={entry.bucket}
             onChange={(e) => onMove(e.target.value as RoutineBucket, Number.MAX_SAFE_INTEGER)}
           >
@@ -508,7 +509,7 @@ function RoutineTaskCard({
                 {ROUTINE_BUCKET_LABELS[b]}
               </option>
             ))}
-          </select>
+          </NativeSelect>
           <button
             type="button"
             aria-label={`${controlsOpen ? 'Close' : 'Set'} the schedule for ${task.title}`}

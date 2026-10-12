@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { NativeSelect } from '@/components/ui/native-select'
 import { convertIntake } from '@/server/actions/intake'
 import type { ConversionTaskPlanItem } from '@/server/convert'
 
@@ -27,9 +28,6 @@ export interface StaffOption {
 export function staffOptionLabel(o: StaffOption): string {
   return o.openCount == null ? o.name : `${o.name} (${o.openCount} open)`
 }
-
-const selectCls =
-  'h-10 w-full appearance-none rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring'
 
 /**
  * Convert-to-client confirmation (HANDOFF §6.8): conversion is a
@@ -132,10 +130,10 @@ export function ConvertDialog({
             <label htmlFor="convert-manager" className="mb-1 block text-xs font-medium text-muted-foreground">
               Manager
             </label>
-            <select
+            <NativeSelect
               id="convert-manager"
               data-testid="select-manager"
-              className={selectCls}
+              className="h-10"
               value={managerId}
               onChange={(e) => setManagerId(e.target.value)}
             >
@@ -145,16 +143,16 @@ export function ConvertDialog({
                   {staffOptionLabel(m)}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
           <div>
             <label htmlFor="convert-bookkeeper" className="mb-1 block text-xs font-medium text-muted-foreground">
               Bookkeeper
             </label>
-            <select
+            <NativeSelect
               id="convert-bookkeeper"
               data-testid="select-bookkeeper"
-              className={selectCls}
+              className="h-10"
               value={bookkeeperId}
               onChange={(e) => setBookkeeperId(e.target.value)}
             >
@@ -164,7 +162,7 @@ export function ConvertDialog({
                   {staffOptionLabel(b)}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         </div>
 
@@ -189,10 +187,10 @@ export function ConvertDialog({
                       <span className="block truncate text-[13px] font-medium text-foreground">{item.title}</span>
                       <span className="block truncate text-[11px] text-muted-foreground">{item.cadence}</span>
                     </span>
-                    <select
+                    <NativeSelect
                       aria-label={`Assign ${item.title}`}
                       data-testid={`convert-task-assignee-${item.key}`}
-                      className="h-8 w-40 appearance-none rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                      className="h-8 w-40 px-2 text-xs"
                       value={v}
                       onChange={(e) => setPicked((p) => ({ ...p, [item.key]: e.target.value }))}
                     >
@@ -202,7 +200,7 @@ export function ConvertDialog({
                           {e.name}
                         </option>
                       ))}
-                    </select>
+                    </NativeSelect>
                     <span className="tnum w-14 shrink-0 text-right text-[10px] text-muted-foreground" data-testid={`convert-task-load-${item.key}`}>
                       {open == null ? '' : `${open} open`}
                     </span>

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { ArrowRight, Check, ChevronDown, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { NativeSelect } from '@/components/ui/native-select'
 import type { IntakeAccountInput } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
@@ -420,10 +421,10 @@ function AccountMiniForm({
         {def.askFinanced && (
           <div>
             <FieldLabel>Financed or paid in full?</FieldLabel>
-            <select
+            <NativeSelect
               aria-label={`Financed or paid in full ${index + 1}`}
               data-testid={`financed-select-${index}`}
-              className={cn(inputCls, 'appearance-none')}
+              className="h-10"
               value={item.financed ?? ''}
               onChange={(e) =>
                 onChange({
@@ -434,17 +435,17 @@ function AccountMiniForm({
               <option value="">Select…</option>
               <option value="financed">Financed - a loan is attached</option>
               <option value="paid">Paid in full</option>
-            </select>
+            </NativeSelect>
           </div>
         )}
 
         {def.askAssetType && (
           <div>
             <FieldLabel>Type</FieldLabel>
-            <select
+            <NativeSelect
               aria-label={`Asset type ${index + 1}`}
               data-testid={`asset-type-${index}`}
-              className={cn(inputCls, 'appearance-none')}
+              className="h-10"
               value={item.assetType ?? ''}
               onChange={(e) => onChange({ assetType: e.target.value || null })}
             >
@@ -454,17 +455,17 @@ function AccountMiniForm({
                   {label}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         )}
 
         {def.proofOptions ? (
           <div>
             <FieldLabel>Proof</FieldLabel>
-            <select
+            <NativeSelect
               aria-label={`Proof category ${index + 1}`}
               data-testid={`proof-select-${index}`}
-              className={cn(inputCls, 'appearance-none')}
+              className="h-10"
               value={proof}
               onChange={(e) => {
                 const next = e.target.value as IntakeAccountInput['proofCategory']
@@ -483,7 +484,7 @@ function AccountMiniForm({
                   {PROOF_CATEGORY_LABELS[o.value] ?? o.label}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         ) : (
           <div className="flex items-end">

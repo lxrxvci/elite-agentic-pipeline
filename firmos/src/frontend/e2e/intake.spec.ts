@@ -244,7 +244,11 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await advance(page, 'qbo-status')
 
   // ── The QBO scope block moved with services (N1) ──
-  await pick(page, 'option-existing', 'qbo-users')
+  // M5 (C5, 10_10 00:25:29): an EXISTING QuickBooks skips user-count + plan
+  // (the S-Corp flow below covers that skip); the no-QuickBooks path keeps
+  // all three questions, so this flow exercises the plan recommendation.
+  await pick(page, 'option-none', 'qbo-setup')
+  await pick(page, 'option-no', 'qbo-users')
   await page.getByLabel('QuickBooks users').fill('2')
   await advance(page, 'qbo-tier')
   await pick(page, 'option-recommended', 'notes')
@@ -335,6 +339,8 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // frequency with the math visible; one-time fees list separately. V5: the
   // reconciliation breakdown lists the actual accounts with count x rate.
   await expect(page.getByTestId('estimate-bucket-monthly')).toContainText('Bank Feed Management')
+  // M6 (10_10 01:19:20): Jason's $15/mo platform line rides every estimate.
+  await expect(page.getByTestId('estimate-bucket-monthly')).toContainText('FirmOS Client Access')
   await expect(page.getByTestId('estimate-math-account_reconciliations')).toHaveText(
     '2 accounts × $25 = $50/mo',
   )
@@ -618,10 +624,8 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await expect(page.getByTestId('standard-bank_feed_management')).toHaveAttribute('data-checked', 'true')
   await expect(page.getByTestId('later-badge-payroll')).toHaveText('Added from your answers')
   await advance(page, 'qbo-status')
-  await pick(page, 'option-existing', 'qbo-users')
-  await page.getByLabel('QuickBooks users').fill('2')
-  await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'notes')
+  // M5 (C5): an existing QuickBooks skips user-count + plan straight to notes.
+  await pick(page, 'option-existing', 'notes')
   await advance(page, 'routine-scheduler') // K6 (D3): no standalone rules card
   // J3: the S-corp payroll auto-flag derives the payroll card - biweekly.
   await expect(page.getByTestId('routine-card-payroll-handling')).toBeVisible()

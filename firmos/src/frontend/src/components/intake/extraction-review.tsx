@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { AlertTriangle, ArrowRight, Check, ChevronDown, ChevronRight, Pencil } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { NativeSelect } from '@/components/ui/native-select'
 import { checkDuplicates } from '@/server/actions/intake'
 import { confirmExtraction, retryExtraction } from '@/server/actions/intake-import'
 import type { DuplicateCandidate } from '@/server/intake'
@@ -472,8 +473,8 @@ function RowEditor({
 }) {
   if (row.kind === 'boolean') {
     return (
-      <select
-        className="mt-1 h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+      <NativeSelect
+        className="mt-1 h-9 px-2"
         value={value === true ? 'yes' : value === false ? 'no' : ''}
         onChange={(e) => onChange(e.target.value === 'yes')}
         data-testid={`edit-input-${row.key}`}
@@ -481,13 +482,13 @@ function RowEditor({
       >
         <option value="yes">Yes</option>
         <option value="no">No</option>
-      </select>
+      </NativeSelect>
     )
   }
   if (row.kind === 'enum') {
     return (
-      <select
-        className="mt-1 h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+      <NativeSelect
+        className="mt-1 h-9 px-2"
         value={String(value ?? '')}
         onChange={(e) => onChange(e.target.value)}
         data-testid={`edit-input-${row.key}`}
@@ -498,7 +499,7 @@ function RowEditor({
             {o.label}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     )
   }
   if (row.kind === 'number') {

@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 
+import { NativeSelect } from '@/components/ui/native-select'
 import { setUserSkillAction } from '@/server/actions/user-skills'
 import { SKILL_TIERS, type UserSkillRow } from '@/shared/lib/user-skills'
 
@@ -75,10 +76,10 @@ export function UserSkillsAdmin({
                   const key = `${s.id}:${t}`
                   return (
                     <td key={t} className="py-2 pr-4">
-                      <select
+                      <NativeSelect
                         aria-label={`${s.name} - ${t} level`}
                         data-testid={`skill-${s.id}-${t}`}
-                        className="h-8 w-20 appearance-none rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                        className="h-8 w-20 px-2 text-xs"
                         value={values[key] ?? ''}
                         disabled={busyCell === key}
                         onChange={(e) => void setCell(s.id, t, e.target.value)}
@@ -89,7 +90,7 @@ export function UserSkillsAdmin({
                             {n}
                           </option>
                         ))}
-                      </select>
+                      </NativeSelect>
                     </td>
                   )
                 })}

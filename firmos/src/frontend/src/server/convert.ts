@@ -722,6 +722,16 @@ export async function convertIntakeToClient(
               entityName: c.entityName ?? null,
               email: c.email ?? null,
               phone: c.phone ?? null,
+              // M5 (C2, 10_10 00:02:57): the full channel list, primary
+              // scalar first ("different email for each business").
+              emails: [
+                ...(c.email ? [c.email] : []),
+                ...(c.emails ?? []).filter((e) => e.trim() !== '' && e !== c.email),
+              ],
+              phones: [
+                ...(c.phone ? [c.phone] : []),
+                ...(c.phones ?? []).filter((p) => p.trim() !== '' && p !== c.phone),
+              ],
             })
             .returning()
         )[0];

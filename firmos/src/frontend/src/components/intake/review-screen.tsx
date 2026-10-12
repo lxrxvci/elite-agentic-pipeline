@@ -9,6 +9,7 @@ import type { Quote } from '@firmos/domain'
 
 import { Button } from '@/components/ui/button'
 import { MaskedValue } from '@/components/ui/masked-value'
+import { NativeSelect } from '@/components/ui/native-select'
 import { acceptIntakeEstimate, checkDuplicates, submitIntakeForReview } from '@/server/actions/intake'
 import type { DuplicateCandidate, IntakeAccountInput } from '@/server/intake'
 import { monthLabel } from '@/shared/lib/date-display'
@@ -75,7 +76,8 @@ import { averageMonthlyStars } from './routine-calendar'
 
 /** Display order for the review's account groups. J1 (D4): assets before
  *  loans - the count-card order - then anything exotic (legacy/extraction
- *  types) last. */
+ *  types) last. M5 (E2, 10_10 00:39:19): equity rows sort GAAP too -
+ *  contributions, then distributions, then other equity. */
 const REVIEW_ACCOUNT_TYPE_ORDER = [
   'checking',
   'savings',
@@ -86,6 +88,10 @@ const REVIEW_ACCOUNT_TYPE_ORDER = [
   'other_asset',
   'vehicle_loan',
   'loan',
+  'loans_from_shareholders',
+  'owner_contributions',
+  'owner_distributions',
+  'other_equity',
 ]
 
 /** The balance-chapter question that edits each account group (V1). */
@@ -117,11 +123,13 @@ const BALANCE_BOX_ORDER: readonly { key: BalanceBoxKey; label: string }[] = [
 const TYPE_TO_BOX: Record<string, BalanceBoxKey> = {
   checking: 'assets',
   savings: 'assets',
-  credit_card: 'assets',
   vehicle: 'assets',
   fixed_assets: 'assets',
   investment: 'assets',
   other_asset: 'assets',
+  // M5 (E2): credit cards are a CURRENT LIABILITY under GAAP - they sat in
+  // Assets before this pass.
+  credit_card: 'liabilities',
   vehicle_loan: 'liabilities',
   loan: 'liabilities',
   loans_from_shareholders: 'liabilities',
@@ -130,7 +138,10 @@ const TYPE_TO_BOX: Record<string, BalanceBoxKey> = {
   other_equity: 'equity',
 }
 /** J2: within Assets, current (money) accounts group before long-term. */
-const CURRENT_ASSET_TYPES: ReadonlySet<string> = new Set(['checking', 'savings', 'credit_card'])
+const CURRENT_ASSET_TYPES: ReadonlySet<string> = new Set(['checking', 'savings'])
+/** M5 (E2): within Liabilities, credit cards group as current; loans
+ *  (vehicle, other, shareholder) group as long-term. */
+const CURRENT_LIABILITY_TYPES: ReadonlySet<string> = new Set(['credit_card'])
 
 function accountDetailLine(a: IntakeAccountInput): string | null {
   const parts: string[] = []
@@ -230,7 +241,10 @@ function AccountTypeGroup({
  *  institution badge. J4 (V1): every row edits its type's count card.
  *  L5 (J2): the groups nest inside the accounting-equation boxes - Assets
  *  (current, then long-term), Liabilities, Equity; the Equity box lists the
- *  intake's planned equity accounts (J3) plus any legacy equity rows. */
+ *  intake's planned equity accounts (J3) plus any legacy equity rows.
+ *  M5 (E2, 10_10 00:39:19): full GAAP order - current assets, fixed assets,
+ *  current liabilities (credit cards - moved OUT of Assets), long-term
+ *  liabilities (loans), then equity (contributions, distributions, other). */
 function ReviewAccounts({
   answers,
   editable,
@@ -266,6 +280,10 @@ function ReviewAccounts({
   const currentAssets = assetGroups.filter(([t]) => CURRENT_ASSET_TYPES.has(t))
   const longTermAssets = assetGroups.filter(([t]) => !CURRENT_ASSET_TYPES.has(t))
   const liabilityGroups = boxOf('liabilities')
+  // M5 (E2): liabilities split GAAP-style too - current (credit cards)
+  // before long-term (loans).
+  const currentLiabilities = liabilityGroups.filter(([t]) => CURRENT_LIABILITY_TYPES.has(t))
+  const longTermLiabilities = liabilityGroups.filter(([t]) => !CURRENT_LIABILITY_TYPES.has(t))
   const equityGroups = boxOf('equity')
 
   return (
@@ -305,10 +323,27 @@ function ReviewAccounts({
               </div>
             )}
             {key === 'liabilities' && (
-              <div className="mt-1 divide-y divide-border/50">
-                {liabilityGroups.map(([t, list]) => (
-                  <AccountTypeGroup key={t} type={t} list={list} editable={editable} onEdit={onEdit} />
-                ))}
+              <div className="mt-1 space-y-2">
+                {currentLiabilities.length > 0 && (
+                  <div data-testid="balance-box-liabilities-current">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Current</p>
+                    <div className="divide-y divide-border/50">
+                      {currentLiabilities.map(([t, list]) => (
+                        <AccountTypeGroup key={t} type={t} list={list} editable={editable} onEdit={onEdit} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {longTermLiabilities.length > 0 && (
+                  <div data-testid="balance-box-liabilities-long-term">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Long-term</p>
+                    <div className="divide-y divide-border/50">
+                      {longTermLiabilities.map(([t, list]) => (
+                        <AccountTypeGroup key={t} type={t} list={list} editable={editable} onEdit={onEdit} />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             {key === 'equity' && (
@@ -480,37 +515,39 @@ function EstimateLineRow({
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground" data-testid={`billing-grid-${view.key}`}>
           <label className="flex items-center gap-1.5">
             Calculate
-            <select
+            <NativeSelect
               aria-label={`Calculation frequency for ${view.name}`}
               data-testid={`calc-freq-${view.key}`}
               value={cfg.calcFrequency}
               onChange={(e) => onLineBilling!(view.key, { calcFrequency: e.target.value as CalcFrequency })}
-              className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+              className="rounded border-border px-1 py-0.5 text-xs"
+              wrapperClassName="inline-block"
             >
               <option value="daily">per day</option>
               <option value="weekly">per week</option>
               <option value="monthly">per month</option>
               <option value="quarterly">per quarter</option>
               <option value="annual">per year</option>
-            </select>
+            </NativeSelect>
           </label>
           {(cfg.calcFrequency === 'weekly' || cfg.calcFrequency === 'daily') && !cfg.flatMonthly && (
             <label className="flex items-center gap-1.5">
               on
               {cfg.calcFrequency === 'weekly' ? (
-                <select
+                <NativeSelect
                   aria-label={`Weekday for ${view.name}`}
                   data-testid={`calc-weekday-${view.key}`}
                   value={(cfg.calcWeekdays ?? [5])[0]}
                   onChange={(e) => onLineBilling!(view.key, { calcWeekdays: [Number(e.target.value)] })}
-                  className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                  className="rounded border-border px-1 py-0.5 text-xs"
+                  wrapperClassName="inline-block"
                 >
                   {WEEKDAY_NAMES.map((name, i) => (
                     <option key={name} value={i}>
                       {name}s
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               ) : (
                 <span className="flex items-center gap-1" data-testid={`calc-days-${view.key}`}>
                   {WEEKDAY_NAMES.map((name, i) => {
@@ -556,18 +593,19 @@ function EstimateLineRow({
           )}
           <label className="flex items-center gap-1.5">
             Bill
-            <select
+            <NativeSelect
               aria-label={`Billing frequency for ${view.name}`}
               data-testid={`bill-freq-${view.key}`}
               value={cfg.billingFrequency}
               onChange={(e) => onLineBilling!(view.key, { billingFrequency: e.target.value as BillingFrequency })}
-              className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+              className="rounded border-border px-1 py-0.5 text-xs"
+              wrapperClassName="inline-block"
             >
               <option value="weekly">weekly</option>
               <option value="monthly">monthly</option>
               <option value="quarterly">quarterly</option>
               <option value="annual">annually</option>
-            </select>
+            </NativeSelect>
           </label>
           {cfg.billingFrequency === 'monthly' && (
             <label className="flex items-center gap-1.5">
@@ -590,14 +628,15 @@ function EstimateLineRow({
           {(cfg.billingFrequency === 'annual' || cfg.billingFrequency === 'quarterly') && (
             <label className="flex items-center gap-1.5">
               in
-              <select
+              <NativeSelect
                 aria-label={`Billing month for ${view.name}`}
                 data-testid={`bill-month-${view.key}`}
                 value={cfg.billMonth ?? ''}
                 onChange={(e) =>
                   onLineBilling!(view.key, { billMonth: e.target.value === '' ? null : Number(e.target.value) })
                 }
-                className="rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                className="rounded border-border px-1 py-0.5 text-xs"
+                wrapperClassName="inline-block"
               >
                 <option value="">…</option>
                 {BILLING_MONTH_NAMES.map((name, i) => (
@@ -605,7 +644,7 @@ function EstimateLineRow({
                     {name}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </label>
           )}
         </div>

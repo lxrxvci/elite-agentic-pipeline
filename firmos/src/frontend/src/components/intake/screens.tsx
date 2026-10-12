@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowRight, Check, Eye, EyeOff, Info, Pencil, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { NativeSelect } from '@/components/ui/native-select'
 import type { ContactLookupResults } from '@/server/contact-lookup'
 import type { IntakeAccountInput } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
@@ -638,10 +639,10 @@ export function ServicesScreen({
                           onChange={(e) => setEditName(e.target.value)}
                         />
                         {c.edit.kind === 'rule' ? (
-                          <select
+                          <NativeSelect
                             aria-label="Cadence"
                             data-testid="custom-addon-edit-cadence"
-                            className={`${inputCls} appearance-none`}
+                            className="h-10"
                             value={editCadence}
                             onChange={(e) => setEditCadence(e.target.value)}
                           >
@@ -649,7 +650,7 @@ export function ServicesScreen({
                             <option value="monthly">Monthly</option>
                             <option value="quarterly">Quarterly</option>
                             <option value="annual">Annual</option>
-                          </select>
+                          </NativeSelect>
                         ) : (
                           <span className="text-xs text-muted-foreground">One-time</span>
                         )}
@@ -662,10 +663,10 @@ export function ServicesScreen({
                           onChange={(e) => setEditPrice(e.target.value)}
                         />
                         {c.edit.kind === 'rule' && (
-                          <select
+                          <NativeSelect
                             aria-label="Industry tag (optional)"
                             data-testid="custom-addon-edit-industry"
-                            className={`${inputCls} appearance-none`}
+                            className="h-10"
                             value={editIndustry}
                             onChange={(e) => setEditIndustry(e.target.value)}
                           >
@@ -675,7 +676,7 @@ export function ServicesScreen({
                                 {v.name}
                               </option>
                             ))}
-                          </select>
+                          </NativeSelect>
                         )}
                         <Button type="button" variant="action" size="sm" data-testid="custom-addon-edit-save" onClick={saveAddonEdit}>
                           Save
@@ -834,9 +835,22 @@ export function DateTextInput({
 }) {
   const [text, setText] = useState(() => isoToDateText(typeof value === 'string' ? value : null))
   const [invalid, setInvalid] = useState(false)
+  const lastDigits = useRef(0)
+  const expandedYear = useRef(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const caretToEnd = useRef(false)
+  // Programmatic value changes (the year expansion and its step-aside) leave
+  // the browser caret mid-string; typing must continue at the end.
+  useLayoutEffect(() => {
+    if (!caretToEnd.current) return
+    caretToEnd.current = false
+    const el = inputRef.current
+    if (el) el.setSelectionRange(el.value.length, el.value.length)
+  }, [text])
   return (
     <div>
       <input
+        ref={inputRef}
         aria-label={label}
         aria-invalid={invalid}
         className={cn(inputCls, 'tnum')}
@@ -846,7 +860,29 @@ export function DateTextInput({
         placeholder={placeholder ?? 'MM/DD/YYYY'}
         value={text}
         onChange={(e) => {
-          const masked = maskDateText(e.target.value)
+          let masked = maskDateText(e.target.value)
+          // Uncapped digits - dateTextDigits caps at 8, which would hide the
+          // 9th keystroke that means "I'm typing a 4-digit year".
+          const rawDigits = e.target.value.replace(/\D/g, '')
+          const digits = dateTextDigits(e.target.value)
+          // M5 (C4, 10_10 00:06:33 + 00:07:42): typing the 6th digit expands
+          // the 2-digit year - "it needs to put the 20 in first… then from
+          // there you could change it if you wanted to." Expands only while
+          // typing forward (deleting back to 6 stays editable). When the
+          // typist keeps going into a 4-digit year (the e2e flow types
+          // "01012026"), the inserted "20" steps aside for the real digits.
+          if (digits.length === 6 && lastDigits.current < 6) {
+            masked = maskDateText(`${digits.slice(0, 4)}20${digits.slice(4)}`)
+            expandedYear.current = true
+            caretToEnd.current = true
+          } else if (expandedYear.current && rawDigits.length > 8) {
+            expandedYear.current = false
+            caretToEnd.current = true
+            masked = maskDateText(`${rawDigits.slice(0, 4)}${rawDigits.slice(6)}`)
+          } else if (digits.length < 8) {
+            expandedYear.current = false
+          }
+          lastDigits.current = dateTextDigits(masked).length
           setText(masked)
           if (dateTextDigits(masked).length < 8) {
             setInvalid(false)
@@ -1004,9 +1040,9 @@ function FieldInput({  def,
   }
   if (def.kind === 'select') {
     return (
-      <select
+      <NativeSelect
         aria-label={def.label}
-        className={cn(inputCls, 'appearance-none')}
+        className="h-10"
         value={String(value ?? '')}
         onChange={(e) => onChange(def.key, e.target.value || undefined)}
       >
@@ -1016,7 +1052,7 @@ function FieldInput({  def,
             {o.label}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     )
   }
   if (def.kind === 'textarea') {
@@ -1524,6 +1560,66 @@ export function RepeatableScreen({
  * normalization happens on commit. Picker writes (a contact pick or
  * create-new) clear the buffer so programmatic values render immediately.
  */
+/**
+ * M5 (C2, 10_10 00:02:57): additional emails and phones beyond the primary
+ * scalar - "if I have multiple businesses and I have a different email for
+ * each business… am I able to add multiple emails, multiple phone numbers?"
+ * Extras edit the contactEmailsExtra/contactPhonesExtra arrays in the
+ * question's value; the scalar email/phone stays the primary.
+ */
+function ChannelList({
+  label,
+  kind,
+  values,
+  testidPrefix,
+  onChange,
+}: {
+  label: string
+  kind: 'email' | 'tel'
+  values: string[]
+  testidPrefix: string
+  onChange: (next: string[]) => void
+}) {
+  return (
+    <div>
+      <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
+      <ul className="space-y-1.5">
+        {values.map((v, i) => (
+          <li key={i} className="flex items-center gap-2">
+            <input
+              aria-label={`${label} ${i + 1}`}
+              type={kind === 'tel' ? 'tel' : 'text'}
+              inputMode={kind === 'tel' ? 'tel' : undefined}
+              className={inputCls}
+              value={v}
+              data-testid={`${testidPrefix}-${i}`}
+              onChange={(e) => onChange(values.map((x, j) => (j === i ? e.target.value : x)))}
+            />
+            <button
+              type="button"
+              aria-label={`Remove ${label} ${i + 1}`}
+              data-testid={`${testidPrefix}-remove-${i}`}
+              onClick={() => onChange(values.filter((_, j) => j !== i))}
+              className="rounded p-1 text-muted-foreground transition-colors hover:text-status-overdue focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        data-testid={`${testidPrefix}-add`}
+        onClick={() => onChange([...values, ''])}
+        className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-firm-brand/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <Plus className="h-3 w-3" aria-hidden />
+        Add another
+      </button>
+    </div>
+  )
+}
+
 function FieldsScreen({
   q,
   answers,
@@ -1593,7 +1689,9 @@ function FieldsScreen({
     if (picker.emailKey) patch[picker.emailKey] = hit.kind === 'contact' ? (hit.email ?? '') : ''
     // K4 (B6): the main-contact picker prefills phone too.
     if (picker.phoneKey) patch[picker.phoneKey] = hit.kind === 'contact' ? (hit.phone ?? '') : ''
-    patch[picker.linkKey] = hit.kind === 'contact' ? hit.id : null
+    // M5 (C3): form-local hits carry id -1 (no DB row) - the link key
+    // only writes a real FK.
+    patch[picker.linkKey] = hit.kind === 'contact' && hit.id > 0 ? hit.id : null
     if (picker.clientLinkKey) patch[picker.clientLinkKey] = hit.kind === 'client' ? hit.id : null
     setTyped({})
     onApply(q.apply(answers, patch))
@@ -1656,6 +1754,33 @@ function FieldsScreen({
           onApply(q.apply(answers, next))
         }}
       />
+      {q.contactChannels === true && (
+        <div className="grid gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5 sm:grid-cols-2" data-testid="contact-channels">
+          <ChannelList
+            label="Other emails (optional)"
+            kind="email"
+            values={Array.isArray(value.contactEmailsExtra) ? (value.contactEmailsExtra as string[]) : []}
+            testidPrefix="channel-email"
+            // M5 (C2): the extras ride `typed` like every other field (B1) -
+            // apply() strips empty rows, so without the typed overlay the
+            // freshly-added blank input would never render.
+            onChange={(next) => {
+              setTyped((t) => ({ ...t, contactEmailsExtra: next }))
+              onApply(q.apply(answers, { ...value, contactEmailsExtra: next }))
+            }}
+          />
+          <ChannelList
+            label="Other phones (optional)"
+            kind="tel"
+            values={Array.isArray(value.contactPhonesExtra) ? (value.contactPhonesExtra as string[]) : []}
+            testidPrefix="channel-phone"
+            onChange={(next) => {
+              setTyped((t) => ({ ...t, contactPhonesExtra: next }))
+              onApply(q.apply(answers, { ...value, contactPhonesExtra: next }))
+            }}
+          />
+        </div>
+      )}
       {error && (
         <p className="text-sm font-medium text-status-overdue" role="alert">
           {error}
@@ -2112,10 +2237,10 @@ export function QuestionScreen({
                 }}
               />
             ) : (
-              <select
+              <NativeSelect
                 id={`followup-${q.followup.key}`}
                 data-testid={`followup-select-${q.followup.key}`}
-                className={cn(inputCls, 'appearance-none')}
+                className="h-10"
                 value={String(answers[q.followup.key] ?? '')}
                 onChange={(e) => {
                   const raw = e.target.value
@@ -2128,7 +2253,7 @@ export function QuestionScreen({
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             )}
           </div>
         )}

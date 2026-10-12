@@ -305,12 +305,7 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await expect(question).toHaveAttribute('data-question', 'qbo-status')
   await page.getByTestId('option-existing').click()
   await page.getByTestId('continue').click()
-  await expect(question).toHaveAttribute('data-question', 'qbo-users')
-  await page.getByLabel('QuickBooks users').fill('2')
-  await page.getByTestId('continue').click()
-  await expect(question).toHaveAttribute('data-question', 'qbo-tier')
-  await page.getByTestId('option-recommended').click()
-  await page.getByTestId('continue').click()
+  // M5 (C5, 10_10 00:25:29): an existing QuickBooks skips user-count + plan.
   await expect(question).toHaveAttribute('data-question', 'notes')
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'routine-scheduler')

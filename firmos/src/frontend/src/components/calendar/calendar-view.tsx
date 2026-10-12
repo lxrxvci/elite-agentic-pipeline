@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   deleteMeetingAction,
   emailMeetingInfoAction,
@@ -277,10 +278,10 @@ export function CalendarViewRoot({
           </div>
           {/* L6 (I4): the employee toggle - "toggle by employee essentially
               that's assigned to that task" (00:59:13). */}
-          <select
+          <NativeSelect
             aria-label="Filter by employee"
             data-testid="calendar-assignee-filter"
-            className="h-8 appearance-none rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            className="h-8 px-2 text-xs"
             value={assigneeId ?? ''}
             onChange={(e) => {
               const v = e.target.value === '' ? null : Number(e.target.value)
@@ -293,7 +294,7 @@ export function CalendarViewRoot({
                 {s.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
           <div className="flex items-center gap-1">
             <Button asChild variant="outline" size="sm" className="h-8 w-8 px-0">
               <Link href={prevHref(view, anchor, todayIso, assigneeId)} aria-label={view === 'week' ? 'Previous week' : 'Previous month'}>

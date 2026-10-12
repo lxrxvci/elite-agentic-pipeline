@@ -307,6 +307,11 @@ export interface QuestionDef {
    *  chapter cards ("Assets · current", "Liabilities", "Equity") - "a box
    *  within the box… a little more delineated on what those are." */
   section?: string
+  /** M5 (C2, 10_10 00:02:57): the contact channels widget - additional
+   *  emails and phones beyond the primary scalar ("different email for
+   *  each business"). The extras ride fieldsValue/apply as
+   *  contactEmailsExtra / contactPhonesExtra string arrays. */
+  contactChannels?: boolean
   type: QuestionType
   options?: SelectOption[]
   /** I3: checklist options derived from the current answers (the online
@@ -1076,6 +1081,13 @@ export function effectiveServiceKeys(a: WizardAnswers, today?: { year: number; m
   if (retroInScope) set.add('retroactive_bookkeeping')
   else set.delete('retroactive_bookkeeping')
 
+  // M6 (10_10 01:19:20): every engagement carries the FirmOS client-access
+  // platform line - Jason's $15/mo software fee ("that money is going to
+  // me, not QuickBooks"). Not a checklist service: it derives on any set
+  // engagement and the review screen's price edits (J4) are the escape
+  // hatch when a client's fee is waived or changed.
+  if (a.engagementType != null) set.add('firmos_access')
+
   return [...set]
 }
 
@@ -1170,6 +1182,10 @@ export const ACCOUNT_COUNT_DEFS: readonly AccountCountDef[] = [
     nameLabel: 'Loan name',
     namePlaceholder: 'Delivery van loan',
     askLender: true,
+    // M5 (C8, 10_10 00:18:39): online-access is asked at selection time on
+    // EVERY account, loans included - the end-of-intake checklist question
+    // stays as the roll-up of the per-account flags.
+    askLoginAccess: true,
     proofOptions: [
       { value: 'statement', label: 'Statement', sub: 'The lender issues statements' },
       { value: 'owner_declared', label: 'Owner declared', sub: 'No statement - the owner confirms it' },
@@ -1891,12 +1907,15 @@ export const CHAPTERS: ChapterDef[] = [
           { key: 'contactPhone', label: 'Phone', kind: 'tel', half: true, placeholder: '(503) 555-0182' },
           { key: 'contactEmail', label: 'Email', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
         ],
+        contactChannels: true,
         fieldsValue: (a) => {
           const p = (a.contacts ?? []).find((c) => c.isPrimary)
           return {
             contactName: p ? (str(p.entityName) ?? [p.firstName, p.lastName].filter(Boolean).join(' ')) : '',
             contactPhone: p?.phone ?? '',
             contactEmail: p?.email ?? '',
+            contactEmailsExtra: p?.emails ?? [],
+            contactPhonesExtra: p?.phones ?? [],
           }
         },
         get: (a) => {
@@ -1918,6 +1937,12 @@ export const CHAPTERS: ChapterDef[] = [
           // K4 (B6): the picker link (or a surviving prior link) converts to
           // a link instead of a duplicate person.
           const linkedId = (val.mainContactId as number | null | undefined) ?? contacts[idx]?.contactId ?? null
+          const extraEmails = Array.isArray(val.contactEmailsExtra)
+            ? (val.contactEmailsExtra as unknown[]).map((e) => String(e).trim()).filter((e) => e !== '')
+            : []
+          const extraPhones = Array.isArray(val.contactPhonesExtra)
+            ? (val.contactPhonesExtra as unknown[]).map((e) => phoneDigits(e)).filter((e): e is string => e !== '')
+            : []
           const entry: IntakeContactInput = {
             ...contacts[idx],
             firstName: name ? firstName : null,
@@ -1925,6 +1950,10 @@ export const CHAPTERS: ChapterDef[] = [
             entityName: null,
             email,
             phone,
+            // M5 (C2): the extra channels; the primary scalar stays first
+            // at conversion.
+            emails: extraEmails,
+            phones: extraPhones,
             isPrimary: true,
             relationshipType: 'primary_contact',
             ...(linkedId != null ? { contactId: linkedId } : {}),
@@ -2751,6 +2780,24 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: (a) => (isBookkeeping(a) ? boolWord(a.recordDeposits) : null),
       },
       {
+        // M5 (C7, 10_10 00:19:36): the deposits mirror of pay-bills - "Are
+        // we recording deposits? Do we need to make deposits?" (both agreed).
+        // Making runs on top of recording, like paying runs on recording.
+        id: 'make-deposits',
+        title: 'Will we be making those deposits?',
+        help: 'Making runs on top of recording - we never make deposits we are not recording.',
+        type: 'select',
+        required: true,
+        when: (a) => a.recordDeposits === true,
+        options: [
+          { value: 'yes', label: 'Yes, we make them' },
+          { value: 'no', label: 'No, they handle that' },
+        ],
+        get: (a) => (a.makeDeposits === true ? 'yes' : a.makeDeposits === false ? 'no' : undefined),
+        apply: (_a, v) => ({ makeDeposits: v === 'yes' }),
+        summarize: (a) => (a.recordDeposits === true ? boolWord(a.makeDeposits) : null),
+      },
+      {
         // I2 (00:48:07-00:49:44): corporate structures legally require an
         // officer paid through payroll, so the card pre-answers yes (with the
         // why in a callout) and "No" is disabled. The answer is derived, not
@@ -2938,9 +2985,17 @@ export const CHAPTERS: ChapterDef[] = [
         options: [
           { value: 'cash', label: 'Cash basis' },
           { value: 'accrual', label: 'Accrual basis' },
+          // M5 (C6, 10_10 00:18:39): "We should have an I don't know option
+          // in here because they might not [know]… or skip for now." The IDK
+          // stores null and confirms at setup instead of a wrong guess.
+          { value: 'idk', label: "I don't know - confirm at setup", sub: 'Most small businesses are cash basis; we will confirm at setup.' },
         ],
-        ...key('accountingMethod'),
-        summarize: (a) => (str(a.accountingMethod) ? `${a.accountingMethod} basis` : null),
+        get: (a) => (a.accountingMethod != null ? a.accountingMethod : a.accountingMethodAnswered === true ? 'idk' : undefined),
+        apply: (_a, v) => ({
+          accountingMethod: v === 'idk' ? null : (v as WizardAnswers['accountingMethod']),
+          accountingMethodAnswered: true,
+        }),
+        summarize: (a) => (str(a.accountingMethod) ? `${a.accountingMethod} basis` : a.accountingMethodAnswered === true ? 'Confirm at setup' : null),
       },
       {
         // J2 (E6, 00:33:11-00:35:53): the old combined bill-pay card split
@@ -3262,7 +3317,10 @@ export const CHAPTERS: ChapterDef[] = [
         help: 'The headcount sets the plan: two users need at least Essentials, four need Plus.',
         type: 'fields',
         required: true,
-        when: hasQbo,
+        // M5 (C5, 10_10 00:25:29): an EXISTING QuickBooks skips this and the
+        // plan pick - "if already on QuickBooks is selected, we can skip
+        // the QuickBooks questions… just those two questions can be skipped."
+        when: (a) => a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none',
         fields: [{ key: 'qboUserCount', label: 'QuickBooks users', kind: 'number', min: 1, max: 25, required: true, placeholder: '2' }],
         get: (a) => a.qboUserCount,
         apply: (_a, v) => {
@@ -3281,7 +3339,8 @@ export const CHAPTERS: ChapterDef[] = [
         help: 'Class or location tracking needs Plus. Pick a plan, or let the quote recommend one from the user count.',
         type: 'select',
         required: true,
-        when: hasQbo,
+        // M5 (C5): skipped for an existing QuickBooks, like qbo-users above.
+        when: (a) => a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none',
         options: [
           { value: 'recommended', label: 'Recommend for me', sub: 'From user count and tracking needs' },
           { value: 'simple_start', label: 'Simple Start', sub: '1 user' },
@@ -3367,6 +3426,82 @@ export const CHAPTERS: ChapterDef[] = [
 ]
 
 // ── Branch map (pure, unit-tested) ────────────────────────────────────────
+
+/**
+ * M5 (C3, 10_10 00:04:46-00:06:33): form-local contact hits for the
+ * picker - "pull from a previous spot on the form… one instance throughout
+ * rather than creating multiple ones." The main contact, other contacts,
+ * owners, and the CPA entered earlier become pickable on later questions;
+ * a hit carries the DB link when the entry already has one (id > 0), else
+ * id -1 (the picker writes the create-new path, never a fake FK).
+ */
+export function formContactHits(
+  a: WizardAnswers,
+  query: string,
+): {
+  kind: 'contact'
+  id: number
+  name: string
+  firstName: string | null
+  lastName: string | null
+  entityName: string | null
+  email: string | null
+  phone: string | null
+}[] {
+  const q = query.trim().toLowerCase()
+  const matches = (name: string, email?: string | null) =>
+    q === '' || name.toLowerCase().includes(q) || (email ?? '').toLowerCase().includes(q)
+  const out: ReturnType<typeof formContactHits> = []
+  const seen = new Set<string>()
+  const push = (hit: (typeof out)[number]) => {
+    const fold = hit.name.trim().toLowerCase()
+    if (fold === '' || seen.has(fold)) return
+    seen.add(fold)
+    out.push(hit)
+  }
+  for (const c of a.contacts ?? []) {
+    const name = (c.entityName ?? [c.firstName, c.lastName].filter(Boolean).join(' ')).trim()
+    if (name === '' || !matches(name, c.email)) continue
+    push({
+      kind: 'contact',
+      id: c.contactId ?? -1,
+      name: c.isPrimary ? `${name} (this form's main contact)` : name,
+      firstName: c.firstName ?? null,
+      lastName: c.lastName ?? null,
+      entityName: c.entityName ?? null,
+      email: c.email ?? null,
+      phone: c.phone ?? null,
+    })
+  }
+  for (const o of a.owners ?? []) {
+    const name = (o.name ?? '').trim()
+    if (name === '' || !matches(name, o.email)) continue
+    push({
+      kind: 'contact',
+      id: -1,
+      name: `${name} (owner on this form)`,
+      firstName: null,
+      lastName: null,
+      entityName: null,
+      email: o.email ?? null,
+      phone: o.phone ?? null,
+    })
+  }
+  const cpaName = str(a.cpaName)
+  if (cpaName && matches(cpaName, null)) {
+    push({
+      kind: 'contact',
+      id: (a.cpaContactId as number | undefined) ?? -1,
+      name: `${cpaName} (CPA on this form)`,
+      firstName: null,
+      lastName: null,
+      entityName: cpaName,
+      email: null,
+      phone: null,
+    })
+  }
+  return out.slice(0, 8)
+}
 
 export function visibleChapters(a: WizardAnswers): ChapterDef[] {
   return CHAPTERS.filter((c) => !c.when || c.when(a))

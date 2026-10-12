@@ -44,6 +44,12 @@ export const contacts = pgTable(
     entityName: text("entity_name"),
     email: text("email"),
     phone: text("phone"),
+    // M5 (C2, 10_10 00:02:57): every address on file - "different email for
+    // each business… add multiple emails, multiple phone numbers." The
+    // scalar email/phone stay the canonical primary; the arrays hold the
+    // full list with the primary first.
+    emails: jsonb("emails").$type<string[]>(),
+    phones: jsonb("phones").$type<string[]>(),
     addressLine1: text("address_line1"),
     addressLine2: text("address_line2"),
     city: text("city"),
