@@ -50,6 +50,9 @@ describe('J10: no_internal_jargon_in_copy', () => {
       'this engagement seeds',
       'Seats drive',
       'seat count',
+      // M1 (B9, 10_10 00:13:13): "mirror of the bills flow" leaked internal
+      // structure onto a client-facing card ("Oh, what? What's that mean?").
+      'mirror of the',
     ]) {
       expect(src).not.toContain(banned)
     }

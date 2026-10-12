@@ -87,7 +87,12 @@ export const payrollServicesSummarize = (a: WizardAnswers): string | null => {
 const hasPayroll = (a: WizardAnswers): boolean =>
   isBookkeeping(a) && (a.hasPayroll === true || requiresOfficerPayroll(a))
 const takesCards = (a: WizardAnswers): boolean =>
-  (a.paymentMethods ?? []).some((m) => m === 'card' || m === 'online')
+  // M1 (B2): fold first - a stored custom variant ("Credit / debit card")
+  // still qualifies, so merchants never hides on a duplicate pick.
+  (a.paymentMethods ?? []).some((m) => {
+    const fold = foldPaymentMethod(m)
+    return fold === 'card' || fold === 'online'
+  })
 /** Only the three canonical QuickBooks statuses open the QBO follow-ups; a
  *  custom "Other" answer (I1) is explicitly not QuickBooks. */
 const hasQbo = (a: WizardAnswers): boolean =>
@@ -955,6 +960,33 @@ export const PAYMENT_METHOD_LABELS: Record<string, string> = {
   ach: 'ACH / bank transfer',
   card: 'Credit or debit cards',
   online: 'Online payments',
+}
+
+/**
+ * M1 (B1/B2, 10_10 00:10:41 + 00:40:20): the canonical fold for money-in
+ * values. Keys AND labels map to their key ("Credit or debit cards" → card,
+ * "ACH / bank transfer" → ach, "Checks" → check); custom values pass
+ * through. Picking a duplicate seed string can never again write a
+ * non-canonical value that hides the merchants question ("it's some
+ * probably to do with how it duplicated the credit debit card thing" -
+ * Jason diagnosed it).
+ */
+const PAYMENT_METHOD_FOLD_MAP = new Map<string, string>()
+for (const [key, label] of Object.entries(PAYMENT_METHOD_LABELS)) {
+  PAYMENT_METHOD_FOLD_MAP.set(key.toLowerCase().trim(), key)
+  PAYMENT_METHOD_FOLD_MAP.set(label.toLowerCase().trim(), key)
+}
+// The retired seed spellings (pre-M1 option-list duplicates).
+for (const [variant, key] of [
+  ['credit / debit card', 'card'],
+  ['credit/debit card', 'card'],
+  ['ach', 'ach'],
+  ['check', 'check'],
+] as const) {
+  PAYMENT_METHOD_FOLD_MAP.set(variant, key)
+}
+export function foldPaymentMethod(value: string): string {
+  return PAYMENT_METHOD_FOLD_MAP.get(value.toLowerCase().trim()) ?? value
 }
 
 export const PROPERTY_TYPE_LABELS: Record<string, string> = {
@@ -2575,10 +2607,12 @@ export const CHAPTERS: ChapterDef[] = [
         optionsFromList: 'payment_methods',
         options: Object.entries(PAYMENT_METHOD_LABELS).map(([value, label]) => ({ value, label })),
         get: (a) => a.paymentMethods ?? [],
-        apply: (_a, v) => ({ paymentMethods: v as string[] }),
+        // M1 (B1): answers store canonical keys - a duplicate seed pick can
+        // never write a variant string that hides downstream questions.
+        apply: (_a, v) => ({ paymentMethods: (v as string[]).map(foldPaymentMethod) }),
         summarize: (a) => {
           const ms = a.paymentMethods ?? []
-          return ms.length > 0 ? ms.map((m) => PAYMENT_METHOD_LABELS[m] ?? m).join(', ') : null
+          return ms.length > 0 ? ms.map((m) => PAYMENT_METHOD_LABELS[foldPaymentMethod(m)] ?? m).join(', ') : null
         },
       },
       {
@@ -2700,7 +2734,9 @@ export const CHAPTERS: ChapterDef[] = [
         // seeds the weekly routine, exactly like record-bills.
         id: 'record-deposits',
         title: 'Do they need us to record deposits?',
-        help: 'The mirror of the bills flow, for money coming in - deposits recorded as they land, so reconciliation is never a hunt.',
+        // M1 (B9, 10_10 00:13:13): plain language - "mirror of the bills
+        // flow" was internal jargon ("Oh, what? What's that mean?").
+        help: 'Deposits recorded as they come in, matched to what they pay for. Nothing sits uncategorized waiting to be chased at month-end.',
         type: 'select',
         required: true,
         when: isBookkeeping,

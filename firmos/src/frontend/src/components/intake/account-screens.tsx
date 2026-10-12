@@ -272,19 +272,19 @@ function AccountMiniForm({
   // J1 (D1): money accounts have no name field - the name DERIVES from
   // bank + type + last4 on every edit, so form_data and every downstream
   // surface read the same "Chase Checking · 4411" label.
+  // M1 (B3): a bank pick ALONE derives "Chase Checking" - K7's
+  // discovery-optional last-4 never leaves the account nameless (the
+  // 2-of-6 online-access bug on the demo intake).
   const change = (patch: Partial<IntakeAccountInput>) => {
     if (!def.deriveName) {
       onChange(patch)
       return
     }
     const next = { ...item, ...patch }
-    const last4 = normalizeLast4(next.last4)
     const institution = next.institution?.trim() ?? ''
     onChange({
       ...patch,
-      name: last4 != null && institution !== ''
-        ? accountLabel({ institution, accountType: def.accountType, last4 })
-        : '',
+      name: institution !== '' ? accountLabel({ institution, accountType: def.accountType, last4: next.last4 }) : '',
     })
   }
 

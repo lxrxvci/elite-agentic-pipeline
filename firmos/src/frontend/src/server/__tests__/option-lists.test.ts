@@ -66,8 +66,10 @@ describe.skipIf(!reachable)("option-lists engine", () => {
     const added = await addOptionValue("payment_methods", "Zelle");
     const renamed = await renameOptionValue("payment_methods", added.id, "Zelle / Venmo", 1);
     expect(renamed.name).toBe("Zelle / Venmo");
-    // Rename refuses to collide with an existing value.
-    await expect(renameOptionValue("payment_methods", added.id, "cash", 1)).rejects.toThrow(/already on the list/);
+    // Rename refuses to collide with an existing value (custom-vs-custom;
+    // M1: the old static-duplicate seeds this collided with are gone).
+    const other = await addOptionValue("payment_methods", "Cash App");
+    await expect(renameOptionValue("payment_methods", other.id, "zelle / venmo", 1)).rejects.toThrow(/already on the list/);
 
     await setOptionValueActive("payment_methods", added.id, false, 1);
     let names = (await listOptionValues("payment_methods")).map((v) => v.name);

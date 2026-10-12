@@ -48,7 +48,9 @@ const ADDON_KEYS = new Set([
   "payment_processing",
   "class_tracking",
   "location_tracking",
-  "additional_therapist_tracking",
+  // M1 (B5, 10_10 00:22:32): additional_therapist_tracking is OUT of the
+  // common add-ons - Jason's call: it only surfaces as an industry
+  // suggestion for therapy practices ("remove it from this common one").
 ]);
 
 function rowFromPricing(key: string, entry: PricingEntry): Omit<ServiceCatalogRow, "id"> {

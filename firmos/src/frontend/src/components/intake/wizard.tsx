@@ -436,9 +436,16 @@ export function IntakeWizard({
     (dir: 'fwd' | 'back') => {
       setDirection(dir)
       setNote(null)
-      setScreenIndex((i) =>
-        Math.max(0, Math.min(i + (dir === 'fwd' ? 1 : -1), screens.length - 1)),
-      )
+      // M1 (B4, 10_10 00:24:30): a qualifier/chapter jump pushes the origin -
+      // Back returns there FIRST ("it doesn't give me a go back to what are
+      // we taking on"), then resumes the normal walk.
+      if (dir === 'back' && jumpOriginRef.current.length > 0) {
+        setScreenIndex(jumpOriginRef.current.pop()!)
+      } else {
+        setScreenIndex((i) =>
+          Math.max(0, Math.min(i + (dir === 'fwd' ? 1 : -1), screens.length - 1)),
+        )
+      }
       if (editable) void flushSave()
     },
     [editable, flushSave, screens.length],
@@ -479,6 +486,9 @@ export function IntakeWizard({
   // J2 (E1-E3): the mandatory explanation note rides the in-card panel
   // (L1/C2, 10_06 00:12:26) - no wizard-level overlay state anymore.
 
+  // M1 (B4): origins of qualifier/chapter jumps - Back pops them first.
+  const jumpOriginRef = useRef<number[]>([])
+
   const jumpTo = useCallback(
     (chapterId: string, questionId: string) => {
       const target = screens.findIndex(
@@ -487,6 +497,7 @@ export function IntakeWizard({
       if (target < 0) return
       setDirection(target < idx ? 'back' : 'fwd')
       setNote(null)
+      jumpOriginRef.current.push(idx)
       setScreenIndex(target)
     },
     [idx, screens],
@@ -503,11 +514,20 @@ export function IntakeWizard({
       if (target < 0 || target === idx) return
       setDirection(target < idx ? 'back' : 'fwd')
       setNote(null)
+      jumpOriginRef.current.push(idx)
       setScreenIndex(target)
       if (editable) void flushSave()
     },
     [editable, flushSave, idx, screens],
   )
+
+  // M1 (B4): if an answers change shrinks the walk (a question vanishing),
+  // the index can never point past the end - clamp instead of landing on a
+  // phantom screen. (The 00:41:11 kick: the duplicate card pick hid the
+  // merchants question mid-flow - fixed at the fold in M1.1.)
+  useEffect(() => {
+    setScreenIndex((i) => Math.min(i, Math.max(0, screens.length - 1)))
+  }, [screens.length])
 
   // J4 (V1): review edits open the overlay, never the wizard. Closing flushes
   // the autosave so the edit is durable even if the intake is closed next.

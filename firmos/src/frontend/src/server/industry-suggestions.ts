@@ -18,6 +18,30 @@ export interface IndustrySuggestionRow {
   explainer: string;
 }
 
+/**
+ * M1 (B5, 10_10 00:22:32): industry aliases - "create the therapist and
+ * consulting industry… whatever it best thinks it is." Therapy/counseling
+ * spellings fold to the seeded "medical / therapy practice" key so the
+ * suggestion surfaces for any of them.
+ */
+const INDUSTRY_ALIASES: Record<string, string> = {
+  therapist: "medical / therapy practice",
+  therapy: "medical / therapy practice",
+  counseling: "medical / therapy practice",
+  "therapy practice": "medical / therapy practice",
+  "counseling and therapy": "medical / therapy practice",
+  "counseling & therapy": "medical / therapy practice",
+  "mental health": "medical / therapy practice",
+  "behavioral health": "medical / therapy practice",
+};
+
+/** The canonical industry key for matching: alias first, then the raw fold. */
+export function canonicalIndustryKey(value: string | null | undefined): string | null {
+  const fold = normalizeInstitutionKey(value);
+  if (fold == null) return null;
+  return INDUSTRY_ALIASES[fold] ?? fold;
+}
+
 const SEEDS: Array<Omit<IndustrySuggestionRow, "id">> = [
   {
     industryKey: "medical / therapy practice",
@@ -44,7 +68,7 @@ export async function seedIndustrySuggestions(): Promise<number> {
 
 /** Active suggestions for one intake industry answer (fold-matched). */
 export async function listIndustrySuggestions(industry: string | null | undefined): Promise<IndustrySuggestionRow[]> {
-  const key = normalizeInstitutionKey(industry);
+  const key = canonicalIndustryKey(industry);
   if (key == null) return [];
   const rows = await db
     .select()
@@ -52,7 +76,7 @@ export async function listIndustrySuggestions(industry: string | null | undefine
     .where(and(eq(industrySuggestions.isActive, true)))
     .orderBy(asc(industrySuggestions.position), asc(industrySuggestions.id));
   return rows
-    .filter((r) => normalizeInstitutionKey(r.industryKey) === key)
+    .filter((r) => canonicalIndustryKey(r.industryKey) === key)
     .map((r) => ({ id: r.id, industryKey: r.industryKey, serviceKey: r.serviceKey, explainer: r.explainer }));
 }
 
@@ -67,13 +91,13 @@ export async function addIndustrySuggestion(
   serviceKey: string,
   explainer: string,
 ): Promise<IndustrySuggestionRow | null> {
-  const key = normalizeInstitutionKey(industry);
+  const key = canonicalIndustryKey(industry);
   if (key == null || serviceKey.trim() === "") return null;
   const existing = await db
     .select()
     .from(industrySuggestions)
     .where(and(eq(industrySuggestions.serviceKey, serviceKey.trim())));
-  const match = existing.find((r) => normalizeInstitutionKey(r.industryKey) === key);
+  const match = existing.find((r) => canonicalIndustryKey(r.industryKey) === key);
   if (match) {
     if (!match.isActive || match.explainer !== explainer) {
       await db

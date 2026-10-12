@@ -117,6 +117,11 @@ const SERVICE_TASK_KEYS: Record<string, readonly string[]> = {
   account_reconciliations: ['reconcile_accounts'],
   merchant_account_reconciliation: ['merchant-reconciliation'],
   record_bills: ['record-bills'],
+  // M1 (A12, 10_10 00:50:38): the deposits line was missing here and fell
+  // back to the engine bucket - a weekly record-deposits rendered under
+  // monthly on the estimate ("thrown in with monthly… should have been
+  // part of the weekly").
+  record_deposits: ['record-deposits'],
   monthly_reporting_5: ['send_reports'],
   monthly_reporting_10: ['send_reports'],
   monthly_reporting_15: ['send_reports'],

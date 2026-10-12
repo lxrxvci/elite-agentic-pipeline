@@ -61,7 +61,11 @@ export const OPTION_LISTS: Record<string, OptionListDef> = {
     key: "payment_methods",
     label: "Payment methods",
     noun: "method",
-    seeds: ["ACH", "Cash", "Check", "Credit / debit card", "Online payments"],
+    // M1 (B1, 10_10 00:10:41): no seeds - the five static options on the
+    // money-in card cover the canon (an earlier seed set duplicated them as
+    // custom strings, and picking the custom hid the merchants question).
+    // The list stays for real customs (Zelle, Venmo).
+    seeds: [],
   },
   property_types: {
     key: "property_types",

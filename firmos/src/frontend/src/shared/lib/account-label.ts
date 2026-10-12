@@ -52,15 +52,20 @@ export function normalizeLast4(value: unknown): string | null {
   return /^\d{4}$/.test(digits) && digits === String(value ?? '').trim() ? digits : null;
 }
 
-/** "Chase Checking · 4411"; legacy rows without last4 keep the old label. */
+/** "Chase Checking · 4411"; legacy rows without last4 keep the old label.
+ *  M1 (B3, 10_10 00:43:18): a bank pick with no last-4 yet derives
+ *  "Chase Checking" (K7's discovery-optional last-4 can never again leave an
+ *  account nameless - nameless accounts vanish from the online-access
+ *  checklist and every name-dependent surface). */
 export function accountLabel(account: AccountLabelParts): string {
   const last4 = normalizeLast4(account.last4);
   if (last4 == null) {
-    return (
-      [account.name, account.institution]
-        .map((v) => v?.trim())
-        .find((v): v is string => !!v) ?? 'Account'
+    const named = account.name?.trim();
+    if (named) return named;
+    const parts = [account.institution?.trim(), typeWord(account.accountType)].filter(
+      (p): p is string => !!p,
     );
+    return parts.length > 0 ? parts.join(' ') : 'Account';
   }
   const parts = [account.institution?.trim(), typeWord(account.accountType)].filter(
     (p): p is string => !!p,

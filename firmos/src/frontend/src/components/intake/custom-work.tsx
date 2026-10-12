@@ -46,7 +46,18 @@ export function CustomWorkAdder({
 }) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
-  const [cadence, setCadence] = useState<string>('monthly')
+  // M1 (B7, 10_10 00:33:59): the cadence default is the BOOK-CLOSING
+  // frequency ("it should default to the book closing frequency"), and it
+  // RESETS after each add - an annual add must never leak into the next
+  // one ("defaulted to annual based on the things we entered").
+  const closingCadence =
+    answers.bookkeepingFrequency === 'weekly' ||
+    answers.bookkeepingFrequency === 'monthly' ||
+    answers.bookkeepingFrequency === 'quarterly' ||
+    answers.bookkeepingFrequency === 'annual'
+      ? answers.bookkeepingFrequency
+      : 'monthly'
+  const [cadence, setCadence] = useState<string>(closingCadence)
   const [price, setPrice] = useState('')
   const [industry, setIndustry] = useState('')
 
@@ -86,6 +97,9 @@ export function CustomWorkAdder({
     setTitle('')
     setPrice('')
     setIndustry('')
+    // M1 (B7): cadence returns to the closing-frequency default after every
+    // add - the next custom starts clean, not on the last-used cadence.
+    setCadence(closingCadence)
     setOpen(false)
   }
 
