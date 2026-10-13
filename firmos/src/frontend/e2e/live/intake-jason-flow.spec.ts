@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { live as test, expect, liveName } from './helpers'
+import { dismissIdlePrompts, live as test, expect, liveName } from './helpers'
 
 /**
  * Live plan addendum - "Intake, the Jason flow" (restructure I1-I4, plus the
@@ -55,6 +55,7 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
 
   // ── New intake ──
   await page.goto('/intake')
+  await dismissIdlePrompts(page)
   await expect(page.getByRole('heading', { name: 'Client Intake' })).toBeVisible()
   await page.getByTestId('start-new-intake').click()
   await page.getByTestId('new-intake-name').fill(business)
@@ -91,12 +92,12 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   await page.getByLabel('Bookkeeping start date').fill('01/01/2026')
   await expect(page.getByLabel('Bookkeeping start date')).toHaveValue('01/01/2026')
 
-  // ── Accounts (I3 + J1/D1): count stepper -> bank + last-4 mini-form (no
-  // nickname anywhere); seeded banks + inline add. D4: assets BEFORE loans. ──
+  // ── Accounts (I3 + J1/D1): one click adds one mini-form (the count
+  // stepper is gone); bank + masked last-4 (no nickname anywhere); seeded
+  // banks + inline add. D4: assets BEFORE loans. ──
   await advance(page, 'biz-established') // A45: optional established date - skipped
   await advance(page, 'checking-accounts')
-  await page.getByTestId('count-plus').click()
-  await expect(page.getByTestId('count-input')).toHaveValue('1')
+  await page.getByTestId('add-account').click()
   await expect(page.getByTestId('account-form-0')).toBeVisible()
   // D1: the nickname field is gone - the identifier is bank + last 4.
   await expect(page.getByLabel(/nickname/i)).toHaveCount(0)
@@ -118,7 +119,9 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   await advance(page, 'vehicles') // no credit cards
   await advance(page, 'other-assets') // no vehicles
   await advance(page, 'loans') // no other assets
-  await advance(page, 're-yes') // no loans
+  // L5 (J3): the equity setup card follows the loans card - grouped setup.
+  await advance(page, 'equity-setup')
+  await pick(page, 'option-grouped', 're-yes')
   await pick(page, 'option-no', 'payment-methods') // not real estate
 
   // ── Income: checks only; payroll is PRE-ANSWERED for an S Corp (I2) ──
@@ -142,8 +145,9 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   await page.getByRole('option', { name: 'Gusto' }).click()
   await advance(page, 'payroll-frequency')
   await pick(page, 'option-monthly', 'payroll-services')
-  // J2 (P1): payroll handling is mandatory - a selection is required.
-  await page.getByTestId('chip-self_processed').click() // they process their own (Gusto)
+  // ── J2 (P1): payroll handling is mandatory - L2 (D1): TWO core picks in a
+  // vertical stack; "they process their own payroll" (Gusto) is one. ──
+  await page.getByTestId('payroll-core-self_processed').click()
   await advance(page, 'online-access')
 
   // ── Online access (I3 + D2): the checklist label is bank -> type -> last4 ──
@@ -177,30 +181,30 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
 
   await advance(page, 'qbo-status')
 
-  // ── Software: the "Other - type it" card exists on carded selects (I1) ──
+  // ── Software: the "Other - type it" card exists on carded selects (I1).
+  // M5 (C5): an EXISTING QuickBooks now skips user-count + plan - the no-QBO
+  // path keeps all three questions. ──
   await expect(page.getByTestId('option-Other')).toBeVisible()
-  await pick(page, 'option-existing', 'qbo-users')
+  await pick(page, 'option-none', 'qbo-setup')
+  await pick(page, 'option-no', 'qbo-users')
   await page.getByLabel('QuickBooks users').fill('2')
   await advance(page, 'qbo-tier')
   await pick(page, 'option-recommended', 'notes')
-  await advance(page, 'rules') // skip internal notes
-  await advance(page, 'routine-scheduler') // skip custom rules
+  await advance(page, 'routine-scheduler') // skip internal notes; K6 (D3): no standalone rules card
   // J3: the S-corp auto-flagged payroll derives a payroll card on the scheduler.
   await expect(page.getByTestId('routine-card-payroll-handling')).toBeVisible()
   await page.getByTestId('continue').click()
 
-  // ── Review (J4): the quote REVEALS here (no peek); sections render
-  // collapsed and expand one at a time (V2). ──
+  // ── Review (J4): the quote REVEALS here (no peek); K6 (F1): every section
+  // starts OPEN - read rows without toggling. ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByTestId('live-quote')).toHaveAttribute('data-revealed', 'true')
   await expect(page.getByTestId('review-quote')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByTestId('quote-total')).toContainText(/\$\d/)
   await expect(page.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'true')
-  // The services row reads "The 3 standards + ..." (expand its section).
-  await page.getByTestId('section-toggle-services').click()
+  // The services row reads "The 3 standards + ..." (the section starts open).
   await expect(page.getByText('The 3 standards + Invoicing')).toBeVisible()
   // The S Corp payroll answer reads with its legal why (income section).
-  await page.getByTestId('section-toggle-income').click()
   await expect(page.getByText('Yes · officers must be on payroll')).toBeVisible()
 
   // ── Submit -> visible in the intake purgatory ("Awaiting review") ──

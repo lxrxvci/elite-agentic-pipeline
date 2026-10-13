@@ -55,6 +55,57 @@ export function isRemoteLive(): boolean {
   return /localhost|127\.0\.0\.1/.test(BASE_URL) === false
 }
 
+// ── Clock-C2 idle dialogs (shipped after this suite was written) ──────────
+
+/**
+ * The shell clock widget can put two modal dialogs over ANY app page:
+ *
+ *  - IdleExplainerDialog ("Detect when you step away?"): a ONE-TIME
+ *    IdleDetector permission ask shown while clocked in until the browser
+ *    answers (the answer persists in localStorage under
+ *    `firmos.idle-explainer-v1`). Leftover running clocks on prod mean the
+ *    shared personas are often clocked in, so this blocked clicks suite-wide.
+ *  - IdleForgivenessDialog ("Welcome back"): shown on a fresh page load
+ *    while clocked OUT when the server auto-closed a session with an idle
+ *    gap nobody resolved (an earlier crashed run leaves exactly that).
+ *
+ * Prevention: `seedIdleDecline` installs an init script that pre-answers the
+ * explainer ("declined" = in-tab detection) before any app JS runs, so the
+ * explainer never opens. `dismissIdlePrompts` then clears anything that can
+ * still surface - the forgiveness dialog is data-driven, so it can reappear
+ * on every fresh mount until someone resolves the gap (dismiss = Escape,
+ * which chooses nothing and leaves the data untouched).
+ */
+export async function seedIdleDecline(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    try {
+      window.localStorage.setItem('firmos.idle-explainer-v1', 'declined')
+    } catch {
+      // Non-http(s) pages (about:blank) have no localStorage - nothing to seed.
+    }
+  })
+}
+
+/** Dismiss any clock idle dialog currently up; a no-op when none is. */
+export async function dismissIdlePrompts(page: Page): Promise<void> {
+  const explainer = page.getByTestId('idle-explainer-dialog')
+  if (await explainer.isVisible().catch(() => false)) {
+    await page.getByTestId('idle-explainer-decline').click()
+    await expect(explainer).toHaveCount(0)
+  }
+  const forgiveness = page.getByTestId('idle-forgiveness-dialog')
+  if (await forgiveness.isVisible().catch(() => false)) {
+    await page.keyboard.press('Escape')
+    await expect(forgiveness).toHaveCount(0)
+  }
+  // The "Still there?" countdown cancels on any input; a keypress covers it.
+  const countdown = page.getByTestId('idle-countdown-modal')
+  if (await countdown.isVisible().catch(() => false)) {
+    await page.keyboard.press('Shift')
+    await expect(countdown).toHaveCount(0)
+  }
+}
+
 /** Unique, greppable name for anything the suite creates: "LIVE-TEST note a1b2...". */
 export function liveName(prefix: string): string {
   const stamp = Date.now().toString(36)
@@ -75,6 +126,14 @@ export async function loginAs(page: Page, email: string, next?: string): Promise
     await page.getByRole('button', { name: 'Sign in' }).click()
     try {
       await page.waitForURL((url) => url.pathname !== '/login', { timeout: 10_000 })
+      // Clock-C2: the explainer opens once the clock widget's first status
+      // poll returns clocked-in - a beat AFTER the landing URL resolves.
+      // Wait for that window to close, then answer the dialog if it came up.
+      await page
+        .getByTestId('idle-explainer-dialog')
+        .waitFor({ state: 'visible', timeout: 4_000 })
+        .catch(() => null)
+      await dismissIdlePrompts(page)
       return
     } catch {
       if (attempt === 3) throw new Error(`loginAs(${email}) never left /login`)
@@ -85,8 +144,19 @@ export async function loginAs(page: Page, email: string, next?: string): Promise
 
 /** Sign out through the top-bar account menu. */
 export async function logout(page: Page): Promise<void> {
+  // The idle explainer can open a beat AFTER login (it waits on the clock
+  // widget's first status poll), so clear any dialog before and retry the
+  // menu click once if a late one ate it.
+  await dismissIdlePrompts(page)
   await page.getByRole('button', { name: 'Account menu' }).click()
-  await page.getByRole('menuitem', { name: /Sign out/ }).click()
+  const signOut = page.getByRole('menuitem', { name: /Sign out/ })
+  try {
+    await signOut.click({ timeout: 5_000 })
+  } catch {
+    await dismissIdlePrompts(page)
+    await page.getByRole('button', { name: 'Account menu' }).click()
+    await signOut.click()
+  }
   await page.waitForURL((url) => url.pathname === '/login', { timeout: 30_000 })
 }
 
@@ -112,7 +182,9 @@ export function personaCookieHeader(persona: Persona): string {
 
 /** A fresh browser context signed in as the persona (from storageState). */
 export async function personaContext(browser: Browser, persona: Persona): Promise<BrowserContext> {
-  return browser.newContext({ storageState: authFileFor(persona) })
+  const context = await browser.newContext({ storageState: authFileFor(persona) })
+  await seedIdleDecline(context)
+  return context
 }
 
 const EMAIL_PERSONA = new Map<string, Persona>(
@@ -133,6 +205,7 @@ export async function signedInContext(
   if (persona) return personaContext(browser, persona)
   const cookies = await signInViaApi(request, email)
   const context = await browser.newContext()
+  await seedIdleDecline(context)
   await context.addCookies(cookies)
   return context
 }

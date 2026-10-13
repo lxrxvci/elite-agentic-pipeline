@@ -72,14 +72,20 @@ base.describe('portal client home extras', () => {
       await expect(page.getByRole('heading', { name: 'Logins', exact: true })).toBeVisible({ timeout: 15_000 })
       const panel = page.getByTestId('portal-credentials-panel')
       await expect(panel).toBeVisible()
-      // Harborline predates the vault: no expected slots, no saved logins -
-      // the page must say so plainly (the slot list exists once an intake with
-      // "grant us login access" converts; covered staff-side in
-      // client-record.spec.ts on the converted LIVE-TEST client).
-      await expect(page.getByText(/Nothing saved yet|Logins we still need/i).first()).toBeVisible()
-      // Secrets never render.
+      // Harborline's conversion-seeded slots list under the "Logins we still
+      // need" region (its aria-label - the visible heading is "Waiting for
+      // your login"); when nothing is pending, the saved section says
+      // "Nothing saved yet". Either way the page is truthful.
+      const needed = page.getByRole('region', { name: 'Logins we still need' })
+      if (await needed.isVisible().catch(() => false)) {
+        await expect(needed.getByText('Waiting for your login')).toBeVisible()
+      } else {
+        await expect(page.getByText(/Nothing saved yet/i).first()).toBeVisible()
+      }
+      // Secrets never render - saved rows show only the bullet mask, so
+      // strip the mask before the password-pattern sweep.
       const html = await panel.innerHTML()
-      expect(html).not.toMatch(/password\s*[:=]\s*\S/i)
+      expect(html.replace(/Password: ••••••••/g, '')).not.toMatch(/password\s*[:=]\s*\S/i)
     } finally {
       await context.close()
     }

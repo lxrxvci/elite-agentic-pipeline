@@ -1,4 +1,4 @@
-import { live as test, expect } from './helpers'
+import { dismissIdlePrompts, live as test, expect } from './helpers'
 
 /**
  * Live plan addendum - "My Day" (anti-overwhelm wave, shipped after the
@@ -16,6 +16,10 @@ test.use({ persona: 'owner' })
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/workstation')
+  // Clock-C2: the idle explainer is pre-answered by the persona context; the
+  // data-driven forgiveness dialog still needs clearing when a prior run
+  // left an unresolved gap.
+  await dismissIdlePrompts(page)
   await expect(page.getByRole('heading', { name: 'Workstation' })).toBeVisible()
   // Dismiss the rollover dialog when it auto-opens (first visit of the day).
   const dialog = page.getByRole('dialog')

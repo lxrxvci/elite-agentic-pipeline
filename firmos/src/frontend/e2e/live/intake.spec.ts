@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { live as test, expect, liveName } from './helpers'
+import { dismissIdlePrompts, live as test, expect, liveName } from './helpers'
 
 /**
  * Live plan - "Intake to conversion (the money path)", J1-J4 current flow:
@@ -45,6 +45,7 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
 
   // ── New intake ──
   await page.goto('/intake')
+  await dismissIdlePrompts(page)
   await expect(page.getByRole('heading', { name: 'Client Intake' })).toBeVisible()
   await page.getByTestId('start-new-intake').click()
   await page.getByTestId('new-intake-name').fill(business)
@@ -79,7 +80,10 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   // (N2's renamed question qualifies the retroactive scope - R7 removed the
   // separate cleanup question). ──
   await pick(page, 'option-no', 'bk-start')
-  await expect(page.getByText('When would you like your bookkeeping to start?')).toBeVisible()
+  // The chapter rail carries the same label as a menu button - scope to the h1.
+  await expect(
+    page.getByRole('heading', { name: 'When would you like your bookkeeping to start?' }),
+  ).toBeVisible()
   await page.getByLabel('Bookkeeping start date').fill('01/01/2025')
   await expect(page.getByLabel('Bookkeeping start date')).toHaveValue('01/01/2025')
   // A45: the established date card follows (optional).
@@ -89,7 +93,9 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   // bank + masked last-4 (the nickname field is gone; the name derives), and
   // assets run BEFORE loans. ──
   await advance(page, 'checking-accounts')
-  await page.getByTestId('count-input').fill('1')
+  // The count stepper is gone: one click adds one mini-form.
+  await page.getByTestId('add-account').click()
+  await expect(page.getByTestId('account-form-0')).toBeVisible()
   await expect(page.getByLabel(/nickname/i)).toHaveCount(0)
   await page.getByTestId('bank-select-0').click()
   await page.getByRole('option', { name: 'Chase' }).click()
@@ -100,7 +106,9 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await advance(page, 'vehicles') // no credit cards
   await advance(page, 'other-assets') // no vehicles
   await advance(page, 'loans') // no other assets
-  await advance(page, 're-yes') // no loans
+  // L5 (J3): the equity setup card follows the loans card - grouped setup.
+  await advance(page, 'equity-setup')
+  await pick(page, 'option-grouped', 're-yes')
 
   // ── Real estate: no; income: checks only, no payroll ──
   await pick(page, 'option-no', 'payment-methods')
@@ -134,8 +142,11 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await page.getByTestId('addon-class_tracking').click()
   await advance(page, 'qbo-status')
 
-  // ── Software: QBO existing, 2 users, recommend ──
-  await pick(page, 'option-existing', 'qbo-users')
+  // ── Software: no QuickBooks (M5/C5: an EXISTING QuickBooks now skips
+  // user-count + plan, so the no-QBO path keeps the recommendation), no
+  // setup help, 2 users, recommend. ──
+  await pick(page, 'option-none', 'qbo-setup')
+  await pick(page, 'option-no', 'qbo-users')
   await page.getByLabel('QuickBooks users').fill('2')
   await advance(page, 'qbo-tier')
   await pick(page, 'option-recommended', 'notes')
@@ -157,8 +168,7 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await expect(retroSummary).toContainText('one-time')
   await expect(retroSummary).toContainText(/\$\d/)
 
-  await advance(page, 'rules') // skip internal notes
-  await advance(page, 'routine-scheduler') // skip custom rules
+  await advance(page, 'routine-scheduler') // skip internal notes; K6 (D3): custom work enters on the services screen - no standalone rules card
 
   // ── J3 (R1-R5): "Routine order and frequency" - the final content screen.
   // The standard four default into Monthly on the tier day. ──
@@ -170,33 +180,44 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await expect(monthlyBucket.getByTestId('routine-card-send_reports')).toBeVisible()
   await page.getByTestId('continue').click()
 
-  // ── Review: V2 collapsed sections (the first open), the V6 bucketed
-  // estimate with the one-time retro block, then submit. ──
+  // ── Review: K6 (F1) - every section starts OPEN (the confirm check greens
+  // + collapses a reviewed section); the V6 bucketed estimate shows the
+  // one-time retro block; then submit. ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'true')
   // V1: a row edit opens the overlay hero card - never a navigation.
   await page.getByTestId('edit-row-main-contact').click()
   await expect(page.getByTestId('edit-overlay')).toBeVisible()
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('edit-overlay')).toHaveCount(0)
-  // The bucketed estimate: recurring in Monthly, retro in one-time fees.
-  await page.getByTestId('section-toggle-quote').click()
+  // The bucketed estimate (the quote section starts open): recurring in
+  // Monthly, retro in one-time fees.
   await expect(page.getByTestId('estimate-bucket-monthly')).toContainText('Bank Feed Management')
   await expect(
     page.getByTestId('review-quote').getByText('QuickBooks Plus (recommended)'),
   ).toBeVisible()
-  await expect(page.getByTestId('estimate-one-time')).toContainText('Retroactive bookkeeping')
-  await expect(page.getByTestId('retro-periods')).toContainText('2025')
+  // K6 (D5): the retro scope is its own block at the BOTTOM of the estimate
+  // ("Retroactive cleanup"), no longer folded into one-time fees. L4 (G5):
+  // it prices per period - a 2025 start yields "2025 cleanup" + "2026 cleanup".
+  const retroBlock = page.getByTestId('estimate-retro')
+  await expect(retroBlock).toContainText('Retroactive cleanup')
+  await expect(retroBlock).toContainText('2025 cleanup')
+  await expect(retroBlock).toContainText('2026 cleanup')
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 
   // ── Convert WITHOUT staff (owner); assignment happens on the client record ──
+  // L6 (I3): conversion waits for the estimate's acceptance first.
+  await expect(page.getByTestId('convert-button')).toBeDisabled()
+  await page.getByTestId('accept-estimate').click()
+  await expect(page.getByTestId('convert-button')).toBeEnabled({ timeout: 10_000 })
   await page.getByTestId('convert-button').click()
   await expect(page.getByTestId('convert-dialog')).toBeVisible()
   await expect(
-    page.getByText('You can assign the team after conversion from the client record.'),
+    // L6 (I5): the assignment hint copy changed with the per-task picker.
+    page.getByText('Anything left unassigned can be staffed after conversion from the client record.'),
   ).toBeVisible()
   await page.getByTestId('convert-confirm').click()
   // Conversion writes the whole client world (accounts, recurring rules,

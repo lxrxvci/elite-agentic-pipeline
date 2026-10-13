@@ -1,4 +1,4 @@
-import { live as test, expect, liveName } from './helpers'
+import { live as test, expect, liveName, seedIdleDecline } from './helpers'
 import { authFileFor } from './global-setup'
 
 /**
@@ -97,6 +97,7 @@ test('client record: credentials vault - expected slot from conversion, add, cop
     storageState: authFileFor('owner'),
     permissions: ['clipboard-read', 'clipboard-write'],
   })
+  await seedIdleDecline(context)
   const page = await context.newPage()
   try {
     await page.goto('/clients')

@@ -1,4 +1,4 @@
-import { liveName, live as test, expect } from './helpers'
+import { dismissIdlePrompts, liveName, live as test, expect } from './helpers'
 
 /**
  * Live plan - "The daily loop (Workstation)". Signed in once as the owner
@@ -11,6 +11,9 @@ test.use({ persona: 'owner' })
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/workstation')
+  // Clock-C2: clear any idle dialog before touching the queue (the persona
+  // context pre-answers the explainer; the forgiveness dialog is data-driven).
+  await dismissIdlePrompts(page)
   await expect(page.getByRole('heading', { name: 'Workstation' })).toBeVisible()
 })
 

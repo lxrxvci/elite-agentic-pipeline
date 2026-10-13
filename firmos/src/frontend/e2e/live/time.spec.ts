@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { STAFF, liveName, live as test, expect, signedInContext } from './helpers'
+import { STAFF, dismissIdlePrompts, liveName, live as test, expect, signedInContext } from './helpers'
 
 /**
  * Live plan - "Time": the top-bar clock (in, activity switch, out), my-hours
@@ -32,7 +32,8 @@ async function ensureClockedIn(page: Page) {
 async function clockOut(page: Page) {
   const state = await clockState(page)
   if (state === 'out') return
-  await page.getByRole('button', { name: /Current activity:|Start an activity/ }).click()
+  // Clock-C1: the switcher trigger is the client chip ("On the clock: ...").
+  await page.getByTestId('clock-client').click()
   await page.getByRole('menuitem', { name: /^Clock out/ }).click()
   await expect(page.getByTestId('clock-widget')).toHaveAttribute('data-state', 'out', {
     timeout: 15_000,
@@ -43,16 +44,19 @@ test('time: clock in, switch activity, my-hours shows the session, clock out', a
   page,
 }) => {
   await page.goto('/workstation')
+  await dismissIdlePrompts(page)
 
   await ensureClockedIn(page)
   await expect(page.getByTestId('clock-elapsed')).toBeVisible()
 
-  // Switch to a real activity.
-  await page.getByRole('button', { name: /Current activity:|Start an activity/ }).click()
+  // Switch to a real activity (Clock-C1: starts on the current/recent client).
+  await page.getByTestId('clock-client').click()
   await page.getByRole('menuitem', { name: 'Bank feeds' }).click()
-  await expect(
-    page.getByRole('button', { name: 'Current activity: Bank feeds' }),
-  ).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByTestId('clock-client')).toHaveAttribute(
+    'aria-label',
+    /On the clock: .+, Bank feeds/,
+    { timeout: 15_000 },
+  )
 
   // My hours shows the running session.
   await page.goto('/reports/my-hours')
@@ -62,6 +66,7 @@ test('time: clock in, switch activity, my-hours shows the session, clock out', a
 
   // Clock out: the running markers settle to durations.
   await page.goto('/workstation')
+  await dismissIdlePrompts(page)
   await clockOut(page)
   await page.goto('/reports/my-hours')
   await expect(page.getByTestId('time-entry-row').first()).toBeVisible({ timeout: 15_000 })
@@ -70,6 +75,7 @@ test('time: clock in, switch activity, my-hours shows the session, clock out', a
 test('time: team hours (owner) expands to the daily view', async ({ page }) => {
   // Guarantee at least one entry today so the daily drill has content.
   await page.goto('/workstation')
+  await dismissIdlePrompts(page)
   await ensureClockedIn(page)
   await clockOut(page)
 
@@ -90,8 +96,19 @@ test('time: edit request submits and an admin approves it (second context)', asy
   browser,
   request,
 }) => {
+  // The session must span two minute boundaries: the dialog's datetime
+  // inputs truncate to the minute, so a short session submits end <= start
+  // or expands the left edge into the neighbouring session these tests
+  // record back to back (Clock-C3 rejects both). 150s with activity jiggles
+  // (the in-tab idle watcher must not see us go quiet) guarantees room.
+  test.setTimeout(300_000)
   await page.goto('/workstation')
+  await dismissIdlePrompts(page)
   await ensureClockedIn(page)
+  for (let i = 0; i < 5; i += 1) {
+    await page.waitForTimeout(30_000)
+    await page.mouse.move(1, 1)
+  }
   await clockOut(page)
 
   // Request an edit on the day-session entry.
@@ -100,13 +117,15 @@ test('time: edit request submits and an admin approves it (second context)', asy
   const dayRow = page.getByTestId('time-entry-row').filter({ hasText: 'Day session' }).first()
   await expect(dayRow).toBeVisible({ timeout: 15_000 })
   await dayRow.getByRole('button', { name: /Request edit/ }).click()
-  // Shift the corrected end by a minute so the request is a real change.
-  const endInput = page.getByLabel('Corrected end')
-  const currentEnd = await endInput.inputValue()
-  const shifted = new Date(new Date(currentEnd).getTime() + 60_000)
+  // Move the corrected start FORWARD one minute: a real change that keeps
+  // the submitted span strictly inside the recorded one (never overlaps a
+  // sibling, never inverts, never in the future - Clock-C3 guards).
+  const startInput = page.getByLabel('Corrected start')
+  const currentStart = await startInput.inputValue()
+  const shifted = new Date(new Date(currentStart).getTime() + 60_000)
   const pad = (n: number) => String(n).padStart(2, '0')
   const shiftedValue = `${shifted.getFullYear()}-${pad(shifted.getMonth() + 1)}-${pad(shifted.getDate())}T${pad(shifted.getHours())}:${pad(shifted.getMinutes())}`
-  await endInput.fill(shiftedValue)
+  await startInput.fill(shiftedValue)
   await page.getByLabel('Reason').fill(reason)
   await page.getByRole('button', { name: 'Submit request' }).click()
   await expect(dayRow.getByText('Edit pending')).toBeVisible({ timeout: 15_000 })
@@ -117,6 +136,7 @@ test('time: edit request submits and an admin approves it (second context)', asy
   const adminPage = await adminContext.newPage()
   try {
     await adminPage.goto('/reports/time-edits')
+    await dismissIdlePrompts(adminPage)
     await expect(
       adminPage.getByRole('heading', { name: 'Time edit requests' }),
     ).toBeVisible()

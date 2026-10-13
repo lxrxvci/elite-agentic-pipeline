@@ -12,6 +12,9 @@ import { LIVE_PASSWORD, PORTAL, STAFF, loginAs, logout } from './helpers'
  */
 test.describe('auth', () => {
   test('staff login happy path and logout', async ({ page }) => {
+    // Cold prod + a possible sign-in retry + the idle-dialog window need
+    // more than the 60s default.
+    test.setTimeout(90_000)
     await loginAs(page, STAFF.owner)
     // Owner lands on the Firm Progression Board (role-based landing).
     await expect(page).toHaveURL(/\/progress$/)
@@ -53,7 +56,9 @@ test.describe('auth', () => {
 
   test('staff hitting /portal get a 404', async ({ page }) => {
     await loginAs(page, STAFF.owner)
-    await expect(page).toHaveURL(/\/$/)
+    // Owner lands on the Firm Progression Board (role-based landing): /
+    // redirects to /progress, so waiting for /$ is a race the redirect wins.
+    await expect(page).toHaveURL(/\/progress$/)
 
     const response = await page.goto('/portal')
     expect(response?.status()).toBe(404)
