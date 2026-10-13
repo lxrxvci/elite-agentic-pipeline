@@ -243,6 +243,12 @@ export interface BucketedEstimate {
   retroItems: OneTimeItem[]
   retroTotal: number
   retroDiscountPercent: number | null
+  /** M7 (A11, 10_10 00:53:32): the cleanup's month count + per-month rate
+   *  (the discounted or overridden total spread per month), so the 12-month
+   *  projection can spread installments at the retro billing frequency.
+   *  Null when the retro block is unpriced. */
+  retroMonths: number
+  retroPerMonth: number | null
   unpricedRecurringCount: number
 }
 
@@ -540,6 +546,10 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers, retr
     retroItems,
     retroTotal: round2(retroItems.reduce((acc, i) => acc + (i.amount ?? 0), 0)),
     retroDiscountPercent: retro?.discountPercent ?? null,
+    // M7 (A11): months from the scoped cleanup; the installment rate is the
+    // (discounted or overridden) total spread per cleanup month.
+    retroMonths: retro?.months ?? 0,
+    retroPerMonth: retro && retro.months > 0 && retro.total > 0 ? round2(retro.total / retro.months) : null,
     unpricedRecurringCount,
   }
 }
@@ -630,7 +640,19 @@ export function buildBillingProjection(
   answers: WizardAnswers,
   anchor: { year: number; month: number },
   monthCount = 12,
+  // M7 (A11, 10_10 00:53:32): the cleanup scope for installment spreading.
+  retroScope?: { months: number; perMonth: number | null } | null,
 ): ProjectionMonth[] {
+  // M7 (A11): the retro block bills up-front on the first invoice unless a
+  // billing frequency was picked - then installments of 1/3/12 cleanup
+  // months land per period ("am I billing this per month, per quarter,
+  // per year… keep the same logic as these other ones").
+  const retroFreq = answers.retroBillingFrequency ?? null
+  const retroPer = retroFreq === 'monthly' ? 1 : retroFreq === 'quarterly' ? 3 : retroFreq === 'annual' ? 12 : 0
+  const retroInstallments =
+    retroPer > 0 && retroScope != null && retroScope.months > 0 && retroScope.perMonth != null
+      ? { months: retroScope.months, perMonth: retroScope.perMonth }
+      : null
   const recurring: EstimateLine[] = groups.flatMap((g) => g.lines)
   const startMonth = (() => {
     const raw = answers.bookkeepingStartDate
@@ -684,17 +706,37 @@ export function buildBillingProjection(
       if (amount > 0) lines.push({ key: view.key, name: view.name, amount, ownInvoice, note })
     }
 
-    // One-time and retro fees land on the FIRST invoice (the anchor month).
+    // One-time fees land on the FIRST invoice (the anchor month); the retro
+    // block does too UNLESS a billing frequency spread it (A11, below).
     if (i === 0) {
       for (const item of oneTime) {
         if (item.amount != null && item.amount > 0) {
           lines.push({ key: item.key, name: item.name, amount: round2Billing(item.amount), ownInvoice: false, note: 'one-time' })
         }
       }
-      for (const item of retroItems) {
-        if (item.amount != null && item.amount > 0) {
-          lines.push({ key: item.key, name: item.name, amount: round2Billing(item.amount), ownInvoice: false, note: 'one-time' })
+      // M7 (A11): up-front retro keeps the legacy month-0 placement; a
+      // picked frequency spreads installments below instead.
+      if (retroInstallments == null) {
+        for (const item of retroItems) {
+          if (item.amount != null && item.amount > 0) {
+            lines.push({ key: item.key, name: item.name, amount: round2Billing(item.amount), ownInvoice: false, note: 'one-time' })
+          }
         }
+      }
+    }
+    // M7 (A11): installment k bills on month k×per for min(per, remaining)
+    // cleanup months at the per-month rate - never an averaged split.
+    if (retroInstallments != null && i % retroPer === 0) {
+      const k = i / retroPer
+      const billedMonths = Math.min(retroPer, retroInstallments.months - k * retroPer)
+      if (billedMonths > 0) {
+        lines.push({
+          key: 'retroactive_bookkeeping',
+          name: 'Retroactive cleanup',
+          amount: round2Billing(billedMonths * retroInstallments.perMonth),
+          ownInvoice: false,
+          note: `installment ${k + 1}`,
+        })
       }
     }
 

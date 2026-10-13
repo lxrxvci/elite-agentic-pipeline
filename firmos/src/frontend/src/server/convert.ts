@@ -584,6 +584,8 @@ export async function convertIntakeToClient(
       {
         closingFrequency: intake.bookkeepingFrequency ?? form.bookkeepingFrequency ?? undefined,
         routineSchedule: form.routineSchedule ?? null,
+        // M7 (A11): the retro cleanup's installment frequency (when picked).
+        retroBillingFrequency: form.retroBillingFrequency ?? null,
       },
     );
     const stamps = quoteAmountStamps(quote);

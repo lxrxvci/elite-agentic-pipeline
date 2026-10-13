@@ -647,6 +647,22 @@ function EstimateLineRow({
               </NativeSelect>
             </label>
           )}
+          {/* M7 (A9, 10_10 01:12:43): "normal billing frequency or its own
+              invoice… that would have to be the same for each of these." */}
+          <label className="flex items-center gap-1.5">
+            on
+            <NativeSelect
+              aria-label={`Invoice routing for ${view.name}`}
+              data-testid={`own-invoice-${view.key}`}
+              value={cfg.ownInvoice === true ? 'own' : 'normal'}
+              onChange={(e) => onLineBilling!(view.key, { ownInvoice: e.target.value === 'own' })}
+              className="rounded border-border px-1 py-0.5 text-xs"
+              wrapperClassName="inline-block"
+            >
+              <option value="normal">the normal invoice</option>
+              <option value="own">its own invoice</option>
+            </NativeSelect>
+          </label>
         </div>
       )}
       {/* L3 (F5, 10_06 00:30:45): tier-priced lines carry the caveat -
@@ -747,6 +763,7 @@ function EstimateSection({
   onToggleReconAccount,
   onLineBilling,
   onRetroDiscountChange,
+  onRetroBillingChange,
   onCustomWork,
   customTaskCatalog,
   onAddCustomTaskTitle,
@@ -761,6 +778,9 @@ function EstimateSection({
   onLineBilling?: (serviceKey: string, patch: Partial<LineBillingConfig>) => void
   /** K6 (D6): the retro bulk-discount percent (null clears it). */
   onRetroDiscountChange?: (percent: number | null) => void
+  /** M7 (A11, 10_10 00:53:32): the retro cleanup's billing frequency
+   *  (null = one up-front invoice). */
+  onRetroBillingChange?: (frequency: 'monthly' | 'quarterly' | 'annual' | null) => void
   /** K6 (D3/D4): custom one-time or recurring work added from the review. */
   onCustomWork?: (patch: Partial<WizardAnswers>) => void
   /** K3: persist the custom task title to the shared catalog list. */
@@ -784,8 +804,12 @@ function EstimateSection({
   const now = new Date()
   const anchor = { year: now.getFullYear(), month: now.getMonth() + 1 }
   const billingTotals = billingTotalsFor(estimate.groups, anchor)
-  // M4 (A8, 10_10 00:56:00): the 12-month forward billing calendar.
-  const projection = buildBillingProjection(estimate.groups, estimate.oneTime, estimate.retroItems, answers, anchor)
+  // M4 (A8, 10_10 00:56:00): the 12-month forward billing calendar. M7
+  // (A11): the retro scope threads in for installment spreading.
+  const projection = buildBillingProjection(estimate.groups, estimate.oneTime, estimate.retroItems, answers, anchor, 12, {
+    months: estimate.retroMonths,
+    perMonth: estimate.retroPerMonth,
+  })
   const [openMonths, setOpenMonths] = useState<ReadonlySet<string>>(new Set())
   const frequencyTotals = (
     [
@@ -928,6 +952,28 @@ function EstimateSection({
                   </button>
                 ))}
               </span>
+              {/* M7 (A11, 10_10 00:53:32): "Same thing here with the
+                  retroactive cleanup. You would just put the frequency… am
+                  I billing this per month, per quarter, per year." */}
+              {priceEditable && onRetroBillingChange && (
+                <NativeSelect
+                  aria-label="Retro cleanup billing frequency"
+                  data-testid="retro-billing-frequency"
+                  value={answers.retroBillingFrequency ?? ''}
+                  onChange={(e) =>
+                    onRetroBillingChange(
+                      e.target.value === '' ? null : (e.target.value as 'monthly' | 'quarterly' | 'annual'),
+                    )
+                  }
+                  className="ml-2 h-6 rounded border-border px-1 text-[10px] normal-case tracking-normal"
+                  wrapperClassName="inline-block align-middle"
+                >
+                  <option value="">Bill up front</option>
+                  <option value="monthly">Bill monthly</option>
+                  <option value="quarterly">Bill quarterly</option>
+                  <option value="annual">Bill annually</option>
+                </NativeSelect>
+              )}
             </span>
             <span className="tnum font-normal normal-case tracking-normal" data-testid="retro-total">
               {formatMoney(estimate.retroTotal)}
@@ -1110,6 +1156,7 @@ function SectionBody({
   onToggleReconAccount,
   onLineBilling,
   onRetroDiscountChange,
+  onRetroBillingChange,
   onCustomWork,
   customTaskCatalog,
   onAddCustomTaskTitle,
@@ -1125,6 +1172,8 @@ function SectionBody({
   /** M3: the per-line billing model writer. */
   onLineBilling?: (serviceKey: string, patch: Partial<LineBillingConfig>) => void
   onRetroDiscountChange?: (percent: number | null) => void
+  /** M7 (A11): the retro cleanup's billing frequency (null = up front). */
+  onRetroBillingChange?: (frequency: 'monthly' | 'quarterly' | 'annual' | null) => void
   onCustomWork?: (patch: Partial<WizardAnswers>) => void
   customTaskCatalog?: { id: number; name: string }[]
   onAddCustomTaskTitle?: (name: string) => void
@@ -1140,6 +1189,7 @@ function SectionBody({
         onToggleReconAccount={onToggleReconAccount}
         onLineBilling={onLineBilling}
         onRetroDiscountChange={onRetroDiscountChange}
+        onRetroBillingChange={onRetroBillingChange}
         onCustomWork={onCustomWork}
         customTaskCatalog={customTaskCatalog}
         onAddCustomTaskTitle={onAddCustomTaskTitle}
@@ -1221,6 +1271,7 @@ export function ReviewScreen({
   onToggleReconAccount,
   onLineBilling,
   onRetroDiscountChange,
+  onRetroBillingChange,
   onCustomWork,
   customTaskCatalog,
   onAddCustomTaskTitle,
@@ -1243,6 +1294,8 @@ export function ReviewScreen({
   onLineBilling?: (serviceKey: string, patch: Partial<LineBillingConfig>) => void
   /** K6 (D6): retro bulk-discount percent writer (editable review only). */
   onRetroDiscountChange?: (percent: number | null) => void
+  /** M7 (A11): retro billing-frequency writer (editable review only). */
+  onRetroBillingChange?: (frequency: 'monthly' | 'quarterly' | 'annual' | null) => void
   /** K6 (D3/D4): custom work writer (editable review only). */
   onCustomWork?: (patch: Partial<WizardAnswers>) => void
   /** K3: custom task titles catalog for the type-ahead. */
@@ -1645,6 +1698,7 @@ export function ReviewScreen({
                     onToggleReconAccount={onToggleReconAccount}
                     onLineBilling={onLineBilling}
                     onRetroDiscountChange={onRetroDiscountChange}
+                    onRetroBillingChange={onRetroBillingChange}
                     onCustomWork={onCustomWork}
                     customTaskCatalog={customTaskCatalog}
                     onAddCustomTaskTitle={onAddCustomTaskTitle}

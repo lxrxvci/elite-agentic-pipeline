@@ -268,6 +268,15 @@ export async function resyncClientBillingFromLiveState(
   // ── Carry what live state cannot recompute (payroll, invoicing, QBO
   //    pass-throughs, section discounts) - never managed or custom keys ──
   const rebuiltKeys = new Set(rebuilt.map((l) => l.service_key));
+  // M7 (A11): the retro installment frequency lives only on the template
+  // (live state cannot recompute it) - preserve it across resyncs.
+  const existingRetroFreq = existing.find((l) => l && l.service_key === "retroactive_bookkeeping")
+    ?.retro_billing_frequency;
+  if (typeof existingRetroFreq === "string" && existingRetroFreq !== "") {
+    rebuilt = rebuilt.map((l) =>
+      l.service_key === "retroactive_bookkeeping" ? { ...l, retro_billing_frequency: existingRetroFreq } : l,
+    );
+  }
   const carried = existing.filter(
     (l) =>
       l &&

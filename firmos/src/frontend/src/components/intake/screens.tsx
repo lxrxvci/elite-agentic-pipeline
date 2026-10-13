@@ -1111,26 +1111,52 @@ function FieldGrid({
   onAddProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
   optionLists?: Record<string, OptionListValueLite[]>
 }) {
+  const visible = fields.filter((f) => !f.visibleIf || f.visibleIf(value))
+  // M7 (10_10 00:20:21): consecutive rowGroup fields fold into one full-width
+  // row under the group header; everything else renders as before.
+  type Unit = { kind: 'single'; f: FieldDef } | { kind: 'group'; header: string; fields: FieldDef[] }
+  const units: Unit[] = []
+  for (const f of visible) {
+    const last = units[units.length - 1]
+    if (f.rowGroup && last?.kind === 'group' && last.header === f.rowGroup) last.fields.push(f)
+    else if (f.rowGroup) units.push({ kind: 'group', header: f.rowGroup, fields: [f] })
+    else units.push({ kind: 'single', f })
+  }
+  const renderInput = (f: FieldDef) => (
+    <FieldInput
+      def={f}
+      value={value[f.key]}
+      onChange={onChange}
+      processors={processors}
+      onAddProcessor={onAddProcessor}
+      allValues={value}
+      optionLists={optionLists}
+    />
+  )
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      {fields
-        .filter((f) => !f.visibleIf || f.visibleIf(value))
-        .map((f) => (
-        <div key={f.key} className={cn(f.half || f.kind === 'checkbox' ? '' : 'sm:col-span-2')}>
-          {f.kind !== 'checkbox' && (
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">{f.label}</label>
-          )}
-          <FieldInput
-            def={f}
-            value={value[f.key]}
-            onChange={onChange}
-            processors={processors}
-            onAddProcessor={onAddProcessor}
-            allValues={value}
-            optionLists={optionLists}
-          />
-        </div>
-      ))}
+      {units.map((u) =>
+        u.kind === 'group' ? (
+          <div key={`group-${u.header}`} className="sm:col-span-2" data-testid={`row-group-${u.header.toLowerCase().replace(/\s+/g, '-')}`}>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">{u.header}</label>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {u.fields.map((f) => (
+                <div key={f.key}>
+                  <span className="mb-1 block text-[11px] text-muted-foreground/80">{f.label}</span>
+                  {renderInput(f)}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div key={u.f.key} className={cn(u.f.half || u.f.kind === 'checkbox' ? '' : 'sm:col-span-2')}>
+            {u.f.kind !== 'checkbox' && (
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">{u.f.label}</label>
+            )}
+            {renderInput(u.f)}
+          </div>
+        ),
+      )}
     </div>
   )
 }

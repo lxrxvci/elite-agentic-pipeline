@@ -145,6 +145,11 @@ export interface FieldDef {
   max?: number
   /** Half-width field in a two-column row. */
   half?: boolean
+  /** M7 (10_10 00:20:21): consecutive fields sharing one rowGroup token
+   *  render as a single full-width row - the token is the group header and
+   *  each field keeps its label as the column caption ("Difficulty" heading
+   *  over bookkeeper/manager/owner hours). */
+  rowGroup?: string
 }
 
 /** A one-tap draft prefill on a repeatable question (I1: "Same as [owner]"
@@ -3141,18 +3146,23 @@ export const CHAPTERS: ChapterDef[] = [
             },
             // L3: "it should just have the three options available of
             // bookkeeper, manager, owner, and then you put the estimated
-            // hours for each level" (00:29:51) - labeled Difficulty (00:28:49).
+            // hours for each level" (00:29:51). M7 (10_10 00:20:21): one
+            // row - "the header would be difficulty and then it would have
+            // bookkeeper hours then manager hours then owner hours."
             {
-              key: 'tierBookkeeperHours', label: 'Difficulty: bookkeeper hours', kind: 'number', min: 0, max: 500, half: true, placeholder: '2',
+              key: 'tierBookkeeperHours', label: 'Bookkeeper hours', kind: 'number', min: 0, max: 500, placeholder: '2',
               visibleIf: (v) => v.pricingMode === 'hours',
+              rowGroup: 'Difficulty',
             },
             {
-              key: 'tierManagerHours', label: 'Manager hours', kind: 'number', min: 0, max: 500, half: true, placeholder: '1',
+              key: 'tierManagerHours', label: 'Manager hours', kind: 'number', min: 0, max: 500, placeholder: '1',
               visibleIf: (v) => v.pricingMode === 'hours',
+              rowGroup: 'Difficulty',
             },
             {
-              key: 'tierOwnerHours', label: 'Owner hours', kind: 'number', min: 0, max: 500, half: true, placeholder: '0.5',
+              key: 'tierOwnerHours', label: 'Owner hours', kind: 'number', min: 0, max: 500, placeholder: '0.5',
               visibleIf: (v) => v.pricingMode === 'hours',
+              rowGroup: 'Difficulty',
             },
             // J2 (meeting #3): the missed-filings count input became a
             // yes/no toggle; yes requires the most-recent-filing date (the

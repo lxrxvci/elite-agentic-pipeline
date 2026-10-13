@@ -404,7 +404,7 @@ export function buildRecurringServicesTemplate(
   // resolved calc/billing frequencies and date selectors stamp onto every
   // template line ("Billing frequency is different than frequency").
   lineBilling: Record<string, Partial<LineBillingConfig>> = {},
-  billingDefaults: { closingFrequency?: string; routineSchedule?: RoutineSchedule | null } = {},
+  billingDefaults: { closingFrequency?: string; routineSchedule?: RoutineSchedule | null; retroBillingFrequency?: string | null } = {},
 ): TemplateLineItem[] {
   const schedule = billingDefaults.routineSchedule ?? null
   const closingFrequency = billingDefaults.closingFrequency ?? 'monthly'
@@ -524,6 +524,12 @@ export function buildRecurringServicesTemplate(
       ...overrideField,
       ...billMonthField,
       ...billingFields,
+      // M7 (A11, 10_10 00:53:32): the retro cleanup bills in installments
+      // at its own frequency (1/3/12 cleanup-months per invoice); unset
+      // stays the legacy one-time up-front line.
+      ...(line.service_key === "retroactive_bookkeeping" && billingDefaults.retroBillingFrequency
+        ? { retro_billing_frequency: billingDefaults.retroBillingFrequency }
+        : {}),
       frequency: customRule?.scheduleType ?? customMatch?.frequency ?? BUCKET_FREQUENCY[line.bucket] ?? "monthly",
       ...ruleScheduleFields,
       notes: line.unpriced ? "Priced manually: no amount stated in HANDOFF §15." : null,

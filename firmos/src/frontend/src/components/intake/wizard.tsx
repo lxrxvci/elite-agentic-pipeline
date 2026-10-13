@@ -888,6 +888,7 @@ export function IntakeWizard({
                 onToggleReconAccount={toggleReconAccount}
                 onLineBilling={changeLineBilling}
                 onRetroDiscountChange={(percent) => apply({ retroDiscountPercent: percent })}
+                onRetroBillingChange={(frequency) => apply({ retroBillingFrequency: frequency })}
                 onCustomWork={apply}
                 customTaskCatalog={optionLists.custom_task_templates ?? []}
                 onAddCustomTaskTitle={(name) => void addOptionListValue('custom_task_templates', name)}

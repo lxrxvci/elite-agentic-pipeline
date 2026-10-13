@@ -476,7 +476,9 @@ export async function cascadeIntakeToClient(
       reportDefinitions,
       bookkeepingFrequency: fresh?.bookkeepingFrequency ?? null,
     });
-    const rebuilt = buildRecurringServicesTemplate(quote, form.customItems ?? [], specialtyReportsFromIntake({ reportDefinitions }));
+    const rebuilt = buildRecurringServicesTemplate(quote, form.customItems ?? [], specialtyReportsFromIntake({ reportDefinitions }), [], {}, {}, {
+      retroBillingFrequency: form.retroBillingFrequency ?? null,
+    });
     const merged = mergeManualTemplateLines(rebuilt, client.recurringServicesTemplate);
     const stamps = quoteAmountStamps(quote);
     await db

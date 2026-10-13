@@ -300,7 +300,62 @@ export async function buildItemizedLineItems(
 
   for (const line of template) {
     if (!line || typeof line.service_key !== "string") continue;
-    if (line.frequency === "one_time") continue; // one-time services never recur
+    if (line.frequency === "one_time") {
+      // M7 (A11, 10_10 00:53:32): the retro cleanup bills in installments
+      // at its stamped frequency - "am I billing this per month, per
+      // quarter, per year… keep the same logic as these other ones." Each
+      // due invoice bills the next 1/3/12 cleanup months (quantity = total
+      // cleanup months on the template line) until the total is covered;
+      // installments already billed are counted from live line items, so a
+      // rerun of the same month never double-bills. Unstamped one-time
+      // lines keep their legacy behavior (never auto-billed).
+      if (line.service_key === "retroactive_bookkeeping") {
+        const freq =
+          typeof line.retro_billing_frequency === "string" ? line.retro_billing_frequency : null;
+        const per = freq === "monthly" ? 1 : freq === "quarterly" ? 3 : freq === "annual" ? 12 : 0;
+        const templateUnitPrice = line.unit_price;
+        if (per > 0 && templateUnitPrice != null && line.quantity > 0) {
+          const billed = await db
+            .select({ year: invoices.year, month: invoices.month, qty: invoiceLineItems.quantity })
+            .from(invoiceLineItems)
+            .innerJoin(invoices, eq(invoiceLineItems.invoiceId, invoices.id))
+            .where(
+              and(
+                eq(invoices.clientId, client.id),
+                eq(invoiceLineItems.serviceKey, "retroactive_bookkeeping"),
+                ne(invoices.status, "void"),
+              ),
+            )
+            .orderBy(asc(invoices.year), asc(invoices.month));
+          const billedQty = billed.reduce((a, r) => a + Number(r.qty), 0);
+          if (billedQty < line.quantity) {
+            const anchorIdx =
+              billed.length > 0 ? (billed[0]?.year ?? year) * 12 + (billed[0]?.month ?? month) : year * 12 + month;
+            const idx = year * 12 + month;
+            if (idx >= anchorIdx && (idx - anchorIdx) % per === 0) {
+              const quantity = round2(Math.min(per, line.quantity - billedQty));
+              const amount = round2(templateUnitPrice * quantity);
+              const perLineDiscount = Number(line.discount ?? 0);
+              if (perLineDiscount > 0) {
+                const factor = line.quantity > 0 ? quantity / line.quantity : 1;
+                discountTotal -= Math.min(perLineDiscount * factor, amount);
+              }
+              billableSubtotal += amount;
+              lines.push({
+                lineType: "recurring",
+                serviceKey: line.service_key,
+                description: `Retroactive cleanup (installment ${billed.length + 1})`,
+                quantity,
+                unitPrice: templateUnitPrice,
+                discount: perLineDiscount,
+                amount,
+              });
+            }
+          }
+        }
+      }
+      continue; // one-time services never recur
+    }
 
     // Section discounts aggregate into the single negative line (§15).
     if (line.service_key === SECTION_DISCOUNT_KEY) {

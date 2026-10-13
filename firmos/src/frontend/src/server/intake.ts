@@ -390,6 +390,12 @@ export interface IntakeFormData {
   recordDeposits?: boolean;
   /** K6 (D6): bulk discount % on the retroactive cleanup block (0-100). */
   retroDiscountPercent?: number | null;
+  /** M7 (A11, 10_10 00:53:32): the retro cleanup's billing frequency -
+   *  "am I billing this per month, per quarter, per year… keep the same
+   *  logic as these other ones." Null/undefined = one up-front invoice
+   *  (legacy behavior); set = installments of 1/3/12 cleanup months per
+   *  invoice at the chosen frequency. */
+  retroBillingFrequency?: 'monthly' | 'quarterly' | 'annual' | null;
   payBills?: boolean;
   billPayLocations?: string[];
   /** J2 (meeting #3, R6): send reports before the client's open questions
