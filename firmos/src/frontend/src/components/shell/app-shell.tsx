@@ -22,6 +22,14 @@ export function AppShell({
 }) {
   const [collapsed, setCollapsed] = React.useState(false)
 
+  React.useEffect(() => {
+    const media = window.matchMedia('(max-width: 1023px)')
+    const update = () => setCollapsed(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="flex min-h-screen bg-background">
@@ -33,7 +41,7 @@ export function AppShell({
         />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
-          <main className="mx-auto w-full max-w-[1200px] flex-1 px-6 py-6">{children}</main>
+          <main className="mx-auto w-full max-w-[1200px] flex-1 px-3 py-6 sm:px-6">{children}</main>
         </div>
       </div>
     </TooltipProvider>

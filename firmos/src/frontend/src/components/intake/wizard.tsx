@@ -34,7 +34,7 @@ import { cn } from '@/shared/lib/utils'
 import type { StaffOption } from './convert-dialog'
 import { EditQuestionDialog, type EditTarget } from './edit-overlay'
 import { NotesRail } from './notes-rail'
-import { QuoteHiddenCard, QuotePanel } from './quote-panel'
+import { IntakeNavigationProvider } from './navigation'
 import {
   allAccounts,
   buildPatch,
@@ -51,6 +51,7 @@ import {
   formContactHits,
   isCustomOtherPick,
   questionPosition,
+  reconcileScreenIndex,
   visibleChapters,
   type WizardAnswers,
 } from './registry'
@@ -60,9 +61,8 @@ import { QuestionHero, QuestionScreen } from './screens'
 /**
  * The conversational client intake wizard: one question per screen on a
  * single page in Jason's dictated order (intake-restructure I1, plan §1),
- * direction-aware transitions, a persistent Back link that never loses
- * answers, debounced autosave through saveIntake, and a persistent live
- * quote priced by the server only. The branch map lives in registry.ts,
+ * consistent Previous/Next card navigation, debounced autosave through
+ * saveIntake, and a final server-priced estimate on Review. The branch map lives in registry.ts,
  * declarative and tested.
  *
  * J4 harness (meeting 09_30, 00:12:36/00:29:04): NOTHING auto-advances -
@@ -96,24 +96,13 @@ export const INTAKE_OPTION_LIST_KEYS = [
   'bookkeeping_frequencies',
   'engagement_types',
   'bill_pay_locations',
+  'record_bill_vendors',
   // K8 (B4): the roles database behind the contacts role type-ahead.
   'contact_roles',
   // L2 (D3): the persistent payroll-services database behind the payroll
   // secondary stack.
   'payroll_services',
 ] as const
-
-/** I4 (plan §3D): the staff peek flag lives in sessionStorage - remembered
- *  per browser session, never across sessions, default hidden. */
-export const QUOTE_PEEK_STORAGE_KEY = 'firmos:intake-quote-peek'
-
-function readPeekPreference(): boolean {
-  try {
-    return sessionStorage.getItem(QUOTE_PEEK_STORAGE_KEY) === '1'
-  } catch {
-    return false
-  }
-}
 
 export type IntakeStatusKey =
   | 'new'
@@ -136,6 +125,8 @@ export interface IntakeWizardProps {
   managers: StaffOption[]
   bookkeepers: StaffOption[]
   clientId: number | null
+  acceptedEstimateSnapshot?: import('@/server/engagement').AcceptedEstimateSnapshot | null
+  agreementTemplate?: import('@/server/engagement').AgreementTemplate | null
 }
 
 export function IntakeWizard({
@@ -148,6 +139,8 @@ export function IntakeWizard({
   managers,
   bookkeepers,
   clientId,
+  acceptedEstimateSnapshot,
+  agreementTemplate,
 }: IntakeWizardProps) {
   // The status at mount drives editability for the whole session: after a
   // submit, revalidatePath flips the prop to pending_review, but the wizard
@@ -194,18 +187,6 @@ export function IntakeWizard({
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
-  // I4: pricing stays hidden until the review screen (the client may be
-  // watching on the Meet call); staff can peek via the rail toggle, which is
-  // remembered per session and defaults to hidden.
-  const [peekPricing, setPeekPricing] = useState(readPeekPreference)
-  const togglePeekPricing = useCallback((on: boolean) => {
-    setPeekPricing(on)
-    try {
-      sessionStorage.setItem(QUOTE_PEEK_STORAGE_KEY, on ? '1' : '0')
-    } catch {
-      // sessionStorage unavailable - the peek just won't persist.
-    }
-  }, [])
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   // I3: the shared bank list behind the account mini-form dropdowns; an
   // inline add-new lands here in the same session. J1 (DB1): the same
@@ -334,11 +315,6 @@ export function IntakeWizard({
   const screens = useMemo(() => flattenScreens(answers), [answers])
   const idx = Math.min(screenIndex, screens.length - 1)
   const screen = screens[idx]
-  // I4: the review screen always reveals the quote; elsewhere it shows only
-  // while the staff peek toggle is on.
-  const isReview = screen?.kind === 'review'
-  const quoteVisible = isReview || peekPricing
-
   const answersRef = useRef(answers)
   answersRef.current = answers
   const dirtyRef = useRef(false)
@@ -420,18 +396,22 @@ export function IntakeWizard({
   // ── Navigation ──
   const apply = useCallback(
     (patch: Partial<WizardAnswers>) => {
-      setAnswers((prev) => {
-        const next = { ...prev, ...patch }
-        // K4 (B7, 09_30 00:06:59): linked contact copies follow the
-        // canonical store - edit the primary contact once and the linked
-        // owner card shows it too.
-        const sync = syncLinkedContactCopies(next)
-        return sync ? { ...next, ...sync } : next
-      })
+      const merged = { ...answersRef.current, ...patch }
+      // K4 (B7, 09_30 00:06:59): linked contact copies follow the
+      // canonical store - edit the primary contact once and the linked
+      // owner card shows it too.
+      const sync = syncLinkedContactCopies(merged)
+      const next = sync ? { ...merged, ...sync } : merged
+      answersRef.current = next
+      setAnswers(next)
       if (editable) scheduleSave()
     },
     [editable, scheduleSave],
   )
+
+  useEffect(() => {
+    void flushSave()
+  }, [answers.reviewConfirmations, flushSave])
 
   // Running notes (the rail): appended into answers like any other field, so
   // the debounced autosave carries them into form_data.runningNotes.
@@ -532,13 +512,13 @@ export function IntakeWizard({
     [editable, flushSave, idx, screens],
   )
 
-  // M1 (B4): if an answers change shrinks the walk (a question vanishing),
-  // the index can never point past the end - clamp instead of landing on a
-  // phantom screen. (The 00:41:11 kick: the duplicate card pick hid the
-  // merchants question mid-flow - fixed at the fold in M1.1.)
+  // Branch changes preserve the current question when possible; when it
+  // disappears, Previous/Next lands on the nearest preceding visible card.
+  const previousScreensRef = useRef(screens)
   useEffect(() => {
-    setScreenIndex((i) => Math.min(i, Math.max(0, screens.length - 1)))
-  }, [screens.length])
+    setScreenIndex((current) => reconcileScreenIndex(previousScreensRef.current, screens, current))
+    previousScreensRef.current = screens
+  }, [screens])
 
   // J4 (V1): review edits open the overlay, never the wizard. Closing flushes
   // the autosave so the edit is durable even if the intake is closed next.
@@ -569,13 +549,21 @@ export function IntakeWizard({
     [apply],
   )
 
-  // J4 (V4): direct per-line price editing (per billing cycle). A number
-  // writes the servicePrices override; null resets to the standard price,
-  // clearing the override AND any legacy discount on that line.
+  // Recurring lines edit the price at the selected calculation cadence.
+  // One-time work keeps the legacy whole-project override behavior.
   const changeServicePrice = useCallback(
     (serviceKey: string, dollars: number | null) => {
+      const line = quote?.lines.find((candidate) => candidate.service_key === serviceKey)
       const prices = { ...(answersRef.current.servicePrices ?? {}) }
       const discounts = { ...(answersRef.current.serviceDiscounts ?? {}) }
+      if (line?.bucket !== 'one_time') {
+        const all = { ...(answersRef.current.lineBilling ?? {}) }
+        all[serviceKey] = { ...(all[serviceKey] ?? {}), calcUnitPrice: dollars }
+        delete prices[serviceKey]
+        delete discounts[serviceKey]
+        apply({ lineBilling: all, servicePrices: prices, serviceDiscounts: discounts })
+        return
+      }
       if (dollars == null) {
         delete prices[serviceKey]
         delete discounts[serviceKey]
@@ -584,7 +572,7 @@ export function IntakeWizard({
       }
       apply({ servicePrices: prices, serviceDiscounts: discounts })
     },
-    [apply],
+    [apply, quote],
   )
 
   // M3 (10_10, 01:03:54): the per-line billing model - calc frequency,
@@ -600,7 +588,7 @@ export function IntakeWizard({
   )
 
   // ── Progress header ──
-  const chapters = useMemo(() => visibleChapters(answers), [answers])
+  const chapters = useMemo(() => visibleChapters(answers).filter((chapter) => chapter.reviewOnly !== true), [answers])
   const position =
     screen?.kind === 'question' ? questionPosition(answers, screen) : null
   const currentChapterId = screen?.kind === 'question' ? screen.chapterId : null
@@ -838,27 +826,29 @@ export function IntakeWizard({
                   <div className="rounded-xl border border-border bg-card p-6 shadow-card sm:p-8">
                     <QuestionHero q={q} answers={answers} />
                     <div className="mt-5">
-                      <QuestionScreen
-                        key={`${screen.chapterId}.${screen.questionId}`}
-                        q={q}
-                        answers={answers}
-                        onApply={apply}
-                        onAdvance={() => go('fwd')}
-                        onPickOption={(v) => pickOption(q.id, v)}
-                        institutions={institutions}
-                        onAddInstitution={addInstitution}
-                        payrollProviders={payrollProviders}
-                        onAddPayrollProvider={addPayrollProvider}
-                        merchantProcessors={merchantProcessors}
-                        onAddMerchantProcessor={addMerchantProcessor}
-                        contactSearch={contactSearch}
-                        optionLists={optionLists}
-                        onAddOptionListValue={addOptionListValue}
-                        servicesCatalog={servicesCatalog}
-                        industrySuggestions={industrySuggestions}
-                        onJumpTo={jumpTo}
-                        onTagIndustry={tagIndustry}
-                      />
+                      <IntakeNavigationProvider onPrevious={idx > 0 ? () => go('back') : null}>
+                        <QuestionScreen
+                          key={`${screen.chapterId}.${screen.questionId}`}
+                          q={q}
+                          answers={answers}
+                          onApply={apply}
+                          onAdvance={() => go('fwd')}
+                          onPickOption={(v) => pickOption(q.id, v)}
+                          institutions={institutions}
+                          onAddInstitution={addInstitution}
+                          payrollProviders={payrollProviders}
+                          onAddPayrollProvider={addPayrollProvider}
+                          merchantProcessors={merchantProcessors}
+                          onAddMerchantProcessor={addMerchantProcessor}
+                          contactSearch={contactSearch}
+                          optionLists={optionLists}
+                          onAddOptionListValue={addOptionListValue}
+                          servicesCatalog={servicesCatalog}
+                          industrySuggestions={industrySuggestions}
+                          onJumpTo={jumpTo}
+                          onTagIndustry={tagIndustry}
+                        />
+                      </IntakeNavigationProvider>
                     </div>
                     {note && (
                       <p className="mt-4 rounded-lg border border-border bg-muted px-3.5 py-2.5 text-sm text-muted-foreground" role="note">
@@ -892,22 +882,12 @@ export function IntakeWizard({
                 onCustomWork={apply}
                 customTaskCatalog={optionLists.custom_task_templates ?? []}
                 onAddCustomTaskTitle={(name) => void addOptionListValue('custom_task_templates', name)}
+                acceptedEstimateSnapshot={acceptedEstimateSnapshot}
+                agreementTemplate={agreementTemplate}
               />
             </div>
           )}
 
-          {/* Persistent back link */}
-          {idx > 0 && screen?.kind !== 'review' && (
-            <button
-              type="button"
-              onClick={() => go('back')}
-              data-testid="back-link"
-              className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            >
-              <ArrowLeft className="h-4 w-4" aria-hidden />
-              Back
-            </button>
-          )}
           {screen?.kind === 'review' && (
             <button
               type="button"
@@ -921,33 +901,12 @@ export function IntakeWizard({
           )}
         </div>
 
-        {/* Right rail: the live quote (I4: hidden until the review screen,
-            staff-peekable via the rail toggle) above the running-notes rail.
-            J4 (V3, meeting #3 01:01:22): the rail is ONE sticky unit on large
-            screens - the notes box scrolls WITH the pricing card instead of
-            being stranded at the top of a long review ("you can't enter
-            notes when scrolled"). Taller-than-viewport rails scroll
-            internally. The quote panel also captures per-line price
-            overrides (J4/V4) - edits apply into answers, so autosave +
-            repricing follow like any other answer. The review screen is the
-            reveal. */}
+        {/* October 28: the live-estimate rail is gone. Running notes remain
+            sticky so notes stay available through the final review. */}
         <div
           className="space-y-4 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto"
           data-testid="wizard-rail"
         >
-          {quoteVisible ? (
-            <QuotePanel
-              quote={quote}
-              loading={quoteLoading}
-              onPriceChange={changeServicePrice}
-              onHidePricing={
-                isReview ? undefined : () => togglePeekPricing(false)
-              }
-              reveal={isReview}
-            />
-          ) : (
-            <QuoteHiddenCard onShow={() => togglePeekPricing(true)} />
-          )}
           <NotesRail notes={answers.runningNotes ?? []} onAdd={addRunningNote} />
         </div>
       </div>

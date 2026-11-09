@@ -14,7 +14,7 @@ import {
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS, getEventCoordinates } from '@dnd-kit/utilities'
-import { ArrowDown, ArrowRight, ArrowUp, ChevronDown, GripVertical, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, GripVertical, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -38,6 +38,7 @@ import { cn } from '@/shared/lib/utils'
 import { inputCls } from './account-screens'
 import { RoutineCalendar } from './routine-calendar'
 import { closeTierDay, deriveRoutineTasks, findQuestion, removeRoutineTaskSync, type QuestionDef, type WizardAnswers } from './registry'
+import { CardNavigation } from './navigation'
 import { ConfirmDeleteDialog } from './confirm-delete-dialog'
 
 /**
@@ -208,10 +209,12 @@ function WeekdayChips({
 function ScheduleControls({
   task,
   entry,
+  tierDay,
   onPatch,
 }: {
   task: RoutineTaskDef
   entry: RoutineScheduleEntry
+  tierDay?: number
   onPatch: (patch: Partial<RoutineScheduleEntry>) => void
 }) {
   if (entry.keepSourceSchedule) {
@@ -257,21 +260,39 @@ function ScheduleControls({
           </div>
         </div>
       )
-    case 'monthly':
+    case 'monthly': {
+      const selectedDay = entry.dayOfMonth ?? tierDay ?? 15
       return (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <span>Day</span>
-          <ScheduleNumberInput
-            label={`Day of the month for ${task.title}`}
-            value={entry.dayOfMonth ?? 15}
-            min={1}
-            max={31}
-            onCommit={(n) => onPatch({ dayOfMonth: n })}
-            testid={`day-of-month-${task.key}`}
-          />
-          <span>of the month</span>
+          <NativeSelect
+            aria-label={`Day of the month for ${task.title}`}
+            data-testid={`day-of-month-${task.key}`}
+            className={cn('h-9', selectedDay === tierDay && 'border-firm-brand bg-accent text-accent-foreground')}
+            value={selectedDay}
+            onChange={(event) => onPatch({ dayOfMonth: Number(event.target.value) })}
+          >
+            <option value={1}>First day of the month</option>
+            {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => (
+              <option
+                key={day}
+                value={day}
+                data-close-target={day === tierDay || undefined}
+                className={day === tierDay ? 'bg-accent text-accent-foreground' : undefined}
+              >
+                {day}{day === tierDay ? ' — close target' : ''}
+              </option>
+            ))}
+            <option value={31}>Last day of the month</option>
+          </NativeSelect>
+          {tierDay != null && (
+            <span className="rounded bg-accent px-2 py-1 text-xs font-medium text-accent-foreground" data-testid={`close-target-${task.key}`}>
+              Close target: {tierDay}
+            </span>
+          )}
         </div>
       )
+    }
     case 'quarterly':
       return (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -546,7 +567,7 @@ function RoutineTaskCard({
           className="mt-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3"
           data-testid={`schedule-controls-${task.key}`}
         >
-          <ScheduleControls task={task} entry={entry} onPatch={onPatch} />
+          <ScheduleControls task={task} entry={entry} tierDay={closeTierDay(answers)} onPatch={onPatch} />
         </div>
       )}
     </li>
@@ -787,10 +808,9 @@ export function RoutineSchedulerScreen({
       {/* K5 (E1, 09_30 00:50:15): the workload-vs-price calendar visual. */}
       <RoutineCalendar tasks={tasks} entries={entries} />
 
-      <Button type="button" variant="action" onClick={finish} data-testid="continue">
+      <CardNavigation onClick={finish} data-testid="continue">
         Continue
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      </Button>
+      </CardNavigation>
 
       {/* L1 (H3/H4): every X on this board confirms before anything removes. */}
       <ConfirmDeleteDialog

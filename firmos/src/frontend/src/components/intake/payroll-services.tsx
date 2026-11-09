@@ -1,12 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowRight, Check, Plus } from 'lucide-react'
+import { Check, Plus } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { cn } from '@/shared/lib/utils'
 
 import { inputCls } from './account-screens'
+import { CardNavigation } from './navigation'
 import {
   mergeListOptions,
   type OptionListValueLite,
@@ -239,10 +240,9 @@ export function PayrollServicesScreen({
         </p>
       )}
 
-      <Button type="button" variant="action" onClick={finish} data-testid="continue">
+      <CardNavigation onClick={finish} data-testid="continue">
         Continue
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      </Button>
+      </CardNavigation>
     </div>
   )
 }

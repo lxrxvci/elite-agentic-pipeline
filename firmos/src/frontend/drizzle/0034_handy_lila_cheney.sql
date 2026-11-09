@@ -1,0 +1,1 @@
+ALTER TABLE "contacts" ADD COLUMN "contact_channel_links" jsonb;

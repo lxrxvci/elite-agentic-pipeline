@@ -239,6 +239,20 @@
       "when": 1791843727172,
       "tag": "0033_modern_dormammu",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793944453060,
+      "tag": "0034_handy_lila_cheney",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1793951326025,
+      "tag": "0035_perpetual_silhouette",
+      "breakpoints": true
     }
   ]
 }

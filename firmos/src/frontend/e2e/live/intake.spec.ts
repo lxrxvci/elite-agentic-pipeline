@@ -6,7 +6,7 @@ import { dismissIdlePrompts, live as test, expect, liveName } from './helpers'
  * Live plan - "Intake to conversion (the money path)", J1-J4 current flow:
  * new intake -> contact basics -> entity & ownership -> engagement ->
  * starting point (N2's renamed start question) -> balance sheet (D1: bank +
- * last-4, no nickname; D4: assets BEFORE loans) -> income -> online access
+ * last-4, no nickname; D4: assets BEFORE loans) -> income -> source access
  * -> reporting -> services -> software (N1: the scope block at the END) ->
  * custom rules -> the J3 "Routine order and frequency" scheduler -> review
  * (V2 collapsed sections, V6 bucketed estimate, V1 overlay edit) -> submit
@@ -14,7 +14,7 @@ import { dismissIdlePrompts, live as test, expect, liveName } from './helpers'
  * record -> work materializes on the workstation and the Work tab year grid.
  *
  * Quote spot-checks kept from the original plan: 2 QBO users + class
- * tracking -> Plus recommended (staff peek mid-wizard), and a January 2025
+ * tracking -> Plus recommended on the final estimate, and a January 2025
  * start prices the retroactive cleanup as a one-time line.
  */
 
@@ -100,6 +100,7 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await page.getByTestId('bank-select-0').click()
   await page.getByRole('option', { name: 'Chase' }).click()
   await page.getByTestId('last4-0').fill('4411')
+  await page.getByTestId('grant-access-0').check()
   await expect(page.getByTestId('account-label-0')).toHaveText('Chase Checking · 4411')
   await advance(page, 'savings-accounts')
   await advance(page, 'credit-cards') // no savings
@@ -118,13 +119,7 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await pick(page, 'option-no', 'personal-card') // nothing personal on business accounts (A41)
   await pick(page, 'option-no', 'record-deposits') // C10
   await pick(page, 'option-no', 'payroll') // no personal-card business spend (B18)
-  await pick(page, 'option-no', 'online-access') // no payroll; I3 access checklist next
-
-  // ── Online access: grant login on the checking account (drives the vault
-  // slot). D2: the checklist label is the bank -> type -> last4 standard. ──
-  await expect(page.getByTestId('check-checkingAccounts:0')).toContainText('Chase Checking · 4411')
-  await page.getByTestId('check-checkingAccounts:0').click()
-  await advance(page, 'bk-frequency')
+  await pick(page, 'option-no', 'bk-frequency') // no payroll; access stays on the source account
 
   // ── Reporting: monthly, close by the 10th ──
   await pick(page, 'option-monthly', 'close-tier')
@@ -151,22 +146,8 @@ test('intake: wizard -> quote checks -> submit -> convert -> work materializes',
   await advance(page, 'qbo-tier')
   await pick(page, 'option-recommended', 'notes')
 
-  // The live quote is server-priced: non-zero, and 2 QBO users plus class
-  // tracking make the matrix recommend Plus. I4: pricing hides until the
-  // review - staff peek the rail open to see it mid-wizard (the peek then
-  // persists for the session).
-  await page.getByTestId('quote-peek-toggle').click()
-  await expect
-    .poll(async () => page.getByTestId('quote-amount').textContent(), { timeout: 15_000 })
-    .not.toMatch(/^(--|\$0)/)
-  await expect(page.getByTestId('live-quote').getByText('Plus (recommended)')).toBeVisible({
-    timeout: 15_000,
-  })
-  // The retroactive scope prices as a one-time line in the rail summary.
-  const retroSummary = page.getByTestId('retroactive-summary')
-  await expect(retroSummary).toBeVisible({ timeout: 15_000 })
-  await expect(retroSummary).toContainText('one-time')
-  await expect(retroSummary).toContainText(/\$\d/)
+  // The final estimate is server-priced and appears on the review screen;
+  // no live-estimate rail or mid-wizard peek remains.
 
   await advance(page, 'routine-scheduler') // skip internal notes; K6 (D3): custom work enters on the services screen - no standalone rules card
 

@@ -10,6 +10,7 @@ import { users } from '@/db/schema'
 import { requireStaff } from '@/server/auth/guards'
 import { getStaffOpenWorkCounts } from '@/server/capacity'
 import { getIntake } from '@/server/intake'
+import { getEngagementAgreementTemplate } from '@/server/engagement'
 import { WorkStatusBadge } from '@/shared/ui/work'
 
 export const metadata: Metadata = { title: 'FirmOS - Intake' }
@@ -47,6 +48,7 @@ export default async function IntakeWizardPage({ params }: { params: Promise<{ i
     .filter((u) => u.role.toLowerCase() === 'bookkeeper')
     .map((u) => ({ id: u.id, name: nameOf(u), openCount: workload.get(u.id) ?? 0 }))
 
+  const agreementTemplate = await getEngagementAgreementTemplate()
   const chip = INTAKE_STATUS[intake.status]
 
   return (
@@ -66,6 +68,8 @@ export default async function IntakeWizardPage({ params }: { params: Promise<{ i
         managers={managers}
         bookkeepers={bookkeepers}
         clientId={intake.clientId}
+        acceptedEstimateSnapshot={intake.acceptedEstimateSnapshot as import('@/server/engagement').AcceptedEstimateSnapshot | null}
+        agreementTemplate={agreementTemplate}
       />
     </div>
   )

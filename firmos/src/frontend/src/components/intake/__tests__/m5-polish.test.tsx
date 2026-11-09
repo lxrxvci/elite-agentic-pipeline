@@ -228,17 +228,21 @@ describe('M5/C2: contact_channels_widget (10_10 00:02:57)', () => {
       contactName: 'Wren Okafor',
       contactEmail: 'wren@fern.shop',
       contactPhone: '',
-      contactEmailsExtra: ['ap@fern.shop', '  ', 'owner@fern.shop'],
+      contactEmailsExtra: [{ value: 'ap@fern.shop', businessId: 7, businessName: 'Other Business' }, '  ', 'owner@fern.shop'],
       contactPhonesExtra: ['(503) 555-0182'],
     }) as WizardAnswers
     const primary = (applied.contacts ?? []).find((c) => c.isPrimary)!
     expect(primary.email).toBe('wren@fern.shop')
     expect(primary.emails).toEqual(['ap@fern.shop', 'owner@fern.shop'])
     expect(primary.phones).toEqual(['5035550182'])
+    expect(primary.emailChannels?.[0]).toEqual({ value: 'ap@fern.shop', businessId: 7, businessName: 'Other Business' })
     // And the fields read them back for editing.
     const value = q.fieldsValue!(applied) as Record<string, unknown>
-    expect(value.contactEmailsExtra).toEqual(['ap@fern.shop', 'owner@fern.shop'])
-    expect(value.contactPhonesExtra).toEqual(['5035550182'])
+    expect(value.contactEmailsExtra).toEqual([
+      { value: 'ap@fern.shop', businessId: 7, businessName: 'Other Business' },
+      { value: 'owner@fern.shop', businessId: null, businessName: null },
+    ])
+    expect(value.contactPhonesExtra).toEqual([{ value: '5035550182', businessId: null, businessName: null }])
   })
 })
 

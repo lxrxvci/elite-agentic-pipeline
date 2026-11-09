@@ -108,7 +108,7 @@ describe('multi chips from the list (payment methods)', () => {
     fireEvent.click(screen.getByTestId('multi-custom-add'))
 
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith('payment_methods', 'Zelle'))
-    expect(answersNow().paymentMethods).toContain('Zelle')
+    await waitFor(() => expect(answersNow().paymentMethods).toContain('Zelle'))
   })
 
   it('list values render as chips beside the canonical keys', () => {

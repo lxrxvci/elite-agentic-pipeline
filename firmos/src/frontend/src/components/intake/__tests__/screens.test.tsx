@@ -306,9 +306,9 @@ describe('corporate payroll card (I2, 00:48:07)', () => {
     expect(onAdvance).toHaveBeenCalled()
   })
 
-  it('an unanswered select shows no Continue until a pick', () => {
+  it('an unanswered select disables Next while Previous stays available', () => {
     render(<Harness q={findQuestion('income', 'personal-card')!} initial={{}} />)
-    expect(screen.queryByTestId('continue')).toBeNull()
+    expect(screen.getByTestId('continue')).toBeDisabled()
   })
 
   it('a sole prop gets the owner-never-on-payroll nuance and a live No card', () => {

@@ -148,6 +148,24 @@ export const emailTemplates = pgTable("email_templates", {
  * its read-aloud explainer and only a click adds it. industryKey folds to
  * the industries option list's name; serviceKey names a services_catalog row.
  */
+export const chartAccountTemplates = pgTable(
+  "chart_account_templates",
+  {
+    id: serial("id").primaryKey(),
+    key: text("key").notNull(),
+    version: integer("version").notNull().default(1),
+    contributions: text("contributions").notNull(),
+    distributions: text("distributions").notNull(),
+    netInvestment: text("net_investment").notNull(),
+    grouped: text("grouped").notNull(),
+    status: text("status").notNull().default("draft"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("chart_account_templates_key_version_unique").on(t.key, t.version)],
+);
+
 export const industrySuggestions = pgTable(
   "industry_suggestions",
   {

@@ -172,6 +172,7 @@ const ENGINE_BUCKET_FALLBACK: Record<string, RoutineBucket> = {
 export function estimateLineBucket(
   line: QuoteLine,
   schedule: RoutineSchedule | null | undefined,
+  reportDefinitions?: WizardAnswers['reportDefinitions'],
 ): RoutineBucket | null {
   if (line.bucket === 'one_time') return null
   if (schedule && Object.keys(schedule).length > 0) {
@@ -180,6 +181,9 @@ export function estimateLineBucket(
       if (isRoutineBucket(bucket)) return bucket
     }
   }
+  const specialty = /^specialty_report_(\d+)$/.exec(line.service_key)
+  const reportFrequency = specialty ? reportDefinitions?.[Number(specialty[1]) - 1]?.frequency : undefined
+  if (reportFrequency === 'annual' || reportFrequency === 'quarterly') return reportFrequency
   return ENGINE_BUCKET_FALLBACK[line.bucket] ?? 'monthly'
 }
 
@@ -190,6 +194,8 @@ export interface EstimateLine {
   name: string
   line: QuoteLine
   bucket: RoutineBucket
+  /** Natural occurrences at the selected calculation cadence. */
+  calcQuantity: number
   /** M3 (10_10, 01:03:54): the resolved billing model - calc frequency,
    *  billing frequency, and the date selectors (overrides over defaults). */
   billing: import('@/shared/lib/line-billing').LineBillingConfig
@@ -391,6 +397,43 @@ function retroPeriods(startMonth: Month, months: number, split: 'year' | 'quarte
   return out
 }
 
+export function naturalCalcQuantity(line: QuoteLine, cycle: number, answers: WizardAnswers): number {
+  if (line.calc_quantity != null) return line.calc_quantity
+  if (/^specialty_report_\d+$/.test(line.service_key) && line.quantity > 0) {
+    const periodMonths = Math.max(1, Math.round(cycle / line.quantity))
+    const normalizedQuantity = cycle / periodMonths
+    return normalizedQuantity > 0 ? line.quantity / normalizedQuantity : line.quantity
+  }
+  if (line.service_key.startsWith('custom_item_')) {
+    const index = Number(line.service_key.replace('custom_item_', '')) - 1
+    return (answers.customItems ?? [])[index]?.quantity ?? 1
+  }
+  if (line.service_key.startsWith('custom_rule_')) return 1
+  return line.quantity
+}
+
+function calculationPriceForDisplay(
+  line: QuoteLine,
+  defaultConfig: LineBillingConfig,
+  selectedConfig: LineBillingConfig,
+  calcQuantity: number,
+  legacyNet: number | null,
+  honorLegacyOverride = true,
+): number | null {
+  if (selectedConfig.calcUnitPrice != null) return selectedConfig.calcUnitPrice
+  if (honorLegacyOverride && line.price_override != null) return legacyNet
+  if (line.unit_price == null) return null
+  const period = selectedConfig.calcFrequency === 'daily' ? 'weekly' : selectedConfig.calcFrequency
+  const now = new Date()
+  const anchor = { year: now.getFullYear(), month: now.getMonth() + 1 }
+  const amount = billingAmountForPeriod(defaultConfig, line.unit_price, calcQuantity, period, anchor)
+  const discountScale = honorLegacyOverride && (line.discount ?? 0) > 0
+    ? billingAmountForPeriod(defaultConfig, 1, 1, period, anchor)
+    : 0
+  const net = Math.max(0, amount - (line.discount ?? 0) * discountScale)
+  return selectedConfig.calcFrequency === 'daily' ? net / 7 : net
+}
+
 /**
  * Quote + answers -> the bucketed estimate. The priced retroactive line
  * leaves the recurring list (its one-time block owns it - no double
@@ -409,7 +452,7 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers, retr
     const net = quoteLineNet(line)
     const overridden = line.price_override != null
     const discounted = !overridden && (line.discount ?? 0) > 0
-    const bucket = estimateLineBucket(line, schedule)
+    const bucket = estimateLineBucket(line, schedule, answers.reportDefinitions)
 
     if (bucket == null) {
       // V7: one-time money. The priced retro line is represented by its own
@@ -439,30 +482,31 @@ export function buildBucketedEstimate(quote: Quote, answers: WizardAnswers, retr
     const scheduleEntry = taskKeysFor(line)
       .map((k) => schedule?.[k])
       .find((e) => e != null)
-    const billing = resolveLineBilling(
-      defaultLineBilling({
-        bucket,
-        scheduleWeekdays: scheduleEntry?.weekdays ?? null,
-        closingFrequency: answers.bookkeepingFrequency ?? 'monthly',
-        // L4 (G9): an explicit L4 assignment carries; §6.5 1099s default to
-        // February (selectable like any annual line, 10_06 01:23:41).
-        billMonth:
-          answers.billingMonths?.[line.service_key] ??
-          (isFebruaryBilledService(line.service_key) ? 2 : null),
-      }),
-      answers.lineBilling?.[line.service_key],
-    )
+    const defaultBilling = defaultLineBilling({
+      bucket,
+      scheduleWeekdays: scheduleEntry?.weekdays ?? null,
+      closingFrequency: answers.bookkeepingFrequency ?? 'monthly',
+      // L4 (G9): an explicit L4 assignment carries; §6.5 1099s default to
+      // February (selectable like any annual line, 10_06 01:23:41).
+      billMonth:
+        answers.billingMonths?.[line.service_key] ??
+        (isFebruaryBilledService(line.service_key) ? 2 : null),
+    })
+    const billing = resolveLineBilling(defaultBilling, answers.lineBilling?.[line.service_key])
+    const calcQuantity = naturalCalcQuantity(line, cycle, answers)
+    const calcOverridden = overridden || billing.calcUnitPrice != null
     const view: EstimateLine = {
       key: line.service_key,
       name,
       line,
       bucket,
+      calcQuantity,
       billing,
-      cycleNet: net,
-      standard: line.amount,
-      overridden,
+      cycleNet: calculationPriceForDisplay(line, defaultBilling, billing, calcQuantity, net),
+      standard: calculationPriceForDisplay(line, defaultBilling, billing, calcQuantity, line.amount, false),
+      overridden: calcOverridden,
       discounted,
-      unpriced: line.unpriced && !overridden,
+      unpriced: line.unpriced && !calcOverridden,
       februaryBilled: isFebruaryBilledService(line.service_key),
       math: lineMath(line, perMonth, cycle, answers),
       perMonth,
@@ -578,11 +622,11 @@ export function billingTotalsFor(
   const totals: BillingTotals = { weekly: 0, monthly: 0, quarterly: 0, annual: 0 }
   for (const group of groups) {
     for (const view of group.lines) {
-      const unit = view.line.price_override ?? view.line.unit_price
+      const unit = view.billing.calcUnitPrice ?? view.line.price_override ?? view.line.unit_price
       if (unit == null) continue
       const period = view.billing.billingFrequency
       totals[period] = round2Billing(
-        totals[period] + billingAmountForPeriod(view.billing, unit, view.line.quantity, period, anchor),
+        totals[period] + billingAmountForPeriod(view.billing, unit, (view.billing.calcUnitPrice != null ? 1 : view.calcQuantity), period, anchor),
       )
     }
   }
@@ -671,11 +715,11 @@ export function buildBillingProjection(
     const lines: ProjectionLine[] = []
 
     for (const view of recurring) {
-      const unit = view.line.price_override ?? view.line.unit_price
+      const unit = view.billing.calcUnitPrice ?? view.line.price_override ?? view.line.unit_price
       if (unit == null) continue
       const cfg = view.billing
       const ownInvoice = cfg.ownInvoice === true
-      const qty = view.line.quantity
+      const qty = (view.billing.calcUnitPrice != null ? 1 : view.calcQuantity)
       let amount = 0
       let note: string | undefined
 

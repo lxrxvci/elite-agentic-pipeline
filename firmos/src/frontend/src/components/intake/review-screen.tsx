@@ -25,6 +25,8 @@ import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 import { ROUTINE_BUCKET_LABELS } from '@/shared/lib/routine-schedule'
 import { cn } from '@/shared/lib/utils'
 import { CustomWorkAdder } from './custom-work'
+import { EngagementAgreementDialog } from './engagement-agreement'
+import type { AcceptedEstimateSnapshot, AgreementTemplate } from '@/shared/lib/engagement'
 
 import { ConvertDialog, type StaffOption } from './convert-dialog'
 import { formatMoney } from './format'
@@ -285,6 +287,13 @@ function ReviewAccounts({
   const currentLiabilities = liabilityGroups.filter(([t]) => CURRENT_LIABILITY_TYPES.has(t))
   const longTermLiabilities = liabilityGroups.filter(([t]) => !CURRENT_LIABILITY_TYPES.has(t))
   const equityGroups = boxOf('equity')
+  const equityPlanGroups = new Map<string, string[]>()
+  for (const row of equityPlan ?? []) {
+    const separator = row.name.lastIndexOf(' - ')
+    const parent = separator > 0 ? row.name.slice(0, separator) : row.name
+    const owner = separator > 0 ? row.name.slice(separator + 3) : null
+    equityPlanGroups.set(parent, [...(equityPlanGroups.get(parent) ?? []), ...(owner ? [owner] : [])])
+  }
 
   return (
     <div className="space-y-3 px-4 py-2.5" data-testid="review-accounts">
@@ -356,11 +365,22 @@ function ReviewAccounts({
                   </div>
                 )}
                 {equityPlan && (
-                  <ul className="mt-1 space-y-1" data-testid="equity-plan">
-                    {equityPlan.map((row) => (
-                      <li key={row.name} className="flex items-baseline gap-2 text-sm" data-testid="equity-plan-row">
-                        <span className="font-medium text-foreground">{row.name}</span>
-                        <span className="text-[10px] text-muted-foreground">seeds at conversion</span>
+                  <ul className="mt-1 space-y-2" data-testid="equity-plan">
+                    {[...equityPlanGroups.entries()].map(([parent, owners]) => (
+                      <li key={parent} data-testid="equity-plan-group">
+                        <div className="flex items-baseline gap-2 text-sm">
+                          <span className="font-medium text-foreground">{parent}</span>
+                          <span className="text-[10px] text-muted-foreground">seeds at conversion</span>
+                        </div>
+                        {owners.length > 0 && (
+                          <ul className="ml-4 mt-0.5 space-y-0.5 border-l border-border/60 pl-3">
+                            {owners.map((owner) => (
+                              <li key={owner} className="text-sm text-muted-foreground" data-testid="equity-plan-row">
+                                {owner}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -460,7 +480,7 @@ function EstimateLineRow({
   const cfg = view.billing
   const effectiveMonth = cfg.billingFrequency === 'annual' ? (cfg.billMonth ?? null) : null
   const billingEditable = priceEditable && onLineBilling != null
-  const effectiveUnit = view.line.price_override ?? view.line.unit_price
+  const effectiveUnit = view.billing.calcUnitPrice ?? view.line.price_override ?? view.line.unit_price
   const now = new Date()
   const occurrenceLabel =
     effectiveUnit != null
@@ -485,7 +505,17 @@ function EstimateLineRow({
           <PriceEditControl
             serviceKey={view.key}
             name={view.name}
-            cycleLabel={lineCycleLabel(view.line, cycle)}
+            cycleLabel={view.line.price_override != null && cfg.calcUnitPrice == null
+              ? lineCycleLabel(view.line, cycle)
+              : cfg.calcFrequency === 'annual'
+                ? 'per year'
+                : cfg.calcFrequency === 'quarterly'
+                  ? 'per quarter'
+                  : cfg.calcFrequency === 'weekly'
+                    ? 'per week'
+                    : cfg.calcFrequency === 'daily'
+                      ? 'per day'
+                      : 'per month'}
             standard={view.standard}
             effective={net}
             deviates={view.overridden || view.discounted}
@@ -822,8 +852,14 @@ function EstimateSection({
 
   return (
     <div data-testid="estimate">
-      {frequencyTotals.length > 0 && (
+      {(frequencyTotals.length > 0 || estimate.oneTimeTotal > 0) && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-2.5" data-testid="billing-totals">
+          {estimate.oneTimeTotal > 0 && (
+            <span className="text-xs" data-testid="billing-total-one-time">
+              <span className="text-muted-foreground">One-time fees</span>{' '}
+              <span className="tnum font-semibold text-money-strong">{formatMoney(estimate.oneTimeTotal)}</span>
+            </span>
+          )}
           {frequencyTotals.map((t) => (
             <span key={t.key} className="text-xs" data-testid={`billing-total-${t.key}`}>
               <span className="text-muted-foreground">{t.label}</span>{' '}
@@ -1219,9 +1255,9 @@ function SectionBody({
         .map((q) => ({ q, text: q.summarize(answers) }))
         .filter((r): r is { q: QuestionDef; text: string } => r.text != null)
         .map(({ q, text }) => (
-          <div key={q.id} className="group flex items-baseline justify-between gap-4 py-2.5">
-            <dt className="shrink-0 text-xs text-muted-foreground">{q.title}</dt>
-            <dd className="flex items-baseline gap-1.5 text-right text-sm text-foreground">
+          <div key={q.id} className="group flex flex-col gap-1 py-2.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
+            <dt className="min-w-0 text-xs text-muted-foreground">{q.title}</dt>
+            <dd className="flex w-full min-w-0 items-baseline gap-1.5 break-words text-left text-sm text-foreground [&_span]:min-w-0 sm:w-auto sm:flex-1 sm:text-right">
               {/* L5 (J1, 10_06 01:07:49): the EIN masks password-style with a
                   hide/unhide toggle - "we can verify what that is." */}
               {q.id === 'tax-id' && typeof answers.taxId === 'string' && answers.taxId.trim() !== '' ? (
@@ -1232,13 +1268,15 @@ function SectionBody({
                   testid="review-ein"
                 />
               ) : (
-                <span className="whitespace-pre-line">{text}</span>
+                <ReviewValue question={q} text={text} />
               )}
               {editable && (
                 <RowEditButton
                   label={q.title}
                   testid={`edit-row-${q.id}`}
-                  onClick={() => onEdit(section.chapter.id, q.id)}
+                  onClick={() => q.id === 'has-cpa'
+                    ? onEdit(section.chapter.id, q.id, true)
+                    : onEdit(section.chapter.id, q.id)}
                 />
               )}
             </dd>
@@ -1246,6 +1284,76 @@ function SectionBody({
         ))}
     </dl>
   )
+}
+
+function ReviewList({ text, questionId }: { text: string; questionId?: string }) {
+  if (questionId === 'owners' && text.includes('\n')) {
+    return (
+      <ul className="space-y-1">
+        {text.split('\n').map((name) => (
+          <li key={name} className="flex gap-1.5"><span aria-hidden>•</span><span>{name}</span></li>
+        ))}
+      </ul>
+    )
+  }
+  if (!text.includes('\n')) return <span>{text}</span>
+  return (
+    <div className="space-y-2">
+      {text.split(/\n{2,}/).map((chunk, index) => {
+        const prose = chunk.split('\n').filter((line) => !line.trimStart().startsWith('•'))
+        const items = chunk.split('\n').filter((line) => line.trimStart().startsWith('•'))
+        return (
+          <div key={index}>
+            {prose.length > 0 && <p>{prose.join('\n')}</p>}
+            {items.length > 0 && (
+              <ul className="space-y-1">
+                {items.map((item, itemIndex) => (
+                  <li key={`${itemIndex}-${item}`} className="flex gap-1.5">
+                    <span aria-hidden>•</span>
+                    <span>{item.trimStart().replace(/^•\s*/, '')}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ServicesReviewValue({ text }: { text: string }) {
+  const [standardBlock, addonBlock] = text.split('\n\nAdd-ons:\n')
+  const standards = standardBlock.replace(/^Standards:\n/, '').split('\n').filter((line) => line.startsWith('•'))
+  const addons = (addonBlock ?? '').split('\n').filter((line) => line.startsWith('•'))
+  return (
+    <div className="min-w-0 space-y-3" data-testid="services-review">
+      <section aria-label="Standards">
+        <p className="mb-1 text-xs font-medium text-muted-foreground">Standards</p>
+        <ul className="space-y-1">
+          {standards.map((item) => (
+            <li key={item} className="flex gap-1.5"><span aria-hidden>•</span><span>{item.replace(/^•\s*/, '')}</span></li>
+          ))}
+        </ul>
+      </section>
+      {addons.length > 0 && (
+        <details data-testid="service-addons">
+          <summary className="cursor-pointer text-xs font-medium text-firm-brand-strong" data-testid="service-addons-toggle">
+            Add-ons ({addons.length})
+          </summary>
+          <ul className="mt-1.5 space-y-1">
+            {addons.map((item) => (
+              <li key={item} className="flex gap-1.5"><span aria-hidden>•</span><span>{item.replace(/^•\s*/, '')}</span></li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
+function ReviewValue({ question, text }: { question: QuestionDef; text: string }) {
+  return question.id === 'services' ? <ServicesReviewValue text={text} /> : <ReviewList text={text} questionId={question.id} />
 }
 
 // ── The section model (V2 accordion) ──────────────────────────────────────
@@ -1275,6 +1383,8 @@ export function ReviewScreen({
   onCustomWork,
   customTaskCatalog,
   onAddCustomTaskTitle,
+  acceptedEstimateSnapshot,
+  agreementTemplate,
 }: {
   intakeId: number
   answers: WizardAnswers
@@ -1301,7 +1411,10 @@ export function ReviewScreen({
   /** K3: custom task titles catalog for the type-ahead. */
   customTaskCatalog?: { id: number; name: string }[]
   onAddCustomTaskTitle?: (name: string) => void
+  acceptedEstimateSnapshot?: AcceptedEstimateSnapshot | null
+  agreementTemplate?: AgreementTemplate | null
 }) {
+  const [agreementOpen, setAgreementOpen] = useState(false)
   const [phase, setPhase] = useState<Phase>('review')
   const [duplicates, setDuplicates] = useState<DuplicateCandidate[]>([])
   const [busy, setBusy] = useState(false)
@@ -1348,7 +1461,9 @@ export function ReviewScreen({
   // V2 accordion - "It should default to all of them being open... you click
   // a check mark and it turns it green. Boom. And it closes it... when
   // you're done they're all green." Left = complete (green), right = edit.
-  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(new Set())
+  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(
+    () => new Set(answers.reviewConfirmations ?? []),
+  )
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   // D8 (01:07:50): after the first proposal send the button reads Resend.
   const [proposalSent, setProposalSent] = useState(false)
@@ -1403,6 +1518,7 @@ export function ReviewScreen({
       const next = new Set(cur)
       if (next.has(id)) next.delete(id)
       else next.add(id)
+      onCustomWork?.({ reviewConfirmations: [...next] })
       return next
     })
   // "...when you're done they're all green. And then the final estimate at
@@ -1801,6 +1917,11 @@ export function ReviewScreen({
           >
             Estimate accepted
           </span>
+          {acceptedEstimateSnapshot && agreementTemplate && (
+            <Button variant="outline" onClick={() => setAgreementOpen(true)} data-testid="preview-agreement">
+              Preview service agreement
+            </Button>
+          )}
           {canConvert ? (
             <Button variant="action" onClick={() => setConvertOpen(true)} data-testid="convert-button">
               Convert to client
@@ -1814,6 +1935,15 @@ export function ReviewScreen({
             <Link href="/intake">Back to intakes</Link>
           </Button>
         </div>
+      )}
+
+      {acceptedEstimateSnapshot && agreementTemplate && (
+        <EngagementAgreementDialog
+          open={agreementOpen}
+          onOpenChange={setAgreementOpen}
+          snapshot={acceptedEstimateSnapshot}
+          template={agreementTemplate}
+        />
       )}
 
       {canConvert && (

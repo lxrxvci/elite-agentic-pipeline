@@ -143,7 +143,8 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   // I2: the subclass folds into the tax-structure row (F1: default open)...
   await expect(page.getByText('LLC · partnership')).toBeVisible()
   // ...and the owners row shows the pair the partnership guard required.
-  await expect(page.getByText('Jason Mercado, Dana')).toBeVisible()
+  await expect(page.getByText('Jason Mercado', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Dana', { exact: true }).first()).toBeVisible()
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 })

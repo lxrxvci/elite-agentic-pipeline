@@ -21,6 +21,7 @@ const SETTINGS: AdminSettings = {
   slackEnabled: false,
   maxClockInHours: 10,
   commissionPayout: 'next_month_first',
+  engagementAgreementTemplate: '',
 }
 
 beforeEach(() => {
@@ -49,6 +50,7 @@ describe('SettingsForm', () => {
       slackEnabled: false,
       maxClockInHours: 10,
       commissionPayout: 'next_month_first',
+      engagementAgreementTemplate: '',
     })
   })
 

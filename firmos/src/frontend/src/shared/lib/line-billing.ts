@@ -37,6 +37,8 @@ export interface LineBillingConfig {
    *  flagged lines bill on their own invoice row, never bundled with the
    *  engagement's regular invoice (uniform across every billing scenario). */
   ownInvoice?: boolean
+  /** Direct price per natural calculation unit; null resets to the standard rate. */
+  calcUnitPrice?: number | null
 }
 
 /** Per-line overrides from form_data.lineBilling (service key → partial). */
@@ -123,6 +125,7 @@ export function resolveLineBilling(
     billMonth: override.billMonth !== undefined ? override.billMonth : (defaults.billMonth ?? null),
     flatMonthly: override.flatMonthly ?? (calcFrequency === 'monthly' && defaults.calcFrequency === 'weekly' ? true : defaults.flatMonthly),
     ownInvoice: override.ownInvoice ?? defaults.ownInvoice,
+    calcUnitPrice: override.calcUnitPrice !== undefined ? override.calcUnitPrice : defaults.calcUnitPrice,
   }
 }
 

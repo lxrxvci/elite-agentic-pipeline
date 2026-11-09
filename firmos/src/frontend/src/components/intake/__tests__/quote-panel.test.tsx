@@ -66,22 +66,22 @@ describe('QuotePanel direct price editing (V4)', () => {
     // with NO discount input and no negative numbers anywhere.
     const row = screen.getByText('Bank Feed Management').closest('li')!
     expect(row).toHaveTextContent('$100')
-    expect(row).toHaveTextContent('$75')
+    expect(screen.getByTestId('price-input-bank_feed_management')).toHaveValue(75)
     expect(screen.queryByTestId('discount-bank_feed_management')).toBeNull()
     expect(row.textContent).not.toMatch(/−\$|-\$/)
 
     // Open the editor: the effective price prefills.
-    fireEvent.click(screen.getByTestId('price-edit-bank_feed_management'))
+    // The input is always visible; no pencil or popup step.
     const input = screen.getByTestId('price-input-bank_feed_management')
     expect(input).toHaveValue(75)
     fireEvent.change(input, { target: { value: '80' } })
-    fireEvent.click(screen.getByTestId('price-save-bank_feed_management'))
+    fireEvent.keyDown(screen.getByTestId('price-input-bank_feed_management'), { key: 'Enter' })
     expect(onPriceChange).toHaveBeenCalledWith('bank_feed_management', 80)
 
     // Saving the standard price writes a reset (no pointless override).
-    fireEvent.click(screen.getByTestId('price-edit-bank_feed_management'))
+    // The input is always visible; no pencil or popup step.
     fireEvent.change(screen.getByTestId('price-input-bank_feed_management'), { target: { value: '100' } })
-    fireEvent.click(screen.getByTestId('price-save-bank_feed_management'))
+    fireEvent.keyDown(screen.getByTestId('price-input-bank_feed_management'), { key: 'Enter' })
     expect(onPriceChange).toHaveBeenCalledWith('bank_feed_management', null)
 
     // The reset affordance (deviating line) clears override + legacy discount.
@@ -95,9 +95,8 @@ describe('QuotePanel direct price editing (V4)', () => {
     render(<QuotePanel quote={QUOTE} loading={false} onPriceChange={onPriceChange} />)
     const row = screen.getByText('Process Payroll').closest('li')!
     expect(row).toHaveTextContent('quoted at review')
-    fireEvent.click(screen.getByTestId('price-edit-process_payroll'))
     fireEvent.change(screen.getByTestId('price-input-process_payroll'), { target: { value: '200' } })
-    fireEvent.click(screen.getByTestId('price-save-process_payroll'))
+    fireEvent.keyDown(screen.getByTestId('price-input-process_payroll'), { key: 'Enter' })
     expect(onPriceChange).toHaveBeenCalledWith('process_payroll', 200)
   })
 

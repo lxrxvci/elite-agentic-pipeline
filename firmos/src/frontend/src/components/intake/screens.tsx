@@ -1,7 +1,7 @@
 'use client'
 
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowRight, Check, Eye, EyeOff, Info, Pencil, Plus, X } from 'lucide-react'
+import { Check, Eye, EyeOff, Info, Pencil, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { NativeSelect } from '@/components/ui/native-select'
 import type { ContactLookupResults } from '@/server/contact-lookup'
+import type { ContactChannel } from '@/shared/lib/contact-channels'
 import type { IntakeAccountInput } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
 import type { MerchantProcessorRow } from '@/server/merchant-processors'
@@ -23,6 +24,7 @@ import { cn } from '@/shared/lib/utils'
 import { AccountCountScreen, inputCls, InstitutionSelect } from './account-screens'
 import { ConfirmDeleteDialog } from './confirm-delete-dialog'
 import { CustomWorkAdder } from './custom-work'
+import { CardNavigation } from './navigation'
 import { ContactPicker, type ContactPickerHit } from './contact-picker'
 import { NoteOnYesPanel } from './note-on-yes-panel'
 import { PayrollServicesScreen } from './payroll-services'
@@ -93,7 +95,7 @@ export function QuestionHero({
       )}
       <div className="flex flex-wrap items-center gap-2.5">
         <Title className="font-display text-2xl font-semibold tracking-tight text-foreground">
-          {q.title}
+          {q.dynamicTitle?.(answers) ?? q.title}
         </Title>
         {badge && (
           <span
@@ -749,10 +751,9 @@ export function ServicesScreen({
         }}
       />
 
-      <Button type="button" variant="action" onClick={() => { onCommit(addonValues); onAdvance() }} data-testid="continue">
+      <CardNavigation onClick={() => { onCommit(addonValues); onAdvance() }} data-testid="continue">
         Continue
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      </Button>
+      </CardNavigation>
     </div>
   )
 }
@@ -1506,14 +1507,11 @@ export function RepeatableScreen({
         </p>
       )}
 
-      <div className="flex items-center gap-3">
-        <Button type="button" variant="action" onClick={finish} data-testid="continue">
-          {items.length === 0 && !q.required && (validateItems?.(items) ?? null) == null
-            ? 'Skip for now'
-            : 'Continue'}
-          <ArrowRight className="h-4 w-4" aria-hidden />
-        </Button>
-      </div>
+      <CardNavigation onClick={finish} data-testid="continue">
+        {items.length === 0 && !q.required && (validateItems?.(items) ?? null) == null
+          ? 'Skip for now'
+          : 'Continue'}
+      </CardNavigation>
 
       {/* K1 (09_30 00:38:21): the unsaved-work guardrail - "Do you want to
           save this contact before moving to the next page?" Never auto-add,
@@ -1588,55 +1586,94 @@ export function RepeatableScreen({
  */
 /**
  * M5 (C2, 10_10 00:02:57): additional emails and phones beyond the primary
- * scalar - "if I have multiple businesses and I have a different email for
- * each business… am I able to add multiple emails, multiple phone numbers?"
- * Extras edit the contactEmailsExtra/contactPhonesExtra arrays in the
- * question's value; the scalar email/phone stays the primary.
+ * scalar. Each channel can now select its associated business from the client
+ * database; the scalar email/phone stays primary and legacy strings migrate.
  */
 function ChannelList({
   label,
   kind,
   values,
+  currentBusinessName,
+  contactSearch,
   testidPrefix,
   onChange,
 }: {
   label: string
   kind: 'email' | 'tel'
-  values: string[]
+  values: Array<ContactChannel | string>
+  currentBusinessName: string
+  contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
   testidPrefix: string
-  onChange: (next: string[]) => void
+  onChange: (next: ContactChannel[]) => void
 }) {
+  const channels: ContactChannel[] = values.map((value) =>
+    typeof value === 'string' ? { value, businessName: currentBusinessName || null } : value,
+  )
+  const update = (index: number, patch: Partial<ContactChannel>) =>
+    onChange(channels.map((channel, i) => (i === index ? { ...channel, ...patch } : channel)))
+
   return (
     <div>
       <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
-      <ul className="space-y-1.5">
-        {values.map((v, i) => (
-          <li key={i} className="flex items-center gap-2">
-            <input
-              aria-label={`${label} ${i + 1}`}
-              type={kind === 'tel' ? 'tel' : 'text'}
-              inputMode={kind === 'tel' ? 'tel' : undefined}
-              className={inputCls}
-              value={v}
-              data-testid={`${testidPrefix}-${i}`}
-              onChange={(e) => onChange(values.map((x, j) => (j === i ? e.target.value : x)))}
-            />
-            <button
-              type="button"
-              aria-label={`Remove ${label} ${i + 1}`}
-              data-testid={`${testidPrefix}-remove-${i}`}
-              onClick={() => onChange(values.filter((_, j) => j !== i))}
-              className="rounded p-1 text-muted-foreground transition-colors hover:text-status-overdue focus-visible:outline-2 focus-visible:outline-ring"
-            >
-              <X className="h-3.5 w-3.5" aria-hidden />
-            </button>
+      <ul className="space-y-2">
+        {channels.map((channel, i) => (
+          <li key={i} className="rounded-lg border border-border/70 p-2">
+            <div className="flex items-center gap-2">
+              <input
+                aria-label={`${label} ${i + 1}`}
+                type={kind === 'tel' ? 'tel' : 'text'}
+                inputMode={kind === 'tel' ? 'tel' : undefined}
+                className={inputCls}
+                value={channel.value}
+                data-testid={`${testidPrefix}-${i}`}
+                onChange={(e) => update(i, { value: e.target.value })}
+              />
+              <button
+                type="button"
+                aria-label={`Remove ${label} ${i + 1}`}
+                data-testid={`${testidPrefix}-remove-${i}`}
+                onClick={() => onChange(channels.filter((_, j) => j !== i))}
+                className="rounded p-1 text-muted-foreground transition-colors hover:text-status-overdue focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <ContactPicker
+                  search={(query) => contactSearch?.(query) ?? Promise.resolve(null)}
+                  includeContacts={false}
+                  includeClients
+                  onPick={(hit) => {
+                    if (hit.kind !== 'client') return
+                    update(i, { businessId: hit.id, businessName: hit.name })
+                  }}
+                  placeholder={channel.businessName ? 'Change associated business…' : 'Associate a business…'}
+                  ariaLabel={`Associated business for ${label} ${i + 1}`}
+                  testidPrefix={`${testidPrefix}-business-picker-${i}`}
+                />
+              </div>
+              {channel.businessName && (
+                <span className="inline-flex max-w-40 items-center gap-1 truncate rounded bg-accent px-2 py-1 text-[11px] text-accent-foreground" data-testid={`${testidPrefix}-business-${i}`}>
+                  <span className="truncate">{channel.businessName}</span>
+                  <button
+                    type="button"
+                    aria-label={`Clear business for ${label} ${i + 1}`}
+                    onClick={() => update(i, { businessId: null, businessName: null })}
+                    className="rounded focus-visible:outline-2 focus-visible:outline-ring"
+                  >
+                    <X className="h-3 w-3" aria-hidden />
+                  </button>
+                </span>
+              )}
+            </div>
           </li>
         ))}
       </ul>
       <button
         type="button"
         data-testid={`${testidPrefix}-add`}
-        onClick={() => onChange([...values, ''])}
+        onClick={() => onChange([...channels, { value: '', businessName: currentBusinessName || null }])}
         className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-firm-brand/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         <Plus className="h-3 w-3" aria-hidden />
@@ -1785,11 +1822,10 @@ function FieldsScreen({
           <ChannelList
             label="Other emails (optional)"
             kind="email"
-            values={Array.isArray(value.contactEmailsExtra) ? (value.contactEmailsExtra as string[]) : []}
+            values={Array.isArray(value.contactEmailsExtra) ? (value.contactEmailsExtra as Array<ContactChannel | string>) : []}
+            currentBusinessName={answers.legalName ?? ''}
+            contactSearch={contactSearch}
             testidPrefix="channel-email"
-            // M5 (C2): the extras ride `typed` like every other field (B1) -
-            // apply() strips empty rows, so without the typed overlay the
-            // freshly-added blank input would never render.
             onChange={(next) => {
               setTyped((t) => ({ ...t, contactEmailsExtra: next }))
               onApply(q.apply(answers, { ...value, contactEmailsExtra: next }))
@@ -1798,7 +1834,9 @@ function FieldsScreen({
           <ChannelList
             label="Other phones (optional)"
             kind="tel"
-            values={Array.isArray(value.contactPhonesExtra) ? (value.contactPhonesExtra as string[]) : []}
+            values={Array.isArray(value.contactPhonesExtra) ? (value.contactPhonesExtra as Array<ContactChannel | string>) : []}
+            currentBusinessName={answers.legalName ?? ''}
+            contactSearch={contactSearch}
             testidPrefix="channel-phone"
             onChange={(next) => {
               setTyped((t) => ({ ...t, contactPhonesExtra: next }))
@@ -1812,10 +1850,9 @@ function FieldsScreen({
           {error}
         </p>
       )}
-      <Button type="submit" variant="action" data-testid="continue">
+      <CardNavigation type="submit" data-testid="continue">
         {q.required || hasAny ? 'Continue' : 'Skip for now'}
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      </Button>
+      </CardNavigation>
     </form>
   )
 }
@@ -1823,10 +1860,9 @@ function FieldsScreen({
 // ── J2 (E6): yes/no + an addable string list ──────────────────────────────
 
 /**
- * `yes-no-list` questions (the pay-bills card): yes/no option cards plus,
- * when yes, an addable-rows editor of free-text entries (where bills get
- * paid). A yes pick reveals the editor in place; Continue commits. The list
- * is optional detail on a yes.
+ * `yes-no-list` questions: yes/no option cards plus an addable-rows editor.
+ * Pay-bill locations are optional; record-bill vendors are required when the
+ * card says yes. Reusable values persist through their respective option lists.
  */
 function YesNoListScreen({
   q,
@@ -1849,26 +1885,34 @@ function YesNoListScreen({
   const current = q.get(answers) as string | undefined
   const locations = (answers[cfg.listKey] as string[] | undefined) ?? []
   const [draft, setDraft] = useState('')
+  const [listError, setListError] = useState<string | null>(null)
   // L1 (H4, 10_06 00:31:41): chip removals confirm first.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
+  const optionListKey = cfg.optionListKey ?? 'bill_pay_locations'
   const commitLocations = (next: string[]) => onApply({ [cfg.listKey]: next } as Partial<WizardAnswers>)
   const addLocation = (raw?: string) => {
     const text = (raw ?? draft).trim()
     if (text === '') return
-    // K3 (DB1): every place lands on the reusable bill-pay locations list,
-    // fold-deduped locally and globally.
     const fold = text.toLowerCase()
     if (!locations.some((l) => l.toLowerCase() === fold)) {
       commitLocations([...locations, text])
     }
-    void onAddOptionListValue?.('bill_pay_locations', text)
+    void onAddOptionListValue?.(optionListKey, text)
     setDraft('')
   }
   // K3: one-tap re-use of places entered on prior intakes.
-  const quickPlaces = (optionLists?.bill_pay_locations ?? []).filter(
+  const quickPlaces = (optionLists?.[optionListKey] ?? []).filter(
     (v) => !locations.some((l) => l.toLowerCase() === v.name.toLowerCase()),
   )
+  const finish = () => {
+    if (cfg.requireItems === true && current === 'yes' && locations.length === 0) {
+      setListError('Add at least one bill or vendor before continuing.')
+      return
+    }
+    setListError(null)
+    onAdvance()
+  }
 
   return (
     <div className="space-y-4">
@@ -1948,18 +1992,18 @@ function YesNoListScreen({
           </div>
         </div>
       )}
+      {listError && <p className="text-sm font-medium text-status-overdue" role="alert">{listError}</p>}
       {current != null && (
-        <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
+        <CardNavigation onClick={finish} data-testid="continue">
           Continue
-          <ArrowRight className="h-4 w-4" aria-hidden />
-        </Button>
+        </CardNavigation>
       )}
 
       {/* L1 (H4, 10_06 00:31:41): chip removals confirm first. */}
       <ConfirmDeleteDialog
         open={pendingDelete != null}
         itemName={pendingDelete ?? ''}
-        consequence={`This removes "${pendingDelete}" from the places bills get paid.`}
+        consequence={`This removes "${pendingDelete}" from the list.`}
         confirmLabel="Remove"
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
@@ -2082,10 +2126,9 @@ export function QuestionScreen({
             onAdd={async (name) => (onAddPayrollProvider ? onAddPayrollProvider(name) : null)}
           />
           {current != null && current !== '' && (
-            <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
+            <CardNavigation onClick={onAdvance} data-testid="continue">
               Continue
-              <ArrowRight className="h-4 w-4" aria-hidden />
-            </Button>
+            </CardNavigation>
           )}
         </div>
       )
@@ -2117,7 +2160,12 @@ export function QuestionScreen({
       setRequiredError(null)
       const customText = (answers.customAnswers?.[q.id] as string | undefined)?.trim()
       if (q.optionsFromList && customText && onAddOptionListValue) {
-        await onAddOptionListValue(q.optionsFromList, customText)
+        const row = await onAddOptionListValue(q.optionsFromList, customText)
+        if (q.id === 'qbo-status' && row) {
+          const customAnswers = { ...(answers.customAnswers ?? {}) }
+          delete customAnswers[q.id]
+          onApply({ ...q.apply(answers, row.name), customAnswers })
+        }
       }
       onAdvance()
     }
@@ -2166,12 +2214,13 @@ export function QuestionScreen({
             the pre-answered corporate payroll card (I2) and any screen
             revisited via Back would otherwise dead-end (live-verified
             2026-09: the wizard stalled here with no affordance). */}
-        {(otherOpen || current != null) && (
-          <Button type="button" variant="action" onClick={() => void persistCustomThenAdvance()} data-testid="continue">
-            Continue
-            <ArrowRight className="h-4 w-4" aria-hidden />
-          </Button>
-        )}
+        <CardNavigation
+          onClick={() => void persistCustomThenAdvance()}
+          disabled={!otherOpen && current == null}
+          data-testid="continue"
+        >
+          Continue
+        </CardNavigation>
       </div>
     )
   }
@@ -2219,9 +2268,13 @@ export function QuestionScreen({
     const values = (q.get(answers) as string[]) ?? []
     const toggle = (v: string) =>
       onApply(q.apply(answers, values.includes(v) ? values.filter((x) => x !== v) : [...values, v]))
+    const followupVisible = q.followup != null &&
+      q.followup.keys.some((key) => values.includes(key)) &&
+      (q.followup.when?.(answers) ?? true)
+    const followupNeedsAnswer = followupVisible && q.followup!.valueKind === 'boolean' && answers[q.followup!.key] == null
     // J2 (P1): a required multi never skips silently - Continue stays
     // clickable and an empty attempt explains itself (payroll handling).
-    const canContinue = values.length > 0 || !q.required
+    const canContinue = (values.length > 0 || !q.required) && !followupNeedsAnswer
     // K3 (DB1/J1): chips from the list plus an add-new chip that persists
     // and selects in one tap.
     const options = mergeListOptions(q.options ?? [], q.optionsFromList, optionLists)
@@ -2240,7 +2293,7 @@ export function QuestionScreen({
         <MultiChips options={options} values={values} onToggle={toggle} />
         {/* K5 (D1): an inline follow-up revealed by the current picks (the
             1099 estimate count rides the 1099 card - 09_30 00:35:49). */}
-        {q.followup && q.followup.keys.some((k) => values.includes(k)) && (
+        {followupVisible && q.followup && (
           <div className="rounded-lg border border-border bg-muted/40 px-3.5 py-3" data-testid="followup">
             <label
               htmlFor={`followup-${q.followup.key}`}
@@ -2249,7 +2302,6 @@ export function QuestionScreen({
               {q.followup.label}
             </label>
             {q.followup.numeric ? (
-              // L1 (E1, 10_06 00:24:06): free numeric entry, digits only.
               <input
                 id={`followup-${q.followup.key}`}
                 data-testid={`followup-input-${q.followup.key}`}
@@ -2267,13 +2319,19 @@ export function QuestionScreen({
                 id={`followup-${q.followup.key}`}
                 data-testid={`followup-select-${q.followup.key}`}
                 className="h-10"
-                value={String(answers[q.followup.key] ?? '')}
+                value={q.followup.valueKind === 'boolean'
+                  ? answers[q.followup.key] === true ? 'yes' : answers[q.followup.key] === false ? 'no' : ''
+                  : String(answers[q.followup.key] ?? '')}
                 onChange={(e) => {
                   const raw = e.target.value
-                  onApply({ [q.followup!.key]: raw === '' ? null : Number(raw) } as Partial<WizardAnswers>)
+                  onApply({
+                    [q.followup!.key]: q.followup!.valueKind === 'boolean'
+                      ? raw === '' ? null : raw === 'yes'
+                      : raw === '' ? null : Number(raw),
+                  } as Partial<WizardAnswers>)
                 }}
               >
-                <option value="">Estimate…</option>
+                <option value="">{q.followup.valueKind === 'boolean' ? 'Choose…' : 'Estimate…'}</option>
                 {(q.followup.options ?? []).map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
@@ -2331,12 +2389,10 @@ export function QuestionScreen({
             {requiredError}
           </p>
         )}
-        <Button
-          type="button"
-          variant="action"
+        <CardNavigation
           onClick={() => {
             if (!canContinue) {
-              setRequiredError('Pick at least one before continuing.')
+              setRequiredError(followupNeedsAnswer ? 'Answer the follow-up question before continuing.' : 'Pick at least one before continuing.')
               return
             }
             setRequiredError(null)
@@ -2345,8 +2401,7 @@ export function QuestionScreen({
           data-testid="continue"
         >
           {values.length === 0 && !q.required ? 'Skip for now' : 'Continue'}
-          <ArrowRight className="h-4 w-4" aria-hidden />
-        </Button>
+        </CardNavigation>
       </div>
     )
   }
@@ -2362,10 +2417,9 @@ export function QuestionScreen({
     return (
       <div className="space-y-4">
         <ChecklistCards options={options} values={values} onToggle={toggle} />
-        <Button type="button" variant="action" onClick={onAdvance} data-testid="continue">
+        <CardNavigation onClick={onAdvance} data-testid="continue">
           Continue
-          <ArrowRight className="h-4 w-4" aria-hidden />
-        </Button>
+        </CardNavigation>
       </div>
     )
   }

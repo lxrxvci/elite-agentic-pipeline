@@ -66,7 +66,6 @@ vi.mock('@/server/actions/contacts', () => ({
 
 describe('M1/B2: card_pick_never_hides_merchants (10_10 00:40:20)', () => {
   const merchants = findQuestion('income', 'merchants')!
-  const merchantRecon = findQuestion('income', 'merchant-recon')!
   const paymentMethods = findQuestion('income', 'payment-methods')!
 
   it('the fold maps keys and labels to canonical keys; customs pass through', () => {
@@ -98,7 +97,7 @@ describe('M1/B2: card_pick_never_hides_merchants (10_10 00:40:20)', () => {
       merchantAccounts: [{ name: 'Square', processor: 'Square' }],
     } as unknown as WizardAnswers
     expect(merchants.when?.(legacy)).toBe(true)
-    expect(merchantRecon.when?.(legacy)).toBe(true)
+    expect(merchants.merchantReconcile).toBe(true)
   })
 
   it('online payments qualify too (folded), Zelle never does', () => {
@@ -243,7 +242,7 @@ describe('M1/B3: online_access_checks_never_clobber', () => {
  */
 describe('M1/B3 (flow repro): six_entered_accounts_all_reach_online_access', () => {
   it('2 checking + 2 cards + 2 loans entered via the mini-forms all list', async () => {
-    const { render, fireEvent, screen, act } = await import('@testing-library/react')
+    const { render, fireEvent, screen, act, waitFor } = await import('@testing-library/react')
     const { IntakeWizard } = await import('../wizard')
     const { flattenScreens } = await import('../registry')
 
@@ -271,6 +270,7 @@ describe('M1/B3 (flow repro): six_entered_accounts_all_reach_online_access', () 
       fireEvent.click(qs().getByTestId(`bank-select-${bankIdx}`))
       fireEvent.click(qs().getByTestId('bank-option-1'))
       fireEvent.change(qs().getByTestId(`last4-${bankIdx}`), { target: { value: last4 } })
+      fireEvent.click(qs().getByTestId(`grant-access-${bankIdx}`))
     }
     const advance = () => fireEvent.click(qs().getByTestId('continue'))
 
@@ -291,25 +291,31 @@ describe('M1/B3 (flow repro): six_entered_accounts_all_reach_online_access', () 
     fireEvent.change(qs().getByLabelText('Loan name 1'), { target: { value: 'Delivery van loan' } })
     fireEvent.click(qs().getByTestId('add-account'))
     fireEvent.change(qs().getByLabelText('Loan name 2'), { target: { value: 'SBA loan' } })
+    fireEvent.click(qs().getByTestId('grant-access-0'))
+    fireEvent.click(qs().getByTestId('grant-access-1'))
     advance()
-    // Equity setup is answered (grouped); the access question comes after income.
-    const onlineAccess = () => screen.getByTestId('question-screen').getAttribute('data-question')
+    // Online access is now a review-only section, not a wizard checkpoint.
+    const currentScreen = () => screen.queryByTestId('question-screen')?.getAttribute('data-question') ?? 'unknown'
+    const inReview = () => screen.queryByTestId('review-screen') != null
     let guard = 0
-    while (onlineAccess() !== 'online-access' && guard < 20) {
-      // Required selects block Continue until picked - answer no/skip.
-      const noPick = qs().queryByTestId('option-no')
-      if (noPick && qs().queryByTestId('continue') == null) {
-        fireEvent.click(noPick)
-      } else if (noPick && onlineAccess() !== 'equity-setup') {
-        // Select screens with a continue: still answer no to keep the path lean.
-        fireEvent.click(noPick)
+    while (!inReview() && guard < 40) {
+      const next = qs().queryByTestId('continue') as HTMLButtonElement | null
+      if (next == null || next.disabled) {
+        const noPick = qs().queryByTestId('option-no')
+        if (noPick) fireEvent.click(noPick)
+        else {
+          const firstOption = qs().queryAllByRole('option')[0]
+          if (firstOption) fireEvent.click(firstOption)
+        }
       }
       advance()
       guard += 1
     }
-    expect(onlineAccess()).toBe('online-access')
-    const options = qs().getAllByRole('checkbox').length
-    expect(options).toBe(6)
+    expect(inReview()).toBe(true)
+    await waitFor(() => expect(screen.getByTestId('review-section-access')).toBeInTheDocument(), { timeout: 3000 })
+    for (const name of ['Chase Checking · 4411', 'Chase Checking · 2200', 'Chase Credit card · 7007', 'Chase Credit card · 3310', 'Delivery van loan', 'SBA loan']) {
+      expect(screen.getByTestId('review-section-access')).toHaveTextContent(name)
+    }
   }, 20_000)
 })
 

@@ -115,7 +115,7 @@ export function TopBar() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 flex h-12 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur">
+      <header className="sticky top-0 z-40 flex h-12 items-center gap-3 border-b border-border bg-background/80 px-2 backdrop-blur sm:px-4">
         <SearchTrigger onOpen={() => setCommandOpen(true)} />
         <div className="ml-auto flex items-center gap-1">
           <QuickAddMenu dialog={quickAddDialog} onDialogChange={setQuickAddDialog} />

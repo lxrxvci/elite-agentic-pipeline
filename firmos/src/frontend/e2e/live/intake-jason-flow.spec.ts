@@ -9,8 +9,7 @@ import { dismissIdlePrompts, live as test, expect, liveName } from './helpers'
  *  - S Corp pre-answered payroll with a locked "No" + required provider (I2)
  *  - the Consulting engagement option exists (I1)
  *  - the QBO "Other - type it" card exists (I1)
- *  - the quote rail stays HIDDEN through the wizard and reveals at review
- *    (I4 - the client may be watching on the intake call)
+ *  - no live-estimate rail exists; the final estimate appears on review
  *  - account count stepper -> bank + masked last-4 mini-form (J1/D1: the
  *    nickname is gone; the label derives bank -> type -> last4), seeded
  *    institution dropdown, and an inline add-new-bank that lands selected (I3)
@@ -45,7 +44,7 @@ async function advance(page: Page, nextQuestion: string) {
   await expectQuestion(page, nextQuestion)
 }
 
-test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank add, review reveal, purgatory', async ({
+test('intake (Jason flow): S Corp payroll logic, inline bank add, final estimate, purgatory', async ({
   page,
 }) => {
   test.setTimeout(240_000)
@@ -112,6 +111,7 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   await page.getByTestId('bank-add-submit').click()
   await expect(page.getByTestId('bank-select-0')).toContainText(bankName, { timeout: 15_000 })
   await page.getByTestId('last4-0').fill('4411')
+  await page.getByTestId('grant-access-0').check()
   // D2: the derived bank -> type -> last4 label shows on the mini-form.
   await expect(page.getByTestId('account-label-0')).toHaveText(`${bankName} Checking · 4411`)
   await advance(page, 'savings-accounts')
@@ -144,17 +144,12 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   await page.getByTestId('provider-select-0').click()
   await page.getByRole('option', { name: 'Gusto' }).click()
   await advance(page, 'payroll-frequency')
-  await pick(page, 'option-monthly', 'payroll-services')
+  await pick(page, 'option-monthly', 'payroll-pay-dates')
+  await page.getByLabel('First pay date of the month').fill('15')
+  await advance(page, 'payroll-services')
   // ── J2 (P1): payroll handling is mandatory - L2 (D1): TWO core picks in a
   // vertical stack; "they process their own payroll" (Gusto) is one. ──
   await page.getByTestId('payroll-core-self_processed').click()
-  await advance(page, 'online-access')
-
-  // ── Online access (I3 + D2): the checklist label is bank -> type -> last4 ──
-  await expect(page.getByTestId('check-checkingAccounts:0')).toContainText(
-    `${bankName} Checking · 4411`,
-  )
-  await page.getByTestId('check-checkingAccounts:0').click()
   await advance(page, 'bk-frequency')
 
   // ── Reporting: monthly, close by the 10th, cash basis; N1: the
@@ -175,7 +170,7 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   await expect(page.getByTestId('addon-invoicing')).toHaveAttribute('aria-pressed', 'true')
 
   // ── I4: the quote rail is HIDDEN mid-wizard (the client may be watching) ──
-  await expect(page.getByTestId('quote-hidden')).toBeVisible()
+  await expect(page.getByTestId('quote-hidden')).toHaveCount(0)
   await expect(page.getByTestId('live-quote')).toHaveCount(0)
   await expect(page.getByTestId('quote-amount')).toHaveCount(0)
 
@@ -198,12 +193,12 @@ test('intake (Jason flow): S Corp payroll logic, hidden quote rail, inline bank 
   // ── Review (J4): the quote REVEALS here (no peek); K6 (F1): every section
   // starts OPEN - read rows without toggling. ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
-  await expect(page.getByTestId('live-quote')).toHaveAttribute('data-revealed', 'true')
+  await expect(page.getByTestId('live-quote')).toHaveCount(0)
   await expect(page.getByTestId('review-quote')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByTestId('quote-total')).toContainText(/\$\d/)
   await expect(page.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'true')
-  // The services row reads "The 3 standards + ..." (the section starts open).
-  await expect(page.getByText('The 3 standards + Invoicing')).toBeVisible()
+  await page.getByTestId('service-addons-toggle').click()
+  await expect(page.getByText('Invoicing — Selected in Services')).toBeVisible()
   // The S Corp payroll answer reads with its legal why (income section).
   await expect(page.getByText('Yes · officers must be on payroll')).toBeVisible()
 

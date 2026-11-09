@@ -278,8 +278,6 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await expect(question).toHaveAttribute('data-question', 'payroll')
   await page.getByTestId('option-no').click()
   await page.getByTestId('continue').click()
-  await expect(question).toHaveAttribute('data-question', 'online-access')
-  await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'bk-frequency')
   await page.getByTestId('option-monthly').click()
   await page.getByTestId('continue').click()
@@ -420,4 +418,25 @@ test('portal home has no serious/critical axe violations', async ({ page, contex
   }
   await expect(page.getByRole('heading', { name: 'Waiting on you' })).toBeVisible()
   await expectAccessible(page, 'portal home')
+})
+
+
+test('staff shell fits the phone viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/intake/8')
+  await expect(page.getByTestId('review-screen')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await expect(page.getByRole('button', { name: 'Search or jump to…' })).toBeVisible()
+  const dateValue = page.getByText('Jan 1, 2026', { exact: true })
+  await expect(dateValue).toBeVisible()
+  expect((await dateValue.boundingBox())?.width).toBeGreaterThan(60)
+
+  await page.goto('/workstation')
+  await expect(page.getByRole('heading', { name: 'Workstation' })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await expect(page.getByTestId('start-my-day')).toBeVisible()
+  await expect(page.getByTestId('complete-next')).toBeVisible()
+  const taskTitle = page.locator('[data-testid="work-card"] .truncate').first()
+  await expect(taskTitle).toBeVisible()
+  expect((await taskTitle.boundingBox())?.width).toBeGreaterThan(60)
 })

@@ -48,6 +48,9 @@ export interface IntakeContactInput {
    *  ("different email for each business"). */
   emails?: string[];
   phones?: string[];
+  /** Business associations for additional channels; legacy string arrays remain supported. */
+  emailChannels?: import("@/shared/lib/contact-channels").ContactChannel[];
+  phoneChannels?: import("@/shared/lib/contact-channels").ContactChannel[];
   /** Exactly one primary contact becomes the client's primary_contact. */
   isPrimary?: boolean;
   /** K8 (B4): any contact_roles label ("Office manager") or a legacy enum
@@ -146,6 +149,8 @@ export interface IntakeReportDefinition {
   frequency: string;
   /** Where the data comes from (portal, QBO, the client's bookkeeper, ...). */
   dataSource?: string | null;
+  /** Persistent report-specific details carried into review and recurring work. */
+  notes?: string | null;
   estimatedHours?: number | null;
   /** Flat price per report; wins over estimatedHours x rate when present. */
   flatPrice?: number | null;
@@ -318,6 +323,8 @@ export interface IntakeFormData {
   /** A45 (00:34:18): "When was the business established?" - form_data only
    *  (clients carry no established-date column); informs nothing downstream. */
   businessEstablishedDate?: string | null;
+  /** Optional filing period/date; distinct from the bookkeeping start date. */
+  lastTaxFiledDate?: string | null;
   // Step 3 - balance sheet
   /**
    * I3: the canonical flattened account list, written by buildPatch from
@@ -347,6 +354,10 @@ export interface IntakeFormData {
   merchantAccounts?: IntakeMerchantAccountInput[];
   paymentMethods?: string[];
   payrollFrequency?: "weekly" | "biweekly" | "semi_monthly" | "monthly";
+  /** Weekly/biweekly pay weekday (0 Sunday through 6 Saturday). */
+  payrollPayWeekday?: number | null;
+  /** One monthly pay day or two semi-monthly pay days, each 1-31. */
+  payrollPayDates?: number[];
   /** B18: "personal credit card used for business" - yes/sometimes both land
    *  here as true; conversion seeds the monthly breakdown reminder task. */
   personalCardForBusiness?: boolean;
@@ -398,6 +409,8 @@ export interface IntakeFormData {
   retroBillingFrequency?: 'monthly' | 'quarterly' | 'annual' | null;
   payBills?: boolean;
   billPayLocations?: string[];
+  /** Specific bills/vendors to record; distinct from where bills are paid. */
+  recordBillVendors?: string[];
   /** J2 (meeting #3, R6): send reports before the client's open questions
    *  are answered; conversion notes it on the seeded Send Reports rule. */
   sendPreliminaryReports?: boolean;
@@ -418,6 +431,8 @@ export interface IntakeFormData {
   routineSchedule?: RoutineSchedule;
   /** Running-notes rail entries; ride form_data so autosave preserves them. */
   runningNotes?: IntakeRunningNote[];
+  /** Confirmed review chapters; persisted so leaving and returning never loses review progress. */
+  reviewConfirmations?: string[];
   // Billing modifiers carried through conversion (§6.5)
   monthlyRecurringAmount?: string | number | null;
   baseMonthlyAmount?: string | number | null;
@@ -670,9 +685,11 @@ export async function submitIntakeForReview(intakeId: number): Promise<IntakeRow
 export async function markIntakeAccepted(intakeId: number): Promise<IntakeRow> {
   const existing = await getIntake(intakeId);
   assertIntakeTransition(existing.status, "accepted");
+  const { buildAcceptedEstimateSnapshot } = await import("./engagement");
+  const snapshot = await buildAcceptedEstimateSnapshot(existing);
   const [row] = await db
     .update(clientIntakes)
-    .set({ status: "accepted", updatedAt: new Date() })
+    .set({ status: "accepted", acceptedEstimateSnapshot: snapshot, updatedAt: new Date() })
     .where(eq(clientIntakes.id, intakeId))
     .returning();
   return row;

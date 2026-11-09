@@ -61,6 +61,7 @@ export function SettingsForm({ settings }: SettingsFormProps) {
   const [slackEnabled, setSlackEnabled] = React.useState(settings.slackEnabled)
   const [maxHours, setMaxHours] = React.useState(String(settings.maxClockInHours))
   const [payout, setPayout] = React.useState<PayoutConfig>(settings.commissionPayout)
+  const [agreementTemplate, setAgreementTemplate] = React.useState(settings.engagementAgreementTemplate)
   const [saving, setSaving] = React.useState(false)
 
   const dirty =
@@ -70,7 +71,8 @@ export function SettingsForm({ settings }: SettingsFormProps) {
     celebrationsEnabled !== settings.celebrationsEnabled ||
     slackEnabled !== settings.slackEnabled ||
     maxHours !== String(settings.maxClockInHours) ||
-    payout !== settings.commissionPayout
+    payout !== settings.commissionPayout ||
+    agreementTemplate !== settings.engagementAgreementTemplate
 
   async function save() {
     setSaving(true)
@@ -83,6 +85,7 @@ export function SettingsForm({ settings }: SettingsFormProps) {
         slackEnabled,
         maxClockInHours: Number(maxHours),
         commissionPayout: payout,
+        engagementAgreementTemplate: agreementTemplate,
       })
       if (!res.ok) {
         toast.error(res.error)
@@ -223,6 +226,23 @@ export function SettingsForm({ settings }: SettingsFormProps) {
               ))}
             </SelectContent>
           </Select>
+        </div>
+      </Section>
+
+      <Section
+        title="Client engagement agreement"
+        description="Optional firm-approved agreement text used only for human-review preview and download. Leave empty to disable agreement generation."
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="agreement-template">Agreement template</Label>
+          <textarea
+            id="agreement-template"
+            value={agreementTemplate}
+            onChange={(e) => setAgreementTemplate(e.target.value)}
+            placeholder="Paste the firm-approved engagement, confidentiality, and data-handling language here. Merge tokens: {{clientName}}, {{firmName}}, {{acceptedAt}}, {{monthlyRecurring}}, {{oneTimeTotal}}, {{estimateSummary}}"
+            className="min-h-36 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring"
+          />
+          <p className="text-xs text-muted-foreground">No legal template is supplied by FirmOS. Have the firm or counsel approve the text before using it.</p>
         </div>
       </Section>
 

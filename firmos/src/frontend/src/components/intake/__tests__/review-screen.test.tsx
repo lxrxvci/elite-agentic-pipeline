@@ -5,6 +5,7 @@ import type { Quote } from '@firmos/domain'
 import { ReviewScreen } from '../review-screen'
 import { deriveRoutineTasks, type WizardAnswers } from '../registry'
 import { averageMonthlyStars } from '../routine-calendar'
+import type { AcceptedEstimateSnapshot, AgreementTemplate } from '@/shared/lib/engagement'
 
 /**
  * J4 review & pricing rebuild (meeting #3, V1-V7, 00:58:28-01:06:58):
@@ -134,14 +135,20 @@ function renderReview({
   onEdit = () => {},
   onPriceChange,
   onLineBilling,
+  onCustomWork,
+  acceptedEstimateSnapshot,
+  agreementTemplate,
 }: {
   answers?: WizardAnswers
   quote?: Quote | null
   status?: 'draft' | 'pending_review' | 'accepted' | 'completed' | 'archived'
   canConvert?: boolean
-  onEdit?: (chapterId: string, questionId: string) => void
+  onEdit?: (chapterId: string, questionId: string, walk?: boolean) => void
   onPriceChange?: (serviceKey: string, dollars: number | null) => void
   onLineBilling?: (serviceKey: string, patch: Partial<import('@/shared/lib/line-billing').LineBillingConfig>) => void
+  onCustomWork?: (patch: Partial<WizardAnswers>) => void
+  acceptedEstimateSnapshot?: AcceptedEstimateSnapshot
+  agreementTemplate?: AgreementTemplate
 } = {}) {
   return render(
     <ReviewScreen
@@ -156,6 +163,9 @@ function renderReview({
       onEdit={onEdit}
       onPriceChange={onPriceChange}
       onLineBilling={onLineBilling}
+      onCustomWork={onCustomWork}
+      acceptedEstimateSnapshot={acceptedEstimateSnapshot}
+      agreementTemplate={agreementTemplate}
     />,
   )
 }
@@ -191,6 +201,18 @@ describe('sections_default_open_confirm_greens_and_collapses (K6, F1 - 09_30 01:
     fireEvent.click(screen.getByTestId('section-confirm-contact'))
     expect(screen.getByText('Wren Okafor')).toBeInTheDocument()
     expect(screen.getByTestId('review-section-contact')).not.toHaveAttribute('data-confirmed')
+  })
+
+  it('oct28_review_confirmations_survive_remount', () => {
+    const onCustomWork = vi.fn()
+    const { unmount } = renderReview({ answers, quote: null, onCustomWork })
+    fireEvent.click(screen.getByTestId('section-confirm-contact'))
+    expect(onCustomWork).toHaveBeenCalledWith({ reviewConfirmations: ['contact'] })
+    unmount()
+
+    renderReview({ answers: { ...answers, reviewConfirmations: ['contact'] }, quote: null })
+    expect(screen.getByTestId('review-section-contact')).toHaveAttribute('data-confirmed', 'true')
+    expect(screen.getByTestId('section-confirm-contact')).toHaveAttribute('aria-checked', 'true')
   })
 
   it('the estimate greens itself when every chapter is confirmed', () => {
@@ -248,6 +270,17 @@ describe('V1 edit affordances feed the overlay (never navigation)', () => {
     expect(onEdit).toHaveBeenCalledTimes(3)
   })
 
+  it('oct28_cpa_row_edit_starts_the_dependent_cpa_walk', () => {
+    const onEdit = vi.fn()
+    renderReview({
+      answers: { legalName: 'CPA Co', engagementType: 'bookkeeping', hasCpa: true, cpaName: 'CPA Group' },
+      quote: null,
+      onEdit,
+    })
+    fireEvent.click(screen.getByTestId('edit-row-has-cpa'))
+    expect(onEdit).toHaveBeenCalledWith('entity', 'has-cpa', true)
+  })
+
   it('no edit affordances for read-only reviewers', () => {
     renderReview({
       answers: { legalName: 'Read Only Co', engagementType: 'bookkeeping', contacts: [{ firstName: 'Wren', isPrimary: true }], taxStructure: 'LLC', llcSubclass: 'llc_sml', hasCpa: false },
@@ -259,16 +292,37 @@ describe('V1 edit affordances feed the overlay (never navigation)', () => {
   })
 })
 
+describe('October 28 sourced service add-ons', () => {
+  it('shows standards and a collapsed, deduplicated add-on list with its source reason', () => {
+    renderReview({
+      answers: {
+        legalName: 'Services Co',
+        engagementType: 'bookkeeping',
+        serviceKeys: ['bank_feed_management', 'account_reconciliations', 'invoicing', 'invoicing'],
+      },
+    })
+    const addons = screen.getByTestId('service-addons')
+    expect(addons).not.toHaveAttribute('open')
+    expect(screen.getByTestId('services-review')).toHaveTextContent('Standards')
+    fireEvent.click(screen.getByTestId('service-addons-toggle'))
+    expect(addons).toHaveAttribute('open')
+    expect(addons).toHaveTextContent('Add-ons (1)')
+    expect(within(addons).getAllByText('Invoicing — Selected in Services')).toHaveLength(1)
+  })
+})
+
 describe('price_edit_replaces_discount_flow (V4)', () => {
   it('legacy discounted lines show the standard struck through and the net - never a negative number', () => {
     renderReview({ onPriceChange: () => {} })
     expandSection('quote')
     const row = screen.getByText('Bank Feed Management').closest('li')!
     expect(row).toHaveTextContent('$100') // standard struck
-    expect(row).toHaveTextContent('$75') // discounted net
-    // No discount input, no "-$x/cycle" chip, no negative numbers.
+    expect(screen.getByTestId('price-input-bank_feed_management')).toHaveValue(75)
+    // No discount input, no pencil, no popup save step.
     expect(screen.queryByTestId('review-discount-bank_feed_management')).toBeNull()
     expect(screen.queryByTestId('discount-bank_feed_management')).toBeNull()
+    expect(screen.queryByTestId('price-edit-bank_feed_management')).toBeNull()
+    expect(screen.queryByTestId('price-save-bank_feed_management')).toBeNull()
     expect(row.textContent).not.toMatch(/−\$|-\$/)
   })
 
@@ -276,11 +330,10 @@ describe('price_edit_replaces_discount_flow (V4)', () => {
     const onPriceChange = vi.fn()
     renderReview({ onPriceChange })
     expandSection('quote')
-    fireEvent.click(screen.getByTestId('price-edit-bank_feed_management'))
     const input = screen.getByTestId('price-input-bank_feed_management')
     expect(input).toHaveValue(75) // the effective (discounted) price prefills
     fireEvent.change(input, { target: { value: '90' } })
-    fireEvent.click(screen.getByTestId('price-save-bank_feed_management'))
+    fireEvent.keyDown(input, { key: 'Enter' })
     expect(onPriceChange).toHaveBeenCalledWith('bank_feed_management', 90)
   })
 
@@ -295,7 +348,7 @@ describe('price_edit_replaces_discount_flow (V4)', () => {
     expandSection('quote')
     const row = screen.getByText('Bank Feed Management').closest('li')!
     expect(row).toHaveTextContent('$100')
-    expect(screen.getByTestId('price-value-bank_feed_management')).toHaveTextContent('$60')
+    expect(screen.getByTestId('price-input-bank_feed_management')).toHaveValue(60)
     // The reset affordance clears override + legacy discount in one call.
     fireEvent.click(screen.getByTestId('price-reset-bank_feed_management'))
   })
@@ -645,6 +698,31 @@ describe('day_commitment_blocked_before_acceptance (L6/I3)', () => {
     expect(screen.queryByTestId('accept-estimate')).toBeNull()
   })
 
+  it('previews the supplied agreement from the accepted snapshot without sending it', async () => {
+    const user = (await import('@testing-library/user-event')).default.setup()
+    renderReview({
+      status: 'accepted',
+      canConvert: true,
+      acceptedEstimateSnapshot: {
+        version: 1,
+        acceptedAt: '2026-10-28T23:00:00.000Z',
+        answers: { legalName: 'Agreement Co', engagementType: 'bookkeeping' },
+        quote: DISCOUNT_QUOTE,
+      },
+      agreementTemplate: {
+        firmName: 'Blue Ledger Books',
+        body: 'Approved agreement for {{clientName}} with {{firmName}}.',
+      },
+    })
+    await user.click(screen.getByTestId('preview-agreement'))
+    expect(await screen.findByTestId('engagement-agreement-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('engagement-agreement-body')).toHaveTextContent(
+      'Approved agreement for Agreement Co with Blue Ledger Books.',
+    )
+    expect(screen.getByTestId('download-agreement')).toBeInTheDocument()
+    expect(screen.queryByTestId('send-agreement')).not.toBeInTheDocument()
+  })
+
   it('non-managers see neither gate control', () => {
     renderReview({ status: 'pending_review', canConvert: false, quote: DISCOUNT_QUOTE })
     expect(screen.queryByTestId('accept-estimate')).toBeNull()
@@ -682,7 +760,7 @@ describe('ReviewScreen I1 answer rendering', () => {
     expandSection('entity')
     expect(screen.getByText('Series LLC taxed as a trust')).toBeInTheDocument()
     // The CPA card folds name into the yes/no row (J1/C4: linked-vs-new state).
-    expect(screen.getByText('Yes · Cascade Tax Group · new record')).toBeInTheDocument()
+    expect(screen.getByText('Yes · Cascade Tax Group · new contact')).toBeInTheDocument()
     // Referral folds in who to thank.
     expect(screen.getByText('CPA referral · Carlos at Cascade')).toBeInTheDocument()
     // The text-entry date renders as a real date label…
@@ -947,11 +1025,11 @@ describe('I3 review: accounts grouped by type with institution + proof badges', 
     expect(screen.queryByText('Balance sheet')).toBeNull()
   })
 
-  it('the online-access row counts the checked accounts', () => {
+  it('online access lists each account tagged for access', () => {
     renderAccounts(accountsAnswers)
     expandSection('access')
-    // 3 statement-proof accounts (checking, card, the vehicle loan); 1 checked.
-    expect(screen.getByText('1 of 3 with online access')).toBeInTheDocument()
+    expect(screen.getByText('• Chase Checking · 4411')).toBeInTheDocument()
+    expect(screen.queryByText('1 of 3 with online access')).toBeNull()
   })
 })
 

@@ -81,6 +81,7 @@ export type ExtractionFieldKind =
   | 'string'
   | 'boolean'
   | 'number'
+  | 'numberList'
   | 'enum'
   | 'enumList'
   /** J2 (E6): a free-text string list (bill-pay locations) - no closed enum. */
@@ -179,6 +180,7 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'bankFeedCatchupDate', label: 'Bank-feed catch-up date', chapter: 'starting', kind: 'string' },
   // A45: the established date rides extraction too (form_data only).
   { key: 'businessEstablishedDate', label: 'Business established date', chapter: 'starting', kind: 'string' },
+  { key: 'lastTaxFiledDate', label: 'Taxes last filed', chapter: 'starting', kind: 'string' },
   // balance
   { key: 'accounts', label: 'Accounts', chapter: 'balance', kind: 'accounts' },
   // real-estate
@@ -208,6 +210,8 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   // wizard's dropdown resolves it against payroll_providers on review.
   { key: 'payrollProvider', label: 'Payroll provider', chapter: 'income', kind: 'string' },
   { key: 'payrollFrequency', label: 'Payroll frequency', chapter: 'income', kind: 'enum', options: ['weekly', 'biweekly', 'semi_monthly', 'monthly'] },
+  { key: 'payrollPayWeekday', label: 'Payroll pay weekday', chapter: 'income', kind: 'number', min: 0, max: 6 },
+  { key: 'payrollPayDates', label: 'Payroll pay dates', chapter: 'income', kind: 'numberList', min: 1, max: 31 },
   // J2 (P1): the "they process their own payroll" pick (context, not a
   // billable service - it never enters serviceKeys).
   { key: 'payrollSelfProcessed', label: 'They process their own payroll', chapter: 'income', kind: 'boolean' },
@@ -221,6 +225,7 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'recordBills', label: 'Record bills', chapter: 'reporting', kind: 'boolean' },
   { key: 'payBills', label: 'Pay bills', chapter: 'reporting', kind: 'boolean' },
   { key: 'billPayLocations', label: 'Bill pay locations', chapter: 'reporting', kind: 'stringList' },
+  { key: 'recordBillVendors', label: 'Bills and vendors to record', chapter: 'reporting', kind: 'stringList' },
   { key: 'estimated1099Count', label: 'Estimated 1099 filings', chapter: 'reporting', kind: 'number', min: 0, max: 999 },
   { key: 'reportDefinitions', label: 'Special reports', chapter: 'reporting', kind: 'reports' },
   // J2 (R6): the preliminary-reports toggle rides extraction too.
@@ -512,6 +517,21 @@ function coerceValue(
         ? { ok: false, reason: `value ${JSON.stringify(raw)} is not one of ${(spec.options ?? []).join(', ')}` }
         : { ok: true, value: v }
     }
+    case 'numberList': {
+      const list = asList(raw)
+      if (!list) return { ok: false, reason: 'not a list' }
+      const kept: number[] = []
+      for (const entry of list) {
+        const n = asNumber(entry)
+        if (n == null || (spec.min != null && n < spec.min) || (spec.max != null && n > spec.max)) {
+          rejected.push({ key: spec.key, reason: `dropped invalid entry ${JSON.stringify(entry)}`, value: JSON.stringify(entry) })
+        } else if (!kept.includes(n)) {
+          kept.push(n)
+        }
+      }
+      if (kept.length === 0) return { ok: false, reason: 'no valid entries' }
+      return { ok: true, value: kept }
+    }
     case 'enumList': {
       const list = asList(raw)
       if (!list) return { ok: false, reason: 'not a list' }
@@ -797,7 +817,7 @@ export function describeExtractedValue(key: string, value: unknown): string {
   const spec = SPEC_BY_KEY.get(key)
   if (value == null) return ''
   // Defensive: list kinds expect arrays; anything else renders verbatim.
-  const listKinds: ReadonlySet<string> = new Set(['enumList', 'stringList', 'owners', 'contacts', 'accounts', 'merchants', 'reports', 'rules'])
+  const listKinds: ReadonlySet<string> = new Set(['enumList', 'numberList', 'stringList', 'owners', 'contacts', 'accounts', 'merchants', 'reports', 'rules'])
   if (spec && listKinds.has(spec.kind) && !Array.isArray(value)) return String(value)
   switch (spec?.kind) {
     case 'boolean':
@@ -808,6 +828,8 @@ export function describeExtractedValue(key: string, value: unknown): string {
       return labelFor(key, String(value))
     case 'enumList':
       return (value as string[]).map((v) => labelFor(key, v)).join(', ')
+    case 'numberList':
+      return (value as number[]).join(', ')
     case 'stringList':
       return (value as string[]).join(', ')
     case 'noteMap': {

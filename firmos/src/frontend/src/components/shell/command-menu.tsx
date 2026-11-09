@@ -403,12 +403,13 @@ export function SearchTrigger({ onOpen }: { onOpen: () => void }) {
   return (
     <button
       type="button"
+      aria-label="Search or jump to…"
       onClick={onOpen}
-      className="flex h-8 w-full max-w-72 items-center gap-2 rounded-md border border-input bg-card px-2.5 text-[13px] text-muted-foreground transition-colors duration-150 ease-out hover:bg-secondary"
+      className="flex h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-md border border-input bg-card px-2.5 text-[13px] text-muted-foreground transition-colors duration-150 ease-out hover:bg-secondary md:h-8 md:w-full md:max-w-72 md:justify-start"
     >
       <Search aria-hidden className="h-3.5 w-3.5" />
-      <span className="flex-1 truncate text-left">Search or jump to…</span>
-      <kbd className="rounded border border-border bg-secondary px-1 text-[10px] font-medium text-muted-foreground">
+      <span className="hidden md:block md:flex-1 md:truncate md:text-left">Search or jump to…</span>
+      <kbd className="hidden md:inline rounded border border-border bg-secondary px-1 text-[10px] font-medium text-muted-foreground">
         ⌘K
       </kbd>
     </button>

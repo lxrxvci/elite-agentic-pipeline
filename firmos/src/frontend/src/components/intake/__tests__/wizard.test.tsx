@@ -345,13 +345,14 @@ describe('custom "Other" option cards (I1)', () => {
   })
 })
 
-describe('live quote panel', () => {
-  it('renders server-returned figures only, with unpriced lines labeled', async () => {
+describe('final estimate on review', () => {
+  it('renders server-returned figures only, with unpriced lines labeled and no live sidebar', async () => {
     renderWizard(completeAnswers)
-    await waitFor(() => expect(screen.getByTestId('quote-amount')).toHaveTextContent('$425'), { timeout: 3000 })
+    await waitFor(() => expect(screen.getByTestId('review-quote')).toBeInTheDocument(), { timeout: 3000 })
     expect(screen.getAllByText('Process Payroll').length).toBeGreaterThan(0)
     expect(screen.getAllByText('quoted at review').length).toBeGreaterThan(0)
-    // The panel never shows a computed number for the unpriced line.
+    expect(screen.queryByTestId('live-quote')).toBeNull()
+    expect(screen.queryByTestId('quote-amount')).toBeNull()
     expect(screen.queryByText('$0')).not.toBeInTheDocument()
   })
 
@@ -412,17 +413,18 @@ describe('quote panel: QBO recommendation and priced retroactive', () => {
   it('names the recommended QBO tier and breaks retroactive out as one-time', async () => {
     getQuote.mockImplementation(async () => ({ ok: true as const, data: QUOTE_WITH_EXTRAS }))
     renderWizard(completeAnswers)
-    await waitFor(() => expect(screen.getByTestId('quote-amount')).toHaveTextContent('$160'), { timeout: 3000 })
+    await waitFor(() => expect(screen.getByTestId('review-quote')).toBeInTheDocument(), { timeout: 3000 })
+    expect(screen.queryByTestId('live-quote')).toBeNull()
 
     // The pass-through line renders as the tier name, flagged recommended.
     expect(screen.getAllByText('QuickBooks Essentials (recommended)').length).toBeGreaterThan(0)
     // Retroactive gets its own one-time block, and the priced line itself
     // leaves the regular line list.
-    const retro = screen.getByTestId('retroactive-summary')
-    expect(retro).toHaveTextContent('$1,120 one-time')
-    expect(retro).toHaveTextContent('7 months')
-    expect(retro).toHaveTextContent('$160/mo')
-    expect(screen.queryByText('Retroactive Bookkeeping')).not.toBeInTheDocument()
+    const retro = screen.getByTestId('estimate-retro')
+    expect(retro).toHaveTextContent('$1,120')
+    expect(retro).toHaveTextContent('Retroactive cleanup')
+    expect(screen.getByTestId('one-time-math-retroactive_bookkeeping_2026')).toHaveTextContent('7 months × $160/mo')
+    expect(screen.getByTestId('estimate-recurring')).not.toHaveTextContent('Retroactive Bookkeeping')
   })
 
   it('the review screen carries the recommended tier and the retroactive one-time block (V7)', async () => {
@@ -581,23 +583,18 @@ describe('review screen', () => {
   })
 })
 
-describe('notes rail scrolls with the pricing card (V3, meeting #3 01:01:22)', () => {
-  it('the rail is one sticky unit holding BOTH the pricing card and the notes box', () => {
+describe('running notes rail without a live estimate', () => {
+  it('the rail is one sticky unit containing notes and no pricing surface', () => {
     const reviewIndex = flattenScreens(completeAnswers).length - 1
     renderWizard(completeAnswers, reviewIndex)
     const rail = screen.getByTestId('wizard-rail')
-    // One sticky, viewport-capped, internally scrolling unit on large
-    // screens - the notes box can never be stranded at the top of a long
-    // review while the pricing card rides along.
     expect(rail.className).toContain('lg:sticky')
     expect(rail.className).toContain('lg:top-6')
     expect(rail.className).toContain('lg:max-h-')
     expect(rail.className).toContain('lg:overflow-y-auto')
-    expect(within(rail).queryByTestId('live-quote') ?? within(rail).getByTestId('quote-hidden')).toBeInTheDocument()
     expect(within(rail).getByTestId('running-notes')).toBeInTheDocument()
-    // The pricing card no longer sticks on its own.
-    const panel = screen.queryByTestId('live-quote') ?? screen.getByTestId('quote-hidden')
-    expect(panel.className).not.toContain('lg:sticky')
+    expect(within(rail).queryByTestId('live-quote')).toBeNull()
+    expect(within(rail).queryByTestId('quote-hidden')).toBeNull()
   })
 })
 
@@ -646,62 +643,30 @@ describe('I2 corporate payroll auto-flag (00:48:07-00:49:44)', () => {  // S-cor
   })
 })
 
-describe('quote_hidden_until_review (I4, plan §3D, 00:22:46-00:24:22)', () => {
+describe('live estimate removed (October 28)', () => {
   const screenIndex = (a: WizardAnswers, questionId: string) =>
     flattenScreens(a).findIndex((s) => s.kind === 'question' && s.questionId === questionId)
 
-  beforeEach(() => {
-    // The peek flag is per-session; each test starts with a clean slate.
-    sessionStorage.clear()
-  })
-
-  it('mid-wizard the rail collapses to a stub with no dollar amounts anywhere', async () => {
+  it('mid-wizard has no live estimate, peek control, or hidden-pricing stub', async () => {
     renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
-    // The quote still prices server-side (the review will need it)…
     await waitFor(() => expect(getQuote).toHaveBeenCalled(), { timeout: 3000 })
-    // …but nothing money-shaped renders: no panel, no $ text.
     expect(screen.queryByTestId('live-quote')).toBeNull()
     expect(screen.queryByTestId('quote-amount')).toBeNull()
-    expect(screen.getByTestId('quote-hidden')).toBeInTheDocument()
-    expect(screen.getByText('Show pricing')).toBeInTheDocument()
+    expect(screen.queryByTestId('quote-hidden')).toBeNull()
+    expect(screen.queryByTestId('quote-peek-toggle')).toBeNull()
     expect(document.body.textContent).not.toMatch(/\$\d/)
   })
 
-  it('the staff peek toggle reveals pricing and remembers it per session', async () => {
-    renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
-    fireEvent.click(screen.getByTestId('quote-peek-toggle'))
-    await waitFor(() => expect(screen.getByTestId('quote-amount')).toHaveTextContent('$425'), { timeout: 3000 })
-    expect(sessionStorage.getItem('firmos:intake-quote-peek')).toBe('1')
-
-    // Hide again -> back to the stub, preference cleared.
-    fireEvent.click(screen.getByTestId('quote-hide-toggle'))
-    expect(screen.getByTestId('quote-hidden')).toBeInTheDocument()
-    expect(sessionStorage.getItem('firmos:intake-quote-peek')).toBe('0')
-
-    // A remount in the same session remembers the peek.
-    sessionStorage.setItem('firmos:intake-quote-peek', '1')
-    const remount = renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
-    await waitFor(() => expect(remount.getByTestId('quote-amount')).toHaveTextContent('$425'), { timeout: 3000 })
-    expect(sessionStorage.getItem('firmos:intake-quote-peek')).toBe('1')
-  })
-
-  it('the review screen is the reveal: the panel shows with or without the peek', async () => {
+  it('review shows the authoritative estimate without any live-estimate panel', async () => {
     const reviewIndex = flattenScreens(completeAnswers).length - 1
     renderWizard(completeAnswers, reviewIndex)
-    const panel = await screen.findByTestId('live-quote', undefined, { timeout: 3000 })
-    // The reveal moment is marked (and reduced-motion safe via CSS).
-    expect(panel).toHaveAttribute('data-revealed', 'true')
-    expect(panel.className).toContain('fi-quote-reveal')
-    await waitFor(() => expect(screen.getByTestId('quote-amount')).toHaveTextContent('$425'), { timeout: 3000 })
-    // No hide toggle on the review screen - the reveal is the point.
+    await waitFor(() => expect(screen.getByTestId('review-quote')).toBeInTheDocument(), { timeout: 3000 })
+    expect(screen.queryByTestId('live-quote')).toBeNull()
+    expect(screen.queryByTestId('quote-amount')).toBeNull()
     expect(screen.queryByTestId('quote-hide-toggle')).toBeNull()
-    // The review quote section (the quote-send source) renders fully.
-    expect(screen.getByTestId('review-quote')).toBeInTheDocument()
   })
 
-  it('no price text renders on any non-review screen with the peek off', async () => {
-    // The reports screen commits priced specialty-report definitions - the
-    // chips must still not leak amounts once the rail is hidden.
+  it('no price text renders on non-review intake cards', async () => {
     const withReports: WizardAnswers = {
       ...completeAnswers,
       reportDefinitions: [
@@ -713,10 +678,8 @@ describe('quote_hidden_until_review (I4, plan §3D, 00:22:46-00:24:22)', () => {
     const { container } = renderWizard(withReports, index)
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'reports')
     await waitFor(() => expect(getQuote).toHaveBeenCalled(), { timeout: 3000 })
-    // Dollar-free chips…
     expect(screen.getByText(/flat price set/)).toBeInTheDocument()
     expect(screen.getByText(/3h estimated/)).toBeInTheDocument()
-    // …and a whole-screen scan: no $ figure anywhere with the rail hidden.
     expect(container.textContent).not.toMatch(/\$\d/)
     expect(screen.queryByTestId('live-quote')).toBeNull()
   })

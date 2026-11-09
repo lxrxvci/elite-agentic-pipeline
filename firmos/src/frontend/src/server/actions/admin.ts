@@ -161,6 +161,7 @@ export interface AdminSettingsPatch {
   slackEnabled?: boolean;
   maxClockInHours?: number;
   commissionPayout?: PayoutConfig;
+  engagementAgreementTemplate?: string;
 }
 
 const PAYOUT_VALUES: readonly PayoutConfig[] = [
@@ -238,6 +239,12 @@ export async function updateAdminSettingsAction(
       changed.commissionPayout = patch.commissionPayout;
     }
 
+    if (patch.engagementAgreementTemplate !== undefined) {
+      const body = patch.engagementAgreementTemplate.trim();
+      await upsertSetting("engagement_agreement_template", body, actor.id);
+      changed.engagementAgreementTemplate = body;
+    }
+
     if (Object.keys(changed).length === 0) throw new Error("Nothing to save");
 
     await logEvent({
@@ -248,6 +255,19 @@ export async function updateAdminSettingsAction(
     });
     revalidatePath("/admin/settings");
     return { ok: true, data: { saved: true } };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+export async function approveChartTemplateAction(id: number): Promise<ActionResult<{ approved: true }>> {
+  try {
+    const actor = await requireAdmin();
+    const { approveChartTemplate } = await import("@/server/chart-templates");
+    const row = await approveChartTemplate(id, actor.id);
+    if (!row) throw new Error(`Chart template ${id} not found`);
+    revalidatePath("/admin/settings");
+    return { ok: true, data: { approved: true } };
   } catch (error) {
     return fail(error);
   }

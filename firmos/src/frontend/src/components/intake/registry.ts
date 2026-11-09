@@ -3,6 +3,7 @@ import { parseDaysOfWeek } from '@firmos/domain'
 import type { IntakeAccountInput, IntakeContactInput, IntakePatch, IntakeProofCategory } from '@/server/intake'
 import type { IntakeFormData, IntakeRow } from '@/server/intake'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
+import type { ContactChannel } from '@/shared/lib/contact-channels'
 import { EQUITY_BREAKDOWN_OPTIONS } from '@/shared/lib/account-types'
 import {
   DEFAULT_RECURRING_RULES,
@@ -82,7 +83,7 @@ export const payrollServicesSummarize = (a: WizardAnswers): string | null => {
   const parts = (a.serviceKeys ?? []).filter(isPayrollServiceKey).map(serviceLabel)
   if (a.payrollSelfProcessed === true) parts.push('They process their own - we enter the reports')
   parts.push(...((a.payrollCustomServices ?? []) as string[]))
-  return parts.length > 0 ? parts.join(', ') : null
+  return parts.length > 0 ? parts.join('\n') : null
 }
 const hasPayroll = (a: WizardAnswers): boolean =>
   isBookkeeping(a) && (a.hasPayroll === true || requiresOfficerPayroll(a))
@@ -97,6 +98,10 @@ const takesCards = (a: WizardAnswers): boolean =>
  *  custom "Other" answer (I1) is explicitly not QuickBooks. */
 const hasQbo = (a: WizardAnswers): boolean =>
   a.quickbooksStatus === 'existing' || a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none'
+const hasSoftwareSetup = (a: WizardAnswers): boolean =>
+  str(a.quickbooksStatus) != null && a.quickbooksStatus !== 'existing'
+const softwareDisplayName = (a: WizardAnswers): string =>
+  hasQbo(a) ? (a.quickbooksStatus === 'desktop' ? 'QuickBooks Desktop' : 'QuickBooks Online') : (str(a.quickbooksStatus) ?? 'accounting software')
 const isRealEstate = (a: WizardAnswers): boolean => a.isRealEstateClient === true
 
 // ── Question definition types ─────────────────────────────────────────────
@@ -218,10 +223,14 @@ export interface NoteOnYesDef {
  *  plus, when yes, an addable string-list editor (bill-pay locations). */
 export interface YesNoListDef {
   /** form_data key carrying the string list. */
-  listKey: 'billPayLocations'
+  listKey: 'billPayLocations' | 'recordBillVendors'
+  /** Reusable global option-list key; defaults to bill-pay locations. */
+  optionListKey?: 'bill_pay_locations' | 'record_bill_vendors'
   label: string
   placeholder?: string
   addLabel: string
+  /** Yes requires at least one list item before Continue (record-bill vendors). */
+  requireItems?: boolean
 }
 
 /**
@@ -305,6 +314,8 @@ export interface ContactPickerDef {
 export interface QuestionDef {
   id: string
   title: string
+  /** Optional answer-aware title, such as the selected accounting software. */
+  dynamicTitle?: (a: WizardAnswers) => string
   /** One-sentence explainer; a function resolves it from the current answers
    *  (I2: the EIN note for sole props, the owner-count rule, ...). */
   help?: string | ((a: WizardAnswers) => string | null)
@@ -313,9 +324,8 @@ export interface QuestionDef {
    *  within the box… a little more delineated on what those are." */
   section?: string
   /** M5 (C2, 10_10 00:02:57): the contact channels widget - additional
-   *  emails and phones beyond the primary scalar ("different email for
-   *  each business"). The extras ride fieldsValue/apply as
-   *  contactEmailsExtra / contactPhonesExtra string arrays. */
+   *  emails and phones beyond the primary scalar. October 28 adds a business
+   *  association to each channel while legacy string arrays keep working. */
   contactChannels?: boolean
   type: QuestionType
   options?: SelectOption[]
@@ -333,6 +343,8 @@ export interface QuestionDef {
    *  (type 'multi') renders the core pick (they/us) then the DB-backed
    *  secondary stack. */
   payrollServices?: boolean
+  /** Merchant reconciliation choice sits at the top of the processor stack. */
+  merchantReconcile?: boolean
   /** J1 (P2/DB1): `select` questions backed by a database list render a
    *  dropdown + inline add-new instead of option cards (the payroll
    *  provider question reads payroll_providers). The stored answer is the
@@ -356,10 +368,14 @@ export interface QuestionDef {
    *  count is a free numeric text entry, not a dropdown. */
   followup?: {
     keys: string[]
-    key: 'estimated1099Count'
+    key: 'estimated1099Count' | 'equityPerOwner'
     label: string
     /** Free numeric text entry (digits only) instead of the option select. */
     numeric?: boolean
+    /** Boolean follow-ups store true/false; numeric follow-ups store numbers. */
+    valueKind?: 'number' | 'boolean'
+    /** Optional extra visibility rule, such as multiple owners for per-owner equity. */
+    when?: (a: WizardAnswers) => boolean
     options?: { value: string; label: string }[]
   }
   /** J2 (E6): `yes-no-list` questions - the yes/no pick plus the string-list
@@ -405,6 +421,8 @@ export interface ChapterDef {
   id: string
   label: string
   when?: (a: WizardAnswers) => boolean
+  /** Rendered on review but skipped by the wizard's card walk and chapter rail. */
+  reviewOnly?: boolean
   questions: QuestionDef[]
 }
 
@@ -699,6 +717,7 @@ const specialtyPriceLabel = (i: Record<string, unknown>): string | null => {
 
 export const SERVICE_LABELS: Record<string, string> = {
   qbo_setup: 'QuickBooks setup',
+  software_setup: 'Accounting software setup',
   initial_payroll_setup: 'Initial payroll setup',
   bank_feed_management: 'Bank feed management',
   account_reconciliations: 'Account reconciliations',
@@ -836,24 +855,27 @@ export interface QualifyingFactor {
 }
 
 export function qualifyingFactorFor(serviceKey: string, a: WizardAnswers): QualifyingFactor | null {
+  if (serviceKey === 'payroll' || serviceKey === 'process_payroll' || serviceKey.startsWith('payroll_')) {
+    const parts = [a.payrollSelfProcessed === true ? 'Payroll: they process their own' : 'Payroll: Yes']
+    if (str(a.payrollProvider)) parts.push(String(a.payrollProvider))
+    if (a.payrollFrequency) parts.push(FREQUENCY_LABELS[String(a.payrollFrequency)] ?? String(a.payrollFrequency))
+    return { reason: parts.join(' · '), chapterId: 'income', questionId: 'payroll-services' }
+  }
+  if (serviceKey === 'qbo_setup' || serviceKey === 'software_setup') {
+    return { reason: `${softwareDisplayName(a)} setup`, chapterId: 'software', questionId: 'qbo-setup' }
+  }
   switch (serviceKey) {
     case 'bank_feed_management':
     case 'account_reconciliations':
     case 'reporting':
       return { reason: 'Monthly bookkeeping engagement', chapterId: 'engagement', questionId: 'engagement' }
-    case 'payroll':
-    case 'process_payroll': {
-      const parts = ['Payroll: Yes']
-      if (str(a.payrollProvider)) parts.push(String(a.payrollProvider))
-      if (a.payrollFrequency) parts.push(FREQUENCY_LABELS[String(a.payrollFrequency)] ?? String(a.payrollFrequency))
-      return { reason: parts.join(' · '), chapterId: 'income', questionId: 'payroll-services' }
-    }
     case 'record_bills':
       return { reason: 'Record bills: Yes', chapterId: 'reporting', questionId: 'record-bills' }
     case 'record_deposits':
       return { reason: 'Record deposits: Yes', chapterId: 'income', questionId: 'record-deposits' }
     case '1099_collection':
-    case '1099_full_management': {
+    case '1099_full_management':
+    case '1099_per_filing': {
       const mode = a.include1099FullManagement === true ? 'full management' : 'collection'
       const count = a.estimated1099Count != null ? ` · ~${a.estimated1099Count} filings` : ''
       return { reason: `1099 work: ${mode}${count}`, chapterId: 'reporting', questionId: 'ten99-services' }
@@ -865,7 +887,7 @@ export function qualifyingFactorFor(serviceKey: string, a: WizardAnswers): Quali
     case 'merchant_account_reconciliation': {
       const names = (a.merchantAccounts ?? []).map((m) => str(m.processor ?? m.name)).filter((n): n is string => n != null)
       return {
-        reason: names.length > 0 ? `Processors: ${names.join(', ')}` : 'Card or online payments',
+        reason: names.length > 0 ? `Processors: ${names.join('\n')}` : 'Card or online payments',
         chapterId: 'income',
         questionId: 'merchants',
       }
@@ -1059,7 +1081,8 @@ export function effectiveServiceKeys(a: WizardAnswers, today?: { year: number; m
   }
 
   const derived: Array<[boolean | undefined, string]> = [
-    [a.needsQuickbooksSetup, 'qbo_setup'],
+    [a.needsQuickbooksSetup && hasQbo(a), 'qbo_setup'],
+    [a.needsQuickbooksSetup && !hasQbo(a) && str(a.quickbooksStatus) != null, 'software_setup'],
     [a.includeMerchantReconciliation, 'merchant_account_reconciliation'],
     // J2 (E6): record_bills derives from the record-bills answer; legacy
     // intakes carrying includeBillPay keep their key.
@@ -1521,7 +1544,7 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
     push({
       key: 'merchant-reconciliation',
       title: MERCHANT_RECONCILIATION_TITLE,
-      detail: names.length > 0 ? names.join(', ') : 'Processor accounts reconcile here',
+      detail: names.length > 0 ? names.join('\n') : 'Processor accounts reconcile here',
       assignee: 'bookkeeper',
       ...closeCadencePlacement(a, tierDay),
     })
@@ -1570,7 +1593,7 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
     push({
       key: 'pay-bills',
       title: 'Pay bills',
-      detail: locations.length > 0 ? `Pays at: ${locations.join(', ')}` : 'Paying runs on top of recording',
+      detail: locations.length > 0 ? `Pays at: ${locations.join('\n')}` : 'Paying runs on top of recording',
       assignee: 'bookkeeper',
       defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
     })
@@ -1851,11 +1874,18 @@ export function routineScheduleSummary(a: WizardAnswers): string | null {
   if (schedule == null || Object.keys(schedule).length === 0) return null
   const tasks = deriveRoutineTasks(a)
   if (tasks.length === 0) return null
-  const order = routineBucketOrder(tasks, resolveRoutineEntries(tasks, schedule))
-  const counts = ROUTINE_BUCKETS.filter((b) => order[b].length > 0).map(
-    (b) => `${ROUTINE_BUCKET_LABELS[b]} ${order[b].length}`,
-  )
-  return `${tasks.length} routine${tasks.length === 1 ? '' : 's'} · ${counts.join(' · ')}`
+  const entries = resolveRoutineEntries(tasks, schedule)
+  const order = routineBucketOrder(tasks, entries)
+  const byKey = new Map(tasks.map((task) => [task.key, task]))
+  const groups: string[] = []
+  for (const bucket of ROUTINE_BUCKETS) {
+    const keys = order[bucket]
+    if (keys.length === 0) continue
+    const biweekly = bucket === 'weekly' && keys.some((key) => entries[key]?.everyNWeeks === 2)
+    const label = biweekly ? 'Biweekly' : ROUTINE_BUCKET_LABELS[bucket]
+    groups.push(`${label}:\n${keys.map((key) => `• ${byKey.get(key)?.title ?? key}`).join('\n')}`)
+  }
+  return groups.join('\n\n')
 }
 
 // ── Chapters ──────────────────────────────────────────────────────────────
@@ -1919,8 +1949,8 @@ export const CHAPTERS: ChapterDef[] = [
             contactName: p ? (str(p.entityName) ?? [p.firstName, p.lastName].filter(Boolean).join(' ')) : '',
             contactPhone: p?.phone ?? '',
             contactEmail: p?.email ?? '',
-            contactEmailsExtra: p?.emails ?? [],
-            contactPhonesExtra: p?.phones ?? [],
+            contactEmailsExtra: p?.emailChannels ?? p?.emails ?? [],
+            contactPhonesExtra: p?.phoneChannels ?? p?.phones ?? [],
           }
         },
         get: (a) => {
@@ -1942,12 +1972,19 @@ export const CHAPTERS: ChapterDef[] = [
           // K4 (B6): the picker link (or a surviving prior link) converts to
           // a link instead of a duplicate person.
           const linkedId = (val.mainContactId as number | null | undefined) ?? contacts[idx]?.contactId ?? null
-          const extraEmails = Array.isArray(val.contactEmailsExtra)
-            ? (val.contactEmailsExtra as unknown[]).map((e) => String(e).trim()).filter((e) => e !== '')
-            : []
-          const extraPhones = Array.isArray(val.contactPhonesExtra)
-            ? (val.contactPhonesExtra as unknown[]).map((e) => phoneDigits(e)).filter((e): e is string => e !== '')
-            : []
+          const normalizeChannels = (input: unknown, kind: 'email' | 'phone'): ContactChannel[] =>
+            (Array.isArray(input) ? input : []).flatMap((raw) => {
+              const channel = typeof raw === 'string' ? { value: raw } : (raw as ContactChannel)
+              const value = kind === 'email' ? String(channel.value ?? '').trim() : phoneDigits(channel.value)
+              if (value === '') return []
+              return [{
+                value,
+                businessId: typeof channel.businessId === 'number' ? channel.businessId : null,
+                businessName: str(channel.businessName) ?? a.legalName ?? null,
+              }]
+            })
+          const emailChannels = normalizeChannels(val.contactEmailsExtra, 'email')
+          const phoneChannels = normalizeChannels(val.contactPhonesExtra, 'phone')
           const entry: IntakeContactInput = {
             ...contacts[idx],
             firstName: name ? firstName : null,
@@ -1955,10 +1992,10 @@ export const CHAPTERS: ChapterDef[] = [
             entityName: null,
             email,
             phone,
-            // M5 (C2): the extra channels; the primary scalar stays first
-            // at conversion.
-            emails: extraEmails,
-            phones: extraPhones,
+            emails: emailChannels.map((channel) => channel.value),
+            phones: phoneChannels.map((channel) => channel.value),
+            emailChannels,
+            phoneChannels,
             isPrimary: true,
             relationshipType: 'primary_contact',
             ...(linkedId != null ? { contactId: linkedId } : {}),
@@ -1988,7 +2025,7 @@ export const CHAPTERS: ChapterDef[] = [
         get: (a) => a.businessAddress,
         apply: (_a, v) => v as Partial<WizardAnswers>,
         summarize: (a) => {
-          const cityState = [a.businessCity, a.businessState].filter(Boolean).join(', ')
+          const cityState = [a.businessCity, a.businessState].filter(Boolean).join('\n')
           return join(str(a.businessAddress), cityState || null)
         },
       },
@@ -2154,7 +2191,7 @@ export const CHAPTERS: ChapterDef[] = [
         apply: (_a, v) => ({ owners: v as WizardAnswers['owners'] }),
         summarize: (a) => {
           const owners = a.owners ?? []
-          return owners.length > 0 ? owners.map((o) => o.name).join(', ') : null
+          return owners.length > 0 ? owners.map((o) => o.name).join('\n') : null
         },
       },
       {
@@ -2247,7 +2284,7 @@ export const CHAPTERS: ChapterDef[] = [
             ? join(
                 'Yes',
                 str(a.cpaName),
-                a.cpaContactId != null ? 'linked to the existing record' : str(a.cpaName) ? 'new record' : null,
+                a.cpaContactId != null ? 'linked to the existing record' : str(a.cpaName) ? 'new contact' : null,
               )
             : a.hasCpa === false
               ? 'No'
@@ -2378,21 +2415,23 @@ export const CHAPTERS: ChapterDef[] = [
         // buildPatch derives bankFeedCatchupDate from this date.
         // N2 (meeting #3, 00:56:09-00:57:43): the card is renamed "When
         // would you like your bookkeeping to start?" everywhere (card +
-        // review row + extraction label); I7's taxes-filed framing survives
-        // only as Jason's verbal follow-up in the helper copy. The answer
-        // key stays bookkeepingStartDate.
+        // review row + extraction label). October 28 adds the optional
+        // last-tax-filed capture alongside the stable start-date key.
         id: 'bk-start',
         title: 'When would you like your bookkeeping to start?',
-        help: 'The first month we are responsible for. Catch-up work starts from this date automatically. Jason usually follows up with: when was the last time you filed taxes?',
+        help: 'The first month we are responsible for. Catch-up work starts from this date automatically.',
         type: 'fields',
         required: true,
         when: isBookkeeping,
         fields: [
           { key: 'bookkeepingStartDate', label: 'Bookkeeping start date', kind: 'date-text', required: true, placeholder: '01/01/2026' },
+          { key: 'lastTaxFiledDate', label: 'When were taxes last filed? (optional)', kind: 'text', placeholder: '2024 or 06/30/2025' },
         ],
         get: (a) => a.bookkeepingStartDate,
         apply: (_a, v) => v as Partial<WizardAnswers>,
-        summarize: (a) => (isBookkeeping(a) ? dateTextLabel(a.bookkeepingStartDate) : null),
+        summarize: (a) => isBookkeeping(a)
+          ? join(dateTextLabel(a.bookkeepingStartDate), a.lastTaxFiledDate ? `Taxes last filed: ${a.lastTaxFiledDate}` : null)
+          : null,
       },
       {
         // A45 (00:34:18): flagged missing during the call itself - distinct
@@ -2540,19 +2579,19 @@ export const CHAPTERS: ChapterDef[] = [
         section: 'Equity',
         when: (a) => a.equitySetup === 'breakdown',
         options: EQUITY_BREAKDOWN_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+        followup: {
+          keys: EQUITY_BREAKDOWN_OPTIONS.map((o) => o.value),
+          key: 'equityPerOwner',
+          label: 'Track each selected account separately per owner?',
+          valueKind: 'boolean',
+          when: (a) => (a.owners ?? []).length > 1,
+          options: [
+            { value: 'yes', label: 'Yes - one set per owner (no extra charge)' },
+            { value: 'no', label: 'No - one shared set' },
+          ],
+        },
         get: (a) => a.equityBreakdown ?? [],
         apply: (_a, v) => ({ equityBreakdown: v as string[] }),
-        summarize: () => null,
-      },
-      {
-        id: 'equity-per-owner',
-        title: 'Track equity per owner?',
-        help: 'Each owner gets their own set of equity accounts - the books show who put in and took out what.',
-        type: 'select',
-        required: true,
-        section: 'Equity',
-        when: (a) => (a.owners ?? []).length > 1,
-        ...yesNo('equityPerOwner', { yes: 'Yes - one set per owner', no: 'No - one shared set' }),
         summarize: () => null,
       },
     ],
@@ -2605,7 +2644,7 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: (a) => {
           if (!isRealEstate(a)) return null
           const ts = a.propertyTypes ?? []
-          return ts.length > 0 ? ts.map((t) => PROPERTY_TYPE_LABELS[t] ?? t).join(', ') : null
+          return ts.length > 0 ? ts.map((t) => PROPERTY_TYPE_LABELS[t] ?? t).join('\n') : null
         },
       },
       {
@@ -2621,7 +2660,7 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: (a) => {
           if (!isRealEstate(a)) return null
           const ds = a.depreciationTracking ?? []
-          return ds.length > 0 ? ds.map((d) => DEPRECIATION_BUCKET_LABELS[d] ?? d).join(', ') : null
+          return ds.length > 0 ? ds.map((d) => DEPRECIATION_BUCKET_LABELS[d] ?? d).join('\n') : null
         },
       },
     ],
@@ -2646,7 +2685,7 @@ export const CHAPTERS: ChapterDef[] = [
         apply: (_a, v) => ({ paymentMethods: (v as string[]).map(foldPaymentMethod) }),
         summarize: (a) => {
           const ms = a.paymentMethods ?? []
-          return ms.length > 0 ? ms.map((m) => PAYMENT_METHOD_LABELS[foldPaymentMethod(m)] ?? m).join(', ') : null
+          return ms.length > 0 ? ms.map((m) => PAYMENT_METHOD_LABELS[foldPaymentMethod(m)] ?? m).join('\n') : null
         },
       },
       {
@@ -2663,6 +2702,7 @@ export const CHAPTERS: ChapterDef[] = [
         type: 'repeatable',
         required: true,
         when: takesCards,
+        merchantReconcile: true,
         repeatable: {
           // L2 (B3, 10_06 00:10:01): the comparison is settled - ONE
           // alphabetized vertical stack with click-select, pencil rename,
@@ -2681,18 +2721,11 @@ export const CHAPTERS: ChapterDef[] = [
         apply: (_a, v) => ({ merchantAccounts: v as WizardAnswers['merchantAccounts'] }),
         summarize: (a) => {
           const ms = a.merchantAccounts ?? []
-          return ms.length > 0 && takesCards(a) ? ms.map((m) => m.name).join(', ') : null
+          if (ms.length === 0 || !takesCards(a)) return null
+          const reconcile = boolWord(a.includeMerchantReconciliation)
+          const merchants = ms.map((m) => m.name)
+          return reconcile ? [`Reconcile: ${reconcile}`, ...merchants].join('\n') : merchants.join('\n')
         },
-      },
-      {
-        id: 'merchant-recon',
-        title: 'Should we reconcile the merchant accounts too?',
-        type: 'select',
-        required: true,
-        when: (a) => takesCards(a) && (a.merchantAccounts ?? []).length > 0,
-        ...yesNo('includeMerchantReconciliation'),
-        summarize: (a) =>
-          takesCards(a) && (a.merchantAccounts ?? []).length > 0 ? boolWord(a.includeMerchantReconciliation) : null,
       },
       {
         // A41 (00:48:07): each money-behavior question is its own card.
@@ -2872,6 +2905,57 @@ export const CHAPTERS: ChapterDef[] = [
           hasPayroll(a) ? (FREQUENCY_LABELS[String(a.payrollFrequency)] ?? null) : null),
       },
       {
+        id: 'payroll-pay-dates',
+        title: 'When does payroll pay out?',
+        help: 'The actual pay day or dates, so payroll work lands on the right schedule.',
+        type: 'fields',
+        required: true,
+        when: (a) => hasPayroll(a) && ['weekly', 'biweekly', 'semi_monthly', 'monthly'].includes(String(a.payrollFrequency)),
+        fields: [
+          {
+            key: 'payrollPayWeekday', label: 'Pay day of the week', kind: 'select', required: true,
+            options: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((label, value) => ({ value: String(value), label })),
+            visibleIf: (v) => v.payrollFrequency === 'weekly' || v.payrollFrequency === 'biweekly',
+          },
+          { key: 'payrollPayDate1', label: 'First pay date of the month', kind: 'number', min: 1, max: 31, required: true, half: true, visibleIf: (v) => v.payrollFrequency === 'semi_monthly' || v.payrollFrequency === 'monthly' },
+          { key: 'payrollPayDate2', label: 'Second pay date (semi-monthly)', kind: 'number', min: 1, max: 31, required: true, half: true, visibleIf: (v) => v.payrollFrequency === 'semi_monthly' },
+        ],
+        fieldsValue: (a) => ({
+          payrollFrequency: a.payrollFrequency,
+          payrollPayWeekday: a.payrollPayWeekday ?? '',
+          payrollPayDate1: a.payrollPayDates?.[0] ?? '',
+          payrollPayDate2: a.payrollPayDates?.[1] ?? '',
+        }),
+        get: (a) => a.payrollPayWeekday ?? a.payrollPayDates,
+        apply: (a, v) => {
+          const values = v as Record<string, unknown>
+          const frequency = String(values.payrollFrequency ?? a.payrollFrequency)
+          const first = numOrNull(values.payrollPayDate1)
+          const second = numOrNull(values.payrollPayDate2)
+          return {
+            payrollPayWeekday: frequency === 'weekly' || frequency === 'biweekly' ? numOrNull(values.payrollPayWeekday) : null,
+            payrollPayDates: frequency === 'semi_monthly'
+              ? [first, second].filter((n): n is number => n != null)
+              : frequency === 'monthly' && first != null
+                ? [first]
+                : [],
+          }
+        },
+        summarize: (a) => {
+          const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+          if ((a.payrollFrequency === 'weekly' || a.payrollFrequency === 'biweekly') && a.payrollPayWeekday != null) {
+            return `Pays ${days[a.payrollPayWeekday]}s`
+          }
+          if (a.payrollFrequency === 'semi_monthly' && (a.payrollPayDates ?? []).length === 2) {
+            return `Pays on days ${a.payrollPayDates![0]} and ${a.payrollPayDates![1]}`
+          }
+          if (a.payrollFrequency === 'monthly' && (a.payrollPayDates ?? []).length > 0) {
+            return `Pays on day ${a.payrollPayDates![0]}`
+          }
+          return null
+        },
+      },
+      {
         // J2 (P1, 00:29:31-00:31:33): payroll handling is MANDATORY when
         // payroll runs - no skip without a selection. L2 (D1/D3, 10_06
         // 00:16:31-00:21:42): TWO core picks in a vertical stack - "They
@@ -2912,6 +2996,7 @@ export const CHAPTERS: ChapterDef[] = [
     // slot per checked account (3B seeding, unchanged).
     id: 'access',
     label: 'Online access',
+    reviewOnly: true,
     when: (a) => isBookkeeping(a) && statementAccountRefs(a).length > 0,
     questions: [
       {
@@ -2936,10 +3021,9 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: (a) => {
           const refs = statementAccountRefs(a)
           if (refs.length === 0) return null
-          const on = refs.filter((r) => r.item.grantLoginAccess === true).length
-          return on === 0
-            ? `None of the ${refs.length} account${refs.length === 1 ? '' : 's'} - all manual`
-            : `${on} of ${refs.length} with online access`
+          const online = refs.filter((r) => r.item.grantLoginAccess === true)
+          if (online.length === 0) return `No online access selected - all manual`
+          return online.map((r) => `• ${accountLabel(r.item)}`).join('\n')
         },
       },
     ],
@@ -3010,23 +3094,34 @@ export const CHAPTERS: ChapterDef[] = [
         id: 'record-bills',
         title: 'Should we record their bills?',
         help: 'Bills tracked as they come in, before anyone pays them. On accrual books, bills are recorded at the bill date.',
-        type: 'select',
+        type: 'yes-no-list',
         required: true,
         options: [
-          { value: 'yes', label: 'Yes, record their bills' },
+          { value: 'yes', label: 'Yes, record their bills', sub: 'List the bills and vendors below' },
           { value: 'no', label: 'No' },
         ],
+        yesNoList: {
+          listKey: 'recordBillVendors',
+          optionListKey: 'record_bill_vendors',
+          label: 'Which bills and vendors should we record?',
+          placeholder: 'Rent, utilities, insurance, a vendor name…',
+          addLabel: 'Add a bill or vendor',
+          requireItems: true,
+        },
         get: (a) => {
           const v = a.recordBills ?? a.includeBillPay
           return v === true ? 'yes' : v === false ? 'no' : undefined
         },
-        // Answering no retires the pay answer and its locations with it
-        // (same never-stale rule as the LLC subclass, I2).
+        // Answering no retires the pay answer and both bill lists with it.
         apply: (_a, v) =>
           v === 'yes'
             ? { recordBills: true }
-            : { recordBills: false, payBills: false, billPayLocations: [] },
-        summarize: (a) => boolWord(a.recordBills ?? a.includeBillPay),
+            : { recordBills: false, payBills: false, billPayLocations: [], recordBillVendors: [] },
+        summarize: (a) => {
+          if ((a.recordBills ?? a.includeBillPay) !== true) return boolWord(a.recordBills ?? a.includeBillPay)
+          const vendors = (a.recordBillVendors ?? []).filter((vendor) => str(vendor))
+          return join('Yes', vendors.length > 0 ? `records: ${vendors.join('\n')}` : null)
+        },
       },
       {
         // J2 (E6): pay requires record - the card only renders once recording
@@ -3058,7 +3153,7 @@ export const CHAPTERS: ChapterDef[] = [
           if ((a.recordBills ?? a.includeBillPay) !== true) return null
           if (a.payBills !== true) return boolWord(a.payBills)
           const locations = (a.billPayLocations ?? []).filter((l) => str(l))
-          return join('Yes', locations.length > 0 ? `pays at: ${locations.join(', ')}` : null)
+          return join('Yes', locations.length > 0 ? `pays at: ${locations.join('\n')}` : null)
         },
       },
       {
@@ -3107,7 +3202,7 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: (a) => {
           const ks = (a.serviceKeys ?? []).filter((k) => k === '1099_collection' || k === '1099_full_management')
           if (ks.length === 0) return null
-          return join(ks.map(serviceLabel).join(', '), a.estimated1099Count != null ? `~${a.estimated1099Count} filings` : null)
+          return join(ks.map(serviceLabel).join('\n'), a.estimated1099Count != null ? `~${a.estimated1099Count} filings` : null)
         },
       },
       {
@@ -3129,6 +3224,7 @@ export const CHAPTERS: ChapterDef[] = [
               options: ['monthly', 'quarterly', 'semi_annual', 'annual'].map((f) => ({ value: f, label: FREQUENCY_LABELS[f] })),
             },
             { key: 'dataSource', label: 'Data source (optional)', kind: 'text', half: true, placeholder: 'Client portal, QBO, …' },
+            { key: 'notes', label: 'Report details and notes (optional)', kind: 'textarea', placeholder: 'What this report needs to include, who receives it, and any special instructions…' },
             // L3 (10_06 00:25:07-00:29:51): "it should either be estimated
             // number of hours or flat price per [report]." The mode pick
             // reveals its own fields - flat price, or one hour input per
@@ -3198,6 +3294,7 @@ export const CHAPTERS: ChapterDef[] = [
             name: String(i.name),
             frequency: String(i.frequency),
             dataSource: str(i.dataSource),
+            notes: str(i.notes),
             // L3 (10_06): the pricing mode + tier hours fold into tierHours;
             // legacy estimatedHours still coerces for old rows.
             pricingMode: i.pricingMode === 'flat' || i.pricingMode === 'hours' ? i.pricingMode : null,
@@ -3222,7 +3319,9 @@ export const CHAPTERS: ChapterDef[] = [
           const rs = a.reportDefinitions ?? []
           // L3 (F7, 10_06 01:11:48): a vertical bulleted list, never
           // comma-joined - "I hate the comma stuff to track."
-          return rs.length > 0 ? rs.map((r) => `• ${r.name}`).join('\n') : null
+          return rs.length > 0
+            ? rs.map((r) => `• ${r.name}${r.notes ? ` — ${r.notes}` : ''}`).join('\n')
+            : null
         },
       },
       {
@@ -3281,10 +3380,23 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: (a) => {
           const stored = a.serviceKeys ?? []
           if (stored.length === 0) return null
-          const addons = stored.filter(isAddonServiceKey)
+          const standards = SERVICES_STANDARD_ROWS.map((row) => `• ${row.label}`)
+          const standardKeys = new Set([
+            ...SERVICES_STANDARD_VALUES,
+            'monthly_reporting_5', 'monthly_reporting_10', 'monthly_reporting_15',
+            'quarterly_reporting', 'semi_annual_reporting', 'annual_reporting', 'retroactive_bookkeeping', 'firmos_access',
+          ])
+          const addonKeys = new Set(effectiveServiceKeys(a).filter((key) => !standardKeys.has(key)))
+          if (a.payrollSelfProcessed === true) addonKeys.add('payroll')
+          if ((a.reportDefinitions ?? []).length > 0) addonKeys.add('specialty_reports')
+          const addons = [...addonKeys].map((key) => {
+            const label = key === 'payroll' && a.payrollSelfProcessed === true ? 'Payroll report entry' : serviceLabel(key)
+            const factor = qualifyingFactorFor(key, a)
+            return `• ${label} — ${factor?.reason ?? 'Selected in Services'}`
+          })
           return addons.length > 0
-            ? `The 3 standards + ${addons.map(serviceLabel).join(', ')}`
-            : 'The 3 standards'
+            ? `Standards:\n${standards.join('\n')}\n\nAdd-ons:\n${addons.join('\n')}`
+            : `Standards:\n${standards.join('\n')}`
         },
       },
     ],
@@ -3307,19 +3419,19 @@ export const CHAPTERS: ChapterDef[] = [
         ],
         ...key('quickbooksStatus'),
         summarize: withCustom('qbo-status', (a) =>
-          a.quickbooksStatus === 'existing' ? 'On QBO' : a.quickbooksStatus === 'desktop' ? 'QBO migration' : a.quickbooksStatus === 'none' ? 'No QuickBooks yet' : null),
+          a.quickbooksStatus === 'existing' ? 'On QBO' : a.quickbooksStatus === 'desktop' ? 'QBO migration' : a.quickbooksStatus === 'none' ? 'No QuickBooks yet' : str(a.quickbooksStatus)),
       },
       {
         id: 'qbo-setup',
-        title: 'Should we handle the QuickBooks setup?',
+        title: 'Should we handle the accounting software setup?',
+        dynamicTitle: (a) => `Should we handle the ${softwareDisplayName(a)} setup?`,
         type: 'select',
         required: true,
-        when: (a) => a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none',
+        when: hasSoftwareSetup,
         ...yesNo('needsQuickbooksSetup'),
-        summarize: (a) =>
-          a.quickbooksStatus === 'desktop' || a.quickbooksStatus === 'none'
-            ? boolWord(a.needsQuickbooksSetup)
-            : null,
+        summarize: (a) => hasSoftwareSetup(a)
+          ? join(`${softwareDisplayName(a)} setup`, boolWord(a.needsQuickbooksSetup))
+          : null,
       },
       {
         id: 'qbo-users',
@@ -3527,13 +3639,30 @@ export type ScreenRef =
 
 export function flattenScreens(a: WizardAnswers): ScreenRef[] {
   const out: ScreenRef[] = []
-  for (const c of visibleChapters(a)) {
+  for (const c of visibleChapters(a).filter((chapter) => chapter.reviewOnly !== true)) {
     for (const q of visibleQuestions(c, a)) {
       out.push({ kind: 'question', chapterId: c.id, questionId: q.id })
     }
   }
   out.push({ kind: 'review' })
   return out
+}
+
+export function reconcileScreenIndex(previous: ScreenRef[], next: ScreenRef[], index: number): number {
+  const current = previous[index]
+  if (!current) return Math.max(0, Math.min(index, next.length - 1))
+  const same = next.findIndex((screen) =>
+    screen.kind === current.kind && (current.kind === 'review' || (screen.kind === 'question' && screen.chapterId === current.chapterId && screen.questionId === current.questionId)),
+  )
+  if (same >= 0) return same
+  for (let i = index - 1; i >= 0; i--) {
+    const candidate = previous[i]
+    const fallback = next.findIndex((screen) =>
+      screen.kind === candidate.kind && (candidate.kind === 'review' || (screen.kind === 'question' && screen.chapterId === candidate.chapterId && screen.questionId === candidate.questionId)),
+    )
+    if (fallback >= 0) return fallback
+  }
+  return 0
 }
 
 export function findQuestion(chapterId: string, questionId: string): QuestionDef | undefined {

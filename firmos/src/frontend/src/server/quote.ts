@@ -20,7 +20,7 @@ import {
   type LineBillingConfig,
 } from "@/shared/lib/line-billing";
 import type { RoutineSchedule } from "@/shared/lib/routine-schedule";
-import { taskKeysFor } from "@/components/intake/review-estimate";
+import { estimateLineBucket, taskKeysFor } from "@/components/intake/review-estimate";
 
 import { statementDayForIntakeAccount } from "./accounts-seed";
 import { accountLabel } from "@/shared/lib/account-label";
@@ -138,12 +138,11 @@ function missedCountFor(r: IntakeReportDefinition, today: LocalDate): number | n
 }
 
 /**
- * C10: specialty report definitions price into the quote at their own
- * cadence. Only definitions carrying pricing data (hours, a flat price, or a
- * missed-filings count) reach the engine; pure tracking definitions stay out
- * of the money (they still materialize report rows at conversion). The quote
- * line keys (specialty_report_{n}) index into THIS filtered array, so every
- * caller of buildRecurringServicesTemplate must pass the same list.
+ * C10: specialty report definitions enter the quote at their own cadence.
+ * Reports without pricing remain visible as unpriced lines instead of
+ * disappearing from review. The quote line keys (specialty_report_{n}) index
+ * into THIS filtered array, so every caller of buildRecurringServicesTemplate
+ * must pass the same list.
  *
  * J2: `today` drives the missed-count derivation from lastFiledDate. It
  * defaults to the firm-local today; any caller that also computes the quote
@@ -177,7 +176,7 @@ export function specialtyReportsFromIntake(
       const missed = missedCountFor(r, today)
       return { def: r, missed, tierHours }
     })
-    .filter(({ def, missed, tierHours }) => def.estimatedHours != null || def.flatPrice != null || tierHours != null || (missed ?? 0) > 0)
+    .filter(({ def }) => def.name.trim() !== "" && def.frequency.trim() !== "")
     .map(({ def, missed, tierHours }) => ({
       name: def.name,
       frequency: def.frequency,
@@ -254,13 +253,9 @@ function toQuoteInput(
   // missed-count derivation so the quote and the template agree.
   const specialtyReports = specialtyReportsFromIntake(answers, today);
 
-  // QBO pass-through (owner walkthrough): every QuickBooks status ends on
-  // QBO, so any answered status prices the tier line - recommended from the
-  // seat count + tracking complexity unless a plan was picked explicitly.
-  // I1: the one exception is the wizard's canonical custom-answer sentinel
-  // 'Other' (typed text rides form_data.customAnswers) - not QuickBooks, no
-  // QBO line. Legacy aliases like "has_qbo" still price, as before.
-  const qbo = answers.quickbooksStatus && answers.quickbooksStatus !== "Other"
+  // QBO pass-through applies only to canonical QuickBooks statuses and legacy
+  // aliases. Wave, Xero, and other accounting software never inherit QBO pricing.
+  const qbo = ["existing", "desktop", "none", "has_qbo"].includes(String(answers.quickbooksStatus))
     ? {
         userCount: answers.qboUserCount ?? null,
         classTracking: serviceKeys.includes("class_tracking"),
@@ -304,6 +299,61 @@ function toQuoteInput(
   };
 }
 
+function legacyCycleNetForCalcRate(
+  line: Quote["lines"][number],
+  cycle: number,
+  config: LineBillingConfig,
+  calcQuantity: number,
+): number | null {
+  const rate = config.calcUnitPrice
+  if (rate == null) return null
+  const monthlyRate = config.flatMonthly === true
+    ? rate * calcQuantity
+    : config.calcFrequency === "monthly"
+      ? rate * calcQuantity
+      : config.calcFrequency === "quarterly"
+        ? (rate * calcQuantity) / 3
+        : config.calcFrequency === "annual"
+          ? (rate * calcQuantity) / 12
+          : config.calcFrequency === "weekly"
+            ? rate * calcQuantity * 4
+            : rate * calcQuantity * 22
+  const amount = line.bucket === "monthly" || line.bucket === "payroll_monthly"
+    ? monthlyRate * cycle
+    : line.bucket === "quarterly"
+      ? monthlyRate * 3
+      : line.bucket === "annual"
+        ? monthlyRate * 12
+        : rate * calcQuantity
+  return Math.round(amount * 100) / 100
+}
+
+function calcRateServicePrices(answers: IntakeQuoteAnswers, quote: Quote): Record<string, number> {
+  const prices: Record<string, number> = {}
+  const schedule = answers.routineSchedule ?? null
+  for (const line of quote.lines) {
+    const override = answers.lineBilling?.[line.service_key]
+    if (override?.calcUnitPrice == null) continue
+    const bucket = estimateLineBucket(line, schedule, answers.reportDefinitions)
+    if (bucket == null) continue
+    const scheduleEntry = taskKeysFor(line)
+      .map((key) => schedule?.[key])
+      .find((entry) => entry != null)
+    const config = resolveLineBilling(
+      defaultLineBilling({
+        bucket,
+        scheduleWeekdays: scheduleEntry?.weekdays ?? null,
+        closingFrequency: answers.bookkeepingFrequency ?? "monthly",
+        billMonth: answers.billingMonths?.[line.service_key] ?? (isFebruaryBilledService(line.service_key) ? 2 : null),
+      }),
+      override,
+    )
+    const amount = legacyCycleNetForCalcRate(line, quote.billingCycle, config, 1)
+    if (amount != null) prices[line.service_key] = amount
+  }
+  return prices
+}
+
 /**
  * Wizard answers -> the full domain quote (line items + effective monthly).
  * `today` sets the retroactive month count; it defaults to the firm-local
@@ -319,7 +369,15 @@ export function calculateIntakeQuote(
   customEntries?: Record<string, PricingEntry> | null,
   rateTiers?: QuoteInput["rateTiers"],
 ): Quote {
-  return calculateQuote(toQuoteInput(answers, today, customEntries, rateTiers), pricingOverrides, customEntries);
+  const input = toQuoteInput(answers, today, customEntries, rateTiers)
+  const preliminary = calculateQuote(input, pricingOverrides, customEntries)
+  const calcPrices = calcRateServicePrices(answers, preliminary)
+  if (Object.keys(calcPrices).length === 0) return preliminary
+  return calculateQuote(
+    { ...input, servicePrices: { ...input.servicePrices, ...calcPrices } },
+    pricingOverrides,
+    customEntries,
+  )
 }
 
 /**
@@ -383,13 +441,11 @@ const BUCKET_FREQUENCY: Record<string, string> = {
  * discount (no standard amount) - the raw field carries and the line keeps
  * its priced-at-review note.
  *
- * Specialty report lines (C10, keys specialty_report_{n}[_retro]): the quote
- * line's quantity is already cycle-normalized (occurrences per intake cycle),
- * which is exactly the quantity semantics the invoice engine's periodic
- * spread expects; the template line just needs the report's OWN frequency so
- * the spread bills it correctly on any billing cadence. Retro missed-filings
- * lines store as one_time (the engine never recurs them; they exist so the
- * client sees the full catch-up price on the template).
+ * Specialty report lines (C10): quantity stays cycle-normalized for legacy
+ * totals while calc_quantity preserves natural occurrences for the resolved
+ * billing model. The report's own frequency and calculation-rate overrides
+ * therefore bill consistently in preview, templates, and invoices. Retro
+ * missed-filings lines store as one_time.
  */
 export function buildRecurringServicesTemplate(
   quote: Quote,
@@ -451,22 +507,28 @@ export function buildRecurringServicesTemplate(
       calc_weekdays: billing.calcWeekdays ?? null,
       bill_day: billing.billDay ?? null,
       bill_month: billing.billMonth ?? null,
+      ...(billing.calcUnitPrice != null
+        ? { calc_quantity: 1 }
+        : line.calc_quantity != null
+          ? { calc_quantity: line.calc_quantity }
+          : {}),
       ...(billing.flatMonthly === true ? { flat_monthly: true } : {}),
       // M4 (01:12:43): "normal billing frequency or its own invoice" -
       // flagged lines split onto their own invoice row at generation.
       ...(billing.ownInvoice === true ? { own_invoice: true } : {}),
     }
-    // J4 (V4): the equivalent per-cycle discount for a direct price
-    // override, derived from the line's GROSS (unit price x quantity - the
-    // retro line's amount already IS the override after repricing, so
-    // amount-minus-override would wrongly zero it). Legacy discounts carry
-    // verbatim when no override exists.
-    const discount =
-      line.price_override != null && line.unit_price != null
+    const hasCalcRateOverride = billing.calcUnitPrice != null
+    const effectiveUnitPrice = billing.calcUnitPrice ?? line.unit_price
+    // Legacy per-cycle overrides retain their equivalent-discount behavior.
+    // A calculation-rate override instead becomes the template unit price.
+    const discount = hasCalcRateOverride
+      ? 0
+      : line.price_override != null && line.unit_price != null
         ? round2(Math.max(0, line.unit_price * line.quantity - line.price_override))
         : (line.discount ?? 0);
-    const overrideField =
-      line.price_override != null ? { price_override: line.price_override } : {};
+    const overrideField = !hasCalcRateOverride && line.price_override != null
+      ? { price_override: line.price_override }
+      : {};
     const customMatch = line.service_key.startsWith("custom_item_")
       ? customItems[Number(line.service_key.replace("custom_item_", "")) - 1]
       : undefined;
@@ -496,7 +558,7 @@ export function buildRecurringServicesTemplate(
       return {
         service_key: line.service_key,
         product_name: line.product_name,
-        unit_price: line.unit_price,
+        unit_price: effectiveUnitPrice,
         quantity: line.quantity,
         discount,
         ...overrideField,
@@ -510,7 +572,7 @@ export function buildRecurringServicesTemplate(
         // the tier assumption.
         notes: line.pricedByTiers
           ? "Difficulty-tier estimate (admin tier rates) - the assigned employee's actual billing rate applies at invoicing."
-          : line.unpriced
+          : line.unpriced && !hasCalcRateOverride
             ? "Priced manually: no amount stated in HANDOFF §15."
             : null,
       };
@@ -518,7 +580,7 @@ export function buildRecurringServicesTemplate(
     return {
       service_key: line.service_key,
       product_name: line.product_name,
-      unit_price: line.unit_price,
+      unit_price: effectiveUnitPrice,
       quantity: line.quantity,
       discount,
       ...overrideField,
@@ -532,7 +594,7 @@ export function buildRecurringServicesTemplate(
         : {}),
       frequency: customRule?.scheduleType ?? customMatch?.frequency ?? BUCKET_FREQUENCY[line.bucket] ?? "monthly",
       ...ruleScheduleFields,
-      notes: line.unpriced ? "Priced manually: no amount stated in HANDOFF §15." : null,
+      notes: line.unpriced && !hasCalcRateOverride ? "Priced manually: no amount stated in HANDOFF §15." : null,
     };
   });
 }

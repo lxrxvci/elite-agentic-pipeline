@@ -73,6 +73,8 @@ import {
   type IntakeRow,
 } from "./intake";
 import { materializeOperationalRows, reportDefinitionsOf } from "./materialize";
+import { approvedChartTemplateFor } from "./chart-templates";
+import { chartTemplateKeyFor } from "@/shared/lib/chart-templates";
 import { catchUpRangesFor } from "./projects";
 import {
   buildRecurringServicesTemplate,
@@ -673,11 +675,24 @@ export async function convertIntakeToClient(
       const locations = (form.billPayLocations ?? [])
         .filter((l): l is string => typeof l === "string" && l.trim() !== "")
         .map((l) => l.trim());
+      const vendors = (form.recordBillVendors ?? [])
+        .filter((vendor): vendor is string => typeof vendor === "string" && vendor.trim() !== "")
+        .map((vendor) => vendor.trim());
+      const vendorDetail = vendors.length > 0 ? ` Bills to record: ${vendors.join(", ")}.` : "";
       const body =
-        form.payBills === true
+        (form.payBills === true
           ? `Bills: we record and pay them.${locations.length > 0 ? ` Bills get paid at: ${locations.join(", ")}.` : ""}`
-          : "Bills: we record them; the client pays their own.";
+          : "Bills: we record them; the client pays their own.") + vendorDetail;
       await tx.insert(clientNotes).values({ clientId, authorId: userId, body });
+    }
+    for (const definition of reportDefinitionsOf(intake)) {
+      if (definition.notes?.trim()) {
+        await tx.insert(clientNotes).values({
+          clientId,
+          authorId: userId,
+          body: `Special report: ${definition.name} — ${definition.notes.trim()}`,
+        });
+      }
     }
     // J2 (P1): self-processed payroll is context, not a service - no
     // payroll-processing work seeds from it (process_payroll stays a quote
@@ -712,6 +727,10 @@ export async function convertIntakeToClient(
         c.contactId != null
           ? await findContactById(tx, c.contactId)
           : await findContactByNameEmail(tx, displayName, c.email);
+      const channelLinks: import("@/shared/lib/contact-channels").ContactChannelLink[] = [
+        ...(c.emailChannels ?? []).map((channel) => ({ ...channel, kind: "email" as const })),
+        ...(c.phoneChannels ?? []).map((channel) => ({ ...channel, kind: "phone" as const })),
+      ];
       const contact =
         linkedRow ??
         (
@@ -734,9 +753,22 @@ export async function convertIntakeToClient(
                 ...(c.phone ? [c.phone] : []),
                 ...(c.phones ?? []).filter((p) => p.trim() !== '' && p !== c.phone),
               ],
+              contactChannelLinks: channelLinks,
             })
             .returning()
         )[0];
+      if (linkedRow && channelLinks.length > 0) {
+        const merged = [...(linkedRow.contactChannelLinks ?? [])];
+        const seen = new Set(merged.map((link) => `${link.kind}|${link.value}|${link.businessId ?? link.businessName ?? ""}`));
+        for (const link of channelLinks) {
+          const key = `${link.kind}|${link.value}|${link.businessId ?? link.businessName ?? ""}`;
+          if (!seen.has(key)) {
+            merged.push(link);
+            seen.add(key);
+          }
+        }
+        await tx.update(contacts).set({ contactChannelLinks: merged }).where(eq(contacts.id, contact.id));
+      }
       if (linkedRow) contactsLinked += 1;
       else contactsCreated += 1;
       // K8 (B4): the role may be any contact_roles label - fold it onto the
@@ -1034,10 +1066,12 @@ export async function convertIntakeToClient(
       insertedAccounts.push(merchantAccount);
       accountsCreated += 1;
     }
-    // L5 (J3, 10_06 01:10:10): the intake's equity answers decide the
-    // equity seeds (grouped / breakdown / per-owner); an unanswered intake
-    // keeps the §6.8 default pair (owner contributions + distributions).
-    const equityPlan = equitySeedPlan(form);
+    // Approved chart templates override naming by entity type; unapproved or
+    // missing templates preserve the existing equity seed behavior.
+    const chartTemplate = await approvedChartTemplateFor(
+      chartTemplateKeyFor({ taxStructure: intake.taxStructure, llcSubclass: form.llcSubclass }),
+    );
+    const equityPlan = equitySeedPlan(form, chartTemplate ?? undefined);
     const seededAccounts = await seedDefaultAccounts(
       clientId,
       {
@@ -1315,7 +1349,7 @@ export async function convertIntakeToClient(
       // up in the queue; pricing rides the services template via the quote.
       const specialtyRules: IntakeCustomRuleInput[] = reportDefinitionsOf(intake).map((def) => ({
         title: def.name,
-        description: def.dataSource ?? null,
+        description: [def.dataSource, def.notes].filter((value) => value?.trim()).join("\n") || null,
         ...scheduleForCadence(def.frequency, anchorMonth),
       }));
       if (specialtyRules.length > 0) {

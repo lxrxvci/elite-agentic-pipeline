@@ -234,9 +234,8 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
     expect(lines.some((l) => l.serviceKey === "specialty_report_2_retro")).toBe(false);
   });
 
-  // Item 4, C9 edge: a report definition with no pricing data stays a
-  // tracking row - no quote line, no guessed amount.
-  it("specialty_reports_without_pricing_stay_tracking_only", async () => {
+  // October 28: selected reports remain visible even before pricing is complete.
+  it("specialty_reports_without_pricing_stay_visible_unpriced", async () => {
     const quote = await calculateIntakeQuoteWithConfig(
       {
         serviceKeys: ["bank_feed_management"],
@@ -244,7 +243,12 @@ describe.skipIf(!reachable)("money & intake completeness batch (server layer)", 
       },
       TEST_TODAY,
     );
-    expect(quote.lines.some((l) => l.service_key.startsWith("specialty_report_"))).toBe(false);
+    expect(quote.lines.find((l) => l.service_key === "specialty_report_1")).toMatchObject({
+      product_name: "Specialty Report: Monthly Financial Package",
+      unit_price: null,
+      amount: null,
+      unpriced: true,
+    });
     expect(quote.totals.effectiveMonthly).toBe(100);
   });
 

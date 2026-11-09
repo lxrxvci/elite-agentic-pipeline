@@ -61,6 +61,7 @@ export interface PricingEntry {
 export const PRICING: Record<string, PricingEntry> = {
   // One-time
   qbo_setup: { product_name: "QBO Setup", group: "one_time", unit_price: 150, unit: "one_time", scaling: "fixed", bucket: "one_time" }, // $150 min
+  software_setup: { product_name: "Accounting Software Setup", group: "one_time", unit_price: null, unit: "one_time", scaling: "fixed", bucket: "one_time" },
   initial_payroll_setup: { product_name: "Initial Payroll Setup", group: "one_time", unit_price: 150, unit: "one_time", scaling: "fixed", bucket: "one_time" }, // $150 min
   // Core monthly
   bank_feed_management: { product_name: "Bank Feed Management", group: "core_monthly", unit_price: 100, unit: "month", scaling: "flat_monthly", bucket: "monthly" }, // $100 min
@@ -385,12 +386,10 @@ export interface QuoteInput {
    *  done in one pass"). 0-100, clamped; the recurring lines never see it. */
   retroDiscountPercent?: number | null;
   /**
-   * Specialty report definitions with pricing data (C10). Each prices as a
-   * recurring line at the report's own cadence (normalized into the monthly
-   * bucket like every periodic service) plus, when missedFilings is set,
-   * a one-time retro line at missedFilings x the per-report price. Reports
-   * without hours or a flat price stay out of the quote entirely (they are
-   * tracking rows, not money).
+   * Specialty report definitions (C10). Each recurs at its own cadence with
+   * calc_quantity preserving the natural report count alongside the
+   * cycle-normalized quantity. Missed filings add a one-time retro line.
+   * Reports without pricing remain visible as unpriced lines.
    */
   specialtyReports?: SpecialtyReportInput[];
   /** L3 (10_06): the admin difficulty-tier rates for tier-hour pricing;
@@ -414,6 +413,8 @@ export interface QuoteLine {
   product_name: string;
   unit_price: number | null;
   quantity: number;
+  /** Natural occurrences at the calculation cadence, before intake-cycle normalization. */
+  calc_quantity?: number;
   /** Flat dollars off per billing cycle; absent/0 for undiscounted lines. */
   discount?: number;
   /**
@@ -493,6 +494,23 @@ export function customItemQuantity(frequency: CustomItemFrequency, cycle: number
   }
 }
 
+function naturalServiceQuantity(
+  entry: PricingEntry,
+  rawQuantity: number | undefined,
+  payrollFrequency: PayrollFrequency,
+): number {
+  switch (entry.scaling) {
+    case "flat_monthly":
+      return 1;
+    case "per_unit_monthly":
+      return rawQuantity ?? 1;
+    case "payroll_per_period":
+      return payrollPeriodsPerMonth(payrollFrequency);
+    case "fixed":
+      return rawQuantity ?? 1;
+  }
+}
+
 function serviceQuantity(
   entry: PricingEntry,
   rawQuantity: number | undefined,
@@ -535,6 +553,7 @@ export function calculateQuote(
       product_name: entry.product_name,
       unit_price: entry.unit_price,
       quantity,
+      calc_quantity: naturalServiceQuantity(entry, svc.quantity, payrollFrequency),
       discount: Math.max(0, svc.discount ?? 0),
       amount: entry.unit_price == null ? null : entry.unit_price * quantity,
       bucket: entry.bucket,
@@ -562,6 +581,7 @@ export function calculateQuote(
         product_name: entry.product_name,
         unit_price: entry.unit_price,
         quantity: cycle,
+        calc_quantity: 1,
         discount: 0,
         amount: entry.unit_price == null ? null : entry.unit_price * cycle,
         bucket: entry.bucket,
@@ -578,6 +598,7 @@ export function calculateQuote(
       product_name: item.product_name,
       unit_price: item.unit_price,
       quantity,
+      calc_quantity: item.quantity ?? 1,
       discount: 0,
       amount: item.unit_price * quantity,
       // K6 (D4): one-time custom work lands in the one-time block.
@@ -607,6 +628,7 @@ export function calculateQuote(
       product_name: `Specialty Report: ${report.name}`,
       unit_price: price,
       quantity,
+      calc_quantity: 1,
       discount: 0,
       amount: price == null ? null : round2(price * quantity),
       bucket: "monthly",

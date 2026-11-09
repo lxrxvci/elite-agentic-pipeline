@@ -85,6 +85,12 @@ export const OPTION_LISTS: Record<string, OptionListDef> = {
     noun: "place",
     seeds: [],
   },
+  record_bill_vendors: {
+    key: "record_bill_vendors",
+    label: "Bills and vendors to record",
+    noun: "bill or vendor",
+    seeds: [],
+  },
   report_types: {
     key: "report_types",
     label: "Special report types",

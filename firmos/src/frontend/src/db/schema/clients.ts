@@ -50,6 +50,7 @@ export const contacts = pgTable(
     // full list with the primary first.
     emails: jsonb("emails").$type<string[]>(),
     phones: jsonb("phones").$type<string[]>(),
+    contactChannelLinks: jsonb("contact_channel_links").$type<import("@/shared/lib/contact-channels").ContactChannelLink[]>(),
     addressLine1: text("address_line1"),
     addressLine2: text("address_line2"),
     city: text("city"),
@@ -274,6 +275,8 @@ export const clientIntakes = pgTable(
     // Custom recurring rules captured at intake, seeded at conversion.
     customRecurringRules: jsonb("custom_recurring_rules"),
 
+    /** Immutable quote + answers captured when the estimate is accepted. */
+    acceptedEstimateSnapshot: jsonb("accepted_estimate_snapshot"),
     /** Full seven-step wizard answers (auto-saved on step navigation). */
     formData: jsonb("form_data"),
     internalNotes: text("internal_notes"),

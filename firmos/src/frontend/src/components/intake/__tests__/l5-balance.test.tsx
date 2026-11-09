@@ -132,15 +132,18 @@ describe('L5/J2: balance_groups_assets_liabilities_equity_in_order (10_06 01:09:
     expect(within(liabilities).getByText(/Delivery van loan/)).toBeInTheDocument()
     expect(within(liabilities).queryByText(/Chase Checking/)).toBeNull()
 
-    // Equity lists the planned per-owner breakdown (J3) - owner-major:
-    // all of one owner's equity rows together.
+    // Equity groups parents first, then indents each owner beneath them.
     const equity = screen.getByTestId('balance-box-equity')
+    expect(within(equity).getAllByTestId('equity-plan-group').map((group) => group.textContent)).toEqual([
+      expect.stringContaining('Owner Contributions'),
+      expect.stringContaining('Owner Distributions'),
+    ])
     const planRows = within(equity).getAllByTestId('equity-plan-row')
     expect(planRows.map((r) => r.textContent)).toEqual([
-      expect.stringContaining('Owner Contributions - Wren Okafor'),
-      expect.stringContaining('Owner Distributions - Wren Okafor'),
-      expect.stringContaining('Owner Contributions - Daniel Reyes'),
-      expect.stringContaining('Owner Distributions - Daniel Reyes'),
+      'Wren Okafor',
+      'Daniel Reyes',
+      'Wren Okafor',
+      'Daniel Reyes',
     ])
   })
 
@@ -157,7 +160,7 @@ describe('L5/J2: balance_groups_assets_liabilities_equity_in_order (10_06 01:09:
 })
 
 describe('L5/J3: equity questions gate on the setup pick and owner count', () => {
-  it('breakdown + per-owner questions appear only when qualified', () => {
+  it('per-owner is a follow-up on the breakdown card only when qualified', () => {
     const ids = (a: WizardAnswers) =>
       flattenScreens(a)
         .filter((s) => s.kind === 'question')
@@ -165,15 +168,12 @@ describe('L5/J3: equity questions gate on the setup pick and owner count', () =>
     const base = { engagementType: 'bookkeeping' } as WizardAnswers
     expect(ids(base)).toContain('equity-setup')
     expect(ids(base)).not.toContain('equity-breakdown')
-    expect(ids(base)).not.toContain('equity-per-owner')
 
-    const breakdown = { ...base, equitySetup: 'breakdown', owners: [{ name: 'A' }, { name: 'B' }] } as WizardAnswers
-    expect(ids(breakdown)).toContain('equity-breakdown')
-    expect(ids(breakdown)).toContain('equity-per-owner')
-
-    const oneOwner = { ...base, equitySetup: 'breakdown', owners: [{ name: 'A' }] } as WizardAnswers
-    expect(ids(oneOwner)).toContain('equity-breakdown')
-    expect(ids(oneOwner)).not.toContain('equity-per-owner')
+    const breakdownQuestion = findQuestion('balance', 'equity-breakdown')!
+    expect(ids({ ...base, equitySetup: 'breakdown' })).toContain('equity-breakdown')
+    expect(breakdownQuestion.followup?.when?.({ ...base, owners: [{ name: 'A' }, { name: 'B' }] })).toBe(true)
+    expect(breakdownQuestion.followup?.when?.({ ...base, owners: [{ name: 'A' }] })).toBe(false)
+    expect(breakdownQuestion.followup?.key).toBe('equityPerOwner')
   })
 })
 

@@ -73,6 +73,7 @@ interface ReportDefinition {
   frequency: string;
   /** C10 specialty-report extras (data-source note, pricing) pass through. */
   dataSource?: string | null;
+  notes?: string | null;
   estimatedHours?: number | null;
   flatPrice?: number | null;
   hourlyRate?: number | null;

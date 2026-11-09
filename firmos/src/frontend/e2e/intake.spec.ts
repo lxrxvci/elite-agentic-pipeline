@@ -47,7 +47,7 @@ async function startIntake(page: Page, name: string) {
   await page.waitForURL((url) => /^\/intake\/\d+$/.test(url.pathname))
 }
 
-test('intake: wizard -> live quote -> submit -> convert -> workstation work', async ({ page }) => {
+test('intake: wizard -> final estimate -> submit -> convert -> workstation work', async ({ page }) => {
   // ── Login as the firm owner ──
   await loginAsOwner(page)
 
@@ -122,6 +122,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByRole('option', { name: 'Chase' }).click()
   await expect(page.getByTestId('bank-select-0')).toHaveText('Chase')
   await page.getByTestId('last4-0').fill('4411')
+  await page.getByTestId('grant-access-0').check()
   // D2: the derived label shows on the mini-form.
   await expect(page.getByTestId('account-label-0')).toHaveText('Chase Checking · 4411')
   // Money accounts carry the locked statement-proof note (no selector).
@@ -141,6 +142,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await page.getByTestId('bank-select-0').click() // toggle closed
   await expect(page.getByRole('option', { name: 'E2E First Tech' })).toHaveCount(0)
   await page.getByTestId('last4-0').fill('1005')
+  await page.getByTestId('grant-access-0').check()
   await advance(page, 'vehicles')
   // Vehicles: description/year + the financed pick (D5); bill-of-sale proof; no bank.
   await page.getByTestId('add-account').click()
@@ -156,6 +158,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(page.getByTestId('from-vehicle-0')).toHaveText('From the vehicles card')
   await page.getByTestId('lender-select-0').click()
   await page.getByRole('option', { name: 'Chase' }).click()
+  await page.getByTestId('grant-access-0').check()
   // L5 (J3): the equity setup card follows the loans card - grouped setup.
   await advance(page, 'equity-setup')
   await pick(page, 'option-grouped', 're-yes')
@@ -181,17 +184,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await pick(page, 'option-no', 'personal-card') // never personal spend on business accounts (A41)
   await pick(page, 'option-no', 'record-deposits') // no business spend on a personal card (B18)
   await pick(page, 'option-no', 'payroll') // they handle deposit recording (C10)
-  await pick(page, 'option-no', 'online-access') // no payroll (I3: access checklist next)
-
-  // ── Online access: the checklist pulls the statement-proof accounts (I3) ──
-  // D2: labels follow bank -> type -> last4.
-  await expect(page.getByTestId('check-checkingAccounts:0')).toContainText('Chase Checking · 4411')
-  await expect(page.getByTestId('check-creditCardAccounts:0')).toContainText('E2E First Tech Credit card · 1005')
-  // D5: the financed vehicle's linked loan IS a statement account; the
-  // bill-of-sale vehicle asset itself is not an online-access candidate.
-  await expect(page.getByTestId('check-loanAccounts:0')).toContainText('2022 Ford Transit (vehicle loan)')
-  await page.getByTestId('check-checkingAccounts:0').click()
-  await advance(page, 'bk-frequency')
+  await pick(page, 'option-no', 'bk-frequency') // no payroll; access stays on the source accounts
 
   // ── Reporting and payroll: monthly, close by the 10th, cash ──
   await pick(page, 'option-monthly', 'close-tier')
@@ -199,19 +192,15 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
 
   // I4: the running estimate stays hidden until the review screen (the client
   // may be watching on the Meet call) - no dollar figures anywhere mid-wizard.
-  await expect(page.getByTestId('quote-hidden')).toBeVisible()
+  await expect(page.getByTestId('quote-hidden')).toHaveCount(0)
   await expect(page.getByTestId('live-quote')).toHaveCount(0)
+  await expect(page.getByTestId('quote-peek-toggle')).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText(/\$\d/)
-  // Staff can peek: the rail toggle reveals the server-priced estimate…
-  await page.getByTestId('quote-peek-toggle').click()
-  await expect
-    .poll(async () => page.getByTestId('quote-amount').textContent(), { timeout: 15_000 })
-    .not.toMatch(/^(--|\$0)/)
-  // …and hide it again before continuing the conversation.
-  await page.getByTestId('quote-hide-toggle').click()
-  await expect(page.getByTestId('quote-hidden')).toBeVisible()
 
   await pick(page, 'option-cash', 'record-bills')
+  await page.getByTestId('option-yes').click()
+  await page.getByTestId('list-input').pressSequentially('Rent')
+  await page.getByTestId('list-add').click()
   // J2 (E6): record yes -> the pay card with its addable locations list.
   await pick(page, 'option-yes', 'pay-bills')
   await page.getByTestId('option-yes').click() // pay yes reveals the editor (no auto-advance)
@@ -288,18 +277,18 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
 
   // ── Review: summary renders in the dictated order, quote revealed HERE ──
   await expect(page.getByTestId('review-screen')).toBeVisible()
-  // I4: the review screen is the reveal - the rail panel animates in even
-  // though pricing stayed hidden (and was re-hidden) during the questions.
-  await expect(page.getByTestId('live-quote')).toBeVisible()
-  await expect(page.getByTestId('live-quote')).toHaveAttribute('data-revealed', 'true')
+  await expect(page.getByTestId('live-quote')).toHaveCount(0)
   await expect(page.getByTestId('review-quote')).toBeVisible()
-  // K6 (F1, 09_30 01:00:58): every section starts OPEN; the confirm check
-  // greens + collapses a reviewed section. Read rows without toggling.
+  // Every section starts OPEN; the confirm check persists across a reload.
   await expect(page.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'true')
   await expect(page.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.getByText('Yes · Cascade Tax Group')).toBeVisible()
+  await expect(page.getByText('Yes · Cascade Tax Group · new contact')).toBeVisible()
   // The main contact row shows the formatted phone.
   await expect(page.getByText('Wren Okafor · (503) 555-0182 · wren@e2ebloom.example')).toBeVisible()
+  await page.getByTestId('section-confirm-contact').click()
+  await expect(page.getByTestId('save-indicator')).toHaveText('Saved', { timeout: 15_000 })
+  await page.reload({ waitUntil: 'networkidle' })
+  await expect(page.getByTestId('review-section-contact')).toHaveAttribute('data-confirmed', 'true')
   // I3: accounts render grouped by type with institution + proof badges.
   // J1 (D2): the bank -> type -> last4 standard everywhere.
   const reviewAccounts = page.getByTestId('review-accounts')
@@ -310,11 +299,13 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   await expect(reviewAccounts).toContainText('Bill of sale')
   // D5: the financed vehicle's linked loan renders in the loans group.
   await expect(reviewAccounts).toContainText('2022 Ford Transit (vehicle loan)')
-  // The online-access row counts the checked statement accounts (3 now:
-  // checking + card + the vehicle loan).
-  await expect(page.getByText('1 of 3 with online access')).toBeVisible()
+  // Source-account flags render as a vertical access list, not a count.
+  const accessReview = page.getByTestId('review-section-access')
+  await expect(accessReview.getByRole('listitem').filter({ hasText: 'Chase Checking · 4411' })).toBeVisible()
+  await expect(accessReview.getByRole('listitem').filter({ hasText: 'E2E First Tech Credit card · 1005' })).toBeVisible()
+  await expect(accessReview.getByRole('listitem').filter({ hasText: '2022 Ford Transit (vehicle loan)' })).toBeVisible()
   // The CPA card answer shows on the review screen.
-  await expect(page.getByText('Yes · Cascade Tax Group')).toBeVisible()
+  await expect(page.getByText('Yes · Cascade Tax Group · new contact')).toBeVisible()
   // I2: the LLC subclass folds into the tax-structure row.
   await expect(page.getByText('LLC · single-member')).toBeVisible()
   // The referral row carries who to thank.
@@ -334,6 +325,7 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   // J2 (E6): the bills split carries both rows, locations included.
   await expect(page.getByTestId('review-screen').getByText('Should we record their bills?')).toBeVisible()
   await expect(page.getByText('Yes · pays at: Vendor websites')).toBeVisible()
+  await expect(page.getByTestId('review-section-reporting').getByText(/records:\s*Rent/)).toBeVisible()
 
   // V6/V7 (01:04:00-01:06:58): the estimate buckets recurring services by
   // frequency with the math visible; one-time fees list separately. V5: the
@@ -359,18 +351,16 @@ test('intake: wizard -> live quote -> submit -> convert -> workstation work', as
   ).toBeVisible()
   // V4 (01:01:22-01:02:14): direct price editing, no discount boxes - edit
   // the bank-feed price to $90 and the estimate follows the server re-quote.
-  // (The rail panel has a twin editor; these target the estimate's.)
   await expect(page.locator('body')).not.toContainText('−$')
   const feedLine = page.getByTestId('estimate-line-bank_feed_management')
-  await feedLine.getByTestId('price-edit-bank_feed_management').click()
   await feedLine.getByTestId('price-input-bank_feed_management').fill('90')
-  await feedLine.getByTestId('price-save-bank_feed_management').click()
-  await expect(feedLine.getByTestId('price-value-bank_feed_management')).toHaveText('$90', {
+  await feedLine.getByTestId('price-input-bank_feed_management').press('Enter')
+  await expect(feedLine.getByTestId('price-input-bank_feed_management')).toHaveValue('90', {
     timeout: 15_000,
   })
   // Reset restores the standard price.
   await feedLine.getByTestId('price-reset-bank_feed_management').click()
-  await expect(feedLine.getByTestId('price-value-bank_feed_management')).toHaveText('$100', {
+  await expect(feedLine.getByTestId('price-input-bank_feed_management')).toHaveValue('100', {
     timeout: 15_000,
   })
 
@@ -472,10 +462,9 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
   await pick(page, 'option-consulting', 'existing-client')
   await pick(page, 'option-no', 're-yes') // consulting: no books-start screen
   await pick(page, 'option-no', 'services') // not real estate
-  // I4: the standards are pre-selected on every engagement type; pricing
-  // stays hidden until the review (the collapsed rail offers a staff peek).
+  // The standards are pre-selected; no live-estimate rail remains.
   await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
-  await expect(page.getByTestId('quote-hidden')).toBeVisible()
+  await expect(page.getByTestId('quote-hidden')).toHaveCount(0)
   await advance(page, 'qbo-status')
   await pick(page, 'option-none', 'qbo-setup')
   await pick(page, 'option-no', 'qbo-users')
@@ -597,7 +586,9 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await page.getByTestId('provider-select-0').click() // toggle closed
   await page.getByTestId('continue').click()
   await expectQuestion(page, 'payroll-frequency')
-  await pick(page, 'option-biweekly', 'payroll-services')
+  await pick(page, 'option-biweekly', 'payroll-pay-dates')
+  await page.getByLabel('Pay day of the week').selectOption('5')
+  await advance(page, 'payroll-services')
 
   // ── The payroll add-on is prompted with a recommendation badge ──
   await expect(page.getByTestId('recommendation-badge')).toContainText('Recommended')
@@ -636,10 +627,10 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await expect(page.getByTestId('review-screen')).toBeVisible()
   await expect(page.getByText('S-corp')).toBeVisible()
   await expect(page.getByText('Yes · officers must be on payroll')).toBeVisible()
-  await expect(page.getByText('E2E SurePayroll')).toBeVisible()
-  await expect(page.getByText('Every two weeks')).toBeVisible()
+  await expect(page.getByTestId('review-section-income').getByText('E2E SurePayroll')).toBeVisible()
+  await expect(page.getByTestId('review-section-income').getByText('Every two weeks')).toBeVisible()
   // (the review row joins the core + secondary: "Process payroll, Payroll quarterly filings")
-  await expect(page.getByText(/Payroll quarterly filings/)).toBeVisible()
+  await expect(page.getByTestId('review-section-income').getByText(/Payroll quarterly filings/)).toBeVisible()
   await page.getByTestId('submit-intake').click()
   await expect(page.getByTestId('submitted-success')).toBeVisible({ timeout: 15_000 })
 

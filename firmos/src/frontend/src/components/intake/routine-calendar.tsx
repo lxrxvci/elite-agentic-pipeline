@@ -184,8 +184,9 @@ export function plotMonthTasks(tasks: RoutineTaskDef[], entries: RoutineSchedule
   const daysInMonth = new Date(year, month, 0).getDate()
   const plot = new Map<number, PlottedTask[]>()
   const mark = (day: number, task: RoutineTaskDef, bucket: RoutineBucket) => {
-    if (day < 1 || day > daysInMonth) return
-    plot.set(day, [...(plot.get(day) ?? []), { key: task.key, title: task.title, bucket }])
+    if (day < 1) return
+    const resolvedDay = Math.min(day, daysInMonth)
+    plot.set(resolvedDay, [...(plot.get(resolvedDay) ?? []), { key: task.key, title: task.title, bucket }])
   }
   const firstWeekdayOccurrence = (weekday: number): number => {
     const first = new Date(year, month - 1, 1).getDay()

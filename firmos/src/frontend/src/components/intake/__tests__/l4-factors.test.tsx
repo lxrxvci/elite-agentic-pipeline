@@ -100,9 +100,9 @@ describe('L4/G6: qualified_row_shows_reason_and_links_back', () => {
     fireEvent.click(stdFactor)
     expect(onJumpTo).toHaveBeenCalledWith('engagement', 'engagement')
 
-    // Later addon (payroll, qualified): "Payroll: Yes · Gusto · Weekly".
+    // Later addon (payroll, self-processed): the reason states that explicitly.
     const payrollFactor = screen.getByTestId('factor-payroll')
-    expect(payrollFactor.textContent).toContain('Payroll: Yes · Gusto · Weekly')
+    expect(payrollFactor.textContent).toContain('Payroll: they process their own · Gusto · Weekly')
     fireEvent.click(payrollFactor)
     expect(onJumpTo).toHaveBeenCalledWith('income', 'payroll-services')
   })

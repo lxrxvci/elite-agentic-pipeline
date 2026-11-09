@@ -12,8 +12,8 @@ import { findChapter, visibleQuestions, type WizardAnswers } from '../registry'
  * edits its single question.
  */
 
-function Harness({ target }: { target: EditTarget }) {
-  const [answers, setAnswers] = useState<WizardAnswers>({})
+function Harness({ target, initial = {} }: { target: EditTarget; initial?: WizardAnswers }) {
+  const [answers, setAnswers] = useState<WizardAnswers>(initial)
   const [closed, setClosed] = useState(false)
   if (closed) return <pre data-testid="closed">closed</pre>
   return (
@@ -84,5 +84,16 @@ describe('L1/G1: parent_edit_walks_every_chapter_question (10_06 01:03:07)', () 
     expect(screen.queryByTestId('edit-walk-nav')).toBeNull()
     fireEvent.click(screen.getByRole('option', { name: /consulting/i }))
     expect(screen.getByTestId('closed')).toBeInTheDocument()
+  })
+
+  it('oct28_cpa_edit_reopens_cpa_sequence', () => {
+    render(<Harness
+      target={{ chapterId: 'entity', questionId: 'has-cpa', walk: true }}
+      initial={{ hasCpa: true, cpaName: 'CPA Group' }}
+    />)
+    expect(screen.getByTestId('edit-overlay')).toHaveAttribute('data-question', 'has-cpa')
+    fireEvent.click(screen.getByRole('option', { name: /^yes$/i }))
+    expect(screen.getByTestId('edit-overlay')).toHaveAttribute('data-question', 'cpa-details')
+    expect(screen.queryByTestId('routine-scheduler')).toBeNull()
   })
 })

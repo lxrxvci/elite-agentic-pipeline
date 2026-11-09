@@ -852,11 +852,11 @@ export function WorkstationQueue({
   )
 
   return (
-    <div className="space-y-5 pb-10">
+    <div className="mx-auto w-full max-w-5xl space-y-5 pb-10">
       {/* Header: title + the one green primary action (FreshBooks action
           language - green is for DOING; docs/DESIGN-FRESHBOOKS.md §1). */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="font-display text-xl font-semibold tracking-tight text-foreground">
             Workstation
           </h1>
@@ -880,7 +880,7 @@ export function WorkstationQueue({
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* D2: the Up Next lane's first-class entry - one card at a time in
               the frozen day order. Only offered when My Day has work. */}
           {view === 'my-day' && !focusMode && (

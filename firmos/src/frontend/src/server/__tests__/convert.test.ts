@@ -2059,7 +2059,14 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
     const formData = {
       serviceKeys: ["bank_feed_management", "account_reconciliations", "monthly_reporting_10", "record_bills", "1099_collection"],
       contacts: [
-        { firstName: "Wren", lastName: "Okafor", email: "wren@fullgraph.example", isPrimary: true },
+        {
+          firstName: "Wren",
+          lastName: "Okafor",
+          email: "wren@fullgraph.example",
+          isPrimary: true,
+          emails: ["wren@other-business.example"],
+          emailChannels: [{ value: "wren@other-business.example", businessId: 7, businessName: "Other Business" }],
+        },
         // J1 (C5): a picker-linked contact entry - linked, never duplicated.
         { contactId: carlos.id, firstName: "Carlos", lastName: "Reyes", email: "carlos@riverstonetax.com", relationshipType: "related" as const },
       ],
@@ -2110,11 +2117,14 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
       hasPayroll: true,
       payrollProvider: "Gusto",
       payrollFrequency: "monthly" as const,
+      payrollPayDates: [10],
       payrollSelfProcessed: true,
+      lastTaxFiledDate: "2024",
       // J2 (E6): the bills split with its payment locations.
       recordBills: true,
       payBills: true,
       billPayLocations: ["Vendor websites"],
+      recordBillVendors: ["Rent", "Utilities"],
       // J2: the 1099 estimated count at the per-filing rate.
       estimated1099Count: 4,
       include1099Collection: true,
@@ -2125,7 +2135,7 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
     };
     // J2 (missed filings): the yes/no + most-recent-filed date shape.
     const reportDefinitions = [
-      { name: "Oregon Special Report", frequency: "quarterly", flatPrice: 450, missedFilings: true as const, lastFiledDate: "2026-03-31" },
+      { name: "Oregon Special Report", frequency: "quarterly", flatPrice: 450, missedFilings: true as const, lastFiledDate: "2026-03-31", notes: "Include county detail" },
     ];
     const customRecurringRules = [{ title: "Weekly deposit review", scheduleType: "weekly" as const }];
     // The committed J3 schedule, exactly as the untouched scheduler screen
@@ -2169,7 +2179,8 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
     expect(client.payrollProvider).toBe("Gusto");
     expect(client.hasPayroll).toBe(true);
     const noteBodies = (await db.select().from(clientNotes).where(eq(clientNotes.clientId, clientId))).map((n) => n.body);
-    expect(noteBodies).toContain("Bills: we record and pay them. Bills get paid at: Vendor websites.");
+    expect(noteBodies).toContain("Bills: we record and pay them. Bills get paid at: Vendor websites. Bills to record: Rent, Utilities.");
+    expect(noteBodies).toContain("Special report: Oregon Special Report — Include county detail");
     expect(noteBodies).toContain("Payroll: they process their own payroll (Gusto) - we download and enter the reports.");
     expect(noteBodies).toContain("Wants the SOPs for Chase first.");
     expect(noteBodies).toContain("Referred by Carlos.");
@@ -2179,6 +2190,10 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
     expect(result.contactsLinked).toBe(3); // Carlos x2 + the owner match
     expect(client.cpaContactId).toBe(carlos.id);
     expect(client.primaryContactId).not.toBe(carlos.id);
+    const [primaryContact] = await db.select().from(contacts).where(eq(contacts.id, client.primaryContactId!));
+    expect(primaryContact.contactChannelLinks).toEqual([
+      { kind: "email", value: "wren@other-business.example", businessId: 7, businessName: "Other Business" },
+    ]);
     const carlosRows = await db.select().from(contacts).where(eq(contacts.email, "carlos@riverstonetax.com"));
     expect(carlosRows).toHaveLength(1);
 

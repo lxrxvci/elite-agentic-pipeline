@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowRight, Check, Pencil, Plus } from 'lucide-react'
+import { Check, Pencil, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,8 @@ import { cn } from '@/shared/lib/utils'
 // drag the db module into every client/test bundle that renders the wizard.
 
 import { inputCls } from './account-screens'
+import { CardNavigation } from './navigation'
+import { NativeSelect } from '@/components/ui/native-select'
 import type { QuestionDef, WizardAnswers } from './registry'
 
 /**
@@ -121,11 +123,34 @@ export function ProcessorStackScreen({
       setError('Pick at least one processor, or go back.')
       return
     }
+    if (q.merchantReconcile && answers.includeMerchantReconciliation == null) {
+      setError('Choose whether we should reconcile the merchant accounts.')
+      return
+    }
+    setError(null)
     onAdvance()
   }
 
   return (
     <div className="space-y-4">
+      {q.merchantReconcile && (
+        <label className="block text-sm font-medium text-foreground">
+          Should we reconcile the merchant accounts?
+          <NativeSelect
+            data-testid="merchant-reconcile"
+            className="mt-1.5"
+            value={answers.includeMerchantReconciliation === true ? 'yes' : answers.includeMerchantReconciliation === false ? 'no' : ''}
+            onChange={(event) => {
+              setError(null)
+              onApply({ includeMerchantReconciliation: event.target.value === 'yes' })
+            }}
+          >
+            <option value="">Choose an answer…</option>
+            <option value="yes">Yes - reconcile these accounts</option>
+            <option value="no">No - only track the processors</option>
+          </NativeSelect>
+        </label>
+      )}
       <ul className="divide-y divide-border rounded-xl border border-border bg-card" data-testid="processor-stack">
         {processors.map((row) => {
           const selected = isSelected(row)
@@ -230,10 +255,9 @@ export function ProcessorStackScreen({
         </p>
       )}
 
-      <Button type="button" variant="action" onClick={finish} data-testid="continue">
+      <CardNavigation onClick={finish} data-testid="continue">
         Continue
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      </Button>
+      </CardNavigation>
     </div>
   )
 }

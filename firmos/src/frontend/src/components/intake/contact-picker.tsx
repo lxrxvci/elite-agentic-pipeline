@@ -35,6 +35,7 @@ export function ContactPicker({
   placeholder = 'Start typing a name…',
   ariaLabel = 'Search existing contacts and clients',
   excludeContactIds = [],
+  includeContacts = true,
   includeClients = true,
   testidPrefix = 'contact-picker',
 }: {
@@ -48,6 +49,8 @@ export function ContactPicker({
   ariaLabel?: string
   /** Contacts already on the list - filtered out of the results. */
   excludeContactIds?: number[]
+  /** Business-only channel pickers hide people; most pickers include both. */
+  includeContacts?: boolean
   /** Referral-who also searches client names; the contacts pickers don't. */
   includeClients?: boolean
   testidPrefix?: string
@@ -80,7 +83,7 @@ export function ContactPicker({
     }
   }, [query, search])
 
-  const contactHits = results.contacts.filter((c) => !excludeContactIds.includes(c.id))
+  const contactHits = includeContacts ? results.contacts.filter((c) => !excludeContactIds.includes(c.id)) : []
   const clientHits = includeClients ? results.clients : []
   const hits: ContactPickerHit[] = [...contactHits, ...clientHits]
   const showCreate = onCreateNew != null && query.trim() !== ''

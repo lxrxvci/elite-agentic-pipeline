@@ -16,6 +16,9 @@ const cspHeader = (
 
 const nextConfig = {
   transpilePackages: ['@firmos/domain'],
+  experimental: {
+    turbopackFileSystemCacheForDev: process.env.FIRMOS_E2E !== '1',
+  },
   // @firmos/domain is a file: dep outside this directory (../../packages/domain);
   // Turbopack must treat the monorepo root as its project root to resolve it.
   turbopack: {

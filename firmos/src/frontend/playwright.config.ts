@@ -42,6 +42,7 @@ export default defineConfig({
       env: {
         ...process.env,
         DATABASE_URL,
+        FIRMOS_E2E: '1',
         // Production runtime requires a real secret (src/server/auth/config.ts);
         // this is a throwaway e2e value, never deployed.
         BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? 'firmos-e2e-only-secret',
@@ -60,6 +61,7 @@ export default defineConfig({
       env: {
         ...process.env,
         DATABASE_URL,
+        FIRMOS_E2E: '1',
         BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? 'firmos-e2e-only-secret',
         BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? portalBaseURL,
         // Portal e2e: kill switch on + dev magic-link retrieval.

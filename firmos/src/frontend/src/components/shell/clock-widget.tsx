@@ -448,7 +448,7 @@ export function ClockWidget({
         aria-label="Time clock - loading"
       >
         <Clock aria-hidden className="h-3.5 w-3.5" />
-        <span className="text-xs">Not clocked in</span>
+        <span className="hidden text-xs md:inline">Not clocked in</span>
       </Button>
     )
   }
@@ -468,7 +468,7 @@ export function ClockWidget({
           data-state="out"
         >
           <Clock aria-hidden className="h-3.5 w-3.5" />
-          <span className="text-xs">Not clocked in</span>
+          <span className="hidden text-xs md:inline">Not clocked in</span>
           <span className="text-xs font-medium text-foreground">Clock in</span>
         </Button>
         {idleDialogs}

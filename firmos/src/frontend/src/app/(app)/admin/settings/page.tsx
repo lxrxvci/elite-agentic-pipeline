@@ -4,6 +4,8 @@ import { asc, eq } from 'drizzle-orm'
 import { EmailTemplatesAdmin } from '@/components/admin/email-templates-admin'
 import { SettingsForm } from '@/components/admin/settings-form'
 import { UserSkillsAdmin } from '@/components/admin/user-skills-admin'
+import { ChartTemplatesAdmin } from '@/components/admin/chart-templates-admin'
+import { listChartTemplates } from '@/server/chart-templates'
 import { db } from '@/db'
 import { users } from '@/db/schema'
 import { getAdminSettings } from '@/server/admin-reads'
@@ -19,7 +21,7 @@ export const metadata: Metadata = { title: 'FirmOS - Admin - Settings' }
  */
 export default async function AdminSettingsPage() {
   await requireRole('admin', 'owner')
-  const [settings, emailOverrides, staffRows, skillRows] = await Promise.all([
+  const [settings, emailOverrides, staffRows, skillRows, chartTemplates] = await Promise.all([
     getAdminSettings(),
     getEmailTemplateOverrides(),
     // L6 (I6): the skill-tree editor's staff list + current levels.
@@ -29,6 +31,7 @@ export default async function AdminSettingsPage() {
       .where(eq(users.isActive, true))
       .orderBy(asc(users.firstName)),
     listUserSkills(),
+    listChartTemplates(),
   ])
   const staff = staffRows.map((u) => ({
     id: u.id,
@@ -37,6 +40,7 @@ export default async function AdminSettingsPage() {
   return (
     <div className="space-y-4">
       <SettingsForm settings={settings} />
+      <ChartTemplatesAdmin templates={chartTemplates} />
       <EmailTemplatesAdmin defs={EMAIL_TEMPLATE_DEFS} overrides={Object.fromEntries(emailOverrides)} />
       <UserSkillsAdmin staff={staff} rows={skillRows} />
     </div>

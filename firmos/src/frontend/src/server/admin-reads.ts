@@ -401,6 +401,7 @@ export interface AdminSettings {
   slackEnabled: boolean;
   maxClockInHours: number;
   commissionPayout: PayrollConfig["commission_payout"];
+  engagementAgreementTemplate: string;
 }
 
 /**
@@ -426,6 +427,9 @@ export async function getAdminSettings(): Promise<AdminSettings> {
     slackEnabled: flags?.slack_enabled === true,
     maxClockInHours: await maxClockInHours(),
     commissionPayout: payout.commission_payout,
+    engagementAgreementTemplate: typeof byKey.get("engagement_agreement_template") === "string"
+      ? byKey.get("engagement_agreement_template") as string
+      : "",
   };
 }
 

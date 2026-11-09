@@ -184,14 +184,15 @@ export function equitySeedPlan(form: {
   equityBreakdown?: string[] | null;
   equityPerOwner?: boolean | null;
   owners?: readonly { name?: string | null }[] | null;
-}): EquitySeedRow[] | null {
+}, template?: import("@/shared/lib/chart-templates").ChartTemplateNames): EquitySeedRow[] | null {
   if (form.equitySetup !== "grouped" && form.equitySetup !== "breakdown") return null;
   const owners = (form.owners ?? []).map((o) => (o.name ?? "").trim()).filter((n) => n !== "");
   const perOwner = form.equityPerOwner === true && owners.length > 1;
   if (form.equitySetup === "grouped") {
+    const label = template?.grouped ?? "Owner's Equity";
     return perOwner
-      ? owners.map((o) => ({ type: "other_equity", name: `Owner's Equity - ${o}` }))
-      : [{ type: "other_equity", name: "Owner's Equity" }];
+      ? owners.map((o) => ({ type: "other_equity", name: `${label} - ${o}` }))
+      : [{ type: "other_equity", name: label }];
   }
   const picks =
     form.equityBreakdown && form.equityBreakdown.length > 0
@@ -199,7 +200,14 @@ export function equitySeedPlan(form: {
       : ["contributions", "distributions"];
   const chosen = EQUITY_BREAKDOWN_OPTIONS.map((o) => o.value)
     .filter((v) => picks.includes(v))
-    .map((v) => EQUITY_PICK_SEED[v]!);
+    .map((v) => ({
+      type: EQUITY_PICK_SEED[v]!.type,
+      label: v === "contributions"
+        ? template?.contributions ?? EQUITY_PICK_SEED[v]!.label
+        : v === "distributions"
+          ? template?.distributions ?? EQUITY_PICK_SEED[v]!.label
+          : template?.netInvestment ?? EQUITY_PICK_SEED[v]!.label,
+    }));
   return perOwner
     ? owners.flatMap((o) => chosen.map((d) => ({ type: d.type, name: `${d.label} - ${o}` })))
     : chosen.map((d) => ({ type: d.type, name: d.label }));

@@ -334,8 +334,8 @@ export const WorkCardRow = React.memo(function WorkCardRow({
         // White card on the cool-gray canvas: 1px border, subtle shadow,
         // slight hover lift; the 3px status spine is the left edge.
         embedded
-          ? 'group relative flex h-11 cursor-pointer items-center gap-3 overflow-hidden pl-4 pr-2 transition-colors duration-150'
-          : 'group relative flex h-12 cursor-pointer items-center gap-3 overflow-hidden rounded-lg border border-border bg-card pl-5 pr-3 shadow-card transition-[background-color,box-shadow,transform] duration-150 hover:shadow-pop motion-safe:hover:-translate-y-0.5',
+          ? 'group relative flex h-11 cursor-pointer items-center gap-2 overflow-hidden pl-4 pr-2 transition-colors duration-150 sm:gap-3'
+          : 'group relative flex h-12 cursor-pointer items-center gap-2 overflow-hidden rounded-lg border border-border bg-card pl-5 pr-3 shadow-card transition-[background-color,box-shadow,transform] duration-150 hover:shadow-pop motion-safe:hover:-translate-y-0.5 sm:gap-3',
         selected ? 'bg-muted' : 'hover:bg-muted/60',
         card.status === 'waiting_on_client' && 'bg-status-waiting-client-bg/30',
         card.status === 'deferred' && 'bg-status-deferred-bg/30',
@@ -363,7 +363,7 @@ export const WorkCardRow = React.memo(function WorkCardRow({
         <span className="truncate text-sm font-medium text-foreground">{card.title}</span>
         <span
           className={cn(
-            'tnum shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+            'tnum hidden shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide sm:inline',
             kindStyle.chip,
           )}
         >
@@ -499,7 +499,7 @@ export const WorkCardRow = React.memo(function WorkCardRow({
       </span>
 
       {assignee ? (
-        <Avatar className="h-6 w-6 shrink-0">
+        <Avatar className="hidden h-6 w-6 shrink-0 sm:flex">
           <AvatarFallback
             className="text-[10px] font-semibold"
             style={avatarStyle(assignee.id)}
@@ -509,7 +509,7 @@ export const WorkCardRow = React.memo(function WorkCardRow({
           </AvatarFallback>
         </Avatar>
       ) : (
-        <span className="h-6 w-6 shrink-0" aria-hidden />
+        <span className="hidden h-6 w-6 shrink-0 sm:block" aria-hidden />
       )}
 
       {/* D5: the Start/timer control on every non-locked card (task timer

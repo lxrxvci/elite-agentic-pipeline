@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowRight, Check, ChevronDown, Plus, X } from 'lucide-react'
+import { Check, ChevronDown, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -11,6 +11,7 @@ import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
 import { cn } from '@/shared/lib/utils'
 
 import { ConfirmDeleteDialog } from './confirm-delete-dialog'
+import { CardNavigation } from './navigation'
 import {
   accountItemError,
   ASSET_TYPE_LABELS,
@@ -605,12 +606,9 @@ export function AccountCountScreen({
         </p>
       )}
 
-      <div className="flex items-center gap-3">
-        <Button type="button" variant="action" onClick={finish} data-testid="continue">
-          {items.length === 0 ? 'Skip for now' : 'Continue'}
-          <ArrowRight className="h-4 w-4" aria-hidden />
-        </Button>
-      </div>
+      <CardNavigation onClick={finish} data-testid="continue">
+        {items.length === 0 ? 'Skip for now' : 'Continue'}
+      </CardNavigation>
 
       {/* L1 (H4, 10_06 00:31:41): every account removal confirms first. */}
       <ConfirmDeleteDialog

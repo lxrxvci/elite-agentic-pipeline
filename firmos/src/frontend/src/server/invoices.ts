@@ -38,6 +38,12 @@ import { toDomainClient, type ClientRow } from "./domain-adapters";
 import { firmLocalWallToUtc, firmTimezone } from "./notifications";
 import { getPricingOverrides } from "./pricing-config";
 import { weekdayOccurrencesInMonth } from "@/shared/lib/routine-schedule";
+import {
+  billingAmountForPeriod,
+  type BillingFrequency,
+  type CalcFrequency,
+  type LineBillingConfig,
+} from "@/shared/lib/line-billing";
 import type { TemplateLineItem } from "./quote";
 
 /**
@@ -181,7 +187,7 @@ const PERIOD_SPREAD_MONTHS: Record<string, number> = {
  * (01:09:53): weekly/daily-calc bills its real weekday occurrences;
  * monthly-calc counts months; annual-calc divides.
  */
-function configQuantityForMonth(
+export function configQuantityForMonth(
   line: TemplateLineItem,
   period: "monthly" | "quarterly" | "annual",
   year: number,
@@ -192,11 +198,24 @@ function configQuantityForMonth(
   const calcWeekdays = (line.calc_weekdays as number[] | null) ?? [5];
   const qty = line.quantity;
   const monthlyFamily = line.flat_monthly === true || calcFreq == null || calcFreq === "monthly";
-  // The monthly SHARE of a unit: specialty report lines arrive
-  // cycle-normalized (occurrences per month already - the template comment
-  // on quote.ts); every other line arrives as a per-cadence count, divided
-  // to the month by its calc frequency.
   const specialty = /^specialty_report_\d+(_retro)?$/.test(line.service_key);
+  const calcQuantity = line.calc_quantity as number | undefined;
+  const validCalcFrequency = calcFreq != null && ["daily", "weekly", "monthly", "quarterly", "annual"].includes(calcFreq)
+    ? calcFreq as CalcFrequency
+    : null;
+
+  if (calcQuantity != null && validCalcFrequency != null) {
+    const config: LineBillingConfig = {
+      calcFrequency: validCalcFrequency,
+      billingFrequency: period as BillingFrequency,
+      calcWeekdays,
+      billDay: line.bill_day as number | null,
+      billMonth: (line.bill_month as number | null) ?? startMonth,
+      flatMonthly: line.flat_monthly === true,
+    };
+    return billingAmountForPeriod(config, 1, calcQuantity, period, { year, month });
+  }
+
   const monthlyShare = specialty
     ? qty
     : monthlyFamily
@@ -207,8 +226,6 @@ function configQuantityForMonth(
           ? qty / 12
           : qty;
 
-  // Flat monthly (01:00:03): occurrences never apply at any billing period -
-  // the unit is the month ("your unit now becomes month", 01:02:14).
   if (line.flat_monthly === true) {
     if (period === "monthly") return monthlyShare;
     if (period === "quarterly") return monthlyShare * 3;
@@ -236,7 +253,6 @@ function configQuantityForMonth(
     }
     return monthlyShare * 3;
   }
-  // annual: the full calc-year amount lands in the assigned month.
   const billMonth = (line.bill_month as number | null) ?? 1;
   if (month !== billMonth) return 0;
   if (calcFreq === "weekly" || calcFreq === "daily") {
@@ -868,10 +884,23 @@ export async function generateWeeklyInvoices(
             : calcFreq === "annual"
               ? line.quantity / 12
               : line.quantity;
-        // Weekly/daily calc: each selected weekday bills once this week
-        // ("calculated on a weekly basis"); monthly-family prorates x12/52.
-        const quantity =
-          calcFreq === "weekly" || calcFreq === "daily"
+        const validCalcFrequency = ["daily", "weekly", "monthly", "quarterly", "annual"].includes(calcFreq)
+          ? calcFreq as CalcFrequency
+          : "weekly";
+        const quantity = line.calc_quantity != null
+          ? billingAmountForPeriod(
+              {
+                calcFrequency: validCalcFrequency,
+                billingFrequency: "weekly",
+                calcWeekdays,
+                flatMonthly: line.flat_monthly === true,
+              },
+              1,
+              line.calc_quantity as number,
+              "weekly",
+              { year: start.year, month: start.month },
+            )
+          : calcFreq === "weekly" || calcFreq === "daily"
             ? line.quantity * calcWeekdays.length
             : (monthlyShare * 12) / 52;
         const amount = round2(unitPrice * quantity);

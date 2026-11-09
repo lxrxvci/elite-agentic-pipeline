@@ -142,14 +142,14 @@ describe('branch map', () => {
     }
   })
 
-  it('qbo-setup question only appears for desktop or none, never for a custom Other answer', () => {
+  it('setup follows the selected software while users and plans stay QuickBooks-only', () => {
     const software = CHAPTERS.find((c) => c.id === 'software')!
     const onQbo = visibleQuestions(software, base).map((q) => q.id)
     expect(onQbo).not.toContain('qbo-setup')
     const noQbo = visibleQuestions(software, { ...base, quickbooksStatus: 'none' }).map((q) => q.id)
     expect(noQbo).toContain('qbo-setup')
-    const custom = visibleQuestions(software, { ...base, quickbooksStatus: 'Other' }).map((q) => q.id)
-    expect(custom).not.toContain('qbo-setup')
+    const custom = visibleQuestions(software, { ...base, quickbooksStatus: 'Wave' }).map((q) => q.id)
+    expect(custom).toContain('qbo-setup')
     expect(custom).not.toContain('qbo-users')
     expect(custom).not.toContain('qbo-tier')
   })
@@ -204,13 +204,9 @@ describe('branch map', () => {
     expect(cashOnly).not.toContain('merchants')
     const cards = visibleQuestions(income, { ...base, paymentMethods: ['card'] }).map((q) => q.id)
     expect(cards).toContain('merchants')
-    expect(cards).not.toContain('merchant-recon') // needs at least one merchant account
-    const withMerchant = visibleQuestions(income, {
-      ...base,
-      paymentMethods: ['card'],
-      merchantAccounts: [{ name: 'Stripe' }],
-    }).map((q) => q.id)
-    expect(withMerchant).toContain('merchant-recon')
+    const merchants = findQuestion('income', 'merchants')!
+    expect(merchants.merchantReconcile).toBe(true)
+    expect(cards).not.toContain('merchant-recon') // consolidated into the processor card
   })
 
   it('close tier only matters for monthly closes', () => {
@@ -245,7 +241,7 @@ describe('CPA question card (I1)', () => {
   it('summarizes the CPA name on the review row and hides the detail row', () => {
     // J1 (C4/C6): the row carries the linked-vs-new state.
     expect(hasCpa.summarize({ ...base, hasCpa: true, cpaName: 'Cascade Tax Group' })).toBe(
-      'Yes · Cascade Tax Group · new record',
+      'Yes · Cascade Tax Group · new contact',
     )
     expect(hasCpa.summarize({ ...base, hasCpa: false })).toBe('No')
     expect(cpaDetails.summarize({ ...base, hasCpa: true, cpaName: 'Cascade' })).toBeNull()
@@ -345,6 +341,8 @@ describe('main-contact card (I1)', () => {
         // M5 (C2): the channel arrays always write (empty when no extras).
         emails: [],
         phones: [],
+        emailChannels: [],
+        phoneChannels: [],
         isPrimary: true,
         relationshipType: 'primary_contact',
       },
@@ -588,11 +586,11 @@ describe('B18 personal-card question', () => {
 describe('N2 renamed books-start question (meeting #3, supersedes A44)', () => {
   const bkStart = findQuestion('starting', 'bk-start')!
 
-  it('the title is "When would you like your bookkeeping to start?" everywhere, with the taxes-filed framing demoted to helper copy', () => {
+  it('the start card keeps its stable key and adds optional last-tax-filed capture', () => {
     expect(bkStart.title).toBe('When would you like your bookkeeping to start?')
-    expect(String(bkStart.help)).toContain('Jason usually follows up with: when was the last time you filed taxes?')
     expect(bkStart.fields?.map((f) => [f.key, f.label])).toEqual([
       ['bookkeepingStartDate', 'Bookkeeping start date'],
+      ['lastTaxFiledDate', 'When were taxes last filed? (optional)'],
     ])
     // The answer key never moved (I1 date-text, masked MM/DD/YYYY).
     expect(bkStart.fields?.[0]?.kind).toBe('date-text')
@@ -700,6 +698,7 @@ describe('C10 specialty report capture', () => {
       name: 'Oregon Special Report',
       frequency: 'annual',
       dataSource: 'Client portal',
+      notes: null,
       pricingMode: null,
       estimatedHours: null,
       flatPrice: 200,
@@ -725,6 +724,7 @@ describe('C10 specialty report capture', () => {
       name: 'Oregon Special Report',
       frequency: 'quarterly',
       dataSource: null,
+      notes: null,
       pricingMode: null,
       estimatedHours: 2,
       flatPrice: null,
@@ -938,10 +938,13 @@ describe('J3 routine scheduler (meeting #3, R1-R5, 00:39:26-00:54:05)', () => {
     expect(q.apply(base, schedule)).toEqual({ routineSchedule: schedule })
     const patch = buildPatch({ ...base, routineSchedule: schedule as never })
     expect(patch.formData?.routineSchedule).toEqual(schedule)
-    // The committed map drives the review one-liner.
+    // The committed map drives grouped vertical routines, not a count summary.
     const tasks = deriveRoutineTasks(base)
     const full = Object.fromEntries(tasks.map((t) => [t.key, t.defaultEntry]))
-    expect(q.summarize({ ...base, routineSchedule: full })).toBe('5 routines · Monthly 4 · Annual 1')
+    const summary = q.summarize({ ...base, routineSchedule: full })!
+    expect(summary).toContain('Monthly:\n• Categorize Transactions')
+    expect(summary).toContain('Annual:\n• Year-end tax readiness checklist')
+    expect(summary).not.toContain('5 routines')
   })
 })
 
@@ -1360,12 +1363,12 @@ describe('online_access_checklist_pulls_statement_accounts (I3, plan §1 screen 
     expect(off.checkingAccounts?.[0]?.grantLoginAccess).toBe(false)
   })
 
-  it('the review row counts the checked accounts', () => {
+  it('the review lists every account tagged for online access', () => {
     const q = findQuestion('access', 'online-access')!
-    expect(q.summarize(withAccounts)).toBe('None of the 3 accounts - all manual')
+    expect(q.summarize(withAccounts)).toBe('No online access selected - all manual')
     const two = statementAccountRefs(withAccounts).slice(0, 2).map((r) => r.key)
     const on: WizardAnswers = { ...withAccounts, ...q.apply(withAccounts, two) }
-    expect(q.summarize(on)).toBe('2 of 3 with online access')
+    expect(q.summarize(on)).toBe('• Operating\n• Reserve')
   })
 })
 
@@ -1413,16 +1416,15 @@ describe('standard_three_preselected (I4, plan §1 screen 5, §3C)', () => {
     expect(services.get({ ...base, ...bare })).toEqual(bare.serviceKeys)
   })
 
-  it('the review row names the standards and add-ons without any money', () => {
-    expect(services.summarize({ ...base, serviceKeys: ['bank_feed_management', 'account_reconciliations'] })).toBe(
-      'The 3 standards',
-    )
+  it('the review separates standards from sourced add-ons without any money', () => {
+    const standards = 'Standards:\n• Bank feed management\n• Account reconciliation\n• Reporting'
+    expect(services.summarize({ ...base, serviceKeys: ['bank_feed_management', 'account_reconciliations'] })).toBe(standards)
     expect(
       services.summarize({
         ...base,
         serviceKeys: ['bank_feed_management', 'account_reconciliations', 'invoicing', 'class_tracking'],
       }),
-    ).toBe('The 3 standards + Invoicing, Class tracking')
+    ).toBe(`${standards}\n\nAdd-ons:\n• Invoicing — Selected in Services\n• Class tracking — Selected in Services`)
     expect(services.summarize(base)).toBeNull()
   })
 
@@ -1729,10 +1731,8 @@ describe('merchant_selection_flags_review (J1, E5 - 00:24:04)', () => {
       merchantAccounts: [{ name: 'Stripe', processor: 'Stripe', processorId: 1 }],
     }
     expect(merchantsQ.summarize(withOne)).toBe('Stripe')
-    // ...and the merchant-recon follow-up opens once processors exist.
-    const recon = findQuestion('income', 'merchant-recon')!
-    expect(recon.when!(a)).toBe(false)
-    expect(recon.when!(withOne)).toBe(true)
+    expect(merchantsQ.merchantReconcile).toBe(true)
+    expect(merchantsQ.summarize({ ...withOne, includeMerchantReconciliation: true })).toBe('Reconcile: Yes\nStripe')
   })
 
   it('a processor pick requires the processor (the account name alone is not enough)', () => {
@@ -1772,7 +1772,7 @@ describe('contact picker wiring (J1, C5/C6/C7)', () => {
     expect(hasCpa.summarize({ ...base, hasCpa: true, cpaName: 'Cascade Tax Group', cpaContactId: 56 })).toBe(
       'Yes · Cascade Tax Group · linked to the existing record',
     )
-    expect(hasCpa.summarize({ ...base, hasCpa: true, cpaName: 'New Firm' })).toBe('Yes · New Firm · new record')
+    expect(hasCpa.summarize({ ...base, hasCpa: true, cpaName: 'New Firm' })).toBe('Yes · New Firm · new contact')
     expect(hasCpa.summarize({ ...base, hasCpa: false })).toBe('No')
   })
 
@@ -1823,8 +1823,8 @@ describe('J2 bills split (E6)', () => {
     // ...and a pay=yes data path force-sets recordBills (extraction, legacy).
     expect(pay.apply(base, 'yes')).toEqual({ payBills: true, recordBills: true })
 
-    // Recording flipped to no retires the pay answer and its locations.
-    expect(record.apply(base, 'no')).toEqual({ recordBills: false, payBills: false, billPayLocations: [] })
+    // Recording flipped to no retires the pay answer and both bill lists.
+    expect(record.apply(base, 'no')).toEqual({ recordBills: false, payBills: false, billPayLocations: [], recordBillVendors: [] })
     expect(record.apply(base, 'yes')).toEqual({ recordBills: true })
   })
 
@@ -1839,7 +1839,7 @@ describe('J2 bills split (E6)', () => {
     expect(pay.summarize({ ...base, recordBills: true, payBills: false })).toBe('No')
     expect(
       pay.summarize({ ...base, recordBills: true, payBills: true, billPayLocations: ['Vendor websites', 'Bank bill pay'] }),
-    ).toBe('Yes · pays at: Vendor websites, Bank bill pay')
+    ).toBe('Yes · pays at: Vendor websites\nBank bill pay')
   })
 })
 
@@ -1932,6 +1932,6 @@ describe('J2 payroll-services mandatory handling (P1, registry half)', () => {
     ).toBe('They process their own - we enter the reports')
     expect(
       services.summarize({ ...base, hasPayroll: true, payrollSelfProcessed: true, serviceKeys: ['payroll_quarterly_filings'] }),
-    ).toBe('Payroll quarterly filings, They process their own - we enter the reports')
+    ).toBe('Payroll quarterly filings\nThey process their own - we enter the reports')
   })
 })
