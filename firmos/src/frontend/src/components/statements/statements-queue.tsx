@@ -193,7 +193,7 @@ export function StatementsQueue({ rows: initialRows, txRows, today, canManageSta
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={clientFilter} onValueChange={setClientFilter}>
+        <Select optionOrder="alphabetical" value={clientFilter} onValueChange={setClientFilter}>
           <SelectTrigger className="h-8 w-48 text-xs" aria-label="Filter by client">
             <SelectValue placeholder="All clients" />
           </SelectTrigger>

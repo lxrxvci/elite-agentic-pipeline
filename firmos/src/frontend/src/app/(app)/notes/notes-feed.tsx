@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { NativeSelect } from '@/components/ui/native-select'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -320,9 +321,9 @@ export function NotesFeed({
           </div>
           {/* E4: optional priority + due date; the defaults (normal, none)
               keep the two-tap flow intact. */}
-          <select
+          <NativeSelect
             aria-label="Priority"
-            className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+            className="h-8 w-40 text-xs"
             value={priority}
             onChange={(e) => setPriority(e.target.value as QuickNotePriority)}
             data-testid="note-priority-select"
@@ -331,7 +332,7 @@ export function NotesFeed({
             <option value="normal">Normal priority</option>
             <option value="high">High priority</option>
             <option value="urgent">Urgent</option>
-          </select>
+          </NativeSelect>
           <Input
             type="date"
             aria-label="Due date (optional)"

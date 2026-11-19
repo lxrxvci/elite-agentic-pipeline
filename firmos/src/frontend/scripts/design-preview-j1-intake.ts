@@ -155,7 +155,7 @@ async function main(): Promise<void> {
     await page.getByTestId("count-plus").click();
     await page.getByLabel("Description 1").fill("2022 Toyota Tundra");
     await page.getByLabel("Vehicle year 1").fill("2022");
-    await page.getByTestId("financed-select-0").selectOption("financed");
+    await page.getByTestId("financed-select-0").fill("financed");
     await page.waitForTimeout(300);
     await shot(page, "intake-vehicle-financed");
     await advance(page, "other-assets");
@@ -164,7 +164,7 @@ async function main(): Promise<void> {
     // 4. D6: the loans card - the financed vehicle's linked entry, switched
     //    to owner-declared so the lender is a free-text write-in.
     await expect(page.getByLabel("Loan name 1")).toHaveValue("2022 Toyota Tundra (vehicle loan)");
-    await page.getByTestId("proof-select-0").selectOption("owner_declared");
+    await page.getByTestId("proof-select-0").fill("owner_declared");
     await page.getByTestId("lender-writein-0").fill("Wren's credit union");
     await page.waitForTimeout(300);
     await shot(page, "intake-loan-lender");

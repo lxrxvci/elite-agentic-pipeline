@@ -134,6 +134,7 @@ export function ConvertDialog({
               id="convert-manager"
               data-testid="select-manager"
               className="h-10"
+              optionOrder="alphabetical"
               value={managerId}
               onChange={(e) => setManagerId(e.target.value)}
             >
@@ -153,6 +154,7 @@ export function ConvertDialog({
               id="convert-bookkeeper"
               data-testid="select-bookkeeper"
               className="h-10"
+              optionOrder="alphabetical"
               value={bookkeeperId}
               onChange={(e) => setBookkeeperId(e.target.value)}
             >
@@ -191,6 +193,7 @@ export function ConvertDialog({
                       aria-label={`Assign ${item.title}`}
                       data-testid={`convert-task-assignee-${item.key}`}
                       className="h-8 w-40 px-2 text-xs"
+                      optionOrder="alphabetical"
                       value={v}
                       onChange={(e) => setPicked((p) => ({ ...p, [item.key]: e.target.value }))}
                     >

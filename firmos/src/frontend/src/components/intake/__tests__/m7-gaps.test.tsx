@@ -116,7 +116,7 @@ describe('M7: own_invoice_selector_on_every_line (10_10 01:12:43)', () => {
     const onLineBilling = vi.fn()
     renderReview(answers, MONTHLY_QUOTE, { onLineBilling })
     const select = screen.getByTestId('own-invoice-bank_feed_management')
-    expect(select).toHaveValue('normal')
+    expect(select).toHaveAttribute('data-value', 'normal')
     fireEvent.change(select, { target: { value: 'own' } })
     expect(onLineBilling).toHaveBeenCalledWith('bank_feed_management', { ownInvoice: true })
   })
@@ -128,7 +128,7 @@ describe('M7: own_invoice_selector_on_every_line (10_10 01:12:43)', () => {
     } as WizardAnswers
     renderReview(routed, MONTHLY_QUOTE, { onLineBilling: () => {} })
     const select = screen.getByTestId('own-invoice-bank_feed_management')
-    expect(select).toHaveValue('own')
+    expect(select).toHaveAttribute('data-value', 'own')
     // The projection's first month carries the own-invoice total note.
     const months = screen.getAllByTestId(/^projection-\d{4}-\d{2}$/)
     const first = months[0]
@@ -185,13 +185,13 @@ describe('M7: retro_cleanup_bills_at_frequency (10_10 00:53:32)', () => {
     const onRetroBillingChange = vi.fn()
     renderReview(answers, RETRO_QUOTE, { onRetroBillingChange })
     const select = screen.getByTestId('retro-billing-frequency')
-    expect(select).toHaveValue('')
+    expect(select).toHaveAttribute('data-value', '')
     fireEvent.change(select, { target: { value: 'quarterly' } })
     expect(onRetroBillingChange).toHaveBeenCalledWith('quarterly')
     // A picked frequency renders back from the answers.
     renderReview({ ...answers, retroBillingFrequency: 'quarterly' } as WizardAnswers, RETRO_QUOTE, {
       onRetroBillingChange,
     })
-    expect(screen.getAllByTestId('retro-billing-frequency')[1]).toHaveValue('quarterly')
+    expect(screen.getAllByTestId('retro-billing-frequency')[1]).toHaveAttribute('data-value', 'quarterly')
   })
 })

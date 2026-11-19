@@ -12,7 +12,6 @@ import {
   Lock,
   Mail,
   Play,
-  Search,
   Undo2,
   X,
 } from 'lucide-react'
@@ -21,6 +20,7 @@ import { LANE_STAGE_LABEL, isBreakActivityType } from '@firmos/domain'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { SearchSelect } from '@/components/ui/search-select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
@@ -247,6 +247,7 @@ export function WorkstationQueue({
   // ── Filters ──
   const [bucketFilter, setBucketFilter] = useState<BucketFilter>('all')
   const [search, setSearch] = useState('')
+  const [selectedWorkKeys, setSelectedWorkKeys] = useState<string[]>([])
   const [kinds, setKinds] = useState<WorkCardKind[]>(ALL_KINDS)
   const [assigneeId, setAssigneeId] = useState<number | null>(null)
   const [clientId, setClientId] = useState<number | null>(null)
@@ -401,9 +402,11 @@ export function WorkstationQueue({
     search.trim() !== '' ||
     kinds.length !== ALL_KINDS.length ||
     assigneeId != null ||
-    clientId != null
+    clientId != null ||
+    selectedWorkKeys.length > 0
 
   const matchesFilters = (card: WorkCard): boolean => {
+    if (selectedWorkKeys.length > 0 && !selectedWorkKeys.includes(workCardKey(card))) return false
     if (!kinds.includes(card.kind)) return false
     if (assigneeId != null && card.assigneeId !== assigneeId) return false
     if (clientId != null && card.clientId !== clientId) return false
@@ -455,7 +458,7 @@ export function WorkstationQueue({
   const filtered = useMemo(
     () => openCards.filter((c) => matchesWorkDay(c) && matchesFilters(c)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [openCards, search, kinds, assigneeId, clientId, workDay],
+    [openCards, search, kinds, assigneeId, clientId, workDay, selectedWorkKeys],
   )
 
   const counts = useMemo(() => {
@@ -492,7 +495,7 @@ export function WorkstationQueue({
           matchesFilters(c),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [openCards, search, kinds, assigneeId, clientId, workDay],
+    [openCards, search, kinds, assigneeId, clientId, workDay, selectedWorkKeys],
   )
 
   const myDayCards = useMemo(
@@ -732,6 +735,7 @@ export function WorkstationQueue({
   function resetFilters() {
     setSearch('')
     setKinds(ALL_KINDS)
+    setSelectedWorkKeys([])
     setAssigneeId(null)
     setClientId(null)
     setBucketFilter('all')
@@ -743,6 +747,7 @@ export function WorkstationQueue({
     // explicit jump out of My Day into All work.
     setView('queue')
     setBucketFilter(view.bucket)
+    setSelectedWorkKeys([])
     setSearch(view.search)
     setKinds(view.kinds)
     setAssigneeId(view.assigneeId)
@@ -1197,23 +1202,36 @@ export function WorkstationQueue({
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-52 flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            ref={searchRef}
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value)
-              setRawCursor(0)
-            }}
-            placeholder="Search title or client…  ( / )"
-            aria-label="Search work items"
-            className="h-8 pl-8 text-sm"
-          />
-        </div>
+        <SearchSelect
+          multiple
+          optionOrder="source"
+          inputRef={searchRef}
+          ariaLabel="Search work items"
+          options={openCards.map((card) => ({
+            id: workCardKey(card),
+            label: card.title,
+            description: card.clientName,
+            keywords: [card.clientName],
+            data: card,
+          }))}
+          values={selectedWorkKeys}
+          onChange={(keys) => {
+            setSelectedWorkKeys(keys)
+            setSearch('')
+            setRawCursor(0)
+          }}
+          onQueryChange={(query) => {
+            setSearch(query)
+            setRawCursor(0)
+          }}
+          selectedLabel={search}
+          placeholder="Search title or client…  ( / )"
+          emptyMessage="No work items match."
+          className="min-w-52 flex-1"
+          inputClassName="h-8 text-sm"
+          inputTestid="work-search"
+          testidPrefix="work-search"
+        />
 
         <div role="group" aria-label="Filter by kind" className="flex gap-1">
           {ALL_KINDS.map((k) => {
@@ -1246,7 +1264,7 @@ export function WorkstationQueue({
         </div>
 
         <Select
-          value={assigneeId == null ? 'all' : String(assigneeId)}
+          optionOrder="alphabetical"          value={assigneeId == null ? 'all' : String(assigneeId)}
           onValueChange={(v) => {
             setAssigneeId(v === 'all' ? null : Number(v))
             setRawCursor(0)
@@ -1266,7 +1284,7 @@ export function WorkstationQueue({
         </Select>
 
         <Select
-          value={clientId == null ? 'all' : String(clientId)}
+          optionOrder="alphabetical"          value={clientId == null ? 'all' : String(clientId)}
           onValueChange={(v) => {
             setClientId(v === 'all' ? null : Number(v))
             setRawCursor(0)

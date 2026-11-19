@@ -1,10 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, ChevronDown, Plus, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
+import { SearchSelect } from '@/components/ui/search-select'
 import type { IntakeAccountInput } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
@@ -53,11 +54,11 @@ export function InstitutionSelect({
   onAdd,
   ariaLabel = 'Bank or card issuer',
   testidPrefix = 'bank',
-  listboxLabel = 'Banks',
+  listboxLabel: _listboxLabel = 'Banks',
   selectPlaceholder = 'Select the bank…',
   addToggleLabel = 'Add a new bank…',
-  addSubmitLabel = 'Add bank',
-  addPlaceholder = 'First Interstate Bank',
+  addSubmitLabel: _addSubmitLabel = 'Add bank',
+  addPlaceholder: _addPlaceholder = 'First Interstate Bank',
   addErrorLabel = 'bank',
 }: {
   institutions: InstitutionRow[]
@@ -79,123 +80,34 @@ export function InstitutionSelect({
   addPlaceholder?: string
   addErrorLabel?: string
 }) {
-  const [open, setOpen] = useState(false)
-  const [adding, setAdding] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const currentName =
-    (selectedId != null ? institutions.find((i) => i.id === selectedId)?.name : null) ??
-    selectedName ??
-    null
-
-  const submitNew = async () => {
-    if (newName.trim() === '' || busy) return
-    setBusy(true)
-    setError(null)
-    const row = await onAdd(newName)
-    setBusy(false)
-    if (!row) {
-      setError(`Could not add the ${addErrorLabel} - try again.`)
-      return
-    }
-    onSelect(row)
-    setNewName('')
-    setAdding(false)
-    setOpen(false)
-  }
+  const selected = selectedId != null
+    ? institutions.find((institution) => institution.id === selectedId)
+    : institutions.find((institution) => institution.name === selectedName)
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        data-testid={`${testidPrefix}-select-${index}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={ariaLabel}
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          inputCls,
-          'flex items-center justify-between gap-2 text-left',
-          currentName == null && 'text-muted-foreground',
-        )}
-      >
-        <span className="truncate">{currentName ?? selectPlaceholder}</span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-      </button>
-      {open && (
-        // The popover holds the listbox AND the inline add-new; the listbox
-        // itself owns options only (axe aria-required-children).
-        <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-popover p-1 shadow-pop">
-          <div role="listbox" aria-label={listboxLabel} className="max-h-64 overflow-auto">
-            {institutions.map((i) => {
-              const selected = i.id === selectedId
-              return (
-                <button
-                  key={i.id}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  data-testid={`${testidPrefix}-option-${i.id}`}
-                  onClick={() => {
-                    onSelect(i)
-                    setOpen(false)
-                  }}
-                  className={cn(
-                    'flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-                    selected ? 'font-medium text-accent-foreground' : 'text-foreground',
-                  )}
-                >
-                  {i.name}
-                  {selected && <Check className="h-3.5 w-3.5" aria-hidden />}
-                </button>
-              )
-            })}
-          </div>
-          <div className="border-t border-border">
-            {adding ? (
-              <form
-                className="flex items-center gap-2 p-2"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  void submitNew()
-                }}
-              >
-                <input
-                  aria-label={`New ${addErrorLabel} name`}
-                  data-testid={`${testidPrefix}-add-input`}
-                  className={cn(inputCls, 'h-9')}
-                  placeholder={addPlaceholder}
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  // eslint-disable-next-line jsx-a11y/no-autofocus -- inline reveal: focus follows the user's click
-                  autoFocus
-                />
-                <Button type="submit" size="sm" disabled={busy || newName.trim() === ''} data-testid={`${testidPrefix}-add-submit`}>
-                  {busy ? 'Adding…' : addSubmitLabel}
-                </Button>
-              </form>
-            ) : (
-              <button
-                type="button"
-                data-testid={`${testidPrefix}-add-toggle-${index}`}
-                onClick={() => setAdding(true)}
-                className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-firm-brand-strong transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
-                <Plus className="h-3.5 w-3.5" aria-hidden />
-                {addToggleLabel}
-              </button>
-            )}
-            {error && (
-              <p className="px-3 py-1.5 text-xs font-medium text-status-overdue" role="alert">
-                {error}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+    <SearchSelect
+      ariaLabel={ariaLabel}
+      options={institutions.map((institution) => ({
+        id: String(institution.id),
+        label: institution.name,
+        data: institution,
+      }))}
+      value={selected == null ? null : String(selected.id)}
+      selectedLabel={selected?.name ?? selectedName ?? null}
+      placeholder={selectPlaceholder}
+      testidPrefix={testidPrefix}
+      inputTestid={`${testidPrefix}-select-${index}`}
+      addToggleTestid={`${testidPrefix}-add-toggle-${index}`}
+      addLabel={(query) => (query ? `Add "${query}" as a new ${addErrorLabel}` : addToggleLabel)}
+      addInputLabel={`New ${addErrorLabel} name`}
+      addPlaceholder={_addPlaceholder}
+      onChange={(_id, option) => onSelect(option.data)}
+      onAdd={async (name) => {
+        const row = await onAdd(name)
+        if (!row) throw new Error(`Could not add the ${addErrorLabel} - try again.`)
+        onSelect(row)
+      }}
+    />
   )
 }
 

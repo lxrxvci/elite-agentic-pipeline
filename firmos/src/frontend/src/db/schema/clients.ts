@@ -294,6 +294,24 @@ export const clientIntakes = pgTable(
   ],
 );
 
+export const intakeContactLinks = pgTable(
+  "intake_contact_links",
+  {
+    id: serial("id").primaryKey(),
+    intakeId: integer("intake_id").notNull().references(() => clientIntakes.id, { onDelete: "cascade" }),
+    contactId: integer("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    source: text("source").notNull().default("intake"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("intake_contact_links_unique").on(t.intakeId, t.contactId, t.role),
+    index("intake_contact_links_contact_idx").on(t.contactId),
+    index("intake_contact_links_intake_idx").on(t.intakeId),
+  ],
+);
+
 /** §7 - owners captured during intake; reconciled on cascade. */
 export const intakeOwners = pgTable(
   "intake_owners",

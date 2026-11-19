@@ -357,7 +357,7 @@ describe('WorkstationQueue - full queue', () => {
     renderQueue()
     await switchToAllWork(user)
     await user.type(screen.getByLabelText('Search work items'), 'management')
-    expect(screen.getByText('August management report')).toBeInTheDocument()
+    expect(within(screen.getByTestId('work-card')).getByText('August management report')).toBeInTheDocument()
     expect(screen.queryByText('Close August books')).not.toBeInTheDocument()
 
     await user.clear(screen.getByLabelText('Search work items'))

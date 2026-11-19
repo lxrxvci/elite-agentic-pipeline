@@ -95,9 +95,9 @@ describe('M5/C5: existing_qbo_skips_plan_and_user_count (10_10 00:25:29)', () =>
     expect(existing).not.toContain('qbo-setup')
 
     for (const status of ['desktop', 'none'] as const) {
-      const ids = questionIds({ ...bookkeeping, quickbooksStatus: status } as WizardAnswers)
-      expect(ids).toContain('qbo-users')
-      expect(ids).toContain('qbo-tier')
+      const answers = { ...bookkeeping, quickbooksStatus: status } as WizardAnswers
+      expect(findQuestion('software', 'qbo-users')!.when?.(answers)).toBe(true)
+      expect(findQuestion('software', 'qbo-tier')!.when?.(answers)).toBe(true)
     }
   })
 })
@@ -128,9 +128,8 @@ describe('M5/C7: deposits_asks_record_and_make (10_10 00:19:36)', () => {
     expect(withoutRecord).not.toContain('make-deposits')
 
     const withRecord = questionIds({ ...bookkeeping, recordDeposits: true } as WizardAnswers)
-    const recordIdx = withRecord.indexOf('record-deposits')
-    const makeIdx = withRecord.indexOf('make-deposits')
-    expect(makeIdx).toBeGreaterThan(recordIdx)
+    expect(withRecord).toContain('record-deposits')
+    expect(withRecord).not.toContain('make-deposits')
 
     const q = findQuestion('income', 'make-deposits')!
     const applied = q.apply(bookkeeping, 'yes') as WizardAnswers
@@ -235,14 +234,19 @@ describe('M5/C2: contact_channels_widget (10_10 00:02:57)', () => {
     expect(primary.email).toBe('wren@fern.shop')
     expect(primary.emails).toEqual(['ap@fern.shop', 'owner@fern.shop'])
     expect(primary.phones).toEqual(['5035550182'])
-    expect(primary.emailChannels?.[0]).toEqual({ value: 'ap@fern.shop', businessId: 7, businessName: 'Other Business' })
+    expect(primary.emailChannels?.[0]).toEqual({
+      value: 'ap@fern.shop',
+      businessId: 7,
+      businessName: 'Other Business',
+      businesses: [{ id: 7, name: 'Other Business' }],
+    })
     // And the fields read them back for editing.
     const value = q.fieldsValue!(applied) as Record<string, unknown>
     expect(value.contactEmailsExtra).toEqual([
-      { value: 'ap@fern.shop', businessId: 7, businessName: 'Other Business' },
-      { value: 'owner@fern.shop', businessId: null, businessName: null },
+      { value: 'ap@fern.shop', businessId: 7, businessName: 'Other Business', businesses: [{ id: 7, name: 'Other Business' }] },
+      { value: 'owner@fern.shop', businessId: null, businessName: null, businesses: [] },
     ])
-    expect(value.contactPhonesExtra).toEqual([{ value: '5035550182', businessId: null, businessName: null }])
+    expect(value.contactPhonesExtra).toEqual([{ value: '5035550182', businessId: null, businessName: null, businesses: [] }])
   })
 })
 

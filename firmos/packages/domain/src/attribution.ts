@@ -11,6 +11,7 @@
  */
 
 import {
+  addDays,
   addMonths,
   lastDayOfMonth,
   parseLocalDate,
@@ -19,7 +20,7 @@ import {
 } from "./dates.ts";
 
 export type { Month };
-export type CloseTier = 5 | 10 | 15;
+export type CloseTier = number;
 
 /** HANDOFF §6.1 RULE 1 (attribution.py:57). */
 export const DEFAULT_ATTRIBUTION_CUTOFF_DAY = 15;
@@ -45,17 +46,18 @@ export function followingMonth(year: number, month: number): Month {
 }
 
 /**
- * HANDOFF §32 ("Close tier"): a monthly client's promised delivery day - the
- * 5th, 10th, or 15th of the FOLLOWING month. This is the due date for an
- * accounting month's work.
+ * HANDOFF §32 ("Close tier"): the 5th/10th/15th remain the legacy pricing
+ * tiers. Custom intake deadlines are actual whole-day offsets after the
+ * period ends, including offsets that extend into a second following month.
  */
 export function closeTierDueDate(m: Month, tier: CloseTier): LocalDate {
-  const next = followingMonth(m.year, m.month);
-  return {
-    year: next.year,
-    month: next.month,
-    day: Math.min(tier, lastDayOfMonth(next.year, next.month)),
-  };
+  if (!Number.isInteger(tier) || tier < 1 || tier > 365) {
+    throw new RangeError("Close deadline must be a whole number of days from 1 to 365");
+  }
+  return addDays(
+    { year: m.year, month: m.month, day: lastDayOfMonth(m.year, m.month) },
+    tier,
+  );
 }
 
 /** Duck-typed client cadence/close-tier fields (HANDOFF §7 Client field groups). */

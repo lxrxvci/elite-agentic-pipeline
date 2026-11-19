@@ -627,6 +627,22 @@ describe("I7 closeout extraction (A45 + A41)", () => {
     expect(project.missing).not.toContain("personalOnBusiness");
   });
 
+  it("the business-income-to-personal workflow extracts and stays required until answered", () => {
+    const missing = coerceExtraction({
+      fields: [{ key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" }],
+    });
+    expect(missing.missing).toContain("businessIncomeToPersonal");
+
+    const answered = coerceExtraction({
+      fields: [
+        { key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" },
+        { key: "businessIncomeToPersonal", value: true, confidence: 0.9, evidence: "business income goes into personal checking" },
+      ],
+    });
+    expect(answered.missing).not.toContain("businessIncomeToPersonal");
+    expect(answered.fields.find((field) => field.key === "businessIncomeToPersonal")).toMatchObject({ value: true, group: "income" });
+  });
+
   it("the established date is informational, never on the still-to-ask list", () => {
     const result = coerceExtraction({
       fields: [{ key: "engagementType", value: "bookkeeping", confidence: 0.9, evidence: "x" }],

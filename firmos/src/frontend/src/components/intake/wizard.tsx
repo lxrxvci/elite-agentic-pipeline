@@ -21,6 +21,10 @@ import {
   listOptionValuesBulkAction,
 } from '@/server/actions/option-lists'
 import { listServicesCatalogAction } from '@/server/actions/services-catalog'
+import { addReportTypeAction, addVendorAction, listReportCatalogAction, listSopTemplatesAction, listVendorCatalogAction, renameReportTypeAction, renameVendorAction, setVendorDefaultsAction } from '@/server/actions/intake-setup'
+import type { SopTemplateRow } from '@/server/templates'
+import type { VendorCatalogRow, VendorDefaultsInput } from '@/server/vendors'
+import type { ReportCatalogRow } from '@/server/reports-catalog'
 import { listIndustrySuggestionsAction } from '@/server/actions/industry-suggestions'
 import type { IndustrySuggestionRow } from '@/server/industry-suggestions'
 import type { ContactLookupResults } from '@/server/contact-lookup'
@@ -50,6 +54,7 @@ import {
   flattenScreens,
   formContactHits,
   isCustomOtherPick,
+  questionGroupParent,
   questionPosition,
   reconcileScreenIndex,
   visibleChapters,
@@ -59,7 +64,7 @@ import { ReviewScreen } from './review-screen'
 import { QuestionHero, QuestionScreen } from './screens'
 
 /**
- * The conversational client intake wizard: one question per screen on a
+ * The conversational client intake wizard: one question or grouped flow per screen on a
  * single page in Jason's dictated order (intake-restructure I1, plan §1),
  * consistent Previous/Next card navigation, debounced autosave through
  * saveIntake, and a final server-priced estimate on Review. The branch map lives in registry.ts,
@@ -194,8 +199,24 @@ export function IntakeWizard({
   const [institutions, setInstitutions] = useState<InstitutionRow[]>([])
   const [payrollProviders, setPayrollProviders] = useState<PayrollProviderRow[]>([])
   const [merchantProcessors, setMerchantProcessors] = useState<MerchantProcessorRow[]>([])
+  const [vendorCatalog, setVendorCatalog] = useState<VendorCatalogRow[]>([])
+  const [sopTemplates, setSopTemplates] = useState<SopTemplateRow[]>([])
+  const [reportCatalog, setReportCatalog] = useState<ReportCatalogRow[]>([])
   // K3 (DB1): the universal option lists behind optionsFromList questions.
   const [optionLists, setOptionLists] = useState<Record<string, OptionValueRow[]>>({})
+  const applyReportCatalog = useCallback((rows: ReportCatalogRow[]) => {
+    setReportCatalog(rows)
+    setOptionLists((current) => ({
+      ...current,
+      report_types: rows.map((row) => ({
+        id: row.id,
+        listKey: 'report_types',
+        name: row.name,
+        meta: { isCommon: row.isCommon, sopTemplateId: row.sopTemplateId },
+        isActive: true,
+      })),
+    }))
+  }, [])
   // K3 (J16): the services catalog behind the services screen.
   const [servicesCatalog, setServicesCatalog] = useState<ServiceCatalogRowLite[] | undefined>(undefined)
   // K6 (D2): industry-driven suggestions for the services screen.
@@ -224,7 +245,16 @@ export function IntakeWizard({
     void listMerchantProcessorsAction().then((res) => {
       if (res.ok) setMerchantProcessors(res.data)
     })
-  }, [])
+    void listVendorCatalogAction(intakeId, answers.industry ?? null).then((res) => {
+      if (res.ok) setVendorCatalog(res.data)
+    })
+    void listSopTemplatesAction().then((res) => {
+      if (res.ok) setSopTemplates(res.data.filter((template) => template.isActive))
+    })
+    void listReportCatalogAction(intakeId).then((res) => {
+      if (res.ok) applyReportCatalog(res.data)
+    })
+  }, [intakeId, applyReportCatalog, answers.industry])
 
   const addInstitution = useCallback(async (name: string): Promise<InstitutionRow | null> => {
     const res = await addInstitutionAction(name)
@@ -259,6 +289,41 @@ export function IntakeWizard({
     return res.data
   }, [])
 
+  const addVendor = useCallback(async (name: string, input: VendorDefaultsInput) => {
+    const result = await addVendorAction(name, input)
+    if (!result.ok) throw new Error(result.error)
+    setVendorCatalog((current) => [...current.filter((row) => row.id !== result.data.id), result.data].sort((a, b) => a.name.localeCompare(b.name)))
+    return result.data
+  }, [])
+
+  const renameVendor = useCallback(async (id: number, name: string) => {
+    const result = await renameVendorAction(id, name)
+    if (!result.ok) throw new Error(result.error)
+    setVendorCatalog((current) => current.map((row) => row.id === id ? result.data : row).sort((a, b) => a.name.localeCompare(b.name)))
+    return result.data
+  }, [])
+
+  const saveVendorDefaults = useCallback(async (id: number, input: VendorDefaultsInput) => {
+    const result = await setVendorDefaultsAction(id, input)
+    if (!result.ok) throw new Error(result.error)
+    setVendorCatalog((current) => current.map((row) => row.id === id ? result.data : row))
+    return result.data
+  }, [])
+
+  const addReportType = useCallback(async (name: string, isCommon: boolean, sopTemplateId: number | null) => {
+    const result = await addReportTypeAction(name, { isCommon, sopTemplateId, intakeId })
+    if (!result.ok) throw new Error(result.error)
+    applyReportCatalog([...reportCatalog.filter((row) => row.id !== result.data.id), result.data].sort((a, b) => a.name.localeCompare(b.name)))
+    return result.data
+  }, [applyReportCatalog, intakeId, reportCatalog])
+
+  const renameReportType = useCallback(async (id: number, name: string) => {
+    const result = await renameReportTypeAction(id, name)
+    if (!result.ok) throw new Error(result.error)
+    applyReportCatalog(reportCatalog.map((row) => row.id === id ? result.data : row).sort((a, b) => a.name.localeCompare(b.name)))
+    return result.data
+  }, [applyReportCatalog, reportCatalog])
+
   // K3 (J1/J2): a custom option persists to its list and lands, sorted,
   // in the local copy - "once added through an intake, it stays in the
   // database for future use."
@@ -284,14 +349,14 @@ export function IntakeWizard({
   // main contact, owners, and CPA entered on THIS form are pickable before
   // the database ("pull from a previous spot on the form").
   const contactSearch = useCallback(
-    async (query: string): Promise<ContactLookupResults | null> => {
-      const local = formContactHits(answersRef.current, query)
-      const res = await searchContactsAction(query)
+    async (query: string, associationContactId?: number | null): Promise<ContactLookupResults | null> => {
+      const local = associationContactId === undefined ? formContactHits(answersRef.current, query) : []
+      const res = await searchContactsAction(query, associationContactId)
       if (!res.ok) return null
       const localFold = (n: string) =>
         n.replace(/ \((this form's main contact|owner on this form|CPA on this form)\)$/, '').trim().toLowerCase()
       const remote = res.data.contacts.filter(
-        (r) => !local.some((l) => localFold(l.name) === r.name.trim().toLowerCase()),
+        (r) => !local.some((l) => (l.id > 0 && l.id === r.id) || localFold(l.name) === r.name.trim().toLowerCase()),
       )
       return { contacts: [...local, ...remote], clients: res.data.clients }
     },
@@ -323,11 +388,29 @@ export function IntakeWizard({
 
   // ── Autosave (debounced; flushes before advancing screens) ──
   const flushSave = useCallback(async () => {
-    if (!dirtyRef.current) return
+    if (!dirtyRef.current) return true
     dirtyRef.current = false
     setSaveState('saving')
-    const res = await saveIntake({ intakeId, patch: buildPatch(answersRef.current) })
+    const savedAnswers = answersRef.current
+    const res = await saveIntake({ intakeId, patch: buildPatch(savedAnswers) })
+    if (res.ok && res.data.contactIds) {
+      const ids = res.data.contactIds
+      const current = answersRef.current
+      const contacts = (current.contacts ?? []).map((contact, index) => {
+        const saved = savedAnswers.contacts?.[index]
+        return saved && saved.entityName === contact.entityName && saved.firstName === contact.firstName && saved.lastName === contact.lastName
+          ? { ...contact, contactId: ids.contacts[index] ?? null }
+          : contact
+      })
+      const owners = (current.owners ?? []).map((owner, index) => owner.name === savedAnswers.owners?.[index]?.name
+        ? { ...owner, contactId: ids.owners[index] ?? null }
+        : owner)
+      const next = { ...current, contacts, owners, mainContactId: ids.mainContactId, cpaContactId: ids.cpaContactId, referralContactId: ids.referralContactId }
+      answersRef.current = next
+      setAnswers(next)
+    }
     setSaveState(res.ok ? 'saved' : 'error')
+    return res.ok
   }, [intakeId])
 
   const scheduleSave = useCallback(() => {
@@ -424,20 +507,13 @@ export function IntakeWizard({
   )
 
   const go = useCallback(
-    (dir: 'fwd' | 'back') => {
+    async (dir: 'fwd' | 'back') => {
+      if (editable && !(await flushSave())) return
       setDirection(dir)
       setNote(null)
-      // M1 (B4, 10_10 00:24:30): a qualifier/chapter jump pushes the origin -
-      // Back returns there FIRST ("it doesn't give me a go back to what are
-      // we taking on"), then resumes the normal walk.
-      if (dir === 'back' && jumpOriginRef.current.length > 0) {
-        setScreenIndex(jumpOriginRef.current.pop()!)
-      } else {
-        setScreenIndex((i) =>
-          Math.max(0, Math.min(i + (dir === 'fwd' ? 1 : -1), screens.length - 1)),
-        )
-      }
-      if (editable) void flushSave()
+      setScreenIndex((i) =>
+        Math.max(0, Math.min(i + (dir === 'fwd' ? 1 : -1), screens.length - 1)),
+      )
     },
     [editable, flushSave, screens.length],
   )
@@ -477,18 +553,16 @@ export function IntakeWizard({
   // J2 (E1-E3): the mandatory explanation note rides the in-card panel
   // (L1/C2, 10_06 00:12:26) - no wizard-level overlay state anymore.
 
-  // M1 (B4): origins of qualifier/chapter jumps - Back pops them first.
-  const jumpOriginRef = useRef<number[]>([])
-
   const jumpTo = useCallback(
     (chapterId: string, questionId: string) => {
+      const question = findQuestion(chapterId, questionId)
+      const targetId = (question ? questionGroupParent(question) : undefined) ?? questionId
       const target = screens.findIndex(
-        (s) => s.kind === 'question' && s.chapterId === chapterId && s.questionId === questionId,
+        (s) => s.kind === 'question' && s.chapterId === chapterId && s.questionId === targetId,
       )
       if (target < 0) return
       setDirection(target < idx ? 'back' : 'fwd')
       setNote(null)
-      jumpOriginRef.current.push(idx)
       setScreenIndex(target)
     },
     [idx, screens],
@@ -505,7 +579,6 @@ export function IntakeWizard({
       if (target < 0 || target === idx) return
       setDirection(target < idx ? 'back' : 'fwd')
       setNote(null)
-      jumpOriginRef.current.push(idx)
       setScreenIndex(target)
       if (editable) void flushSave()
     },
@@ -525,7 +598,8 @@ export function IntakeWizard({
   // L1 (G1): walk=true (the section-header Edit) steps through every question
   // in the chapter; row pencils open their single question.
   const openEditor = useCallback((chapterId: string, questionId: string, walk?: boolean) => {
-    setEditTarget({ chapterId, questionId, walk })
+    const q = findQuestion(chapterId, questionId)
+    setEditTarget({ chapterId, questionId: (q ? questionGroupParent(q) : undefined) ?? questionId, walk })
   }, [])
   const closeEditor = useCallback(() => {
     setEditTarget(null)
@@ -809,7 +883,7 @@ export function IntakeWizard({
             )}
           </div>
 
-          {/* Screen: one question per card on the cool-gray canvas
+          {/* Screen: one question or grouped flow per card on the cool-gray canvas
               (DESIGN-FRESHBOOKS §5 - carded steps). */}
           {screen?.kind === 'question' ? (
             <div
@@ -847,6 +921,15 @@ export function IntakeWizard({
                           industrySuggestions={industrySuggestions}
                           onJumpTo={jumpTo}
                           onTagIndustry={tagIndustry}
+                          intakeId={intakeId}
+                          vendorCatalog={vendorCatalog}
+                          sopTemplates={sopTemplates}
+                          onAddVendor={addVendor}
+                          onRenameVendor={renameVendor}
+                          onVendorDefaults={saveVendorDefaults}
+                          reportCatalog={reportCatalog}
+                          onAddReportType={addReportType}
+                          onRenameReportType={renameReportType}
                         />
                       </IntakeNavigationProvider>
                     </div>
@@ -927,6 +1010,15 @@ export function IntakeWizard({
         contactSearch={contactSearch}
         optionLists={optionLists}
         onAddOptionListValue={addOptionListValue}
+        intakeId={intakeId}
+        vendorCatalog={vendorCatalog}
+        sopTemplates={sopTemplates}
+        onAddVendor={addVendor}
+        onRenameVendor={renameVendor}
+        onVendorDefaults={saveVendorDefaults}
+        reportCatalog={reportCatalog}
+        onAddReportType={addReportType}
+        onRenameReportType={renameReportType}
       />
     </div>
   )

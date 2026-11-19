@@ -20,7 +20,7 @@ test.use({ persona: 'owner' })
 /** Open the Harborline client record from the list. */
 async function openHarborline(page: import('@playwright/test').Page) {
   await page.goto('/clients')
-  await page.getByLabel('Search clients').fill('Harborline')
+  await page.getByTestId('client-search').fill('Harborline')
   const row = page.getByTestId('client-row').filter({ hasText: 'Harborline Marine Supply' })
   await expect(row).toBeVisible()
   await row.click()
@@ -101,7 +101,7 @@ test('client record: credentials vault - expected slot from conversion, add, cop
   const page = await context.newPage()
   try {
     await page.goto('/clients')
-    await page.getByLabel('Search clients').fill('LIVE-TEST')
+    await page.getByTestId('client-search').fill('LIVE-TEST')
     const row = page.getByTestId('client-row').filter({ hasText: 'LIVE-TEST' }).first()
     await expect(row).toBeVisible()
     await row.click()

@@ -86,7 +86,7 @@ export function AuditLogTable({ rows, actions, entityTypes, timeZone }: AuditLog
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={actionFilter} onValueChange={setActionFilter}>
+        <Select optionOrder="alphabetical" value={actionFilter} onValueChange={setActionFilter}>
           <SelectTrigger className="h-8 w-52 text-xs" aria-label="Filter by action">
             <SelectValue placeholder="All actions" />
           </SelectTrigger>
@@ -99,7 +99,7 @@ export function AuditLogTable({ rows, actions, entityTypes, timeZone }: AuditLog
             ))}
           </SelectContent>
         </Select>
-        <Select value={entityFilter} onValueChange={setEntityFilter}>
+        <Select optionOrder="alphabetical" value={entityFilter} onValueChange={setEntityFilter}>
           <SelectTrigger className="h-8 w-52 text-xs" aria-label="Filter by entity">
             <SelectValue placeholder="All entities" />
           </SelectTrigger>

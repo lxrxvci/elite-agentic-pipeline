@@ -57,7 +57,7 @@ export const ROUTINE_WEEKDAYS: readonly { value: number; short: string; long: st
  *  - daily: `weekdays` = the selected days (0 = Sunday .. 6 = Saturday).
  *  - weekly: `weekdays` holds the single weekday; `everyNWeeks` is the
  *    interval (1 = every week).
- *  - monthly: `dayOfMonth` (1-31), defaulted to the close tier.
+ *  - monthly: `dayOfMonth` (1-31, or 0 for end of month), defaulted to the close tier.
  *  - quarterly: `daysAfterPeriodEnd` (1-31) - the due lands that many days
  *    after the calendar-quarter end (R4).
  *  - annual: `fiscalYearEnd` "MM-DD" (absent/null = calendar year-end,
@@ -107,6 +107,7 @@ export interface RoutineTaskDef {
   subtasks?: string[]
   isBillable?: boolean
   unitPrice?: string | number | null
+  sopTemplateId?: number | null
   /** The schedule fields conversion copies when keepSourceSchedule is set. */
   sourceSchedule?: {
     scheduleType: ScheduleType
@@ -197,7 +198,7 @@ export function sanitizeRoutineEntry(
   const everyNWeeks = intIn(r.everyNWeeks, 1, 52)
   if (everyNWeeks != null) out.everyNWeeks = everyNWeeks
   else if (fieldFallback?.everyNWeeks !== undefined) out.everyNWeeks = fieldFallback.everyNWeeks
-  const dayOfMonth = intIn(r.dayOfMonth, 1, 31)
+  const dayOfMonth = intIn(r.dayOfMonth, 0, 31)
   if (dayOfMonth != null) out.dayOfMonth = dayOfMonth
   else if (fieldFallback?.dayOfMonth !== undefined) out.dayOfMonth = fieldFallback.dayOfMonth
   const daysAfter = intIn(r.daysAfterPeriodEnd, 1, 120)
@@ -289,7 +290,7 @@ export function routineEntryToRuleSchedule(
       }
     }
     case 'monthly': {
-      const day = intIn(entry.dayOfMonth, 1, 31) ?? ctx.tierDay
+      const day = entry.dayOfMonth === 0 ? 31 : intIn(entry.dayOfMonth, 1, 31) ?? ctx.tierDay
       return { scheduleType: 'monthly', daysOfWeek: null, dayOfMonth: day, anchorMonth: null, weekInterval: null }
     }
     case 'quarterly': {
@@ -333,6 +334,7 @@ export function routineEntrySummary(entry: RoutineScheduleEntry): string {
       return interval > 1 ? `Every ${interval} weeks on ${long}` : `${long}s`
     }
     case 'monthly': {
+      if (entry.dayOfMonth === 0) return 'End of month'
       const day = intIn(entry.dayOfMonth, 1, 31)
       return day != null ? `Day ${day} of the month` : 'Monthly'
     }
@@ -452,6 +454,8 @@ export interface RoutineSeedSpec {
   subtasks: string[]
   isBillable: boolean
   unitPrice: string | number | null
+  /** Optional shared SOP linked after conversion. */
+  sopTemplateId?: number | null
 }
 
 /**
@@ -480,6 +484,7 @@ export function planRoutineSeeds(
       subtasks: def.subtasks ?? [],
       isBillable: def.isBillable === true,
       unitPrice: def.unitPrice ?? null,
+      ...(def.sopTemplateId != null ? { sopTemplateId: def.sopTemplateId } : {}),
     }
     if (entry.keepSourceSchedule && def.sourceSchedule) {
       out.push({

@@ -8,8 +8,7 @@ import { normalizeInstitutionKey } from "@/shared/lib/institution-key";
  * The firm-wide bank/institution list (intake restructure I3, plan §3):
  * the intake account dropdowns pick from this table, and "add a new bank"
  * writes to it inline. Seeded with the firm's known banks by migration
- * 0017; admin management (rename/merge) is a deliberate later seam - this
- * module is the API that screen will use.
+ * 0017; owner/admin rename and merge live in institution-merge.ts.
  */
 
 export interface InstitutionRow {

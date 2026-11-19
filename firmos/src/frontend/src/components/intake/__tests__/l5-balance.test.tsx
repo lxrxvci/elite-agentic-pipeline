@@ -169,8 +169,9 @@ describe('L5/J3: equity questions gate on the setup pick and owner count', () =>
     expect(ids(base)).toContain('equity-setup')
     expect(ids(base)).not.toContain('equity-breakdown')
 
-    const breakdownQuestion = findQuestion('balance', 'equity-breakdown')!
-    expect(ids({ ...base, equitySetup: 'breakdown' })).toContain('equity-breakdown')
+    const breakdownQuestion = findQuestion('balance', 'equity-setup')!.inlineFollowup!.question
+    expect(ids({ ...base, equitySetup: 'breakdown' })).toContain('equity-setup')
+    expect(ids({ ...base, equitySetup: 'breakdown' })).not.toContain('equity-breakdown')
     expect(breakdownQuestion.followup?.when?.({ ...base, owners: [{ name: 'A' }, { name: 'B' }] })).toBe(true)
     expect(breakdownQuestion.followup?.when?.({ ...base, owners: [{ name: 'A' }] })).toBe(false)
     expect(breakdownQuestion.followup?.key).toBe('equityPerOwner')

@@ -19,6 +19,10 @@ async function expectQuestion(page: Page, id: string) {
 
 /** Pick an option card and Continue to the next screen (J4: nothing auto-advances). */
 async function pick(page: Page, testid: string, nextQuestion: string) {
+  if (!(await page.getByTestId(testid).isVisible().catch(() => false))) {
+    const combobox = page.getByTestId('question-screen').getByRole('combobox')
+    if (await combobox.count()) await combobox.click()
+  }
   await page.getByTestId(testid).click()
   await page.getByTestId('continue').click()
   await expectQuestion(page, nextQuestion)
@@ -26,6 +30,7 @@ async function pick(page: Page, testid: string, nextQuestion: string) {
 
 /** Continue (or skip) the current screen and wait for the next one. */
 async function advance(page: Page, nextQuestion: string) {
+  await page.keyboard.press('Escape')
   await page.getByTestId('continue').click()
   await expectQuestion(page, nextQuestion)
 }
@@ -48,6 +53,7 @@ async function startIntake(page: Page, name: string) {
 }
 
 test('intake: wizard -> final estimate -> submit -> convert -> workstation work', async ({ page }) => {
+  test.setTimeout(120_000)
   // ── Login as the firm owner ──
   await loginAsOwner(page)
 
@@ -71,9 +77,13 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
 
   // ── Entity & ownership ──
   await advance(page, 'tax-structure') // skip EIN
-  // I2: an LLC pick opens the tax-classification follow-up (00:15:53).
-  await pick(page, 'option-LLC', 'llc-subclass')
-  await pick(page, 'option-llc_sml', 'dba-industry')
+  // I2: the LLC tax classification stays inline on the registration card.
+  await page.getByRole('combobox', { name: 'How is the business registered?', exact: true }).click()
+  await page.getByTestId('option-LLC').click()
+  await expect(page.getByTestId('inline-followup-llc-subclass')).toBeVisible()
+  await page.getByRole('combobox', { name: 'How is the LLC taxed?', exact: true }).click()
+  await page.getByTestId('option-llc_sml').click()
+  await advance(page, 'dba-industry')
   await advance(page, 'owners') // skip DBA/industry
   // Owners: one owner with phone + the receives-reports flag.
   await page.getByLabel('Full name').fill('Wren Okafor')
@@ -90,12 +100,16 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   await advance(page, 'has-cpa')
 
   // ── The CPA is its own card: yes -> name + email ──
-  await pick(page, 'option-yes', 'cpa-details')
+  await page.getByTestId('option-yes').click()
+  await expectQuestion(page, 'has-cpa')
+  await expect(page.getByTestId('inline-followup-cpa-details')).toBeVisible()
   await page.getByLabel('CPA name or firm').fill('Cascade Tax Group')
   await page.getByLabel('CPA email').fill('team@cascadetax.example')
   await advance(page, 'referral')
-  // A CPA referral asks who to thank.
-  await pick(page, 'option-CPA referral', 'referral-who')
+  // A CPA referral reveals who to thank on the same card.
+  await page.getByTestId('question-referral-input').click()
+  await page.getByTestId('option-CPA referral').click()
+  await expect(page.getByTestId('inline-followup-referral-who')).toBeVisible()
   await page.getByLabel('Name (optional)').fill('Cascade Tax Group')
   await advance(page, 'engagement')
 
@@ -120,7 +134,7 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   await expect(page.getByLabel(/nickname/i)).toHaveCount(0)
   await page.getByTestId('bank-select-0').click()
   await page.getByRole('option', { name: 'Chase' }).click()
-  await expect(page.getByTestId('bank-select-0')).toHaveText('Chase')
+  await expect(page.getByTestId('bank-select-0')).toHaveValue('Chase')
   await page.getByTestId('last4-0').fill('4411')
   await page.getByTestId('grant-access-0').check()
   // D2: the derived label shows on the mini-form.
@@ -136,10 +150,10 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   await page.getByTestId('bank-add-input').fill('E2E First Tech')
   await page.getByTestId('bank-add-submit').click()
   // The new bank is selected immediately and lists in the same session.
-  await expect(page.getByTestId('bank-select-0')).toHaveText('E2E First Tech', { timeout: 10_000 })
+  await expect(page.getByTestId('bank-select-0')).toHaveValue('E2E First Tech', { timeout: 10_000 })
   await page.getByTestId('bank-select-0').click()
   await expect(page.getByRole('option', { name: 'E2E First Tech' })).toBeVisible()
-  await page.getByTestId('bank-select-0').click() // toggle closed
+  await page.getByTestId('bank-select-0').press('Escape')
   await expect(page.getByRole('option', { name: 'E2E First Tech' })).toHaveCount(0)
   await page.getByTestId('last4-0').fill('1005')
   await page.getByTestId('grant-access-0').check()
@@ -148,8 +162,8 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   await page.getByTestId('add-account').click()
   await page.getByLabel('Description 1').fill('2022 Ford Transit')
   await page.getByLabel('Vehicle year 1').fill('2022')
-  await page.getByTestId('financed-select-0').selectOption('financed')
-  await expect(page.getByTestId('proof-select-0')).toHaveValue('bill_of_sale')
+  await page.getByTestId('financed-select-0').fill('financed')
+  await expect(page.getByTestId('proof-select-0')).toHaveAttribute('data-value', 'bill_of_sale')
   await expect(page.getByTestId('bank-select-0')).toHaveCount(0)
   await advance(page, 'other-assets')
   await advance(page, 'loans') // no other assets
@@ -167,8 +181,9 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   await pick(page, 'option-no', 'payment-methods')
 
   // ── Income and expenses: checks only (merchant questions stay hidden), no payroll ──
+  await page.getByTestId('multi-input').click()
   await page.getByTestId('chip-check').click()
-  // A41: the two money-behavior cards come first, each its own screen.
+  // A41: the money-behavior cards come first, each its own screen.
   await advance(page, 'deposits-non-business')
   // L1 (C2, 10_06): a yes applies and opens the IN-CARD note panel (never a
   // blocking overlay); the gated Continue enforces the mandatory note.
@@ -180,7 +195,8 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   await page.getByTestId('note-input-deposits-non-business').fill('Owner covers a bill from his personal account some months')
   await page.getByTestId('note-input-deposits-non-business').blur()
   // Continue moves to the next card once the note is in.
-  await advance(page, 'personal-on-business')
+  await advance(page, 'business-income-personal')
+  await pick(page, 'option-no', 'personal-on-business')
   await pick(page, 'option-no', 'personal-card') // never personal spend on business accounts (A41)
   await pick(page, 'option-no', 'record-deposits') // no business spend on a personal card (B18)
   await pick(page, 'option-no', 'payroll') // they handle deposit recording (C10)
@@ -199,17 +215,22 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
 
   await pick(page, 'option-cash', 'record-bills')
   await page.getByTestId('option-yes').click()
-  await page.getByTestId('list-input').pressSequentially('Rent')
-  await page.getByTestId('list-add').click()
-  // J2 (E6): record yes -> the pay card with its addable locations list.
-  await pick(page, 'option-yes', 'pay-bills')
-  await page.getByTestId('option-yes').click() // pay yes reveals the editor (no auto-advance)
-  await expect(page.getByTestId('yes-no-list-editor')).toBeVisible()
-  await page.getByTestId('list-input').pressSequentially('Vendor websites')
-  await page.getByTestId('list-add').click()
-  await expect(page.getByTestId('list-chip')).toHaveCount(1)
+  await page.getByTestId('vendor-input').click()
+  await page.getByTestId('vendor-add-toggle').click()
+  await page.getByTestId('vendor-add-input').fill('Rent')
+  await page.getByTestId('vendor-add-submit').click()
+  await expect(page.getByTestId('record-vendor-list')).toContainText('Rent')
+  await page.getByRole('combobox', { name: 'SOP for Rent', exact: true }).click()
+  await page.getByRole('option', { name: 'Create new SOP', exact: true }).click()
+  await expect(page.getByTestId('inline-followup-pay-bills')).toBeVisible()
+  await expectQuestion(page, 'record-bills')
+  await page.getByTestId('inline-followup-pay-bills').getByTestId('option-yes').click()
+  await expect(page.getByTestId('pay-vendor-list')).toContainText('Rent')
+  await page.getByRole('combobox', { name: 'Payment method for Rent', exact: true }).click()
+  await page.getByRole('option', { name: 'Vendor portal', exact: true }).click()
+  await page.getByLabel('Payment portal URL (optional)').fill('https://vendor.example.com/login')
   await advance(page, 'ten99-services')
-  await advance(page, 'reports') // skip 1099
+  await pick(page, 'option-no', 'reports')
   await advance(page, 'preliminary-reports') // skip special reports
   // R6: the preliminary-reports toggle; R7: no retroactive question anymore.
   // N1 (00:12:50): the answers have qualified the scope - services + the QBO
@@ -228,7 +249,7 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   // K6 (D3): custom recurring work enters on the services screen now.
   await page.getByTestId('custom-work-open').click()
   await page.getByTestId('custom-work-name').fill('Weekly deposit review')
-  await page.getByTestId('custom-work-cadence').selectOption('weekly')
+  await page.getByTestId('custom-work-cadence').fill('weekly')
   await page.getByTestId('custom-work-add').click()
   await advance(page, 'qbo-status')
 
@@ -236,11 +257,16 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   // M5 (C5, 10_10 00:25:29): an EXISTING QuickBooks skips user-count + plan
   // (the S-Corp flow below covers that skip); the no-QuickBooks path keeps
   // all three questions, so this flow exercises the plan recommendation.
-  await pick(page, 'option-none', 'qbo-setup')
-  await pick(page, 'option-no', 'qbo-users')
+  await page.getByTestId('question-qbo-status-input').click()
+  await page.getByTestId('option-none').click()
+  await expect(page.getByTestId('inline-followup-qbo-setup')).toBeVisible()
+  await page.getByTestId('option-no').click()
+  await expect(page.getByTestId('inline-followup-qbo-users')).toBeVisible()
   await page.getByLabel('QuickBooks users').fill('2')
-  await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'notes')
+  await expect(page.getByTestId('inline-followup-qbo-tier')).toBeVisible()
+  await page.getByRole('combobox', { name: 'Which QuickBooks plan?', exact: true }).click()
+  await page.getByTestId('option-recommended').click()
+  await advance(page, 'notes')
   await advance(page, 'routine-scheduler') // skip internal notes; K6 (D3): the custom rule entered back on the services screen
 
   // ── J3 (R1-R5): "Routine order and frequency" - the final content screen ──
@@ -249,23 +275,23 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   for (const bucket of ['daily', 'weekly', 'monthly', 'quarterly', 'annual']) {
     await expect(page.getByTestId(`bucket-${bucket}`)).toBeVisible()
   }
-  await expect(page.getByTestId('bucket-count-monthly')).toHaveText('5 tasks')
+  await expect(page.getByTestId('bucket-count-monthly')).toHaveText('7 tasks')
   const monthlyBucket = page.getByTestId('bucket-monthly')
   await expect(monthlyBucket.getByTestId('routine-card-categorize_transactions')).toBeVisible()
   await expect(monthlyBucket.getByTestId('routine-card-reconcile_accounts')).toBeVisible()
   await expect(monthlyBucket.getByTestId('routine-card-client_questions')).toBeVisible()
   await expect(monthlyBucket.getByTestId('routine-card-send_reports')).toBeVisible()
   await expect(page.getByTestId('schedule-summary-categorize_transactions')).toHaveText(/Day 10 of the month/)
-  // Answer-derived cards: the deposits review (E1 yes) is Monthly; the bills
-  // split (E6 yes/yes) lands in Weekly; the custom rule pulled through.
+  // The deposits review and selected vendor routines default to Monthly;
+  // the custom rule starts in Weekly.
   await expect(monthlyBucket.getByTestId('routine-card-deposits-non-business')).toBeVisible()
-  await expect(page.getByTestId('bucket-weekly').getByTestId('routine-card-record-bills')).toBeVisible()
-  await expect(page.getByTestId('bucket-weekly').getByTestId('routine-card-pay-bills')).toBeVisible()
+  await expect(monthlyBucket.locator('[data-testid^="routine-card-vendor-record:"]')).toBeVisible()
+  await expect(monthlyBucket.locator('[data-testid^="routine-card-vendor-pay:"]')).toBeVisible()
   await expect(page.getByTestId('bucket-weekly').getByTestId('routine-card-custom:Weekly deposit review')).toBeVisible()
   // Drag-and-drop has a keyboard-accessible twin: the bucket picker moves a
   // card (persists into form_data.routineSchedule), and the schedule controls
   // open per card. Move deposit review to Weekly, every 2 weeks on Friday.
-  await page.getByTestId('move-bucket-custom:Weekly deposit review').selectOption('weekly')
+  await page.getByTestId('move-bucket-custom:Weekly deposit review').fill('weekly')
   await expect(page.getByTestId('routine-card-custom:Weekly deposit review')).toHaveAttribute('data-bucket', 'weekly')
   await page.getByTestId('schedule-toggle-custom:Weekly deposit review').click()
   await page.getByTestId('weekday-custom:Weekly deposit review-5').click()
@@ -282,7 +308,7 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   // Every section starts OPEN; the confirm check persists across a reload.
   await expect(page.getByTestId('section-toggle-contact')).toHaveAttribute('aria-expanded', 'true')
   await expect(page.getByTestId('section-toggle-entity')).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.getByText('Yes · Cascade Tax Group · new contact')).toBeVisible()
+  await expect(page.getByText('Yes · Cascade Tax Group · linked to the existing record')).toBeVisible()
   // The main contact row shows the formatted phone.
   await expect(page.getByText('Wren Okafor · (503) 555-0182 · wren@e2ebloom.example')).toBeVisible()
   await page.getByTestId('section-confirm-contact').click()
@@ -305,7 +331,7 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   await expect(accessReview.getByRole('listitem').filter({ hasText: 'E2E First Tech Credit card · 1005' })).toBeVisible()
   await expect(accessReview.getByRole('listitem').filter({ hasText: '2022 Ford Transit (vehicle loan)' })).toBeVisible()
   // The CPA card answer shows on the review screen.
-  await expect(page.getByText('Yes · Cascade Tax Group · new contact')).toBeVisible()
+  await expect(page.getByText('Yes · Cascade Tax Group · linked to the existing record')).toBeVisible()
   // I2: the LLC subclass folds into the tax-structure row.
   await expect(page.getByText('LLC · single-member')).toBeVisible()
   // The referral row carries who to thank.
@@ -324,7 +350,7 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   ).toBeVisible()
   // J2 (E6): the bills split carries both rows, locations included.
   await expect(page.getByTestId('review-screen').getByText('Should we record their bills?')).toBeVisible()
-  await expect(page.getByText('Yes · pays at: Vendor websites')).toBeVisible()
+  await expect(page.getByText('Yes · Rent: vendor website · https://vendor.example.com/login')).toBeVisible()
   await expect(page.getByTestId('review-section-reporting').getByText(/records:\s*Rent/)).toBeVisible()
 
   // V6/V7 (01:04:00-01:06:58): the estimate buckets recurring services by
@@ -343,8 +369,8 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   await expect(page.getByTestId('breakdown-account_reconciliations')).toContainText(
     'E2E First Tech Credit card · 1005',
   )
-  // The J3 schedule committed: bill recording lives in the weekly bucket.
-  await expect(page.getByTestId('estimate-bucket-weekly')).toContainText('Record Bills')
+  // The standard bill-recording service stays in the monthly pricing bucket.
+  await expect(page.getByTestId('estimate-bucket-monthly')).toContainText('Record Bills')
   // Two QBO users, no tracking: the matrix recommends Essentials.
   await expect(
     page.getByTestId('review-quote').getByText('QuickBooks Essentials (recommended)'),
@@ -413,10 +439,10 @@ test('intake: wizard -> final estimate -> submit -> convert -> workstation work'
   // ── Assign the team from the client record (the new admin flow) ──
   await page.getByTestId('manager-select').click()
   await page.getByRole('option', { name: 'Dana Whitfield' }).click()
-  await expect(page.getByTestId('manager-select')).toContainText('Dana Whitfield')
+  await expect(page.getByTestId('manager-select')).toHaveValue(/Dana Whitfield/)
   await page.getByTestId('bookkeeper-select').click()
   await page.getByRole('option', { name: 'Jorge Medina' }).click()
-  await expect(page.getByTestId('bookkeeper-select')).toContainText('Jorge Medina')
+  await expect(page.getByTestId('bookkeeper-select')).toHaveValue(/Jorge Medina/)
 
   // Revalidation swaps the placeholders for the assigned avatars.
   await expect(page.getByTestId('unassigned-manager')).toHaveCount(0)
@@ -446,6 +472,7 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
 
   // Tax structure: something completely far-fetched via "Other - type it".
   await advance(page, 'tax-structure') // skip EIN
+  await page.getByTestId('question-screen').getByRole('combobox').click()
   await page.getByTestId('option-Other').click() // stays put: the custom input opens in place
   await expectQuestion(page, 'tax-structure')
   await expect(page.getByTestId('custom-input-tax-structure')).toBeVisible()
@@ -466,11 +493,14 @@ test('intake: consulting engagement + custom "Other" answers reach review and co
   await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
   await expect(page.getByTestId('quote-hidden')).toHaveCount(0)
   await advance(page, 'qbo-status')
-  await pick(page, 'option-none', 'qbo-setup')
-  await pick(page, 'option-no', 'qbo-users')
+  await page.getByTestId('question-qbo-status-input').click()
+  await page.getByTestId('option-none').click()
+  await expect(page.getByTestId('inline-followup-qbo-setup')).toBeVisible()
+  await page.getByTestId('option-no').click()
   await page.getByLabel('QuickBooks users').fill('1')
-  await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'notes')
+  await page.getByRole('combobox', { name: 'Which QuickBooks plan?', exact: true }).click()
+  await page.getByTestId('option-recommended').click()
+  await advance(page, 'notes')
   // Consulting: the scheduler is bookkeeping-only - notes -> review directly.
   await page.getByTestId('continue').click()
 
@@ -549,8 +579,10 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await advance(page, 'equity-setup')
   await pick(page, 'option-grouped', 're-yes')
   await pick(page, 'option-no', 'payment-methods')
+  await page.getByTestId('multi-input').click()
   await page.getByTestId('chip-check').click()
   await advance(page, 'deposits-non-business') // A41: the money-behavior cards first
+  await pick(page, 'option-no', 'business-income-personal')
   await pick(page, 'option-no', 'personal-on-business')
   await pick(page, 'option-no', 'personal-card')
   await pick(page, 'option-no', 'record-deposits') // C10
@@ -567,7 +599,8 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   // Clicking the locked card goes nowhere.
   await noCard.click({ force: true }) // aria-disabled: force past actionability
   await expectQuestion(page, 'payroll')
-  await pick(page, 'option-yes', 'payroll-provider')
+  await page.getByTestId('option-yes').click()
+  await expect(page.getByTestId('inline-followup-payroll-provider')).toBeVisible()
 
   // ── Provider is required (it's where the payroll reports come from) ──
   // J1 (P2/DB1): the provider is a database dropdown + inline add-new.
@@ -577,27 +610,30 @@ test('intake: S Corp auto-flags payroll - locked in, provider required, add-on p
   await expect(page.getByRole('option', { name: 'Gusto' })).toBeVisible()
   await expect(page.getByRole('option', { name: 'Rippling' })).toBeVisible()
   // Add a provider that is not on the list - it persists and selects inline.
-  await page.getByTestId('provider-add-toggle-0').click()
+  await page.getByTestId('provider-add-toggle').click()
   await page.getByTestId('provider-add-input').fill('E2E SurePayroll')
   await page.getByTestId('provider-add-submit').click()
-  await expect(page.getByTestId('provider-select-0')).toHaveText('E2E SurePayroll', { timeout: 10_000 })
+  await expect(page.getByTestId('provider-select-0')).toHaveValue('E2E SurePayroll', { timeout: 10_000 })
   await page.getByTestId('provider-select-0').click()
   await expect(page.getByRole('option', { name: 'E2E SurePayroll' })).toBeVisible()
-  await page.getByTestId('provider-select-0').click() // toggle closed
-  await page.getByTestId('continue').click()
-  await expectQuestion(page, 'payroll-frequency')
-  await pick(page, 'option-biweekly', 'payroll-pay-dates')
-  await page.getByLabel('Pay day of the week').selectOption('5')
-  await advance(page, 'payroll-services')
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('inline-followup-payroll-frequency')).toBeVisible()
+  await page.getByRole('combobox', { name: 'How often is payroll run?', exact: true }).click()
+  await page.getByTestId('option-biweekly').click()
+  await expect(page.getByTestId('inline-followup-payroll-pay-dates')).toBeVisible()
+  await page.getByRole('combobox', { name: 'Pay day of the week' }).click()
+  await page.getByRole('option', { name: 'Friday', exact: true }).click()
+  await expect(page.getByTestId('inline-followup-payroll-services')).toBeVisible()
 
   // ── The payroll add-on is prompted with a recommendation badge ──
   await expect(page.getByTestId('recommendation-badge')).toContainText('Recommended')
   // L2 (D1): the core pick comes first - mandatory with no selection.
   await page.getByTestId('continue').click()
   await expect(page.getByText('Pick who runs payroll first')).toBeVisible()
-  await expectQuestion(page, 'payroll-services')
+  await expectQuestion(page, 'payroll')
   await page.getByTestId('payroll-core-process_payroll').click()
   // Secondary services present after the core pick (never auto-selected).
+  await page.getByRole('combobox', { name: 'Additional payroll services', exact: true }).click()
   await page.getByTestId('payroll-service-Quarterly filings').click()
   await advance(page, 'bk-frequency')
 

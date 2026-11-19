@@ -28,6 +28,14 @@ async function expectAccessible(page: Page, surface: string) {
   ).toEqual([])
 }
 
+async function pick(page: Page, testid: string) {
+  if (!(await page.getByTestId(testid).isVisible().catch(() => false))) {
+    const combobox = page.getByTestId('question-screen').getByRole('combobox')
+    if (await combobox.count()) await combobox.click()
+  }
+  await page.getByTestId(testid).click()
+}
+
 test.beforeEach(async ({ context, baseURL }) => {
   // Owner session from global setup (per-test form logins trip the sign-in
   // rate limit when the whole suite runs).
@@ -151,6 +159,7 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await expect(question).toHaveAttribute('data-question', 'tax-id')
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'tax-structure')
+  await question.getByRole('combobox').click()
   await page.getByTestId('option-Sole proprietorship').click()
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'dba-industry')
@@ -179,8 +188,8 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
 
   // C6: the picker-first CPA card.
   await page.getByTestId('option-yes').click()
-  await page.getByTestId('continue').click()
-  await expect(question).toHaveAttribute('data-question', 'cpa-details')
+  await expect(question).toHaveAttribute('data-question', 'has-cpa')
+  await expect(page.getByTestId('inline-followup-cpa-details')).toBeVisible()
   await expect(page.getByTestId('contact-picker-input')).toBeVisible()
   await settle()
   await expectAccessible(page, 'wizard - CPA picker card')
@@ -191,9 +200,11 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   // On to the balance chapter for the D1 mini-form. N1 (meeting #3): the
   // services + QBO scope block moved to the END of the flow, so starting
   // point comes right after the engagement pick now.
+  await question.getByRole('combobox').click()
   await page.getByTestId('option-Web search').click()
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'engagement')
+  await question.getByRole('combobox').click()
   await page.getByTestId('option-bookkeeping').click()
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'existing-client')
@@ -213,6 +224,14 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await expect(page.getByRole('option', { name: 'Chase' })).toBeVisible()
   await settle()
   await expectAccessible(page, 'wizard - bank dropdown open')
+  await page.getByTestId('bank-add-toggle-0').click()
+  const addBounds = await page.getByTestId('bank-add-submit').boundingBox()
+  expect(addBounds).not.toBeNull()
+  expect(addBounds!.y).toBeGreaterThanOrEqual(0)
+  expect(addBounds!.y + addBounds!.height).toBeLessThanOrEqual(720)
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  await page.getByTestId('bank-select-0').click()
   // ...and filled: bank + masked last-4, the derived label in the header.
   await page.getByRole('option', { name: 'Chase' }).click()
   await page.getByTestId('last4-0').fill('4411')
@@ -234,10 +253,23 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await page.getByTestId('chapter-jump-balance').click()
   await expect(question).toHaveAttribute('data-question', 'checking-accounts')
   await expect(page.getByTestId('last4-0')).toHaveValue('4411')
+  await page.getByTestId('back-link').click()
+  await expect(question).toHaveAttribute('data-question', 'biz-established')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'checking-accounts')
+
+  await page.getByTestId('chapter-jump-balance').hover()
+  await page.getByTestId('chapter-menu-item-balance-savings-accounts').click()
+  await expect(question).toHaveAttribute('data-question', 'savings-accounts')
+  await page.getByTestId('back-link').click()
+  await expect(question).toHaveAttribute('data-question', 'checking-accounts')
+  await expect(page.getByTestId('last4-0')).toHaveValue('4411')
+  await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'savings-accounts')
 
   // J2 (E1-E3): the blocking behavior-note overlay scans clean. Walk the
   // remaining balance cards to the income chapter and answer a yes.
-  for (const id of ['savings-accounts', 'credit-cards', 'vehicles', 'other-assets', 'loans']) {
+  for (const id of ['credit-cards', 'vehicles', 'other-assets', 'loans']) {
     await page.getByTestId('continue').click()
     await expect(question).toHaveAttribute('data-question', id)
   }
@@ -261,6 +293,9 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await page.getByTestId('note-input-deposits-non-business').fill('Owner covers a bill from his personal account some months')
   await page.getByTestId('note-input-deposits-non-business').blur()
   await page.getByTestId('continue').click()
+  await expect(question).toHaveAttribute('data-question', 'business-income-personal')
+  await page.getByTestId('option-no').click()
+  await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'personal-on-business')
 
   // J3 (R1-R5): keep walking to the "Routine order and frequency" scheduler -
@@ -279,18 +314,19 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await page.getByTestId('option-no').click()
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'bk-frequency')
-  await page.getByTestId('option-monthly').click()
+  await pick(page, 'option-monthly')
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'close-tier')
-  await page.getByTestId('option-10').click()
+  await pick(page, 'option-10')
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'acct-method')
-  await page.getByTestId('option-cash').click()
+  await pick(page, 'option-cash')
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'record-bills')
   await page.getByTestId('option-no').click()
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'ten99-services')
+  await pick(page, 'option-no')
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'reports')
   await page.getByTestId('continue').click()
@@ -301,7 +337,7 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await expect(question).toHaveAttribute('data-question', 'services')
   await page.getByTestId('continue').click()
   await expect(question).toHaveAttribute('data-question', 'qbo-status')
-  await page.getByTestId('option-existing').click()
+  await pick(page, 'option-existing')
   await page.getByTestId('continue').click()
   // M5 (C5, 10_10 00:25:29): an existing QuickBooks skips user-count + plan.
   await expect(question).toHaveAttribute('data-question', 'notes')
@@ -310,7 +346,7 @@ test('intake wizard J1 surfaces (contact picker, account mini-form, provider dro
   await settle()
   await expectAccessible(page, 'wizard - routine scheduler buckets (J3)')
   // A card's schedule controls open (the weekly controls after a bucket move).
-  await page.getByTestId('move-bucket-categorize_transactions').selectOption('weekly')
+  await page.getByTestId('move-bucket-categorize_transactions').fill('weekly')
   await page.getByTestId('schedule-toggle-categorize_transactions').click()
   await expect(page.getByTestId('schedule-controls-categorize_transactions')).toBeVisible()
   await settle()

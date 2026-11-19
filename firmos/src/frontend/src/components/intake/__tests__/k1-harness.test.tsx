@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 
@@ -212,13 +212,13 @@ describe('A7: continue_with_unadded_draft_prompts_save_or_discard (09_30 00:38:2
     expect(JSON.parse(screen.getByTestId('answers').textContent ?? '{}').owners).toHaveLength(1)
   })
 
-  it('Save and continue commits the draft onto the list, then advances', () => {
+  it('Save and continue commits the draft onto the list, then advances', async () => {
     const onAdvance = vi.fn()
     render(<Harness initial={base} onAdvance={onAdvance} />)
     fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Sal Vega' } })
     fireEvent.click(screen.getByTestId('continue'))
     fireEvent.click(screen.getByTestId('unsaved-draft-save'))
-    expect(onAdvance).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onAdvance).toHaveBeenCalledTimes(1))
     const owners = JSON.parse(screen.getByTestId('answers').textContent ?? '{}').owners as Array<{ name: string }>
     expect(owners.map((o) => o.name)).toEqual(['Wren Okafor', 'Sal Vega'])
   })

@@ -159,16 +159,49 @@ export interface EquitySeedRow {
   name: string;
 }
 
-/** The breakdown picks (values are the stored answer strings). */
-export const EQUITY_BREAKDOWN_OPTIONS = [
-  { value: "contributions", label: "Contributions" },
-  { value: "distributions", label: "Distributions" },
-  { value: "net_investment", label: "Net investment gain/loss" },
-] as const;
+export const EQUITY_BREAKDOWN_VALUES = ["contributions", "distributions", "grouped"] as const;
 
+export interface EquityAccountNames {
+  contributions: string;
+  distributions: string;
+  grouped: string;
+}
+
+export function equityAccountNames(form: {
+  taxStructure?: string | null;
+  llcSubclass?: string | null;
+}): EquityAccountNames {
+  const structure = form.taxStructure ?? "";
+  const subclass = form.llcSubclass ?? "";
+  if (structure === "Partnership" || subclass === "llc_partnership") {
+    return { contributions: "Partner Contribution", distributions: "Partner Distribution", grouped: "Partner Equity" };
+  }
+  if (structure === "S-corp" || structure === "C-corp" || subclass === "llc_scorp" || subclass === "llc_ccorp") {
+    return { contributions: "Shareholder Contribution", distributions: "Shareholder Distribution", grouped: "Shareholder Equity" };
+  }
+  if (structure === "Sole proprietorship" || subclass === "llc_sml") {
+    return { contributions: "Owner Contribution", distributions: "Owner's Draw", grouped: "Owner's Equity" };
+  }
+  return { contributions: "Owner Contributions", distributions: "Owner Distributions", grouped: "Owner's Equity" };
+}
+
+export function equityBreakdownOptionsFor(form: {
+  taxStructure?: string | null;
+  llcSubclass?: string | null;
+}): { value: string; label: string }[] {
+  const names = equityAccountNames(form);
+  return [
+    { value: "contributions", label: names.contributions },
+    { value: "distributions", label: names.distributions },
+    { value: "grouped", label: names.grouped },
+  ];
+}
+
+/** Older net-investment answers still seed their original account. */
 const EQUITY_PICK_SEED: Record<string, { type: string; label: string }> = {
   contributions: { type: "owner_contributions", label: "Owner Contributions" },
   distributions: { type: "owner_distributions", label: "Owner Distributions" },
+  grouped: { type: "other_equity", label: "Owner's Equity" },
   net_investment: { type: "other_equity", label: "Net Investment Gain/Loss" },
 };
 
@@ -184,29 +217,33 @@ export function equitySeedPlan(form: {
   equityBreakdown?: string[] | null;
   equityPerOwner?: boolean | null;
   owners?: readonly { name?: string | null }[] | null;
+  taxStructure?: string | null;
+  llcSubclass?: string | null;
 }, template?: import("@/shared/lib/chart-templates").ChartTemplateNames): EquitySeedRow[] | null {
   if (form.equitySetup !== "grouped" && form.equitySetup !== "breakdown") return null;
   const owners = (form.owners ?? []).map((o) => (o.name ?? "").trim()).filter((n) => n !== "");
   const perOwner = form.equityPerOwner === true && owners.length > 1;
+  const names = equityAccountNames(form);
   if (form.equitySetup === "grouped") {
-    const label = template?.grouped ?? "Owner's Equity";
+    const label = template?.grouped ?? names.grouped;
     return perOwner
       ? owners.map((o) => ({ type: "other_equity", name: `${label} - ${o}` }))
       : [{ type: "other_equity", name: label }];
   }
-  const picks =
-    form.equityBreakdown && form.equityBreakdown.length > 0
-      ? form.equityBreakdown
-      : ["contributions", "distributions"];
-  const chosen = EQUITY_BREAKDOWN_OPTIONS.map((o) => o.value)
-    .filter((v) => picks.includes(v))
-    .map((v) => ({
-      type: EQUITY_PICK_SEED[v]!.type,
-      label: v === "contributions"
-        ? template?.contributions ?? EQUITY_PICK_SEED[v]!.label
-        : v === "distributions"
-          ? template?.distributions ?? EQUITY_PICK_SEED[v]!.label
-          : template?.netInvestment ?? EQUITY_PICK_SEED[v]!.label,
+  const picks = form.equityBreakdown && form.equityBreakdown.length > 0
+    ? form.equityBreakdown
+    : ["contributions", "distributions"];
+  const chosen = ["contributions", "distributions", "grouped", "net_investment"]
+    .filter((value) => picks.includes(value))
+    .map((value) => ({
+      type: EQUITY_PICK_SEED[value]!.type,
+      label: value === "contributions"
+        ? template?.contributions ?? names.contributions
+        : value === "distributions"
+          ? template?.distributions ?? names.distributions
+          : value === "grouped"
+            ? template?.grouped ?? names.grouped
+            : template?.netInvestment ?? EQUITY_PICK_SEED[value]!.label,
     }));
   return perOwner
     ? owners.flatMap((o) => chosen.map((d) => ({ type: d.type, name: `${d.label} - ${o}` })))

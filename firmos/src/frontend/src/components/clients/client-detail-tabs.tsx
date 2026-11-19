@@ -80,9 +80,11 @@ interface ClientDetailTabsProps {
   missingCredentials?: number
   /** K7 (V18): the client notes panel, prominent on Overview. */
   notesPanel?: React.ReactNode
+  /** Payroll-provider handoff, shown only when the client names Gusto. */
+  payrollPanel?: ReactNode
 }
 
-export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, workInitialStream = null, workInitialMonth = null, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel, correspondencePanel, unreadCorrespondence = 0, credentialsPanel, missingCredentials = 0, notesPanel }: ClientDetailTabsProps) {
+export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yearGridNextHref, workInitialStream = null, workInitialMonth = null, billing, showBilling, canEditWorkDay = false, canAssignStaff = false, managers = [], bookkeepers = [], clientInvoices = [], defaultTab, documentsPanel, statementsPanel, taxPanel, w9Panel, offboardingPanel, projectsPanel, recurringPanel, propertiesPanel, correspondencePanel, unreadCorrespondence = 0, credentialsPanel, missingCredentials = 0, notesPanel, payrollPanel }: ClientDetailTabsProps) {
   /* Segmented-pill tab strip (DESIGN-FRESHBOOKS §1): the active tab is the
      brand pill (bg-primary/text-primary-foreground keeps AA in both themes);
      icons inherit currentColor, so they follow the pill for free. */
@@ -173,6 +175,7 @@ export function ClientDetailTabs({ detail, work, yearGrid, yearGridPrevHref, yea
             managers={managers}
             bookkeepers={bookkeepers}
           />
+          {payrollPanel}
           {notesPanel}
         </div>
       </TabsContent>

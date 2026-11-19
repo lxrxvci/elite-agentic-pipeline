@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 
@@ -150,6 +150,7 @@ describe('phone auto-format (I1, 00:30:14)', () => {
 describe('"Other - type it" on carded selects (I1, 00:15:53)', () => {
   it('appends the Other card on multi-option selects and opens the inline input when picked', () => {
     render(<Harness q={findQuestion('engagement', 'engagement')!} initial={{}} />)
+    fireEvent.click(screen.getByRole('combobox', { name: 'What kind of engagement is this?' }))
     const other = screen.getByTestId('option-Other')
     expect(other).toHaveTextContent('Other — type it')
     fireEvent.click(other)
@@ -164,6 +165,7 @@ describe('"Other - type it" on carded selects (I1, 00:15:53)', () => {
 
   it('reuses the existing Other option card when the question already has one', () => {
     render(<Harness q={findQuestion('entity', 'tax-structure')!} initial={{}} />)
+    fireEvent.click(screen.getByRole('combobox', { name: 'How is the business registered?' }))
     expect(screen.getAllByTestId('option-Other')).toHaveLength(1)
     expect(screen.getByTestId('option-Other')).toHaveTextContent('Other / not sure')
   })
@@ -175,7 +177,7 @@ describe('"Other - type it" on carded selects (I1, 00:15:53)', () => {
 })
 
 describe('contacts owner prefill (I1, 00:29:05)', () => {
-  it('fills the draft from the tapped owner', () => {
+  it('fills the draft from the tapped owner', async () => {
     render(
       <Harness
         q={findQuestion('entity', 'contacts')!}
@@ -191,7 +193,7 @@ describe('contacts owner prefill (I1, 00:29:05)', () => {
     expect(screen.getByLabelText('Phone')).toHaveValue('(503) 555-0182')
 
     fireEvent.click(screen.getByTestId('add-another'))
-    expect(screen.getByText('Wren Okafor')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('Wren Okafor')).toBeInTheDocument())
   })
 
   it('offers no prefill buttons when there are no owners', () => {
@@ -216,16 +218,16 @@ describe('owner-count guards on the owners screen (I2, 00:26:10)', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('A sole proprietorship has exactly one owner.')
   })
 
-  it('sole prop: one owner in, the add form swaps for the cap note', () => {
+  it('sole prop: one owner in, the add form swaps for the cap note', async () => {
     const onAdvance = vi.fn()
     render(
       <Harness q={ownersQ} initial={{ taxStructure: 'Sole proprietorship' }} onAdvance={onAdvance} />,
     )
     fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Wren Okafor' } })
     fireEvent.click(screen.getByTestId('add-another'))
-    expect(screen.getByText('Wren Okafor')).toBeInTheDocument()
+    expect(await screen.findByTestId('entity-chip')).toHaveTextContent('Wren Okafor')
     // Capped at 1: the draft form is gone, replaced by the note.
-    expect(screen.getByTestId('cap-note')).toHaveTextContent('One owner is the cap for a sole proprietorship.')
+    await waitFor(() => expect(screen.getByTestId('cap-note')).toHaveTextContent('One owner is the cap for a sole proprietorship.'))
     expect(screen.queryByTestId('add-another')).toBeNull()
     expect(screen.queryByLabelText('Full name')).toBeNull()
 
@@ -244,7 +246,7 @@ describe('owner-count guards on the owners screen (I2, 00:26:10)', () => {
     expect(screen.queryByTestId('add-another')).toBeNull()
   })
 
-  it('partnership_requires_two_owners: one owner blocks, two pass', () => {
+  it('partnership_requires_two_owners: one owner blocks, two pass', async () => {
     const onAdvance = vi.fn()
     render(
       <Harness
@@ -265,7 +267,7 @@ describe('owner-count guards on the owners screen (I2, 00:26:10)', () => {
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('unsaved-draft-save'))
-    expect(onAdvance).toHaveBeenCalled()
+    await waitFor(() => expect(onAdvance).toHaveBeenCalled())
     expect(answersNow().owners).toHaveLength(2)
   })
 
@@ -300,7 +302,17 @@ describe('corporate payroll card (I2, 00:48:07)', () => {
     // rendered no affordance at all and the wizard stalled here.
     const onAdvance = vi.fn()
     render(
-      <Harness q={findQuestion('income', 'payroll')!} initial={{ taxStructure: 'S-corp' }} onAdvance={onAdvance} />,
+      <Harness
+        q={findQuestion('income', 'payroll')!}
+        initial={{
+          taxStructure: 'S-corp',
+          payrollProvider: 'Gusto',
+          payrollFrequency: 'weekly',
+          payrollPayWeekday: 5,
+          payrollSelfProcessed: true,
+        }}
+        onAdvance={onAdvance}
+      />,
     )
     fireEvent.click(screen.getByTestId('continue'))
     expect(onAdvance).toHaveBeenCalled()
@@ -556,9 +568,10 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
     expect(screen.queryByLabelText('Vehicle value 1')).toBeNull()
     // D5: the financed pick is required.
     expect(screen.getByTestId('financed-select-0')).toBeInTheDocument()
-    const proof = screen.getByTestId('proof-select-0') as HTMLSelectElement
-    expect(proof.value).toBe('bill_of_sale')
-    expect([...proof.options].map((o) => o.value)).toEqual(['bill_of_sale', 'owner_declared'])
+    const proof = screen.getByTestId('proof-select-0')
+    expect(proof).toHaveAttribute('data-value', 'bill_of_sale')
+    fireEvent.click(proof)
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Bill of sale', 'Owner declared'])
     fireEvent.change(screen.getByLabelText('Description 1'), { target: { value: '2022 Ford Transit' } })
     const committed = answersNow().vehicleAssets ?? []
     expect(committed[0]).toMatchObject({ name: '2022 Ford Transit', accountType: 'vehicle' })
@@ -584,8 +597,8 @@ describe('I3 account count cards (plan §1 screen 7)', () => {
     expect(screen.queryByTestId('bank-select-0')).toBeNull()
     // D3: no balance field anywhere on the card.
     expect(screen.queryByLabelText(/balance/i)).toBeNull()
-    const proof = screen.getByTestId('proof-select-0') as HTMLSelectElement
-    expect(proof.value).toBe('statement')
+    const proof = screen.getByTestId('proof-select-0')
+    expect(proof).toHaveAttribute('data-value', 'statement')
     // Statement proof: the lender is the institutions dropdown.
     expect(screen.getByTestId('lender-select-0')).toBeInTheDocument()
     expect(screen.queryByTestId('lender-writein-0')).toBeNull()
@@ -737,7 +750,7 @@ describe('contact_picker_never_duplicates_a_person - UI half (J1, C5)', () => {
 })
 
 describe('CPA card is picker-first (J1, C6)', () => {
-  it('picking an existing CPA writes the link and shows the badge; typing over the name clears it', async () => {
+  it('picking an existing CPA writes the link and keeps it when the name is edited', async () => {
     const search = vi.fn(async () => CPA_HIT)
     render(
       <Harness q={findQuestion('entity', 'cpa-details')!} initial={{ hasCpa: true }} contactSearch={search} />,
@@ -750,12 +763,11 @@ describe('CPA card is picker-first (J1, C6)', () => {
     expect(a.cpaEmail).toBe('team@cascadetax.example')
     expect(a.cpaContactId).toBe(56)
     expect(screen.getByTestId('picker-linked-badge')).toBeInTheDocument()
-    // Typing over the name drops the link (the create-new path).
     fireEvent.change(screen.getByLabelText('CPA name or firm'), { target: { value: 'Cascade Tax Group LLC' } })
     a = answersNow()
     expect(a.cpaName).toBe('Cascade Tax Group LLC')
-    expect(a.cpaContactId).toBeNull()
-    expect(screen.queryByTestId('picker-linked-badge')).toBeNull()
+    expect(a.cpaContactId).toBe(56)
+    expect(screen.getByTestId('picker-linked-badge')).toBeInTheDocument()
   })
 
   it('the create-new option types a fresh CPA name without a link', async () => {
@@ -764,8 +776,12 @@ describe('CPA card is picker-first (J1, C6)', () => {
       <Harness q={findQuestion('entity', 'cpa-details')!} initial={{ hasCpa: true }} contactSearch={search} />,
     )
     fireEvent.change(screen.getByTestId('contact-picker-input'), { target: { value: 'Yes Taxes' } })
-    const create = await screen.findByTestId('contact-picker-create', undefined, { timeout: 2000 })
-    fireEvent.click(create)
+    await screen.findByTestId('contact-picker-empty', undefined, { timeout: 2000 })
+    fireEvent.click(screen.getByTestId('contact-picker-add-toggle'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('contact-picker-add-submit'))
+      await Promise.resolve()
+    })
     expect(answersNow().cpaName).toBe('Yes Taxes')
     expect(answersNow().cpaContactId).toBeNull()
     expect(screen.getByLabelText('CPA name or firm')).toHaveValue('Yes Taxes')
@@ -837,7 +853,7 @@ describe('payroll provider database dropdown (J1, P2/DB1)', () => {
     }
     render(<ProvidersHarness />)
     fireEvent.click(screen.getByTestId('provider-select-0'))
-    fireEvent.click(screen.getByTestId('provider-add-toggle-0'))
+    fireEvent.click(screen.getByTestId('provider-add-toggle'))
     fireEvent.change(screen.getByTestId('provider-add-input'), { target: { value: 'SurePayroll' } })
     fireEvent.click(screen.getByTestId('provider-add-submit'))
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith('SurePayroll'))
@@ -856,7 +872,7 @@ describe('merchants processor dropdown + the E5 required flag (J1)', () => {
   ]
   const merchantsQ = findQuestion('income', 'merchants')!
 
-  it('L2/B3: the vertical stack writes name + processorId with no name re-entry', () => {
+  it('the shared multi-select writes name + processorId with no name re-entry', () => {
     render(
       <Harness
         q={merchantsQ}
@@ -864,19 +880,17 @@ describe('merchants processor dropdown + the E5 required flag (J1)', () => {
         merchantProcessors={PROCESSORS}
       />,
     )
-    // The dropdown draft is retired (L2/B3); a stack toggle commits directly.
-    expect(screen.queryByTestId('processor-select-0')).toBeNull()
-    fireEvent.click(screen.getByTestId('processor-toggle-Stripe'))
+    fireEvent.click(screen.getByTestId('processor-input'))
+    fireEvent.click(screen.getByTestId('processor-option-Stripe'))
     expect(answersNow().merchantAccounts).toEqual([{ name: 'Stripe', processor: 'Stripe', processorId: 2 }])
   })
 
-  it('E5: with card payments the question cannot be skipped empty', () => {
+  it('E5: the merchant question allows an explicit no-processor answer', () => {
     const onAdvance = vi.fn()
-    render(<Harness q={merchantsQ} initial={{ paymentMethods: ['online'] }} onAdvance={onAdvance} />)
+    render(<Harness q={merchantsQ} initial={{ paymentMethods: ['online'], includeMerchantReconciliation: false }} onAdvance={onAdvance} />)
     expect(screen.getByTestId('continue')).toHaveTextContent('Continue')
     fireEvent.click(screen.getByTestId('continue'))
-    expect(onAdvance).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent('Pick at least one processor, or go back.')
+    expect(onAdvance).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -965,10 +979,12 @@ describe('financed vehicle routes to the loans card - UI half (J1, D5)', () => {
 describe('J2 missed-filings yes/no + last-filed date (R6)', () => {
   const reportsQ = findQuestion('reporting', 'reports')!
 
-  it('missed_filings_yes_needs_last_filed_date', () => {
+  it('missed_filings_yes_needs_last_filed_date', async () => {
     render(<Harness q={reportsQ} initial={{}} />)
     fireEvent.change(screen.getByLabelText('Report name'), { target: { value: 'Oregon Special Report' } })
     fireEvent.change(screen.getByLabelText('Frequency'), { target: { value: 'quarterly' } })
+    fireEvent.click(screen.getByRole('combobox', { name: 'SOP' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Create new SOP' }))
     // Toggle the yes: the last-filed date becomes required.
     fireEvent.click(screen.getByLabelText('There are missed past filings'))
     fireEvent.click(screen.getByTestId('add-another'))
@@ -978,6 +994,7 @@ describe('J2 missed-filings yes/no + last-filed date (R6)', () => {
     // A real date unblocks the add; the committed item carries both keys.
     fireEvent.change(screen.getByLabelText('Most recent filing'), { target: { value: '03312026' } })
     fireEvent.click(screen.getByTestId('add-another'))
+    await waitFor(() => expect(answersNow().reportDefinitions).toHaveLength(1))
     expect(screen.queryByRole('alert')).toBeNull()
     expect(answersNow().reportDefinitions?.[0]).toMatchObject({
       name: 'Oregon Special Report',
@@ -988,11 +1005,14 @@ describe('J2 missed-filings yes/no + last-filed date (R6)', () => {
     expect(screen.getByText(/last filed Mar 31, 2026/)).toBeInTheDocument()
   })
 
-  it('the date is optional while the toggle is off', () => {
+  it('the date is optional while the toggle is off', async () => {
     render(<Harness q={reportsQ} initial={{}} />)
     fireEvent.change(screen.getByLabelText('Report name'), { target: { value: 'City lodging tax' } })
     fireEvent.change(screen.getByLabelText('Frequency'), { target: { value: 'monthly' } })
+    fireEvent.click(screen.getByRole('combobox', { name: 'SOP' }))
+    fireEvent.click(screen.getByRole('option', { name: 'I’m not sure' }))
     fireEvent.click(screen.getByTestId('add-another'))
+    await waitFor(() => expect(answersNow().reportDefinitions).toHaveLength(1))
     expect(screen.queryByRole('alert')).toBeNull()
     expect(answersNow().reportDefinitions?.[0]).toMatchObject({
       name: 'City lodging tax',
@@ -1044,33 +1064,25 @@ describe('J2 payroll handling mandatory + self-processed (P1)', () => {
 describe('J2 pay-bills screen (E6)', () => {
   const payBills = findQuestion('reporting', 'pay-bills')!
 
-  it('yes reveals the addable locations list; Continue commits; no clears the list', () => {
+  it('yes reveals per-vendor payment fields; Continue commits; no clears the portal list', () => {
     const onAdvance = vi.fn()
-    render(<Harness q={payBills} initial={{ recordBills: true }} onAdvance={onAdvance} />)
-    // No Continue until a pick.
+    render(<Harness q={payBills} initial={{
+      recordBills: true,
+      vendorAssignments: [{ vendorId: 1, vendorName: 'PGE', frequency: 'monthly' }],
+    }} onAdvance={onAdvance} />)
     expect(screen.queryByTestId('continue')).toBeNull()
     expect(screen.queryByTestId('yes-no-list-editor')).toBeNull()
 
     fireEvent.click(screen.getByTestId('option-yes'))
-    // The yes forces recordBills on the data path too (the prerequisite).
     expect(answersNow().recordBills).toBe(true)
     expect(answersNow().payBills).toBe(true)
-    expect(screen.getByTestId('yes-no-list-editor')).toBeInTheDocument()
+    expect(screen.getByTestId('pay-vendor-list')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('combobox', { name: 'Payment method for PGE' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Vendor portal' }))
+    fireEvent.change(screen.getByLabelText('Payment portal URL (optional)'), { target: { value: 'https://vendor.example.com/pay' } })
+    fireEvent.blur(screen.getByLabelText('Payment portal URL (optional)'))
+    expect(answersNow().billPayLocations).toEqual(['https://vendor.example.com/pay'])
 
-    // Addable rows of where bills get paid.
-    fireEvent.change(screen.getByTestId('list-input'), { target: { value: 'Vendor websites' } })
-    fireEvent.click(screen.getByTestId('list-add'))
-    fireEvent.change(screen.getByTestId('list-input'), { target: { value: 'Bank bill pay' } })
-    fireEvent.click(screen.getByTestId('list-add'))
-    expect(screen.getAllByTestId('list-chip')).toHaveLength(2)
-    expect(answersNow().billPayLocations).toEqual(['Vendor websites', 'Bank bill pay'])
-
-    // Rows remove - confirming first (L1/H4: no delete without the dialog).
-    fireEvent.click(screen.getByLabelText('Remove Vendor websites'))
-    fireEvent.click(screen.getByTestId('confirm-delete-confirm'))
-    expect(answersNow().billPayLocations).toEqual(['Bank bill pay'])
-
-    // Flipping to no retires the list with the answer (never stale).
     fireEvent.click(screen.getByTestId('option-no'))
     expect(answersNow().payBills).toBe(false)
     expect(answersNow().billPayLocations).toEqual([])

@@ -71,6 +71,7 @@ export function ClientSelect({
 }) {
   return (
     <Select
+      optionOrder="alphabetical"
       value={value != null ? String(value) : ''}
       onValueChange={(v) => onChange(v === '' ? null : Number(v))}
     >

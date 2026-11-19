@@ -108,7 +108,7 @@ function WorkDayField({
             disabled={pending}
           >
             <SelectTrigger
-              className="h-7 w-36 text-xs"
+              className="h-10 w-full max-w-36 text-xs"
               aria-label="Client work day"
               data-testid="work-day-select"
             >
@@ -182,11 +182,12 @@ function TeamFields({
       <dd className="mt-0.5 text-sm text-foreground">
         {canEdit ? (
           <Select
+            optionOrder="alphabetical"
             value={current == null ? 'none' : String(current.id)}
             onValueChange={(v) => void change(slot, v)}
             disabled={pending}
           >
-            <SelectTrigger className="h-7 w-44 text-xs" aria-label={`Client ${label.toLowerCase()}`} data-testid={testId}>
+            <SelectTrigger className="h-10 w-full max-w-44 text-xs" aria-label={`Client ${label.toLowerCase()}`} data-testid={testId}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

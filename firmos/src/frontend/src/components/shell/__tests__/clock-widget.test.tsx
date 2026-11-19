@@ -156,7 +156,8 @@ describe('ClockWidget', () => {
 
     render(<ClockWidget />)
     await userEvent.click(await screen.findByTestId('clock-client'))
-    await userEvent.click(screen.getByRole('menuitem', { name: /blue spruce ventures/i }))
+    await userEvent.click(screen.getByTestId('clock-client-search'))
+    await userEvent.click(screen.getByRole('option', { name: /blue spruce ventures/i }))
 
     // One tap on the client switches the timer: the start carries the client
     // and resumes the running kind.

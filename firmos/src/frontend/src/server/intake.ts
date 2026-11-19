@@ -151,6 +151,11 @@ export interface IntakeReportDefinition {
   dataSource?: string | null;
   /** Persistent report-specific details carried into review and recurring work. */
   notes?: string | null;
+  /** Catalog identity and scope; cadence and pricing remain per-client choices. */
+  catalogId?: number | null;
+  isCommon?: boolean | null;
+  sopTemplateId?: number | null;
+  sopStatus?: 'existing' | 'create' | 'unsure' | null;
   estimatedHours?: number | null;
   /** Flat price per report; wins over estimatedHours x rate when present. */
   flatPrice?: number | null;
@@ -222,6 +227,18 @@ export type IntakeAccountOverrides = Record<
   string,
   { statementDay?: number | null; requiresManualTransactions?: boolean }
 >;
+
+export interface IntakeVendorAssignment {
+  vendorId: number;
+  vendorName: string;
+  frequency: IntakeCustomRuleInput["scheduleType"];
+  paymentMethod?: "bank_bill_pay" | "vendor_website" | "ach" | "check" | "cash" | "card" | "other" | null;
+  /** Per-client override; null inherits the catalog's default portal. */
+  portalUrl?: string | null;
+  defaultPortalUrl?: string | null;
+  sopTemplateId?: number | null;
+  sopStatus?: 'existing' | 'create' | 'unsure' | null;
+}
 
 /**
  * The seven-step wizard payload (§10). The structured columns on
@@ -356,27 +373,33 @@ export interface IntakeFormData {
   payrollFrequency?: "weekly" | "biweekly" | "semi_monthly" | "monthly";
   /** Weekly/biweekly pay weekday (0 Sunday through 6 Saturday). */
   payrollPayWeekday?: number | null;
-  /** One monthly pay day or two semi-monthly pay days, each 1-31. */
+  /** One monthly pay day or two semi-monthly pay days; 0 means end of month. */
   payrollPayDates?: number[];
+  /** Optional period boundaries; 0 in endDay or payDay means end of month. */
+  payrollPeriods?: { startDay: number | null; endDay: number | null; payDay: number | null }[];
   /** B18: "personal credit card used for business" - yes/sometimes both land
    *  here as true; conversion seeds the monthly breakdown reminder task. */
   personalCardForBusiness?: boolean;
   /** A41 (00:48:07): "deposit anything that isn't business income?" - true
    *  seeds the monthly owner-contribution review task at conversion. */
   depositsNonBusiness?: boolean;
+  /** Business income deposited into personal accounts, with a recurring review. */
+  businessIncomeToPersonal?: boolean;
   /** A41 (00:48:07): "pay for non-business things on business accounts?" -
    *  true seeds the monthly owner-draws confirmation task at conversion. */
   personalOnBusiness?: boolean;
-  /** J2 (meeting #3, E1-E3): the mandatory explanation note captured from the
-   *  blocking overlay when a money-behavior card is answered yes, keyed by
-   *  the registry question id (deposits-non-business / personal-on-business /
-   *  personal-card). Conversion carries the note into the seeded task's
-   *  description. */
+  /** Explanation captured inline when a money-behavior card is answered yes,
+   *  keyed by registry question id (deposits-non-business / business-income-personal /
+   *  personal-on-business / personal-card). Conversion carries it into the task. */
   behaviorNotes?: Record<string, string>;
   // Step 5 - reporting and payroll
   bookkeepingFrequency?: string | null;
   billingFrequency?: string | null;
   monthlyCloseTier?: string | null;
+  /** Actual close offset in days after any monthly/quarterly/annual period end.
+   *  The legacy tier above remains the 5/10/15 pricing input. */
+  closeDeadlineDaysAfterEnd?: number | null;
+  closeDeadlineChoice?: "5" | "10" | "15" | "other" | null;
   accountingMethod?: string | null;
   payrollProvider?: string | null;
   /** J2 (meeting #3, P1): the payroll-services "they process their own
@@ -411,6 +434,8 @@ export interface IntakeFormData {
   billPayLocations?: string[];
   /** Specific bills/vendors to record; distinct from where bills are paid. */
   recordBillVendors?: string[];
+  /** Selected vendors and their client-specific recurring/payment setup. */
+  vendorAssignments?: IntakeVendorAssignment[];
   /** J2 (meeting #3, R6): send reports before the client's open questions
    *  are answered; conversion notes it on the seeded Send Reports rule. */
   sendPreliminaryReports?: boolean;

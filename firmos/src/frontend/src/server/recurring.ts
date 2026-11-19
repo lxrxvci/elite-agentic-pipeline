@@ -12,7 +12,7 @@ import {
 } from "@firmos/domain";
 
 import { db } from "@/db";
-import { clients, recurringTasks, recurringTaskSubtasks, tasks, taskSubtasks } from "@/db/schema";
+import { clientIntakes, clients, recurringTasks, recurringTaskSubtasks, tasks, taskSubtasks } from "@/db/schema";
 
 import { catchupOf, toDomainClient, toDomainRule } from "./domain-adapters";
 import { localToday } from "./dates";
@@ -65,6 +65,12 @@ export async function runRecurringOnce(today: LocalDate = localToday()): Promise
 
   const clientRows = await db.select().from(clients);
   const clientById = new Map(clientRows.map((c) => [c.id, c]));
+  const intakeRows = await db
+    .select({ clientId: clientIntakes.clientId, isExistingClient: clientIntakes.isExistingClient })
+    .from(clientIntakes);
+  const existingClientIds = new Set(
+    intakeRows.filter((intake) => intake.isExistingClient && intake.clientId != null).map((intake) => intake.clientId),
+  );
 
   const rules = await db.select().from(recurringTasks).where(eq(recurringTasks.isActive, true));
   for (const rule of rules) {
@@ -83,6 +89,15 @@ export async function runRecurringOnce(today: LocalDate = localToday()): Promise
     const domainRule = toDomainRule(rule);
     let occurrence = parseLocalDate(rule.nextRun);
     let iterations = 0;
+
+    // Migrating an existing client starts work now; it never manufactures a
+    // backlog from dates before the firm adopted FirmOS. Advance the rule but
+    // leave historical statements and existing checkoffs untouched.
+    if (existingClientIds.has(rule.clientId)) {
+      while (compareLocalDate(occurrence, today) < 0) {
+        occurrence = advanceNextRun({ ...domainRule, next_run: occurrence });
+      }
+    }
 
     // 2B-1 follow-up: the rule's checklist template (recurring_task_subtasks)
     // materializes into every generated instance as task_subtasks, so the
@@ -143,7 +158,7 @@ export async function runRecurringOnce(today: LocalDate = localToday()): Promise
       occurrence = advanceNextRun({ ...domainRule, next_run: occurrence });
     }
 
-    if (iterations > 0) {
+    if (iterations > 0 || existingClientIds.has(rule.clientId)) {
       await db
         .update(recurringTasks)
         .set({ nextRun: formatLocalDate(occurrence), updatedAt: new Date() })

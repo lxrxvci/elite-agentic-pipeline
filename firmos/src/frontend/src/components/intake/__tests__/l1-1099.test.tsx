@@ -28,13 +28,12 @@ function Harness({ initial }: { initial: WizardAnswers }) {
 }
 
 describe('L1/E1: 1099_count_accepts_typed_56 (10_06 00:24:06)', () => {
-  it('the count is a numeric text input - types 56, strips non-digits, caps at 3 digits', () => {
+  it('keeps the optional estimate inline on the qualifying 1099 choice', () => {
     render(<Harness initial={{ serviceKeys: ['1099_collection'] } as unknown as WizardAnswers} />)
-    expect(screen.getByTestId('followup')).toBeInTheDocument()
-    // No dropdown anymore.
+    expect(screen.getByTestId('inline-followup-1099-estimate')).toBeInTheDocument()
     expect(screen.queryByTestId('followup-select-estimated1099Count')).toBeNull()
 
-    const input = screen.getByTestId('followup-input-estimated1099Count')
+    const input = screen.getByLabelText('Estimated filings (optional)')
     fireEvent.change(input, { target: { value: '56' } })
     expect(JSON.parse(screen.getByTestId('answers').textContent ?? '{}').estimated1099Count).toBe(56)
 
@@ -42,6 +41,8 @@ describe('L1/E1: 1099_count_accepts_typed_56 (10_06 00:24:06)', () => {
     expect(JSON.parse(screen.getByTestId('answers').textContent ?? '{}').estimated1099Count).toBeNull()
 
     fireEvent.change(input, { target: { value: '1234' } })
-    expect(JSON.parse(screen.getByTestId('answers').textContent ?? '{}').estimated1099Count).toBe(123)
+    expect(JSON.parse(screen.getByTestId('answers').textContent ?? '{}').estimated1099Count).toBe(1234)
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(screen.getByRole('alert')).toHaveTextContent('Estimated filings should be 999 or less.')
   })
 })

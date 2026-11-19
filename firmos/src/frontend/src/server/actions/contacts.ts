@@ -18,6 +18,7 @@ export type ContactLookupActionResult<T> =
 
 export async function searchContactsAction(
   query: string,
+  associationContactId?: number | null,
 ): Promise<ContactLookupActionResult<ContactLookupResults>> {
   try {
     await requireStaff()
@@ -25,7 +26,7 @@ export async function searchContactsAction(
     return { ok: false, error: 'Your session expired - sign in again.' }
   }
   try {
-    return { ok: true, data: await searchContactsAndClients(query) }
+    return { ok: true, data: await searchContactsAndClients(query, associationContactId) }
   } catch {
     return { ok: false, error: 'Something went wrong - try again.' }
   }

@@ -3,10 +3,13 @@ import { parseDaysOfWeek } from '@firmos/domain'
 import type { IntakeAccountInput, IntakeContactInput, IntakePatch, IntakeProofCategory } from '@/server/intake'
 import type { IntakeFormData, IntakeRow } from '@/server/intake'
 import { accountLabel, normalizeLast4 } from '@/shared/lib/account-label'
-import type { ContactChannel } from '@/shared/lib/contact-channels'
-import { EQUITY_BREAKDOWN_OPTIONS } from '@/shared/lib/account-types'
+import { contactChannelBusinesses, type ContactChannel } from '@/shared/lib/contact-channels'
+import { EQUITY_BREAKDOWN_VALUES, equityBreakdownOptionsFor } from '@/shared/lib/account-types'
+import { closeDeadlineChoice, closeDeadlineDay } from '@/shared/lib/closing-deadline'
+import { vendorRoutineTasks } from '@/shared/lib/vendor-task-plan'
 import {
   DEFAULT_RECURRING_RULES,
+  BUSINESS_INCOME_TO_PERSONAL_REVIEW_TITLE,
   EOY_TAX_CHECKLIST_ITEMS,
   EOY_TAX_CHECKLIST_TITLE,
   MERCHANT_RECONCILIATION_TITLE,
@@ -38,7 +41,7 @@ import { formatPhone, phoneDigits } from './format'
  * at the END, just before the recurring/scheduler closeout. Every chapter
  * and every question is data; branching lives in `when` predicates so the
  * branch map is unit-testable without rendering anything. The wizard walks
- * `flattenScreens`, one question per screen, and the review screen is
+ * `flattenScreens`, one question or grouped flow per screen, and the review screen is
  * appended last and never counted in "Question X of Y".
  */
 
@@ -85,15 +88,24 @@ export const payrollServicesSummarize = (a: WizardAnswers): string | null => {
   parts.push(...((a.payrollCustomServices ?? []) as string[]))
   return parts.length > 0 ? parts.join('\n') : null
 }
+const PAYROLL_DAY_OPTIONS = Array.from({ length: 31 }, (_, index) => {
+  const day = String(index + 1)
+  return { value: day, label: day }
+})
+const PAYROLL_MONTH_END_OPTIONS = [
+  ...PAYROLL_DAY_OPTIONS,
+  { value: '0', label: 'End of month' },
+]
+const payrollDayLabel = (day: number | null | undefined): string =>
+  day === 0 ? 'end of month' : day == null ? '?' : String(day)
+
 const hasPayroll = (a: WizardAnswers): boolean =>
   isBookkeeping(a) && (a.hasPayroll === true || requiresOfficerPayroll(a))
-const takesCards = (a: WizardAnswers): boolean =>
-  // M1 (B2): fold first - a stored custom variant ("Credit / debit card")
-  // still qualifies, so merchants never hides on a duplicate pick.
-  (a.paymentMethods ?? []).some((m) => {
-    const fold = foldPaymentMethod(m)
-    return fold === 'card' || fold === 'online'
-  })
+const payrollSetupReady = (a: WizardAnswers): boolean => {
+  if (!hasPayroll(a) || !a.payrollProvider?.trim() || !a.payrollFrequency) return false
+  if (a.payrollFrequency === 'weekly' || a.payrollFrequency === 'biweekly') return a.payrollPayWeekday != null
+  return true
+}
 /** Only the three canonical QuickBooks statuses open the QBO follow-ups; a
  *  custom "Other" answer (I1) is explicitly not QuickBooks. */
 const hasQbo = (a: WizardAnswers): boolean =>
@@ -129,6 +141,7 @@ export interface FieldDef {
   kind: 'text' | 'email' | 'tel' | 'number' | 'select' | 'textarea' | 'checkbox' | 'date-text' | 'processor'
   placeholder?: string
   options?: SelectOption[]
+  optionOrder?: 'alphabetical' | 'source'
   required?: boolean
   /** J2 (R6): conditionally required - the field must be filled when this
    *  predicate over the current form value holds (the missed-filings yes/no
@@ -187,10 +200,8 @@ export interface RepeatableDef {
    *  an alphabetized tile grid - one tap adds/removes the processor, no name
    *  re-entry (C7). The dropdown draft below stays for the comparison. */
   processorTiles?: boolean
-  /** L2 (B3, 10_06 00:10:01 - the comparison is settled): the merchants
-   *  question renders as ONE alphabetized vertical stack - click selects,
-   *  pencil renames, add at the bottom. Tiles, dropdown, and name field are
-   *  retired when this is set. */
+  /** The merchants question uses the shared searchable multi-select with
+   *  checkboxes, pencil renames, and inline add. */
   processorStack?: boolean
   /** K4 (B6): how a picked contact maps onto THIS repeatable's item shape
    *  (the contacts card's shape is the default; owners carry role+name). */
@@ -208,7 +219,7 @@ export interface RepeatableDef {
   itemsNote?: (items: Array<Record<string, unknown>>, a: WizardAnswers) => string | null
 }
 
-export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist' | 'account-count' | 'yes-no-list' | 'routine-scheduler'
+export type QuestionType = 'select' | 'multi' | 'fields' | 'repeatable' | 'checklist' | 'account-count' | 'yes-no-list' | 'routine-scheduler' | 'vendor-setup' | 'payment-instructions'
 
 /** J2 (meeting #3, E1-E3): a yes answer on the question opens a blocking
  *  note overlay - the explanation is required before the wizard moves on.
@@ -298,7 +309,7 @@ export interface AccountCountDef {
 
 /** J1 (C6/C7): config for picker-first `fields` questions. */
 export interface ContactPickerDef {
-  /** form_data key carrying the picked CONTACT id (null once typed over). */
+  /** form_data key carrying the canonical CONTACT id, retained during edits. */
   linkKey: 'cpaContactId' | 'referralContactId' | 'mainContactId'
   /** Referral-who additionally links CLIENT records (C7). */
   clientLinkKey?: 'referralClientId'
@@ -329,6 +340,7 @@ export interface QuestionDef {
   contactChannels?: boolean
   type: QuestionType
   options?: SelectOption[]
+  optionOrder?: 'alphabetical' | 'source'
   /** I3: checklist options derived from the current answers (the online
    *  access checklist pulls the statement-proof accounts entered earlier). */
   dynamicOptions?: (a: WizardAnswers) => SelectOption[]
@@ -381,6 +393,13 @@ export interface QuestionDef {
   /** J2 (E6): `yes-no-list` questions - the yes/no pick plus the string-list
    *  editor shown when yes; Continue commits). */
   yesNoList?: YesNoListDef
+  /** A follow-up question collected inline beneath its qualifying choice.
+   *  It is absent from the chapter walk, but keeps the standard renderer,
+   *  persistence, and review behavior. Fields and multi-select are supported. */
+  inlineFollowup?: {
+    when: (a: WizardAnswers) => boolean
+    question: QuestionDef
+  }
   /** Branch predicate; question renders only when this returns true. */
   when?: (a: WizardAnswers) => boolean
   /** When false and the answer is empty, Continue acts as Skip. */
@@ -652,8 +671,7 @@ export const customText = (a: WizardAnswers, questionId: string): string | null 
  * else do we talk to are kind of all interconnected... if you edit it in one
  * spot, it should edit to the other ones." The contacts array is the
  * canonical store; linked owner copies follow it by contactId. One
- * direction only (owner-side edits on linked rows stay local until re-picked)
- * - the picker link is what guarantees ONE record at conversion.
+ * direction only; saving writes the linked canonical contact before conversion.
  */
 export function syncLinkedContactCopies(a: WizardAnswers): Partial<WizardAnswers> | null {
   const contacts = a.contacts ?? []
@@ -1104,6 +1122,7 @@ export function effectiveServiceKeys(a: WizardAnswers, today?: { year: number; m
   const now = today ?? (() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1 } })()
   const retroInScope =
     isBookkeeping(a) &&
+    a.isExistingClient !== true &&
     start != null &&
     (Number(start[1]) < now.year || (Number(start[1]) === now.year && Number(start[2]) < now.month))
   if (retroInScope) set.add('retroactive_bookkeeping')
@@ -1448,8 +1467,8 @@ export const ROUTINE_SCHEDULER_QUESTION_ID = 'routine-scheduler'
 
 /** The close tier day as a number; unset or a custom answer falls back to 15
  *  (the same fallback effectiveServiceKeys and convert.ts use). */
-export function closeTierDay(a: WizardAnswers): number {
-  return a.monthlyCloseTier === '5' || a.monthlyCloseTier === '10' ? Number(a.monthlyCloseTier) : 15
+export function closeTierDay(a: WizardAnswers): ReturnType<typeof closeDeadlineDay> {
+  return closeDeadlineDay(a)
 }
 
 /** The bookkeeping start month anchors quarterly-and-longer cadences (§6.4). */
@@ -1562,7 +1581,7 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
         : freq === 'biweekly'
           ? { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 2 }
           : freq === 'semi_monthly'
-            ? { bucket: 'monthly', order: 0, dayOfMonth: 15 }
+            ? { bucket: 'monthly', order: 0, dayOfMonth: a.payrollPayDates?.[0] ?? tierDay }
             : { bucket: 'monthly', order: 0, dayOfMonth: tierDay }
     push({
       key: 'payroll-handling',
@@ -1570,7 +1589,6 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
       detail: join(
         str(a.payrollProvider),
         freq ? (FREQUENCY_LABELS[freq] ?? null) : null,
-        freq === 'semi_monthly' ? 'twice a month - adjust the day to fit' : null,
         selfProcessed ? 'they process their own' : null,
       ),
       assignee: 'bookkeeper',
@@ -1578,25 +1596,35 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
     })
   }
 
-  // E6: the bills split - record and pay are separate routines.
-  if ((a.recordBills ?? a.includeBillPay) === true) {
-    push({
-      key: 'record-bills',
-      title: 'Record bills',
-      detail: 'Bills tracked as they come in',
-      assignee: 'bookkeeper',
-      defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
-    })
-  }
-  if (a.payBills === true) {
-    const locations = (a.billPayLocations ?? []).filter((l) => str(l))
-    push({
-      key: 'pay-bills',
-      title: 'Pay bills',
-      detail: locations.length > 0 ? `Pays at: ${locations.join('\n')}` : 'Paying runs on top of recording',
-      assignee: 'bookkeeper',
-      defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
-    })
+  const vendorAssignments = a.vendorAssignments ?? []
+  if (vendorAssignments.length > 0) {
+    tasks.push(...vendorRoutineTasks(
+      vendorAssignments,
+      (a.recordBills ?? a.includeBillPay) === true,
+      a.payBills === true,
+      tierDay,
+      schedulerAnchorMonth(a),
+    ))
+  } else {
+    if ((a.recordBills ?? a.includeBillPay) === true) {
+      push({
+        key: 'record-bills',
+        title: 'Record bills',
+        detail: 'Bills tracked as they come in',
+        assignee: 'bookkeeper',
+        defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
+      })
+    }
+    if (a.payBills === true) {
+      const locations = (a.billPayLocations ?? []).filter((l) => str(l))
+      push({
+        key: 'pay-bills',
+        title: 'Pay bills',
+        detail: locations.length > 0 ? `Pays at: ${locations.join('\n')}` : 'Paying runs on top of recording',
+        assignee: 'bookkeeper',
+        defaultEntry: { bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 1 },
+      })
+    }
   }
 
   // K5 (C10): the deposits mirror of record-bills - same weekly cadence,
@@ -1613,7 +1641,7 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
 
   pushStandard('reconcile_accounts')
 
-  // A41/B18: the money-behavior seeds - monthly regardless of cadence today.
+  // Money-behavior review work follows the client's close cadence.
   if (a.depositsNonBusiness === true) {
     push({
       key: 'deposits-non-business',
@@ -1621,27 +1649,37 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
       detail: 'Booked as owner contributions, never income',
       assignee: 'bookkeeper',
       description: behaviorNoteFor(a, 'deposits-non-business'),
-      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: tierDay },
+      ...closeCadencePlacement(a, tierDay),
+    })
+  }
+  if (a.businessIncomeToPersonal === true) {
+    push({
+      key: 'business-income-personal',
+      title: BUSINESS_INCOME_TO_PERSONAL_REVIEW_TITLE,
+      detail: 'Reviewed and reclassified with the client',
+      assignee: 'bookkeeper',
+      description: behaviorNoteFor(a, 'business-income-personal'),
+      ...closeCadencePlacement(a, tierDay),
     })
   }
   if (a.personalOnBusiness === true) {
     push({
       key: 'personal-on-business',
       title: OWNER_DRAWS_CONFIRMATION_TITLE,
-      detail: 'Confirmed with the client every month',
+      detail: 'Confirmed with the client at each close',
       assignee: 'bookkeeper',
       description: behaviorNoteFor(a, 'personal-on-business'),
-      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: tierDay },
+      ...closeCadencePlacement(a, tierDay),
     })
   }
   if (a.personalCardForBusiness === true) {
     push({
       key: 'personal-card',
       title: PERSONAL_CARD_REMINDER_TITLE,
-      detail: 'Asks for the prior month\u2019s breakdown',
+      detail: 'Asks for the prior period\u2019s breakdown',
       assignee: 'bookkeeper',
       description: behaviorNoteFor(a, 'personal-card'),
-      defaultEntry: { bucket: 'monthly', order: 0, dayOfMonth: 1 },
+      ...closeCadencePlacement(a, 1),
     })
   }
 
@@ -1681,6 +1719,7 @@ export function deriveRoutineTasks(a: WizardAnswers): RoutineTaskDef[] {
       assignee: 'bookkeeper' as const,
       description: str(def.dataSource),
       isCustom: true,
+      ...(def.sopTemplateId != null ? { sopTemplateId: def.sopTemplateId } : {}),
     }
     switch (String(def.frequency)) {
       case 'quarterly':
@@ -1835,13 +1874,15 @@ export function removeRoutineTaskSync(key: string, a: WizardAnswers): Partial<Wi
         serviceKeys: dropServiceKeys((k) => k.startsWith('payroll_') || k === 'process_payroll'),
       }
     case 'record-bills':
-      return { recordBills: false, includeBillPay: false, payBills: false, billPayLocations: [] }
+      return { recordBills: false, includeBillPay: false, payBills: false, billPayLocations: [], vendorAssignments: [], recordBillVendors: [] }
     case 'pay-bills':
       return { payBills: false }
     case 'record-deposits':
       return { recordDeposits: false }
     case 'deposits-non-business':
       return { depositsNonBusiness: false }
+    case 'business-income-personal':
+      return { businessIncomeToPersonal: false }
     case 'personal-on-business':
       return { personalOnBusiness: false }
     case 'personal-card':
@@ -1855,6 +1896,23 @@ export function removeRoutineTaskSync(key: string, a: WizardAnswers): Partial<Wi
       }
     default:
       break
+  }
+  if (key.startsWith('vendor-record:') || key.startsWith('vendor-pay:')) {
+    const vendorId = Number(key.slice(key.lastIndexOf(':') + 1))
+    if (!Number.isInteger(vendorId) || vendorId <= 0) return {}
+    const next = (a.vendorAssignments ?? []).filter((assignment) => assignment.vendorId !== vendorId)
+    const hasVendors = next.length > 0
+    return {
+      vendorAssignments: next,
+      recordBillVendors: next.map((assignment) => assignment.vendorName),
+      recordBills: hasVendors && (a.recordBills ?? a.includeBillPay) === true,
+      includeBillPay: hasVendors && a.includeBillPay === true,
+      payBills: hasVendors && a.payBills === true,
+      billPayLocations: next.flatMap((assignment) => {
+        const portal = assignment.portalUrl ?? assignment.defaultPortalUrl
+        return portal ? [portal] : []
+      }),
+    }
   }
   if (key.startsWith('specialty:')) {
     const name = key.slice('specialty:'.length)
@@ -1939,8 +1997,8 @@ export const CHAPTERS: ChapterDef[] = [
         },
         fields: [
           { key: 'contactName', label: 'Full name', kind: 'text', required: true, placeholder: 'Wren Okafor' },
-          { key: 'contactPhone', label: 'Phone', kind: 'tel', half: true, placeholder: '(503) 555-0182' },
-          { key: 'contactEmail', label: 'Email', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
+          { key: 'contactEmail', label: 'Email', kind: 'email', placeholder: 'wren@fernfeather.shop' },
+          { key: 'contactPhone', label: 'Phone', kind: 'tel', placeholder: '(503) 555-0182' },
         ],
         contactChannels: true,
         fieldsValue: (a) => {
@@ -1981,6 +2039,7 @@ export const CHAPTERS: ChapterDef[] = [
                 value,
                 businessId: typeof channel.businessId === 'number' ? channel.businessId : null,
                 businessName: str(channel.businessName) ?? a.legalName ?? null,
+                businesses: contactChannelBusinesses(channel),
               }]
             })
           const emailChannels = normalizeChannels(val.contactEmailsExtra, 'email')
@@ -2057,7 +2116,7 @@ export const CHAPTERS: ChapterDef[] = [
       },
       {
         id: 'tax-structure',
-        title: 'How is the business taxed?',
+        title: 'How is the business registered?',
         // I2: his clients don't know the lingo - one-line plain explainers.
         help: 'The tax classification drives payroll rules, owner count, and year-end filings.',
         type: 'select',
@@ -2158,9 +2217,9 @@ export const CHAPTERS: ChapterDef[] = [
           },
           itemFields: [
             { key: 'name', label: 'Full name', kind: 'text', required: true, placeholder: 'Wren Okafor' },
-            { key: 'email', label: 'Email (optional)', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
             // I1 (00:27:59): owners carry a phone and a receives-reports flag.
             { key: 'phone', label: 'Phone (optional)', kind: 'tel', half: true, placeholder: '(503) 555-0182' },
+            { key: 'email', label: 'Email (optional)', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
             { key: 'ownershipPercent', label: 'Ownership % (optional)', kind: 'number', min: 0, max: 100, half: true, placeholder: '60' },
             { key: 'receivesReports', label: 'Receives the monthly reports', kind: 'checkbox' },
           ],
@@ -2209,8 +2268,8 @@ export const CHAPTERS: ChapterDef[] = [
           itemFields: [
             { key: 'firstName', label: 'First name', kind: 'text', half: true, placeholder: 'Wren' },
             { key: 'lastName', label: 'Last name', kind: 'text', half: true, placeholder: 'Okafor' },
-            { key: 'email', label: 'Email', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
             { key: 'phone', label: 'Phone', kind: 'tel', half: true, placeholder: '(503) 555-0182' },
+            { key: 'email', label: 'Email', kind: 'email', half: true, placeholder: 'wren@fernfeather.shop' },
             {
               // I1: the CPA role moved to its own card (00:30:14); legacy
               // entries with relationshipType 'cpa' still render and convert.
@@ -2278,6 +2337,29 @@ export const CHAPTERS: ChapterDef[] = [
         type: 'select',
         required: true,
         ...yesNo('hasCpa'),
+        inlineFollowup: {
+          when: (a) => a.hasCpa === true,
+          question: {
+            id: 'cpa-details',
+            title: 'Who is their CPA?',
+            help: 'Search first - an existing CPA links to the same record. Otherwise, enter a new name.',
+            type: 'fields',
+            required: true,
+            contactPicker: {
+              linkKey: 'cpaContactId',
+              nameKey: 'cpaName',
+              emailKey: 'cpaEmail',
+              placeholder: 'Search CPAs and contacts on file…',
+            },
+            fields: [
+              { key: 'cpaName', label: 'CPA name or firm', kind: 'text', required: true, placeholder: 'Cascade Tax Group' },
+              { key: 'cpaEmail', label: 'CPA email', kind: 'email', half: true, placeholder: 'team@cascadetax.example' },
+            ],
+            get: (a) => a.cpaName,
+            apply: (_a, v) => v as Partial<WizardAnswers>,
+            summarize: () => null,
+          },
+        },
         // J1 (C4/C6): the review row carries the linked-vs-new state.
         summarize: (a) =>
           a.hasCpa === true
@@ -2289,31 +2371,6 @@ export const CHAPTERS: ChapterDef[] = [
             : a.hasCpa === false
               ? 'No'
               : null,
-      },
-      {
-        // J1 (C6, 00:08:36): the CPA card is picker-first - search the
-        // existing contacts and link one (never "two Yes Taxes LLCs"), or
-        // type a new name (the create-new path). The review row carries the
-        // linked-vs-new state.
-        id: 'cpa-details',
-        title: 'Who is their CPA?',
-        help: 'Search first - a CPA already on file links to the same record. Not there? Type the name and we create it at conversion.',
-        type: 'fields',
-        required: true,
-        when: (a) => a.hasCpa === true,
-        contactPicker: {
-          linkKey: 'cpaContactId',
-          nameKey: 'cpaName',
-          emailKey: 'cpaEmail',
-          placeholder: 'Search CPAs and contacts on file…',
-        },
-        fields: [
-          { key: 'cpaName', label: 'CPA name or firm', kind: 'text', required: true, placeholder: 'Cascade Tax Group' },
-          { key: 'cpaEmail', label: 'CPA email', kind: 'email', half: true, placeholder: 'team@cascadetax.example' },
-        ],
-        get: (a) => a.cpaName,
-        apply: (_a, v) => v as Partial<WizardAnswers>,
-        summarize: () => null, // folded into the has-cpa row
       },
       {
         id: 'referral',
@@ -2558,40 +2615,42 @@ export const CHAPTERS: ChapterDef[] = [
         // detailed that needs to be, as part of the setup."
         id: 'equity-setup',
         title: 'How should we set up the equity accounts?',
-        help: 'The owner side of the balance sheet. One grouped account keeps it simple; a breakdown tracks what owners put in, what they take out, and investment gains or losses as their own accounts.',
+        help: 'The owner side of the balance sheet. Choose one grouped account or separate contribution, draw/distribution, and grouped equity accounts.',
         type: 'select',
         required: true,
         section: 'Equity',
         options: [
-          { value: 'grouped', label: "One grouped owner's equity account", sub: 'Everything equity rolls into a single account - simplest to keep.' },
-          { value: 'breakdown', label: 'Break it down', sub: 'Separate accounts for contributions, distributions, and net investment gain/loss.' },
+          { value: 'grouped', label: 'One grouped equity account', sub: 'Everything equity rolls into a single account - simplest to keep.' },
+          { value: 'breakdown', label: 'Break it down', sub: 'Choose the equity accounts to track separately.' },
         ],
         get: (a) => a.equitySetup,
         apply: (_a, v) => ({ equitySetup: v as 'grouped' | 'breakdown' }),
-        summarize: () => null,
-      },
-      {
-        id: 'equity-breakdown',
-        title: 'Which equity accounts should we track?',
-        help: 'Each pick becomes its own account on the balance sheet at setup.',
-        type: 'multi',
-        required: true,
-        section: 'Equity',
-        when: (a) => a.equitySetup === 'breakdown',
-        options: EQUITY_BREAKDOWN_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-        followup: {
-          keys: EQUITY_BREAKDOWN_OPTIONS.map((o) => o.value),
-          key: 'equityPerOwner',
-          label: 'Track each selected account separately per owner?',
-          valueKind: 'boolean',
-          when: (a) => (a.owners ?? []).length > 1,
-          options: [
-            { value: 'yes', label: 'Yes - one set per owner (no extra charge)' },
-            { value: 'no', label: 'No - one shared set' },
-          ],
+        inlineFollowup: {
+          when: (a) => a.equitySetup === 'breakdown',
+          question: {
+            id: 'equity-breakdown',
+            title: 'Which equity accounts should we track?',
+            help: 'Each pick becomes its own account on the balance sheet at setup.',
+            type: 'multi',
+            required: true,
+            section: 'Equity',
+            dynamicOptions: equityBreakdownOptionsFor,
+            followup: {
+              keys: [...EQUITY_BREAKDOWN_VALUES],
+              key: 'equityPerOwner',
+              label: 'Track each selected account separately per owner?',
+              valueKind: 'boolean',
+              when: (a) => (a.owners ?? []).length > 1,
+              options: [
+                { value: 'yes', label: 'Yes - one set per owner (no extra charge)' },
+                { value: 'no', label: 'No - one shared set' },
+              ],
+            },
+            get: (a) => a.equityBreakdown ?? [],
+            apply: (_a, v) => ({ equityBreakdown: v as string[] }),
+            summarize: () => null,
+          },
         },
-        get: (a) => a.equityBreakdown ?? [],
-        apply: (_a, v) => ({ equityBreakdown: v as string[] }),
         summarize: () => null,
       },
     ],
@@ -2634,10 +2693,11 @@ export const CHAPTERS: ChapterDef[] = [
         title: 'What kind of properties?',
         help: 'Each property is created at conversion with its type.',
         type: 'multi',
+        optionOrder: 'alphabetical',
         required: false,
         // K3 (DB1): chips from property_types + add-new.
         optionsFromList: 'property_types',
-        when: isRealEstate,
+        when: (a) => isRealEstate(a) && typeof a.propertyCount === 'number' && Number.isFinite(a.propertyCount) && a.propertyCount >= 1 && a.propertyCount <= 500,
         options: Object.entries(PROPERTY_TYPE_LABELS).map(([value, label]) => ({ value, label })),
         get: (a) => a.propertyTypes ?? [],
         apply: (_a, v) => ({ propertyTypes: v as string[] }),
@@ -2653,7 +2713,7 @@ export const CHAPTERS: ChapterDef[] = [
         help: 'Land versus building versus improvements versus appliances and furniture. Each property gets a schedule with these buckets.',
         type: 'multi',
         required: false,
-        when: isRealEstate,
+        when: (a) => isRealEstate(a) && (a.propertyTypes?.length ?? 0) > 0,
         options: Object.entries(DEPRECIATION_BUCKET_LABELS).map(([value, label]) => ({ value, label })),
         get: (a) => a.depreciationTracking ?? [],
         apply: (_a, v) => ({ depreciationTracking: v as string[] }),
@@ -2675,6 +2735,7 @@ export const CHAPTERS: ChapterDef[] = [
         title: 'How does money come in?',
         help: 'Every way customers pay them.',
         type: 'multi',
+        optionOrder: 'alphabetical',
         required: false,
         // K3 (DB1): chips from payment_methods + add-new (Zelle, Venmo...).
         optionsFromList: 'payment_methods',
@@ -2691,22 +2752,11 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'merchants',
         title: 'Which merchant processors do they use?',
-        // J1 (E5, 00:24:04): when card or online payments come in, this is
-        // mandatory - online payments need a processor to reconcile. E4/DB1:
-        // the processor picks from the merchant_processors table (dropdown +
-        // inline add-new; every add persists globally).
-        help: (a) =>
-          (a.paymentMethods ?? []).includes('online')
-            ? 'Online payments need a processor to reconcile - list every one they use. Each gets its own account on the books.'
-            : 'Card payments settle through a processor - list every one they use. Each gets its own account on the books.',
+        help: 'List every merchant processor they use, or continue with none. Each selected processor gets its own account on the books.',
         type: 'repeatable',
-        required: true,
-        when: takesCards,
+        required: false,
         merchantReconcile: true,
         repeatable: {
-          // L2 (B3, 10_06 00:10:01): the comparison is settled - ONE
-          // alphabetized vertical stack with click-select, pencil rename,
-          // and the add button at the bottom. Tiles + dropdown are gone.
           processorStack: true,
           addLabel: 'Add processor',
           itemFields: [
@@ -2721,7 +2771,7 @@ export const CHAPTERS: ChapterDef[] = [
         apply: (_a, v) => ({ merchantAccounts: v as WizardAnswers['merchantAccounts'] }),
         summarize: (a) => {
           const ms = a.merchantAccounts ?? []
-          if (ms.length === 0 || !takesCards(a)) return null
+          if (ms.length === 0) return null
           const reconcile = boolWord(a.includeMerchantReconciliation)
           const merchants = ms.map((m) => m.name)
           return reconcile ? [`Reconcile: ${reconcile}`, ...merchants].join('\n') : merchants.join('\n')
@@ -2749,6 +2799,23 @@ export const CHAPTERS: ChapterDef[] = [
           a.depositsNonBusiness === true
             ? join('Yes', str(a.behaviorNotes?.['deposits-non-business']))
             : boolWord(a.depositsNonBusiness),
+      },
+      {
+        id: 'business-income-personal',
+        title: 'Do they ever deposit business income into personal accounts?',
+        help: 'Business revenue sent to a personal account. Yes means those transfers get a recurring review and reclassification check.',
+        type: 'select',
+        required: true,
+        ...yesNo('businessIncomeToPersonal'),
+        noteOnYes: {
+          heading: 'Which personal accounts receive business income?',
+          body: 'Tell us what lands there and why. The note carries into the recurring review task.',
+          placeholder: 'Customer payments occasionally land in a personal checking account…',
+        },
+        summarize: (a) =>
+          a.businessIncomeToPersonal === true
+            ? join('Yes', str(a.behaviorNotes?.['business-income-personal']))
+            : boolWord(a.businessIncomeToPersonal),
       },
       {
         // A41 (00:48:07): the flip side - personal spend paid from business
@@ -2893,7 +2960,7 @@ export const CHAPTERS: ChapterDef[] = [
         optionsFromList: 'payroll_frequencies',
         type: 'select',
         required: true,
-        when: hasPayroll,
+        when: (a) => hasPayroll(a) && Boolean(a.payrollProvider?.trim()),
         options: [
           { value: 'weekly', label: 'Weekly' },
           { value: 'biweekly', label: 'Every two weeks' },
@@ -2907,9 +2974,9 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'payroll-pay-dates',
         title: 'When does payroll pay out?',
-        help: 'The actual pay day or dates, so payroll work lands on the right schedule.',
+        help: 'Pay days place payroll work on the right schedule. Monthly and twice-monthly period details can be confirmed later.',
         type: 'fields',
-        required: true,
+        required: false,
         when: (a) => hasPayroll(a) && ['weekly', 'biweekly', 'semi_monthly', 'monthly'].includes(String(a.payrollFrequency)),
         fields: [
           {
@@ -2917,28 +2984,51 @@ export const CHAPTERS: ChapterDef[] = [
             options: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((label, value) => ({ value: String(value), label })),
             visibleIf: (v) => v.payrollFrequency === 'weekly' || v.payrollFrequency === 'biweekly',
           },
-          { key: 'payrollPayDate1', label: 'First pay date of the month', kind: 'number', min: 1, max: 31, required: true, half: true, visibleIf: (v) => v.payrollFrequency === 'semi_monthly' || v.payrollFrequency === 'monthly' },
-          { key: 'payrollPayDate2', label: 'Second pay date (semi-monthly)', kind: 'number', min: 1, max: 31, required: true, half: true, visibleIf: (v) => v.payrollFrequency === 'semi_monthly' },
+          ...([1, 2] as const).flatMap((row) => [
+            {
+              key: `payrollPeriodStart${row}`, label: 'Period start (optional)', kind: 'select' as const,
+              options: PAYROLL_DAY_OPTIONS, rowGroup: `Day ${row}`,
+              visibleIf: (v: Record<string, unknown>) => v.payrollFrequency === 'semi_monthly' || (row === 1 && v.payrollFrequency === 'monthly'),
+            },
+            {
+              key: `payrollPeriodEnd${row}`, label: 'Period end (optional)', kind: 'select' as const,
+              options: PAYROLL_MONTH_END_OPTIONS, rowGroup: `Day ${row}`,
+              visibleIf: (v: Record<string, unknown>) => v.payrollFrequency === 'semi_monthly' || (row === 1 && v.payrollFrequency === 'monthly'),
+            },
+            {
+              key: `payrollPayDate${row}`, label: row === 1 ? 'First pay date of the month (optional)' : 'Second pay date (optional)', kind: 'select' as const,
+              options: PAYROLL_MONTH_END_OPTIONS, rowGroup: `Day ${row}`,
+              visibleIf: (v: Record<string, unknown>) => v.payrollFrequency === 'semi_monthly' || (row === 1 && v.payrollFrequency === 'monthly'),
+            },
+          ]),
         ],
         fieldsValue: (a) => ({
           payrollFrequency: a.payrollFrequency,
           payrollPayWeekday: a.payrollPayWeekday ?? '',
-          payrollPayDate1: a.payrollPayDates?.[0] ?? '',
-          payrollPayDate2: a.payrollPayDates?.[1] ?? '',
+          payrollPeriodStart1: a.payrollPeriods?.[0]?.startDay ?? '',
+          payrollPeriodEnd1: a.payrollPeriods?.[0]?.endDay ?? '',
+          payrollPayDate1: a.payrollPeriods?.[0]?.payDay ?? a.payrollPayDates?.[0] ?? '',
+          payrollPeriodStart2: a.payrollPeriods?.[1]?.startDay ?? '',
+          payrollPeriodEnd2: a.payrollPeriods?.[1]?.endDay ?? '',
+          payrollPayDate2: a.payrollPeriods?.[1]?.payDay ?? a.payrollPayDates?.[1] ?? '',
         }),
         get: (a) => a.payrollPayWeekday ?? a.payrollPayDates,
         apply: (a, v) => {
           const values = v as Record<string, unknown>
           const frequency = String(values.payrollFrequency ?? a.payrollFrequency)
-          const first = numOrNull(values.payrollPayDate1)
-          const second = numOrNull(values.payrollPayDate2)
+          const rowCount = frequency === 'semi_monthly' ? 2 : frequency === 'monthly' ? 1 : 0
+          const periods = Array.from({ length: rowCount }, (_, index) => {
+            const row = index + 1
+            return {
+              startDay: numOrNull(values[`payrollPeriodStart${row}`]),
+              endDay: numOrNull(values[`payrollPeriodEnd${row}`]),
+              payDay: numOrNull(values[`payrollPayDate${row}`]),
+            }
+          }).filter((period) => period.startDay != null || period.endDay != null || period.payDay != null)
           return {
             payrollPayWeekday: frequency === 'weekly' || frequency === 'biweekly' ? numOrNull(values.payrollPayWeekday) : null,
-            payrollPayDates: frequency === 'semi_monthly'
-              ? [first, second].filter((n): n is number => n != null)
-              : frequency === 'monthly' && first != null
-                ? [first]
-                : [],
+            payrollPayDates: periods.flatMap((period) => period.payDay == null ? [] : [period.payDay]),
+            payrollPeriods: periods,
           }
         },
         summarize: (a) => {
@@ -2946,13 +3036,20 @@ export const CHAPTERS: ChapterDef[] = [
           if ((a.payrollFrequency === 'weekly' || a.payrollFrequency === 'biweekly') && a.payrollPayWeekday != null) {
             return `Pays ${days[a.payrollPayWeekday]}s`
           }
-          if (a.payrollFrequency === 'semi_monthly' && (a.payrollPayDates ?? []).length === 2) {
-            return `Pays on days ${a.payrollPayDates![0]} and ${a.payrollPayDates![1]}`
-          }
-          if (a.payrollFrequency === 'monthly' && (a.payrollPayDates ?? []).length > 0) {
-            return `Pays on day ${a.payrollPayDates![0]}`
-          }
-          return null
+          const dates = a.payrollPayDates ?? []
+          const expectedDates = a.payrollFrequency === 'semi_monthly' ? 2 : a.payrollFrequency === 'monthly' ? 1 : 0
+          const confirmation = dates.length < expectedDates ? 'Pay schedule to confirm' : null
+          const pay = dates.length === 0
+            ? null
+            : dates.includes(0)
+              ? `Pays ${dates.map((day) => day === 0 ? 'at the end of the month' : `on day ${day}`).join(' and ')}`
+              : `Pays on ${dates.length === 2 ? `days ${dates[0]} and ${dates[1]}` : `day ${dates[0]}`}`
+          const periods = (a.payrollPeriods ?? []).flatMap((period, index) =>
+            period.startDay == null && period.endDay == null
+              ? []
+              : [`Day ${index + 1}: period ${payrollDayLabel(period.startDay)} to ${payrollDayLabel(period.endDay)}, pay ${payrollDayLabel(period.payDay)}`],
+          )
+          return join(confirmation, pay, periods.length > 0 ? periods.join('\n') : null)
         },
       },
       {
@@ -2966,7 +3063,7 @@ export const CHAPTERS: ChapterDef[] = [
         title: 'What should we do for payroll?',
         type: 'multi',
         required: true,
-        when: hasPayroll,
+        when: payrollSetupReady,
         payrollServices: true,
         // I2: the payroll add-on is prompted for corporate entities.
         badge: (a) => (requiresOfficerPayroll(a) ? 'Recommended - corporate officers must be on payroll' : null),
@@ -3051,20 +3148,46 @@ export const CHAPTERS: ChapterDef[] = [
       },
       {
         id: 'close-tier',
-        title: 'How fast do they need the close?',
+        title: 'When should the close be ready?',
+        help: 'Days after the end of each monthly, quarterly, semi-annual, or annual period.',
         type: 'select',
         required: true,
-        when: (a) => (a.bookkeepingFrequency ?? 'monthly') === 'monthly',
+        allowCustom: false,
         options: [
           { value: '5', label: 'By the 5th', sub: 'Fastest close' },
           { value: '10', label: 'By the 10th' },
-          { value: '15', label: 'By the 15th', sub: 'Most relaxed' },
+          { value: '15', label: 'By the 15th' },
+          { value: 'other', label: 'Other', sub: 'Choose 1 to 365 days after the period ends' },
         ],
-        ...key('monthlyCloseTier'),
-        summarize: withCustom('close-tier', (a) =>
-          (a.bookkeepingFrequency ?? 'monthly') === 'monthly' && a.monthlyCloseTier
-            ? `Close by the ${a.monthlyCloseTier}th`
-            : null),
+        get: (a) => closeDeadlineChoice(a),
+        apply: (_a, v) => ({
+          monthlyCloseTier: v === 'other' ? '15' : String(v),
+          closeDeadlineChoice: v as '5' | '10' | '15' | 'other',
+          closeDeadlineDaysAfterEnd: v === 'other' ? null : Number(v),
+        }),
+        inlineFollowup: {
+          when: (a) => closeDeadlineChoice(a) === 'other',
+          question: {
+            id: 'close-deadline-days',
+            title: 'How many days after the period ends?',
+            help: 'The same number applies to every closing frequency. Choose from 1 to 365 days.',
+            type: 'fields',
+            required: true,
+            fields: [{ key: 'closeDeadlineDaysAfterEnd', label: 'Days after period end', kind: 'number', min: 1, max: 365, required: true, placeholder: '20' }],
+            get: (a) => a.closeDeadlineDaysAfterEnd,
+            apply: (_a, v) => ({
+              closeDeadlineDaysAfterEnd: numOrNull((v as Record<string, unknown>).closeDeadlineDaysAfterEnd),
+              closeDeadlineChoice: 'other',
+              monthlyCloseTier: '15',
+            }),
+            summarize: () => null,
+          },
+        },
+        summarize: (a) => {
+          const choice = closeDeadlineChoice(a)
+          if (!choice) return null
+          return choice === 'other' ? `Close ${closeTierDay(a)} days after period end` : `Close by the ${choice}th`
+        },
       },
       {
         id: 'acct-method',
@@ -3094,56 +3217,38 @@ export const CHAPTERS: ChapterDef[] = [
         id: 'record-bills',
         title: 'Should we record their bills?',
         help: 'Bills tracked as they come in, before anyone pays them. On accrual books, bills are recorded at the bill date.',
-        type: 'yes-no-list',
+        type: 'vendor-setup',
         required: true,
         options: [
-          { value: 'yes', label: 'Yes, record their bills', sub: 'List the bills and vendors below' },
+          { value: 'yes', label: 'Yes, record their bills', sub: 'Select vendors and assign a frequency and shared SOP to each' },
           { value: 'no', label: 'No' },
         ],
-        yesNoList: {
-          listKey: 'recordBillVendors',
-          optionListKey: 'record_bill_vendors',
-          label: 'Which bills and vendors should we record?',
-          placeholder: 'Rent, utilities, insurance, a vendor name…',
-          addLabel: 'Add a bill or vendor',
-          requireItems: true,
-        },
         get: (a) => {
           const v = a.recordBills ?? a.includeBillPay
           return v === true ? 'yes' : v === false ? 'no' : undefined
         },
-        // Answering no retires the pay answer and both bill lists with it.
         apply: (_a, v) =>
           v === 'yes'
             ? { recordBills: true }
-            : { recordBills: false, payBills: false, billPayLocations: [], recordBillVendors: [] },
+            : { recordBills: false, payBills: false, billPayLocations: [], recordBillVendors: [], vendorAssignments: [] },
         summarize: (a) => {
           if ((a.recordBills ?? a.includeBillPay) !== true) return boolWord(a.recordBills ?? a.includeBillPay)
-          const vendors = (a.recordBillVendors ?? []).filter((vendor) => str(vendor))
+          const configured = (a.vendorAssignments ?? []).map((assignment) => assignment.vendorName)
+          const vendors = configured.length > 0 ? configured : (a.recordBillVendors ?? []).filter((vendor) => str(vendor))
           return join('Yes', vendors.length > 0 ? `records: ${vendors.join('\n')}` : null)
         },
       },
       {
-        // J2 (E6): pay requires record - the card only renders once recording
-        // is a yes, and its yes apply force-sets recordBills for data paths
-        // that skip the branch (extraction, legacy edits). The locations
-        // list rides along when paying.
         id: 'pay-bills',
         title: 'Will we be paying those bills?',
-        help: 'Paying runs on top of recording - we never pay bills we are not recording.',
-        type: 'yes-no-list',
+        help: 'Selected vendors appear below. Choose how each gets paid and optionally add a portal URL.',
+        type: 'payment-instructions',
         required: true,
         when: (a) => (a.recordBills ?? a.includeBillPay) === true,
         options: [
-          { value: 'yes', label: 'Yes, we pay them', sub: 'List where below - every place bills get paid' },
+          { value: 'yes', label: 'Yes, we pay them', sub: 'Choose a method for every vendor and optionally a portal URL' },
           { value: 'no', label: 'No, they pay their own' },
         ],
-        yesNoList: {
-          listKey: 'billPayLocations',
-          label: 'Where do the bills get paid?',
-          placeholder: 'Vendor websites, bank bill pay, checks we mail…',
-          addLabel: 'Add a place',
-        },
         get: (a) => (a.payBills === true ? 'yes' : a.payBills === false ? 'no' : undefined),
         apply: (_a, v) =>
           v === 'yes'
@@ -3152,6 +3257,14 @@ export const CHAPTERS: ChapterDef[] = [
         summarize: (a) => {
           if ((a.recordBills ?? a.includeBillPay) !== true) return null
           if (a.payBills !== true) return boolWord(a.payBills)
+          const assignments = a.vendorAssignments ?? []
+          if (assignments.length > 0) {
+            return join('Yes', assignments.map((assignment) => {
+              const method = assignment.paymentMethod?.replaceAll('_', ' ') ?? 'method needed'
+              const portal = assignment.portalUrl ?? assignment.defaultPortalUrl
+              return `${assignment.vendorName}: ${method}${portal ? ` · ${portal}` : ''}`
+            }).join('\n'))
+          }
           const locations = (a.billPayLocations ?? []).filter((l) => str(l))
           return join('Yes', locations.length > 0 ? `pays at: ${locations.join('\n')}` : null)
         },
@@ -3159,50 +3272,51 @@ export const CHAPTERS: ChapterDef[] = [
       {
         id: 'ten99-services',
         title: 'Any 1099 work at year end?',
-        // K5 (D1, 09_30 00:35:49): collection and full management are
-        // mutually exclusive ("full management obviously includes
-        // collecting"); the per-filing chip is gone - the count x the
-        // admin-configurable per-filing rate prices it (quote.ts derives
-        // the line). The estimate dropdown rides THIS card; deselecting
-        // both clears it.
-        type: 'multi',
-        required: false,
+        help: 'Choose no 1099 work, collection, or full management. The filing estimate is optional.',
+        type: 'select',
+        required: true,
+        allowCustom: false,
         options: [
+          { value: 'no', label: 'No 1099 work' },
           { value: '1099_collection', label: '1099 collection', sub: 'W-9s gathered, we file the forms' },
           { value: '1099_full_management', label: '1099 full management', sub: 'Collection + filing, end to end' },
         ],
-        followup: {
-          keys: ['1099_collection', '1099_full_management'],
-          key: 'estimated1099Count',
-          label: 'Estimated number of 1099 filings',
-          // L1 (E1, 10_06 00:24:06-00:25:07): "it should just be a number we
-          // can type in" - the dropdown is gone.
-          numeric: true,
+        get: (a) => {
+          const keys = a.serviceKeys ?? []
+          if (a.include1099FullManagement === true || keys.includes('1099_full_management') || keys.includes('1099_per_filing')) return '1099_full_management'
+          if (a.include1099Collection === true || keys.includes('1099_collection')) return '1099_collection'
+          if (a.include1099Collection === false && a.include1099FullManagement === false) return 'no'
+          return a.serviceKeys !== undefined ? 'no' : undefined
         },
-        get: (a) =>
-          (a.serviceKeys ?? []).filter((k) => k === '1099_collection' || k === '1099_full_management'),
-        apply: (a, v) => {
-          const arr = v as string[]
-          // The freshest pick wins when both land (the toggle appends).
-          let picked = new Set(arr)
-          if (picked.has('1099_collection') && picked.has('1099_full_management')) {
-            picked = new Set([arr[arr.length - 1]])
-          }
-          const rest = (a.serviceKeys ?? []).filter(
-            (k) => k !== '1099_collection' && k !== '1099_full_management' && k !== '1099_per_filing',
-          )
-          return {
-            serviceKeys: [...rest, ...picked],
-            include1099Collection: picked.has('1099_collection'),
-            include1099FullManagement: picked.has('1099_full_management'),
-            // Deselecting both clears the estimate with it.
-            estimated1099Count: picked.size === 0 ? null : a.estimated1099Count,
-          }
+        apply: (a, v) => ({
+          serviceKeys: [
+            ...(a.serviceKeys ?? []).filter((key) => key !== '1099_collection' && key !== '1099_full_management' && key !== '1099_per_filing'),
+            ...(v === 'no' ? [] : [String(v)]),
+          ],
+          include1099Collection: v === '1099_collection',
+          include1099FullManagement: v === '1099_full_management',
+          estimated1099Count: v === 'no' ? null : a.estimated1099Count,
+        }),
+        inlineFollowup: {
+          when: (a) => a.include1099Collection === true || a.include1099FullManagement === true ||
+            (a.serviceKeys ?? []).some((key) => key === '1099_collection' || key === '1099_full_management' || key === '1099_per_filing'),
+          question: {
+            id: '1099-estimate',
+            title: 'About how many 1099 filings?',
+            help: 'Optional. Leave this blank if the count is not known yet.',
+            type: 'fields',
+            required: false,
+            fields: [{ key: 'estimated1099Count', label: 'Estimated filings (optional)', kind: 'number', min: 0, max: 999, placeholder: '56' }],
+            get: (a) => a.estimated1099Count,
+            apply: (_a, v) => ({ estimated1099Count: numOrNull((v as Record<string, unknown>).estimated1099Count) }),
+            summarize: () => null,
+          },
         },
         summarize: (a) => {
-          const ks = (a.serviceKeys ?? []).filter((k) => k === '1099_collection' || k === '1099_full_management')
-          if (ks.length === 0) return null
-          return join(ks.map(serviceLabel).join('\n'), a.estimated1099Count != null ? `~${a.estimated1099Count} filings` : null)
+          const full = a.include1099FullManagement === true || (a.serviceKeys ?? []).some((key) => key === '1099_full_management' || key === '1099_per_filing')
+          const collection = a.include1099Collection === true || (a.serviceKeys ?? []).includes('1099_collection')
+          if (!full && !collection) return a.include1099Collection === false && a.include1099FullManagement === false ? 'No 1099 work' : null
+          return join(full ? '1099 full management' : '1099 collection', a.estimated1099Count != null ? `~${a.estimated1099Count} filings` : null)
         },
       },
       {
@@ -3219,6 +3333,8 @@ export const CHAPTERS: ChapterDef[] = [
           addLabel: 'Add report',
           itemFields: [
             { key: 'name', label: 'Report name', kind: 'text', required: true, placeholder: 'Oregon Special Report', optionsFromList: 'report_types' },
+            { key: 'isCommon', label: 'Is this common?', kind: 'checkbox' },
+            { key: 'sopTemplateId', label: 'Linked shared SOP (optional)', kind: 'select', optionsFromList: 'sop_templates' },
             {
               key: 'frequency', label: 'Frequency', kind: 'select', required: true, half: true,
               options: ['monthly', 'quarterly', 'semi_annual', 'annual'].map((f) => ({ value: f, label: FREQUENCY_LABELS[f] })),
@@ -3272,7 +3388,7 @@ export const CHAPTERS: ChapterDef[] = [
               visibleIf: (v) => v.missedFilings === true,
             },
           ],
-          itemValid: (i) => !!str(i.name) && !!str(i.frequency),
+          itemValid: (i) => !!str(i.name) && !!str(i.frequency) && !!str(i.sopStatus) && (i.sopStatus !== 'existing' || i.sopTemplateId != null),
           summarize: (i) => String(i.name),
           sub: (i) => {
             const parts = [FREQUENCY_LABELS[String(i.frequency)] ?? null]
@@ -3295,6 +3411,9 @@ export const CHAPTERS: ChapterDef[] = [
             frequency: String(i.frequency),
             dataSource: str(i.dataSource),
             notes: str(i.notes),
+            catalogId: numOrNull(i.catalogId),
+            isCommon: typeof i.isCommon === 'boolean' ? i.isCommon : null,
+            sopTemplateId: numOrNull(i.sopTemplateId),
             // L3 (10_06): the pricing mode + tier hours fold into tierHours;
             // legacy estimatedHours still coerces for old rows.
             pricingMode: i.pricingMode === 'flat' || i.pricingMode === 'hours' ? i.pricingMode : null,
@@ -3600,7 +3719,7 @@ export function formContactHits(
     if (name === '' || !matches(name, o.email)) continue
     push({
       kind: 'contact',
-      id: -1,
+      id: o.contactId ?? -1,
       name: `${name} (owner on this form)`,
       firstName: null,
       lastName: null,
@@ -3610,7 +3729,7 @@ export function formContactHits(
     })
   }
   const cpaName = str(a.cpaName)
-  if (cpaName && matches(cpaName, null)) {
+  if (cpaName && matches(cpaName, a.cpaEmail)) {
     push({
       kind: 'contact',
       id: (a.cpaContactId as number | undefined) ?? -1,
@@ -3618,7 +3737,7 @@ export function formContactHits(
       firstName: null,
       lastName: null,
       entityName: cpaName,
-      email: null,
+      email: a.cpaEmail ?? null,
       phone: null,
     })
   }
@@ -3633,6 +3752,34 @@ export function visibleQuestions(chapter: ChapterDef, a: WizardAnswers): Questio
   return chapter.questions.filter((q) => !q.when || q.when(a))
 }
 
+export const INTAKE_GROUP_CHILDREN: Record<string, readonly string[]> = {
+  're-yes': ['re-count', 're-types', 're-depreciation'],
+  'tax-structure': ['llc-subclass'],
+  referral: ['referral-who'],
+  'payment-methods': ['merchants'],
+  'record-deposits': ['make-deposits'],
+  payroll: ['payroll-provider', 'payroll-frequency', 'payroll-pay-dates', 'payroll-services'],
+  'record-bills': ['pay-bills'],
+  'qbo-status': ['qbo-setup', 'qbo-users', 'qbo-tier'],
+}
+
+export function isGroupedFlow(q: QuestionDef): boolean {
+  return INTAKE_GROUP_CHILDREN[q.id] != null
+}
+
+export function questionGroupParent(q: QuestionDef): string | undefined {
+  for (const [parent, children] of Object.entries(INTAKE_GROUP_CHILDREN)) {
+    if (children.includes(q.id)) return parent
+  }
+  return undefined
+}
+
+export function groupedQuestions(q: QuestionDef, a: WizardAnswers): QuestionDef[] {
+  const childIds = INTAKE_GROUP_CHILDREN[q.id] ?? []
+  return CHAPTERS.flatMap((chapter) => chapter.questions)
+    .filter((child) => childIds.includes(child.id) && (!child.when || child.when(a)))
+}
+
 export type ScreenRef =
   | { kind: 'question'; chapterId: string; questionId: string }
   | { kind: 'review' }
@@ -3641,6 +3788,7 @@ export function flattenScreens(a: WizardAnswers): ScreenRef[] {
   const out: ScreenRef[] = []
   for (const c of visibleChapters(a).filter((chapter) => chapter.reviewOnly !== true)) {
     for (const q of visibleQuestions(c, a)) {
+      if (questionGroupParent(q)) continue
       out.push({ kind: 'question', chapterId: c.id, questionId: q.id })
     }
   }
@@ -3666,7 +3814,11 @@ export function reconcileScreenIndex(previous: ScreenRef[], next: ScreenRef[], i
 }
 
 export function findQuestion(chapterId: string, questionId: string): QuestionDef | undefined {
-  return CHAPTERS.find((c) => c.id === chapterId)?.questions.find((q) => q.id === questionId)
+  for (const question of CHAPTERS.find((c) => c.id === chapterId)?.questions ?? []) {
+    if (question.id === questionId) return question
+    if (question.inlineFollowup?.question.id === questionId) return question.inlineFollowup.question
+  }
+  return undefined
 }
 
 export function findChapter(chapterId: string): ChapterDef | undefined {
@@ -3680,7 +3832,7 @@ export function questionPosition(
 ): { chapterLabel: string; index: number; count: number } | null {
   const chapter = findChapter(ref.chapterId)
   if (!chapter) return null
-  const visible = visibleQuestions(chapter, a)
+  const visible = visibleQuestions(chapter, a).filter((q) => !questionGroupParent(q))
   const index = visible.findIndex((q) => q.id === ref.questionId)
   if (index < 0) return null
   return { chapterLabel: chapter.label, index: index + 1, count: visible.length }
@@ -3697,6 +3849,7 @@ export function firstUnansweredScreen(a: WizardAnswers): number {
     if (s.kind === 'review') return i
     const q = findQuestion(s.chapterId, s.questionId)
     if (q && q.required && isEmptyValue(q.get(a))) return i
+    if (q && isGroupedFlow(q) && groupedQuestions(q, a).some((child) => child.required && isEmptyValue(child.get(a)))) return i
   }
   return screens.length - 1
 }

@@ -148,8 +148,8 @@ const EXTRACTABLE_SERVICE_KEYS = Object.keys(SERVICE_LABELS).filter((k) => !DERI
 // reporting/services/software/recurring - services + the QBO scope block
 // moved to the END of the flow. The review screen groups by the registry's
 // CHAPTERS regardless; this order keeps the vocabulary self-consistent.
-/** J2 (E1-E3): the three money-behavior question ids behaviorNotes maps. */
-const BEHAVIOR_NOTE_KEYS = ['deposits-non-business', 'personal-on-business', 'personal-card'] as const
+/** Money-behavior question ids used by behaviorNotes. */
+const BEHAVIOR_NOTE_KEYS = ['deposits-non-business', 'business-income-personal', 'personal-on-business', 'personal-card'] as const
 
 export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   // contact
@@ -192,9 +192,10 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'paymentMethods', label: 'Payment methods', chapter: 'income', kind: 'enumList', options: Object.keys(PAYMENT_METHOD_LABELS) },
   { key: 'merchantAccounts', label: 'Merchant processors', chapter: 'income', kind: 'merchants' },
   { key: 'includeMerchantReconciliation', label: 'Reconcile merchant accounts', chapter: 'income', kind: 'boolean' },
-  // A41 + J2 (E1-E3): all three money-behavior cards extract as booleans;
-  // the mandatory explanation notes extract alongside (behaviorNotes).
+  // All four money-behavior cards extract as booleans; explanation notes
+  // extract alongside them in behaviorNotes.
   { key: 'depositsNonBusiness', label: 'Deposits non-business money', chapter: 'income', kind: 'boolean' },
+  { key: 'businessIncomeToPersonal', label: 'Deposits business income into personal accounts', chapter: 'income', kind: 'boolean' },
   { key: 'personalOnBusiness', label: 'Pays for non-business on business accounts', chapter: 'income', kind: 'boolean' },
   { key: 'personalCardForBusiness', label: 'Puts business expenses on a personal card', chapter: 'income', kind: 'boolean' },
   {
@@ -211,13 +212,15 @@ export const EXTRACTION_FIELDS: readonly ExtractionFieldSpec[] = [
   { key: 'payrollProvider', label: 'Payroll provider', chapter: 'income', kind: 'string' },
   { key: 'payrollFrequency', label: 'Payroll frequency', chapter: 'income', kind: 'enum', options: ['weekly', 'biweekly', 'semi_monthly', 'monthly'] },
   { key: 'payrollPayWeekday', label: 'Payroll pay weekday', chapter: 'income', kind: 'number', min: 0, max: 6 },
-  { key: 'payrollPayDates', label: 'Payroll pay dates', chapter: 'income', kind: 'numberList', min: 1, max: 31 },
+  { key: 'payrollPayDates', label: 'Payroll pay dates', chapter: 'income', kind: 'numberList', min: 0, max: 31 },
   // J2 (P1): the "they process their own payroll" pick (context, not a
   // billable service - it never enters serviceKeys).
   { key: 'payrollSelfProcessed', label: 'They process their own payroll', chapter: 'income', kind: 'boolean' },
   // reporting
   { key: 'bookkeepingFrequency', label: 'Close cadence', chapter: 'reporting', kind: 'enum', options: ['monthly', 'quarterly', 'semi_annual', 'annual'] },
   { key: 'monthlyCloseTier', label: 'Close tier', chapter: 'reporting', kind: 'enum', options: ['5', '10', '15'] },
+  { key: 'closeDeadlineChoice', label: 'Closing deadline choice', chapter: 'reporting', kind: 'enum', options: ['5', '10', '15', 'other'] },
+  { key: 'closeDeadlineDaysAfterEnd', label: 'Days after period end to close', chapter: 'reporting', kind: 'number', min: 1, max: 365 },
   { key: 'accountingMethod', label: 'Accounting method', chapter: 'reporting', kind: 'enum', options: ['cash', 'accrual'] },
   // J2 (E6): the bill-pay question split in two - recording (drives the
   // record_bills service key) and paying (requires recording), with the
@@ -711,10 +714,10 @@ const MISSING_CHECKS: readonly MissingCheck[] = [
   { key: 'bookkeepingStartDate', when: isBk },
   { key: 'isRealEstateClient', when: () => true },
   { key: 'hasPayroll', when: isBk },
-  // A41 + J2 (E1-E3): all three money-behavior cards are required wizard
-  // questions, so an extraction that never mentions them keeps them on the
-  // "still to ask" list (same treatment as the other required yes/no cards).
+  // All four money-behavior cards are required wizard questions, so an
+  // extraction that never mentions them keeps them on the still-to-ask list.
   { key: 'depositsNonBusiness', when: isBk },
+  { key: 'businessIncomeToPersonal', when: isBk },
   { key: 'personalOnBusiness', when: isBk },
   { key: 'personalCardForBusiness', when: isBk },
   // I2: a corporate structure auto-flags payroll, so provider and frequency
@@ -737,7 +740,7 @@ const MISSING_CHECKS: readonly MissingCheck[] = [
       isBk(a) && (a.paymentMethods ?? []).some((m) => m === 'card' || m === 'online'),
   },
   { key: 'bookkeepingFrequency', when: isBk },
-  { key: 'monthlyCloseTier', when: (a) => isBk(a) && (a.bookkeepingFrequency ?? 'monthly') === 'monthly' },
+  { key: 'monthlyCloseTier', when: isBk },
   { key: 'accountingMethod', when: isBk },
   // J2 (E6): recording bills is a required card; paying is required once
   // recording is a yes (the wizard's branch does the same).
@@ -837,6 +840,7 @@ export function describeExtractedValue(key: string, value: unknown): string {
       // question each belongs to.
       const labels: Record<string, string> = {
         'deposits-non-business': 'non-business deposits',
+        'business-income-personal': 'business income into personal accounts',
         'personal-on-business': 'personal spend on business accounts',
         'personal-card': 'personal card',
       }
@@ -1141,6 +1145,12 @@ const STUB_RULES: readonly StubRule[] = [
     key: 'sendPreliminaryReports',
     pattern: /\bpreliminary reports?\b/i,
     confidence: 0.8,
+    build: () => true,
+  },
+  {
+    key: 'businessIncomeToPersonal',
+    pattern: /\b(?:business income|business revenue)\b.{0,40}\b(?:into|to|in)\b.{0,20}\bpersonal (?:bank |checking )?accounts?\b/i,
+    confidence: 0.9,
     build: () => true,
   },
   {

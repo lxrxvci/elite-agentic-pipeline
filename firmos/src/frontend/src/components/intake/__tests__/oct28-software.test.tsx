@@ -34,8 +34,10 @@ describe('October 28 custom accounting software', () => {
   it('adding Other persists and selects the new software immediately', async () => {
     const onAdvance = vi.fn()
     render(<Harness onAdvance={onAdvance} />)
+    fireEvent.click(screen.getByRole('combobox'))
     fireEvent.click(screen.getByTestId('option-Other'))
     fireEvent.change(screen.getByTestId('custom-input-qbo-status'), { target: { value: 'Google bookkeeping' } })
+    fireEvent.click(screen.getByTestId('option-no'))
     fireEvent.click(screen.getByTestId('continue'))
 
     await waitFor(() => expect(onAdvance).toHaveBeenCalled())

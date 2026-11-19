@@ -464,13 +464,13 @@ describe('annual_line_assigned_to_january (L4/G9, M3 billing grid)', () => {
     renderAnnual({ legalName: 'Annual Co', engagementType: 'bookkeeping' } as WizardAnswers, onLineBilling)
     expandSection('quote')
     // The annual report: calc annual, bill annually, no month assigned yet.
-    expect(screen.getByTestId('calc-freq-specialty_report_1')).toHaveValue('annual')
-    expect(screen.getByTestId('bill-freq-specialty_report_1')).toHaveValue('annual')
+    expect(screen.getByTestId('calc-freq-specialty_report_1')).toHaveAttribute('data-value', 'annual')
+    expect(screen.getByTestId('bill-freq-specialty_report_1')).toHaveAttribute('data-value', 'annual')
     const select = screen.getByTestId('bill-month-specialty_report_1')
-    expect(select).toHaveValue('')
+    expect(select).toHaveAttribute('data-value', '')
     expect(screen.queryByTestId('bill-month-badge-specialty_report_1')).toBeNull()
     // The monthly line's grid defaults to monthly billing (day-of-month, not a month select).
-    expect(screen.getByTestId('bill-freq-bank_feed_management')).toHaveValue('monthly')
+    expect(screen.getByTestId('bill-freq-bank_feed_management')).toHaveAttribute('data-value', 'monthly')
     expect(screen.getByTestId('bill-day-bank_feed_management')).toBeInTheDocument()
     expect(screen.queryByTestId('bill-month-bank_feed_management')).toBeNull()
 
@@ -485,7 +485,7 @@ describe('annual_line_assigned_to_january (L4/G9, M3 billing grid)', () => {
     )
     expandSection('quote')
     expect(screen.getByTestId('bill-month-badge-specialty_report_1')).toHaveTextContent('billed each January')
-    expect(screen.getByTestId('bill-month-specialty_report_1')).toHaveValue('1')
+    expect(screen.getByTestId('bill-month-specialty_report_1')).toHaveAttribute('data-value', '1')
   })
 
   it('the 1099s default to February but the month is selectable (01:23:41)', () => {
@@ -508,9 +508,10 @@ describe('annual_line_assigned_to_january (L4/G9, M3 billing grid)', () => {
     expandSection('quote')
     // Unassigned: the §6.5 February badge and the drop-down preselects it.
     expect(screen.getByTestId('bill-month-badge-1099_collection')).toHaveTextContent('billed each February')
-    expect(screen.getByTestId('bill-month-1099_collection')).toHaveValue('2')
+    expect(screen.getByTestId('bill-month-1099_collection')).toHaveAttribute('data-value', '2')
     // Placeholder + the twelve months.
-    const options = Array.from(screen.getByTestId('bill-month-1099_collection').querySelectorAll('option'))
+    fireEvent.click(screen.getByTestId('bill-month-1099_collection'))
+    const options = Array.from(document.querySelectorAll('[role="option"]'))
     expect(options).toHaveLength(13)
     // Moving it to January writes the billing-model patch.
     fireEvent.change(screen.getByTestId('bill-month-1099_collection'), { target: { value: '1' } })
@@ -1129,9 +1130,9 @@ describe('M3: the billing grid and frequency totals (10_10 00:55:12-01:03:54)', 
     )
     expandSection('quote')
     // record_bills scheduled weekly: calc weekly (Fridays), billed monthly.
-    expect(screen.getByTestId('calc-freq-record_bills')).toHaveValue('weekly')
-    expect(screen.getByTestId('bill-freq-record_bills')).toHaveValue('monthly')
-    expect(screen.getByTestId('calc-weekday-record_bills')).toHaveValue('5')
+    expect(screen.getByTestId('calc-freq-record_bills')).toHaveAttribute('data-value', 'weekly')
+    expect(screen.getByTestId('bill-freq-record_bills')).toHaveAttribute('data-value', 'monthly')
+    expect(screen.getByTestId('calc-weekday-record_bills')).toHaveAttribute('data-value', '5')
 
     fireEvent.change(screen.getByTestId('calc-freq-record_bills'), { target: { value: 'monthly' } })
     expect(onLineBilling).toHaveBeenCalledWith('record_bills', { calcFrequency: 'monthly' })

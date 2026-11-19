@@ -253,3 +253,11 @@ test("priorMonth / followingMonth cross year boundaries", () => {
 
 // silence unused-import warning for the documented helper
 void lastDayOfMonth;
+
+
+test("custom close deadlines are actual day offsets, including 45 days", () => {
+  assert.deepEqual(closeTierDueDate({ year: 2026, month: 1 }, 20), { year: 2026, month: 2, day: 20 });
+  assert.deepEqual(closeTierDueDate({ year: 2026, month: 1 }, 31), { year: 2026, month: 3, day: 3 });
+  assert.deepEqual(closeTierDueDate({ year: 2024, month: 1 }, 31), { year: 2024, month: 3, day: 2 });
+  assert.deepEqual(closeTierDueDate({ year: 2026, month: 10 }, 45), { year: 2026, month: 12, day: 15 });
+});

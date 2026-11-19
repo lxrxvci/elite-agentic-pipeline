@@ -15,6 +15,7 @@ import {
   type IntakePatch,
   type IntakeRow,
 } from '@/server/intake'
+import { syncIntakeContacts, type IntakeContactIds } from '@/server/intake-contacts'
 import { calculateIntakeQuoteWithConfig, type IntakeQuoteAnswers } from '@/server/quote'
 import type { Quote } from '@firmos/domain'
 
@@ -40,6 +41,7 @@ export interface SaveIntakeInput {
 export interface SaveIntakeData {
   intake: IntakeRow
   cascaded: boolean
+  contactIds?: IntakeContactIds
 }
 
 /** Autosave: creates when intakeId is absent, patches otherwise. A
@@ -52,20 +54,20 @@ export async function saveIntake(input: SaveIntakeInput): Promise<ActionResult<S
   }
 
   try {
-    if (input.intakeId == null) {
-      const intake = await createIntake(
-        input.intakeMode ? { ...input.patch, intakeMode: input.intakeMode } : input.patch,
-      )
-      return { ok: true, data: { intake, cascaded: false } }
-    }
-    const intake = await updateIntake(input.intakeId, input.patch)
+    const intake = input.intakeId == null
+      ? await createIntake(input.intakeMode ? { ...input.patch, intakeMode: input.intakeMode } : input.patch)
+      : await updateIntake(input.intakeId, input.patch)
+    const contactIds = intake.status === 'new' || intake.status === 'in_progress'
+      ? await syncIntakeContacts(intake.id)
+      : undefined
     let cascaded = false
     if (intake.clientId != null) {
       await cascadeIntakeToClient(intake.id, input.patch)
       cascaded = true
     }
     revalidatePath('/intake')
-    return { ok: true, data: { intake, cascaded } }
+    revalidatePath('/contacts')
+    return { ok: true, data: { intake, cascaded, contactIds } }
   } catch (error) {
     return { ok: false, error: messageOf(error) }
   }

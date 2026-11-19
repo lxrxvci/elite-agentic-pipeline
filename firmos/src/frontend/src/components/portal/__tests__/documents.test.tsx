@@ -75,7 +75,7 @@ describe('PortalUploadPanel', () => {
     // portal on open, so assert the whitelist through the trigger and the
     // module constant the panel maps over.
     expect(screen.getByTestId('portal-upload-panel')).toBeInTheDocument()
-    expect(screen.getByLabelText('Folder')).toHaveTextContent('Receipts')
+    expect(screen.getByLabelText('Folder')).toHaveValue('Receipts')
     expect(screen.getByLabelText('File')).toBeInTheDocument()
   })
 

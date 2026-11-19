@@ -17,12 +17,14 @@ function Harness({
   optionLists = {},
   onAddOptionListValue,
   onAdvance,
+  vendorCatalog = [{ id: 41, name: 'Rent', defaultPortalUrl: null, sopTemplateId: null, reusable: true }],
 }: {
   q: QuestionDef
   initial: WizardAnswers
   optionLists?: Record<string, OptionListValueLite[]>
   onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
   onAdvance?: () => void
+  vendorCatalog?: { id: number; name: string; defaultPortalUrl: string | null; sopTemplateId: number | null; reusable: boolean }[]
 }) {
   const [answers, setAnswers] = useState<WizardAnswers>(initial)
   return (
@@ -30,6 +32,10 @@ function Harness({
       <QuestionScreen
         q={q}
         answers={answers}
+        intakeId={7}
+        vendorCatalog={vendorCatalog}
+        sopTemplates={[]}
+        onAddVendor={async (name) => ({ id: 99, name, defaultPortalUrl: null, sopTemplateId: null, reusable: true })}
         onApply={(p) => setAnswers((a) => ({ ...a, ...p }))}
         onAdvance={onAdvance ?? (() => {})}
         onPickOption={(v) => setAnswers((a) => ({ ...a, ...q.apply(a, v) }))}
@@ -79,6 +85,7 @@ describe('select cards from the list (referral)', () => {
         optionLists={{ referral_sources: [{ id: 5, name: 'Chamber of Commerce' } as OptionListValueLite] }}
       />,
     )
+    fireEvent.click(screen.getByRole('combobox', { name: 'How did they find us?' }))
     const card = screen.getByTestId('option-Chamber of Commerce')
     fireEvent.click(card)
     expect(answersNow().referralSource).toBe('Chamber of Commerce')
@@ -88,6 +95,7 @@ describe('select cards from the list (referral)', () => {
     const onAdd = vi.fn(async (_key: string, name: string) => ({ id: 9, name }) as OptionListValueLite)
     render(<Harness q={referral} initial={{}} optionLists={{}} onAddOptionListValue={onAdd} />)
 
+    fireEvent.click(screen.getByRole('combobox', { name: 'How did they find us?' }))
     fireEvent.click(screen.getByTestId('option-Other'))
     fireEvent.change(screen.getByTestId('custom-input-referral'), { target: { value: 'Met at a BNI meeting' } })
     fireEvent.click(screen.getByTestId('continue'))
@@ -103,9 +111,10 @@ describe('multi chips from the list (payment methods)', () => {
     const onAdd = vi.fn(async (_key: string, name: string) => ({ id: 12, name }) as OptionListValueLite)
     render(<Harness q={methods} initial={{}} optionLists={{}} onAddOptionListValue={onAdd} />)
 
-    fireEvent.click(screen.getByTestId('multi-custom-open'))
-    fireEvent.change(screen.getByTestId('multi-custom-input'), { target: { value: 'Zelle' } })
-    fireEvent.click(screen.getByTestId('multi-custom-add'))
+    fireEvent.click(screen.getByTestId('multi-input'))
+    fireEvent.click(screen.getByTestId('multi-add-toggle'))
+    fireEvent.change(screen.getByTestId('multi-add-input'), { target: { value: 'Zelle' } })
+    fireEvent.click(screen.getByTestId('multi-add-submit'))
 
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith('payment_methods', 'Zelle'))
     await waitFor(() => expect(answersNow().paymentMethods).toContain('Zelle'))
@@ -119,6 +128,7 @@ describe('multi chips from the list (payment methods)', () => {
         optionLists={{ payment_methods: [{ id: 3, name: 'Venmo' } as OptionListValueLite] }}
       />,
     )
+    fireEvent.click(screen.getByTestId('multi-input'))
     fireEvent.click(screen.getByTestId('chip-Venmo'))
     expect(answersNow().paymentMethods).toContain('Venmo')
     // Canonical keys still answer by key (merchant logic untouched).
@@ -143,7 +153,7 @@ describe('list-backed text fields (industry + report names)', () => {
     // The datalist offers the list's values.
     expect(screen.getByTestId('datalist-industry')).toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText(/Industry/), { target: { value: 'Hot air balloon repair' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Industry (optional)' }), { target: { value: 'Hot air balloon repair' } })
     fireEvent.click(screen.getByTestId('continue'))
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith('industries', 'Hot air balloon repair'))
   })
@@ -155,35 +165,43 @@ describe('list-backed text fields (industry + report names)', () => {
 
     fireEvent.change(screen.getByLabelText('Report name'), { target: { value: 'Washington Combined Report' } })
     fireEvent.change(screen.getByLabelText('Frequency'), { target: { value: 'annual' } })
+    fireEvent.click(screen.getByRole('combobox', { name: 'SOP' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Create new SOP' }))
     fireEvent.click(screen.getByTestId('add-another'))
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith('report_types', 'Washington Combined Report'))
   })
 })
 
-describe('bill-pay locations (yes-no-list)', () => {
-  const payBills = findQuestion('reporting', 'pay-bills')!
+describe('vendor catalog (record-bills)', () => {
+  const recordBills = findQuestion('reporting', 'record-bills')!
 
-  it('prior places offer one-tap re-use and new places persist', async () => {
-    const onAdd = vi.fn(async (_key: string, name: string) => ({ id: 40, name }) as OptionListValueLite)
-    render(
-      <Harness
-        q={payBills}
-        initial={{ recordBills: true }}
-        optionLists={{ bill_pay_locations: [{ id: 41, name: 'Vendor websites' } as OptionListValueLite] }}
-        onAddOptionListValue={onAdd}
-      />,
-    )
+  it('reuses an existing vendor and persists a one-off vendor before advancing', async () => {
+    const onAdvance = vi.fn()
+    render(<Harness q={recordBills} initial={{}} onAdvance={onAdvance} />)
     fireEvent.click(screen.getByTestId('option-yes'))
-
-    // One tap re-uses a prior place.
-    fireEvent.click(await screen.findByTestId('quick-place-41'))
-    expect(answersNow().billPayLocations).toContain('Vendor websites')
-
-    // A new place persists globally.
-    fireEvent.change(screen.getByTestId('list-input'), { target: { value: 'Checks by mail' } })
-    fireEvent.click(screen.getByTestId('list-add'))
-    await waitFor(() => expect(onAdd).toHaveBeenCalledWith('bill_pay_locations', 'Checks by mail'))
-    expect(answersNow().billPayLocations).toContain('Checks by mail')
+    fireEvent.click(screen.getByRole('combobox', { name: 'Vendors' }))
+    expect(screen.queryByRole('option', { name: 'Rent' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('combobox', { name: 'All vendors' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Rent' }))
+    expect(answersNow().recordBillVendors).toContain('Rent')
+    fireEvent.click(screen.getByTestId('vendor-input'))
+    fireEvent.click(screen.getByTestId('vendor-add-toggle'))
+    fireEvent.change(screen.getByLabelText('New option name'), { target: { value: 'One custom vendor' } })
+    fireEvent.click(screen.getByTestId('vendor-add-submit'))
+    await screen.findByRole('heading', { name: 'One custom vendor' })
+    for (const vendorName of ['Rent', 'One custom vendor']) {
+      fireEvent.click(screen.getByRole('combobox', { name: `SOP for ${vendorName}` }))
+      fireEvent.click(screen.getByRole('option', { name: 'Create new SOP' }))
+    }
+    expect(screen.getByTestId('inline-followup-pay-bills')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('option', { name: 'No, they pay their own' }))
+    await waitFor(() => expect(screen.getByTestId('continue')).toBeEnabled())
+    fireEvent.click(screen.getByTestId('continue'))
+    expect(onAdvance).toHaveBeenCalledTimes(1)
+    expect(answersNow().vendorAssignments).toHaveLength(2)
+    expect(answersNow().vendorAssignments?.map((vendor) => vendor.vendorName)).toEqual(
+      expect.arrayContaining(['Rent', 'One custom vendor']),
+    )
   })
 })
 

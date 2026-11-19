@@ -1,9 +1,9 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Building2, Hash, Search, SquarePen } from 'lucide-react'
+import { Building2, Hash, SquarePen } from 'lucide-react'
 
-import { Input } from '@/components/ui/input'
+import { SearchSelect } from '@/components/ui/search-select'
 import type { ChatChannelSummary } from '@/server/chat'
 import { cn } from '@/shared/lib/utils'
 
@@ -108,19 +108,30 @@ export function ChannelList({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-        <div className="relative min-w-0 flex-1">
-          <Search
-            aria-hidden
-            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search conversations"
-            aria-label="Search conversations"
-            className="h-8 pl-8 text-[13px]"
-          />
-        </div>
+        <SearchSelect
+          ariaLabel="Search conversations"
+          optionOrder="source"
+          options={channels.map((channel) => ({
+            id: String(channel.id),
+            label: displayChannelName(channel),
+            description: channel.lastMessage?.preview,
+            keywords: [channel.clientName ?? '', channel.otherMember?.name ?? '', channel.lastMessage?.preview ?? ''],
+            data: channel,
+          }))}
+          value={selectedId == null ? null : String(selectedId)}
+          onChange={(_id, option) => {
+            setSearch('')
+            onSelect(option.data.id)
+          }}
+          onQueryChange={setSearch}
+          selectedLabel={search}
+          placeholder="Search conversations"
+          emptyMessage="No conversations match your search."
+          className="min-w-0 flex-1"
+          inputClassName="h-8 text-[13px]"
+          inputTestid="conversation-search"
+          testidPrefix="conversation"
+        />
         <button
           type="button"
           onClick={onNewMessage}

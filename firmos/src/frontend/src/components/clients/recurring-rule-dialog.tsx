@@ -295,6 +295,7 @@ export function RecurringRuleDialog({
             <div className="space-y-1.5">
               <Label htmlFor="rule-assignee">Assignee</Label>
               <Select
+                optionOrder="alphabetical"
                 value={form.assigneeId === '' ? 'none' : form.assigneeId}
                 onValueChange={(v) => patch({ assigneeId: v === 'none' ? '' : v })}
               >

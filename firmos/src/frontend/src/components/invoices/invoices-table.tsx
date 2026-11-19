@@ -183,7 +183,7 @@ export function InvoicesTable({ rows, year, month, today }: InvoicesTableProps) 
           </SelectContent>
         </Select>
 
-        <Select value={clientFilter} onValueChange={setClientFilter}>
+        <Select optionOrder="alphabetical" value={clientFilter} onValueChange={setClientFilter}>
           <SelectTrigger className="h-8 w-52 text-xs" aria-label="Filter by client">
             <SelectValue placeholder="All clients" />
           </SelectTrigger>

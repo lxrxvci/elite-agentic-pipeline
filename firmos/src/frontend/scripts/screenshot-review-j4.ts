@@ -155,7 +155,7 @@ async function walkToReview(page: Page): Promise<void> {
   // A quarterly specialty report with missed filings: the Quarterly bucket
   // gets a line and one-time fees get a missed-filings entry.
   await page.getByLabel("Report name").fill("Oregon Special Report");
-  await page.getByLabel("Frequency").selectOption("quarterly");
+  await page.getByLabel("Frequency").fill("quarterly");
   await page.getByLabel("Flat price per report (optional)").fill("450");
   await page.getByLabel("There are missed past filings").check();
   await page.getByLabel("Most recent filing").pressSequentially("01312026");

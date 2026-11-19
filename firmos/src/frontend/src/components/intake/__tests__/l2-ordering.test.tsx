@@ -14,9 +14,9 @@ import { QuestionScreen, ServicesScreen } from '../screens'
  */
 
 describe('L2/B4: ordering rules', () => {
-  it('close tiers are chronological (5th, 10th, 15th)', () => {
+  it('standard close tiers are chronological, followed by the numeric Other choice', () => {
     const q = findQuestion('reporting', 'close-tier')!
-    expect(q.options?.map((o) => o.label)).toEqual(['By the 5th', 'By the 10th', 'By the 15th'])
+    expect(q.options?.map((o) => o.value)).toEqual(['5', '10', '15', 'other'])
   })
 
   it('"Included in every engagement" stays in workflow order (the alphabetization exception)', () => {

@@ -137,7 +137,7 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
 
     expect(addInstitutionAction).toHaveBeenCalledWith('First Interstate Bank')
     // The dropdown selects the freshly created row...
-    expect(screen.getByTestId('bank-select-0')).toHaveTextContent('First Interstate Bank')
+    expect(screen.getByTestId('bank-select-0')).toHaveValue('First Interstate Bank')
     // ...and a zero-account preview follows a brand-new bank.
     expect(screen.getByTestId('institution-match-preview')).toHaveTextContent(
       'No client accounts at this bank yet.',
@@ -155,7 +155,7 @@ describe('SopAdmin institution keys + staleness failsafe', () => {
     render(<SopAdmin sops={[legacy]} videosBySop={{}} merchantProcessors={[]} canEdit={true} {...PROPS} />)
     await user.click(screen.getByRole('button', { name: 'Edit Chevron WEX fuel card close' }))
     // Free-text fallback: the dropdown shows the raw key as the current value.
-    expect(screen.getByTestId('bank-select-0')).toHaveTextContent('legacy bank')
+    expect(screen.getByTestId('bank-select-0')).toHaveValue('legacy bank')
     // Re-picking a real bank replaces the legacy key.
     await user.click(screen.getByLabelText('Institution'))
     await user.click(screen.getByRole('option', { name: 'Columbia Bank' }))

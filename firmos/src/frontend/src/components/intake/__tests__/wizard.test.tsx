@@ -204,6 +204,7 @@ const completeAnswers: WizardAnswers = {
   personalCardForBusiness: false,
   recordDeposits: false,
   depositsNonBusiness: false,
+  businessIncomeToPersonal: false,
   personalOnBusiness: false,
   bookkeepingFrequency: 'monthly',
   monthlyCloseTier: '10',
@@ -253,6 +254,7 @@ describe('J4 harness: no_auto_advance_on_any_card (meeting 09_30)', () => {
     // Resumes at tax-structure (legal name and main contact are answered).
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
 
+    fireEvent.click(screen.getByRole('combobox', { name: 'How is the business registered?' }))
     fireEvent.click(screen.getByTestId('option-LLC'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
 
@@ -263,16 +265,19 @@ describe('J4 harness: no_auto_advance_on_any_card (meeting 09_30)', () => {
     })
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
 
-    // I2: an LLC pick opens the tax-classification follow-up on Continue.
+    // The LLC classification stays inline and is required before advancing.
     fireEvent.click(screen.getByTestId('continue'))
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'llc-subclass')
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
+    expect(screen.getByTestId('inline-followup-llc-subclass')).toBeInTheDocument()
 
+    fireEvent.click(screen.getByRole('combobox', { name: 'How is the LLC taxed?' }))
     fireEvent.click(screen.getByTestId('option-llc_sml'))
     await act(async () => {
       vi.advanceTimersByTime(10_000)
     })
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'llc-subclass')
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
     fireEvent.click(screen.getByTestId('continue'))
+    await act(async () => { await Promise.resolve() })
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'dba-industry')
   })
 })
@@ -283,6 +288,7 @@ describe('custom "Other" option cards (I1)', () => {
     renderWizard({ legalName: 'Test Co', contacts: [{ firstName: 'Wren', isPrimary: true }] })
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
 
+    fireEvent.click(screen.getByRole('combobox', { name: 'How is the business registered?' }))
     fireEvent.click(screen.getByTestId('option-Other'))
     // The typed answer replaces any advance: still on tax-structure.
     await act(async () => {
@@ -326,14 +332,14 @@ describe('custom "Other" option cards (I1)', () => {
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
     expect(screen.getByTestId('custom-input-tax-structure')).toHaveValue('Something exotic')
 
+    fireEvent.click(screen.getByRole('combobox', { name: 'How is the business registered?' }))
     fireEvent.click(screen.getByTestId('option-LLC'))
     await act(async () => {
       vi.advanceTimersByTime(1_000)
     })
-    // I2: the LLC subclass follow-up comes next (via Continue); the custom
-    // text is cleared.
-    fireEvent.click(screen.getByTestId('continue'))
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'llc-subclass')
+    // The LLC subclass is inline; the old custom text is cleared.
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'tax-structure')
+    expect(screen.getByTestId('inline-followup-llc-subclass')).toBeInTheDocument()
     await act(async () => {
       vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
     })
@@ -549,7 +555,8 @@ describe('review screen', () => {
     fireEvent.click(screen.getByTestId('edit-engagement'))
     const overlay = await screen.findByTestId('edit-overlay')
     expect(overlay).toHaveAttribute('data-question', 'engagement')
-    fireEvent.click(within(overlay).getByTestId('option-project'))
+    fireEvent.click(within(overlay).getByRole('combobox'))
+    fireEvent.click(screen.getByTestId('option-project'))
     await waitFor(() => expect(screen.queryByTestId('edit-overlay')).toBeNull())
     expect(screen.queryByTestId('question-screen')).toBeNull()
     // The engagement row re-reads from the new answer (and the scope
@@ -620,9 +627,10 @@ describe('I2 corporate payroll auto-flag (00:48:07-00:49:44)', () => {  // S-cor
     expect(screen.getByTestId('option-no')).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('the payroll-services card carries the recommendation badge', () => {
-    renderWizard(scorpAnswers, screenIndex(scorpAnswers, 'payroll-services'))
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'payroll-services')
+  it('the payroll group preserves the payroll-services recommendation badge', () => {
+    const withSchedule: WizardAnswers = { ...scorpAnswers, payrollProvider: 'Gusto', payrollFrequency: 'weekly', payrollPayWeekday: 5 }
+    renderWizard(withSchedule, screenIndex(withSchedule, 'payroll'))
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'payroll')
     expect(screen.getByTestId('recommendation-badge')).toHaveTextContent(
       'Recommended - corporate officers must be on payroll',
     )
@@ -740,6 +748,7 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
     isRealEstateClient: false,
     equitySetup: 'grouped',
     paymentMethods: ['check'],
+    businessIncomeToPersonal: false,
   }
 
   it('yes_answer_requires_explanation_note', async () => {
@@ -764,6 +773,11 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
     })
     fireEvent.blur(screen.getByTestId('note-input-deposits-non-business'))
     fireEvent.click(screen.getByTestId('continue'))
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'business-income-personal')
+    fireEvent.click(screen.getByTestId('option-no'))
+    fireEvent.click(screen.getByTestId('continue'))
+    await act(async () => { await Promise.resolve() })
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'personal-on-business')
 
     // The note persists into form_data.behaviorNotes with the answer.
@@ -803,6 +817,11 @@ describe('J2 mandatory behavior-note overlay (E1-E3)', () => {
     })
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'deposits-non-business')
     fireEvent.click(screen.getByTestId('continue'))
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'business-income-personal')
+    fireEvent.click(screen.getByTestId('option-no'))
+    fireEvent.click(screen.getByTestId('continue'))
+    await act(async () => { await Promise.resolve() })
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'personal-on-business')
     await act(async () => {
       vi.advanceTimersByTime(SAVE_DEBOUNCE_MS + 50)
@@ -828,7 +847,7 @@ describe('N3 chapter rail navigation (meeting #3)', () => {
       (s) => s.kind === 'question' && s.chapterId === 'balance',
     )
     renderWizard(completeAnswers, balanceAt)
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts')
+    await waitFor(() => expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts'))
 
     // The rail is a labeled nav landmark; the resume seed made chapters 1-5
     // jumpable (current chapter carries aria-current), later chapters stay
@@ -854,7 +873,7 @@ describe('N3 chapter rail navigation (meeting #3)', () => {
 
     // ...jump to chapter 5, answer there too (account edits commit at once).
     fireEvent.click(screen.getByTestId('chapter-jump-balance'))
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts')
+    await waitFor(() => expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts'))
     fireEvent.click(screen.getByTestId('add-account'))
     fireEvent.click(screen.getByTestId('bank-select-0'))
     fireEvent.click(await screen.findByRole('option', { name: 'Chase' }))
@@ -871,6 +890,12 @@ describe('N3 chapter rail navigation (meeting #3)', () => {
     expect(screen.getByTestId('last4-0')).toHaveValue('4411')
     expect(screen.getByTestId('account-label-0')).toHaveTextContent('Chase Checking · 4411')
 
+    // Previous uses the actual predecessor after a cross-category jump.
+    fireEvent.click(screen.getByTestId('back-link'))
+    await waitFor(() => expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'biz-established'))
+    fireEvent.click(screen.getByTestId('continue'))
+    await waitFor(() => expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts'))
+
     // The flushed autosave carried both answers into form_data (the resume
     // point can never rewind past them).
     await waitFor(() => expect(saveIntake).toHaveBeenCalled())
@@ -881,7 +906,7 @@ describe('N3 chapter rail navigation (meeting #3)', () => {
     expect(last.patch.formData?.checkingAccounts?.[0]?.last4).toBe('4411')
   })
 
-  it('a chapter unlocks only once the walk lands on it (resume seed + unlock on landing)', () => {
+  it('a chapter unlocks only once the walk lands on it (resume seed + unlock on landing)', async () => {
     const startAt = flattenScreens(completeAnswers).findIndex(
       (s) => s.kind === 'question' && s.questionId === 'bk-start',
     )
@@ -896,9 +921,9 @@ describe('N3 chapter rail navigation (meeting #3)', () => {
 
     // Walking forward unlocks each chapter as the walk lands on it.
     fireEvent.click(screen.getByTestId('continue'))
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'biz-established')
+    await waitFor(() => expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'biz-established'))
     fireEvent.click(screen.getByTestId('continue'))
-    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts')
+    await waitFor(() => expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'checking-accounts'))
     expect(screen.getByTestId('chapter-jump-balance')).toBeEnabled()
     expect(screen.getByTestId('chapter-jump-balance')).toHaveAttribute('aria-label', 'Balance sheet (current)')
     // And a rail jump back to the seeded chapters still works from here.
@@ -926,7 +951,7 @@ describe('N3 chapter rail navigation (meeting #3)', () => {
 })
 
 describe('K1 rail hover menu (A4/A2 - 09_30 00:29:54, 00:01:02)', () => {
-  it('hover_reveals_card_title: reached chapters list their slides for a direct jump', () => {
+  it('hover_reveals_card_title: reached chapters list their slides for a direct jump', async () => {
     const balanceAt = flattenScreens(completeAnswers).findIndex(
       (s) => s.kind === 'question' && s.chapterId === 'balance',
     )
@@ -937,7 +962,7 @@ describe('K1 rail hover menu (A4/A2 - 09_30 00:29:54, 00:01:02)', () => {
     const entityMenu = screen.getByTestId('chapter-menu-entity')
     expect(entityMenu).toHaveTextContent('Entity & ownership')
     expect(within(entityMenu).getByTestId('chapter-menu-item-entity-tax-structure')).toHaveTextContent(
-      'How is the business taxed?',
+      'How is the business registered?',
     )
     expect(within(entityMenu).getByTestId('chapter-menu-item-entity-owners')).toHaveTextContent(
       'Who owns the business?',
@@ -949,5 +974,41 @@ describe('K1 rail hover menu (A4/A2 - 09_30 00:29:54, 00:01:02)', () => {
     fireEvent.click(within(entityMenu).getByTestId('chapter-menu-item-entity-owners'))
     expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'owners')
     expect(screen.getByTestId('chapter-jump-entity')).toHaveAttribute('aria-current', 'step')
+
+    // Previous and Continue use that card's neighbors, even within one category.
+    fireEvent.click(screen.getByTestId('back-link'))
+    await waitFor(() => expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'dba-industry'))
+    fireEvent.click(screen.getByTestId('continue'))
+    await waitFor(() => expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 'owners'))
+  })
+})
+
+describe('grouped property intake', () => {
+  it('resumes the parent card when its required property count is unfinished', () => {
+    const view = renderWizard({ ...completeAnswers, isRealEstateClient: true })
+    expect(screen.getByTestId('question-screen')).toHaveAttribute('data-question', 're-yes')
+    expect(screen.getByTestId('property-intake-card')).toBeInTheDocument()
+    expect(screen.getByTestId('inline-followup-re-count')).toBeInTheDocument()
+    view.unmount()
+  })
+
+  it('keeps property summaries in review and edits a child through the grouped parent', () => {
+    const answers: WizardAnswers = {
+      ...completeAnswers,
+      isRealEstateClient: true,
+      propertyCount: 2,
+      propertyTypes: ['land'],
+      depreciationTracking: ['land'],
+    }
+    const view = renderWizard(answers, flattenScreens(answers).length - 1)
+    expect(screen.getByTestId('review-screen')).toBeInTheDocument()
+    expect(screen.getByTestId('edit-row-re-count')).toBeInTheDocument()
+    expect(screen.getByTestId('edit-row-re-types')).toBeInTheDocument()
+    expect(screen.getByTestId('edit-row-re-depreciation')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('edit-row-re-types'))
+    expect(screen.getByTestId('edit-overlay')).toHaveAttribute('data-question', 're-yes')
+    expect(screen.getByTestId('property-intake-card')).toBeInTheDocument()
+    expect(screen.getByLabelText('Number of properties')).toHaveValue(2)
+    view.unmount()
   })
 })

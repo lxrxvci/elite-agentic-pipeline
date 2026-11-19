@@ -1,12 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, Plus } from 'lucide-react'
+import { Check } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
+import { SearchSelect } from '@/components/ui/search-select'
 import { cn } from '@/shared/lib/utils'
 
-import { inputCls } from './account-screens'
 import { CardNavigation } from './navigation'
 import {
   mergeListOptions,
@@ -41,6 +40,7 @@ export function PayrollServicesScreen({
   onAdvance,
   optionLists,
   onAddOptionListValue,
+  showNavigation = true,
 }: {
   q: QuestionDef
   answers: WizardAnswers
@@ -48,10 +48,9 @@ export function PayrollServicesScreen({
   onAdvance: () => void
   optionLists?: Record<string, OptionListValueLite[]>
   onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
+  showNavigation?: boolean
 }) {
   const [error, setError] = useState<string | null>(null)
-  const [addOpen, setAddOpen] = useState(false)
-  const [addText, setAddText] = useState('')
 
   const core: 'self_processed' | 'process_payroll' | null =
     answers.payrollSelfProcessed === true
@@ -91,17 +90,12 @@ export function PayrollServicesScreen({
     commit(core, secondaryStatic, secondaryCustom.includes(value) ? secondaryCustom.filter((n) => n !== value) : [...secondaryCustom, value])
   }
 
-  const addCustom = async () => {
-    const name = addText.trim()
+  const addCustom = async (name: string) => {
     if (name === '' || !onAddOptionListValue) return
     const row = await onAddOptionListValue('payroll_services', name)
-    if (row) {
-      setAddText('')
-      setAddOpen(false)
-      // The add selects in one tap - the row renders from the list next pass.
-      if (!secondaryCustom.includes(row.name)) commit(core, secondaryStatic, [...secondaryCustom, row.name])
-      optionLists?.payroll_services?.push(row)
-    }
+    if (!row) throw new Error('Could not add the payroll service - try again.')
+    if (!secondaryCustom.includes(row.name)) commit(core, secondaryStatic, [...secondaryCustom, row.name])
+    optionLists?.payroll_services?.push(row)
   }
 
   const finish = () => {
@@ -160,74 +154,41 @@ export function PayrollServicesScreen({
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Additional services - optional
           </h2>
-          <ul className="mt-2 divide-y divide-border rounded-xl border border-border bg-card" data-testid="payroll-secondary-stack">
-            {secondaryOptions.map(
-              (row) => {
-                const selected = STATIC_VALUES.has(row.value)
-                  ? secondaryStatic.includes(row.value)
-                  : secondaryCustom.includes(row.value)
-                return (
-                  <li key={row.value}>
-                    <button
-                      type="button"
-                      role="checkbox"
-                      aria-checked={selected}
-                      data-testid={`payroll-service-${row.label}`}
-                      onClick={() => toggleSecondary(STATIC_VALUES.has(row.value) ? row.value : row.label)}
-                      className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                    >
-                      <span
-                        className={cn(
-                          'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
-                          selected ? 'border-firm-brand bg-firm-brand text-white' : 'border-input bg-card',
-                        )}
-                        aria-hidden
-                      >
-                        {selected && <Check className="h-3 w-3" />}
-                      </span>
-                      <span className={cn('min-w-0 flex-1 truncate text-sm', selected ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-                        {row.label}
-                      </span>
-                    </button>
-                  </li>
-                )
-              },
-            )}
-          </ul>
-
-          {onAddOptionListValue &&
-            (addOpen ? (
-              <div className="mt-2 flex items-center gap-2" data-testid="payroll-service-add-form">
-                <input
-                  aria-label="Type the payroll service"
-                  className={inputCls}
-                  placeholder="School district PERS reporting…"
-                  value={addText}
-                  autoFocus
-                  onChange={(e) => setAddText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void addCustom()
-                    if (e.key === 'Escape') setAddOpen(false)
-                  }}
-                />
-                <Button type="button" variant="outline" size="sm" disabled={addText.trim() === ''} onClick={() => void addCustom()} data-testid="payroll-service-add-submit">
-                  Add service
-                </Button>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setAddOpen(false)}>
-                  Cancel
-                </Button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                data-testid="payroll-service-add-open"
-                onClick={() => setAddOpen(true)}
-                className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:border-firm-brand/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
-                <Plus className="h-3.5 w-3.5" aria-hidden />
-                Add a payroll service
-              </button>
-            ))}
+          <SearchSelect
+            multiple
+            ariaLabel="Additional payroll services"
+            options={secondaryOptions.map((row) => ({
+              id: row.value,
+              label: row.label,
+              description: row.sub,
+              editable: !STATIC_VALUES.has(row.value),
+              testidExact: `payroll-service-${row.label}`,
+              data: row,
+            }))}
+            values={secondaryOptions
+              .filter((row) => STATIC_VALUES.has(row.value)
+                ? secondaryStatic.includes(row.value)
+                : secondaryCustom.includes(row.value))
+              .map((row) => row.value)}
+            onChange={(_next, option) => toggleSecondary(STATIC_VALUES.has(option.data.value) ? option.data.value : option.data.label)}
+            onAdd={onAddOptionListValue ? addCustom : undefined}
+            onRename={async (option, name) => {
+              const row = optionLists?.payroll_services?.find((item) => item.name === option.data.label)
+              if (!row) throw new Error('This payroll service cannot be renamed here.')
+              const { renameOptionValueAction } = await import('@/server/actions/option-lists')
+              const result = await renameOptionValueAction('payroll_services', row.id, name)
+              if (!result.ok) throw new Error(result.error)
+              commit(
+                core,
+                secondaryStatic,
+                secondaryCustom.map((value) => (value === option.data.label ? result.data.name : value)),
+              )
+            }}
+            addLabel={(query) => (query ? `Add "${query}" as a payroll service` : 'Add a payroll service…')}
+            listboxTestid="payroll-secondary-stack"
+            testidPrefix="payroll-services"
+            placeholder="Search or select payroll services…"
+          />
           <p className="mt-1.5 text-[11px] text-muted-foreground">
             Added services stay on the list for every future intake. Custom services quote at review.
           </p>
@@ -240,9 +201,11 @@ export function PayrollServicesScreen({
         </p>
       )}
 
-      <CardNavigation onClick={finish} data-testid="continue">
-        Continue
-      </CardNavigation>
+      {showNavigation && (
+        <CardNavigation onClick={finish} data-testid="continue">
+          Continue
+        </CardNavigation>
+      )}
     </div>
   )
 }

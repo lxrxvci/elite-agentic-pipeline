@@ -1,15 +1,16 @@
-import { asc, ilike, or, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { clients, contacts } from "@/db/schema";
+import { clients, contactClientLinks, contacts } from "@/db/schema";
+import type { ContactChannelLink } from "@/shared/lib/contact-channels";
 
 /**
- * Contact + client type-ahead lookup (meeting #3, C5/C6/C7): the intake's
+ * Contact + client browse/search lookup (meeting #3, C5/C6/C7): the intake's
  * contact pickers search the WHOLE contact database plus client names, so a
  * person who already exists - on another client's books, or as a CPA on file
  * - gets linked, never re-entered ("clients owning multiple businesses must
- * never create a second contact"). Matching is case-insensitive "contains"
- * over folded names, the same convention as the global search palette.
+ * never create a second contact"). An empty query returns the alphabetical
+ * browse page; typed queries use case-insensitive "contains" matching.
  */
 
 export interface ContactLookupHit {
@@ -22,6 +23,9 @@ export interface ContactLookupHit {
   entityName: string | null;
   email: string | null;
   phone: string | null;
+  emails?: string[];
+  phones?: string[];
+  channels?: ContactChannelLink[];
 }
 
 export interface ClientLookupHit {
@@ -37,7 +41,7 @@ export interface ContactLookupResults {
 }
 
 /** Per-group cap keeps the picker scannable. */
-const LOOKUP_CAP = 8;
+const LOOKUP_CAP = 20;
 
 const fold = (v: string | null | undefined): string =>
   (v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
@@ -63,9 +67,8 @@ export function contactIdentityKey(name: string, email: string | null | undefine
   return `${n}|${e}`;
 }
 
-export async function searchContactsAndClients(query: string): Promise<ContactLookupResults> {
+export async function searchContactsAndClients(query: string, associationContactId?: number | null): Promise<ContactLookupResults> {
   const q = query.trim().replace(/\s+/g, " ");
-  if (q === "") return { contacts: [], clients: [] };
   const pattern = `%${q.replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
 
   const contactRows = await db
@@ -76,31 +79,47 @@ export async function searchContactsAndClients(query: string): Promise<ContactLo
       entityName: contacts.entityName,
       email: contacts.email,
       phone: contacts.phone,
+      emails: contacts.emails,
+      phones: contacts.phones,
+      contactChannelLinks: contacts.contactChannelLinks,
     })
     .from(contacts)
     .where(
-      or(
-        ilike(contacts.entityName, pattern),
-        ilike(contacts.email, pattern),
-        // "First Last" and "Last First" both match, so typing either works.
-        sql`btrim(concat_ws(' ', ${contacts.firstName}, ${contacts.lastName})) ilike ${pattern}`,
-        sql`btrim(concat_ws(' ', ${contacts.lastName}, ${contacts.firstName})) ilike ${pattern}`,
-      ),
+      q === ""
+        ? undefined
+        : or(
+            ilike(contacts.entityName, pattern),
+            ilike(contacts.email, pattern),
+            ilike(contacts.phone, pattern),
+            sql`coalesce(${contacts.emails}::text, '') ilike ${pattern}`,
+            sql`coalesce(${contacts.phones}::text, '') ilike ${pattern}`,
+            sql`coalesce(${contacts.contactChannelLinks}::text, '') ilike ${pattern}`,
+            sql`btrim(concat_ws(' ', ${contacts.firstName}, ${contacts.lastName})) ilike ${pattern}`,
+            sql`btrim(concat_ws(' ', ${contacts.lastName}, ${contacts.firstName})) ilike ${pattern}`,
+          ),
     )
     .orderBy(asc(contacts.entityName), asc(contacts.firstName), asc(contacts.lastName))
     .limit(LOOKUP_CAP * 2);
 
-  const clientRows = await db
-    .select({ id: clients.id, legalName: clients.legalName, dbaName: clients.dbaName })
-    .from(clients)
-    .where(or(ilike(clients.legalName, pattern), ilike(clients.dbaName, pattern)))
-    .orderBy(asc(clients.legalName))
-    .limit(LOOKUP_CAP * 2);
+  const clientFilter = q === "" ? undefined : or(ilike(clients.legalName, pattern), ilike(clients.dbaName, pattern));
+  const clientRows = associationContactId === null ? [] : associationContactId == null
+    ? await db
+      .select({ id: clients.id, legalName: clients.legalName, dbaName: clients.dbaName })
+      .from(clients)
+      .where(clientFilter)
+      .orderBy(asc(clients.legalName))
+      .limit(LOOKUP_CAP * 2)
+    : await db
+      .select({ id: clients.id, legalName: clients.legalName, dbaName: clients.dbaName })
+      .from(contactClientLinks)
+      .innerJoin(clients, eq(clients.id, contactClientLinks.clientId))
+      .where(and(eq(contactClientLinks.contactId, associationContactId), clientFilter))
+      .orderBy(asc(clients.legalName))
+      .limit(LOOKUP_CAP * 2);
 
-  // Prefix hits rank before plain contains matches, then alphabetical.
   const rank = (name: string): number => (fold(name).startsWith(fold(q)) ? 0 : 1);
   const contactHits = contactRows
-    .map((c): ContactLookupHit => ({ kind: "contact", ...c, name: contactDisplayName(c) }))
+    .map((c): ContactLookupHit => ({ kind: "contact", ...c, emails: c.emails ?? [], phones: c.phones ?? [], channels: c.contactChannelLinks ?? [], name: contactDisplayName(c) }))
     .filter((c) => c.name !== "")
     .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
     .slice(0, LOOKUP_CAP);

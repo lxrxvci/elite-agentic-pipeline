@@ -27,9 +27,8 @@ import { users } from "./users";
  * behind the intake's account dropdowns - pick from the list or "add a new
  * bank" inline (which writes a row here). Accounts keep a denormalized
  * institution text snapshot alongside the FK so legacy rows and
- * extraction-landed free text keep working. Admin management (rename,
- * merge, deactivate) is a deliberate later seam: this table is the
- * canonical list the admin screen will wrap.
+ * extraction-landed free text keep working. Owner/admin rename and merge
+ * are implemented in server/institution-merge.ts.
  */
 export const institutions = pgTable(
   "institutions",

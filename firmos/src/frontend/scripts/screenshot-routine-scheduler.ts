@@ -138,14 +138,14 @@ async function walkToScheduler(page: Page): Promise<void> {
   await advance(page, "reports");
   // A quarterly specialty report so the Quarterly bucket has a card.
   await page.getByLabel("Report name").fill("Oregon Special Report");
-  await page.getByLabel("Frequency").selectOption("quarterly");
+  await page.getByLabel("Frequency").fill("quarterly");
   await page.getByTestId("add-another").click();
   await advance(page, "preliminary-reports");
   await pick(page, "option-no", "notes");
   await advance(page, "rules");
   // A daily custom rule so all five buckets are populated.
   await page.getByLabel("Title").fill("Daily bank sweep");
-  await page.getByLabel("Schedule").selectOption("daily");
+  await page.getByLabel("Schedule").fill("daily");
   await page.getByTestId("add-another").click();
   await advance(page, "routine-scheduler");
 }

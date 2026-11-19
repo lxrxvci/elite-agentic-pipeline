@@ -156,7 +156,7 @@ export function MeetingDialog({
           </div>
           <div className="sm:col-span-2">
             <Label htmlFor="meeting-client">Client</Label>
-            <Select value={clientId} onValueChange={setClientId}>
+            <Select optionOrder="alphabetical" value={clientId} onValueChange={setClientId}>
               <SelectTrigger id="meeting-client" aria-label="Client">
                 <SelectValue />
               </SelectTrigger>

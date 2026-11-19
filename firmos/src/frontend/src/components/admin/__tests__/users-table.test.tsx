@@ -54,7 +54,7 @@ describe('UsersTable', () => {
         <UsersTable rows={[staff({ role: 'Admin' })]} managers={MANAGERS} viewerId={99} />
       </TooltipProvider>,
     )
-    expect(screen.getByRole('combobox', { name: /role for dana/i })).toHaveTextContent('admin')
+    expect(screen.getByRole('combobox', { name: /role for dana/i })).toHaveValue('admin')
   })
 
   it('sends the normalized lowercase role and edited fields on save', async () => {

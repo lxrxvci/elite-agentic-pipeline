@@ -88,23 +88,23 @@ describe('M1/B2: card_pick_never_hides_merchants (10_10 00:40:20)', () => {
     expect(patch.paymentMethods).toEqual(['card', 'check', 'Zelle'])
   })
 
-  it('a stored duplicate variant still qualifies the merchants questions', () => {
-    // A legacy intake carrying the pre-fix custom string: the predicates
-    // fold it, so the merchants card and the recon follow-up stay visible.
+  it('a stored duplicate variant never hides the merchant workflow', () => {
     const legacy = {
       engagementType: 'bookkeeping',
       paymentMethods: ['Credit / debit card'],
       merchantAccounts: [{ name: 'Square', processor: 'Square' }],
     } as unknown as WizardAnswers
-    expect(merchants.when?.(legacy)).toBe(true)
+    expect(merchants.when).toBeUndefined()
+    expect(merchants.summarize(legacy)).toBe('Square')
     expect(merchants.merchantReconcile).toBe(true)
   })
 
-  it('online payments qualify too (folded), Zelle never does', () => {
+  it('online and custom payment methods leave the merchant workflow visible', () => {
     const online = { engagementType: 'bookkeeping', paymentMethods: ['Online payments'] } as unknown as WizardAnswers
-    expect(merchants.when?.(online)).toBe(true)
+    expect(merchants.when).toBeUndefined()
+    expect(merchants.summarize(online)).toBeNull()
     const zelle = { engagementType: 'bookkeeping', paymentMethods: ['Zelle'] } as unknown as WizardAnswers
-    expect(merchants.when?.(zelle)).toBe(false)
+    expect(merchants.when).toBeUndefined()
   })
 })
 
@@ -268,24 +268,27 @@ describe('M1/B3 (flow repro): six_entered_accounts_all_reach_online_access', () 
     const addAccount = async (bankIdx: number, last4: string) => {
       fireEvent.click(qs().getByTestId('add-account'))
       fireEvent.click(qs().getByTestId(`bank-select-${bankIdx}`))
-      fireEvent.click(qs().getByTestId('bank-option-1'))
+      fireEvent.click(screen.getByTestId('bank-option-1'))
       fireEvent.change(qs().getByTestId(`last4-${bankIdx}`), { target: { value: last4 } })
       fireEvent.click(qs().getByTestId(`grant-access-${bankIdx}`))
     }
-    const advance = () => fireEvent.click(qs().getByTestId('continue'))
+    const advance = async () => {
+      fireEvent.click(qs().getByTestId('continue'))
+      await act(async () => { await Promise.resolve() })
+    }
 
     // Checking x2.
     await addAccount(0, '4411')
     await addAccount(1, '2200')
-    advance()
+    await advance()
     // Savings: skip. Credit cards x2.
-    advance()
+    await advance()
     await addAccount(0, '7007')
     await addAccount(1, '3310')
-    advance()
+    await advance()
     // Vehicles, other assets: skip.
-    advance()
-    advance()
+    await advance()
+    await advance()
     // Loans x2 (free-text name + lender write-in).
     fireEvent.click(qs().getByTestId('add-account'))
     fireEvent.change(qs().getByLabelText('Loan name 1'), { target: { value: 'Delivery van loan' } })
@@ -293,25 +296,27 @@ describe('M1/B3 (flow repro): six_entered_accounts_all_reach_online_access', () 
     fireEvent.change(qs().getByLabelText('Loan name 2'), { target: { value: 'SBA loan' } })
     fireEvent.click(qs().getByTestId('grant-access-0'))
     fireEvent.click(qs().getByTestId('grant-access-1'))
-    advance()
+    await advance()
     // Online access is now a review-only section, not a wizard checkpoint.
     const currentScreen = () => screen.queryByTestId('question-screen')?.getAttribute('data-question') ?? 'unknown'
     const inReview = () => screen.queryByTestId('review-screen') != null
     let guard = 0
-    while (!inReview() && guard < 40) {
+    while (!inReview() && guard < 50) {
       const next = qs().queryByTestId('continue') as HTMLButtonElement | null
       if (next == null || next.disabled) {
         const noPick = qs().queryByTestId('option-no')
         if (noPick) fireEvent.click(noPick)
         else {
-          const firstOption = qs().queryAllByRole('option')[0]
+          const combobox = qs().queryAllByRole('combobox')[0]
+          if (combobox) fireEvent.click(combobox)
+          const firstOption = screen.queryAllByRole('option')[0]
           if (firstOption) fireEvent.click(firstOption)
         }
       }
-      advance()
+      await advance()
       guard += 1
     }
-    expect(inReview()).toBe(true)
+    expect(inReview(), `Stopped at ${currentScreen()} after ${guard} iterations`).toBe(true)
     await waitFor(() => expect(screen.getByTestId('review-section-access')).toBeInTheDocument(), { timeout: 3000 })
     for (const name of ['Chase Checking · 4411', 'Chase Checking · 2200', 'Chase Credit card · 7007', 'Chase Credit card · 3310', 'Delivery van loan', 'SBA loan']) {
       expect(screen.getByTestId('review-section-access')).toHaveTextContent(name)
@@ -361,13 +366,11 @@ describe('M1/B3: bank_only_account_derives_a_name_and_lists', () => {
 })
 
 /**
- * M1 (B4, 10_10 00:24:30): "this is jumping me back, but then it doesn't
- * take me back to where I just was… it doesn't give me a go back to what
- * are we taking on." A qualifier-link jump pushes the origin; Back returns
- * there first, then the normal walk resumes.
+ * A qualifier-link jump establishes the current position. Previous and
+ * Continue then traverse the adjacent visible cards, never the jump origin.
  */
-describe('M1/B4: back_after_qualifier_jump_returns_to_origin', () => {
-  it('services -> factor link -> Back -> services again', async () => {
+describe('M1/B4: sequential_navigation_after_qualifier_jump', () => {
+  it('factor link -> actual previous card -> jumped card -> actual next card', async () => {
     const { render, fireEvent, screen } = await import('@testing-library/react')
     const { IntakeWizard } = await import('../wizard')
     const { flattenScreens } = await import('../registry')
@@ -378,13 +381,18 @@ describe('M1/B4: back_after_qualifier_jump_returns_to_origin', () => {
       hasPayroll: true,
       payrollProvider: 'Gusto',
       payrollFrequency: 'weekly',
+      payrollPayWeekday: 5,
       payrollSelfProcessed: true,
       serviceKeys: ['bank_feed_management', 'account_reconciliations', 'monthly_reporting_10'],
     } as unknown as WizardAnswers
-    const idx = flattenScreens(start).findIndex(
+    const screens = flattenScreens(start)
+    const idx = screens.findIndex(
       (s) => s.kind === 'question' && s.chapterId === 'services' && s.questionId === 'services',
     )
-    render(
+    const jumpAt = screens.findIndex((s) => s.kind === 'question' && s.questionId === 'payroll')
+    const previous = screens[jumpAt - 1]
+    expect(previous).toMatchObject({ questionId: 'record-deposits' })
+    const view = render(
       <IntakeWizard
         intakeId={7}
         status="in_progress"
@@ -396,34 +404,42 @@ describe('M1/B4: back_after_qualifier_jump_returns_to_origin', () => {
         clientId={null}
       />,
     )
-    const { waitFor } = await import('@testing-library/react')
-    // Transitions render the exit + enter copies together; read once settled.
+    const { act, waitFor } = await import('@testing-library/react')
     const current = async () => {
-      // Transitions keep the exit copy mounted in jsdom (no transitionend);
-      // the entering (current) screen is the LAST question-screen element.
       await waitFor(() => expect(screen.getAllByTestId('question-screen').length).toBeGreaterThan(0))
       const els = screen.getAllByTestId('question-screen')
       return els[els.length - 1]!.getAttribute('data-question')
     }
     expect(await current()).toBe('services')
 
-    // The qualifier drop-down jumps to the hero card that qualified it.
     fireEvent.click(screen.getByTestId('factor-payroll'))
-    expect(await current()).toBe('payroll-services')
+    expect(await current()).toBe('payroll')
 
-    // B4 fix: Back returns to the jump ORIGIN, not walk-previous.
-    // (Transitions mount two screen copies in jsdom - click the last one.)
     const back = () => {
       const els = screen.getAllByTestId('back-link')
       fireEvent.click(els[els.length - 1]!)
     }
+    const forward = () => {
+      const els = screen.getAllByTestId('continue')
+      fireEvent.click(els[els.length - 1]!)
+    }
     back()
-    expect(await current()).toBe('services')
+    expect(await current()).toBe(previous.kind === 'question' ? previous.questionId : null)
+    const declineDeposits = screen.getAllByTestId('option-no')
+    fireEvent.click(declineDeposits[declineDeposits.length - 1]!)
+    forward()
+    expect(await current()).toBe('payroll')
 
-    // The stack is drained: the next Back is the normal walk-previous.
+    const serviceJumps = screen.getAllByTestId('chapter-jump-services')
+    fireEvent.click(serviceJumps[serviceJumps.length - 1]!)
+    fireEvent.click(screen.getByTestId('factor-payroll'))
+    expect(await current()).toBe('payroll')
+    forward()
+    expect(await current()).toBe('bk-frequency')
     back()
-    expect(await current()).not.toBe('payroll-services')
-    expect(await current()).not.toBe('services')
+    expect(await current()).toBe('payroll')
+    await act(async () => { await Promise.resolve() })
+    view.unmount()
   })
 })
 
@@ -454,7 +470,7 @@ describe('M1/B7: custom_routine_defaults_to_closing_frequency', () => {
 
     // Second add: the cadence must be the monthly default again - not annual.
     fireEvent.click(screen.getByTestId('custom-work-open'))
-    expect(screen.getByTestId('custom-work-cadence')).toHaveValue('monthly')
+    expect(screen.getByTestId('custom-work-cadence')).toHaveAttribute('data-value', 'monthly')
     fireEvent.change(screen.getByTestId('custom-work-name'), {
       target: { value: 'Ask client for personal-card business-expense breakdown' },
     })

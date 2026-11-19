@@ -278,6 +278,7 @@ export function UsersTable({ rows, managers, viewerId }: UsersTableProps) {
                 </TableCell>
                 <TableCell className="px-3 py-2">
                   <Select
+                    optionOrder="alphabetical"
                     value={draft.managerId === '' ? 'none' : draft.managerId}
                     onValueChange={(v) => patchDraft(row.id, { managerId: v === 'none' ? '' : v })}
                   >

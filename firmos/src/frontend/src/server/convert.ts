@@ -13,7 +13,7 @@ import {
   type Month,
 } from "@firmos/domain";
 
-import { requiresOfficerPayroll, deriveRoutineTasks, type WizardAnswers } from "@/components/intake/registry";
+import { requiresOfficerPayroll, deriveRoutineTasks, closeTierDay, type WizardAnswers } from "@/components/intake/registry";
 import { db } from "@/db";
 import {
   accounts,
@@ -25,6 +25,7 @@ import {
   contacts,
   correspondence,
   institutions,
+  intakeContactLinks,
   intakeOwners,
   merchantProcessors,
   onboardingTemplateTasks,
@@ -32,7 +33,9 @@ import {
   projectTasks,
   properties,
   recurringTasks,
+  recurringTaskSopLinks,
   recurringTaskSubtasks,
+  sopTemplates,
   tasks,
 } from "@/db/schema";
 import { accountLabel, normalizeLast4 } from "@/shared/lib/account-label";
@@ -46,6 +49,7 @@ import {
 import { DEPRECIATION_FIELDS, type DepreciationBreakdown } from "@/shared/lib/proforma";
 import {
   DEFAULT_RECURRING_RULES,
+  BUSINESS_INCOME_TO_PERSONAL_REVIEW_TITLE,
   MERCHANT_RECONCILIATION_TITLE,
   NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
   OWNER_DRAWS_CONFIRMATION_TITLE,
@@ -84,6 +88,9 @@ import {
 } from "./quote";
 import { runRecurringOnce } from "./recurring";
 import { seedExpectedCredentialSlots } from "./vault";
+import { persistVendorAssignments, linkVendorSops } from "./vendor-conversion";
+import { createSopFollowUps } from "./sop-followups";
+import { vendorCustomRules } from "@/shared/lib/vendor-task-plan";
 
 /**
  * Intake -> client conversion (HANDOFF §6.8, routes_intake.py).
@@ -366,8 +373,7 @@ export async function getConversionTaskPlan(intakeId: number): Promise<Conversio
     customRecurringRules:
       (intake.customRecurringRules as IntakeCustomRuleInput[] | null) ?? form.customRecurringRules ?? [],
   };
-  const tierRaw = Number(intake.monthlyCloseTier ?? form.monthlyCloseTier);
-  const tierDay = tierRaw === 5 || tierRaw === 10 ? tierRaw : 15;
+  const tierDay = closeTierDay(answers);
   const tasks = deriveRoutineTasks(answers);
   const entries = resolveRoutineEntries(tasks, routineSchedule);
   return planRoutineSeeds(tasks, routineSchedule, { tierDay }).map((seed) => {
@@ -396,8 +402,6 @@ async function seedFromRoutineSchedule(
   staff: ConversionStaff,
   today: LocalDate,
 ): Promise<number> {
-  const tierRaw = Number(intake.monthlyCloseTier ?? form.monthlyCloseTier);
-  const tierDay = tierRaw === 5 || tierRaw === 10 ? tierRaw : 15;
   const answers: WizardAnswers = {
     ...form,
     taxStructure: intake.taxStructure,
@@ -411,6 +415,7 @@ async function seedFromRoutineSchedule(
     customRecurringRules:
       (intake.customRecurringRules as IntakeCustomRuleInput[] | null) ?? form.customRecurringRules ?? [],
   };
+  const tierDay = closeTierDay(answers);
   const seeds = planRoutineSeeds(deriveRoutineTasks(answers), routineSchedule, { tierDay });
   let created = 0;
   for (const seed of seeds) {
@@ -456,6 +461,9 @@ async function seedFromRoutineSchedule(
       await tx.insert(recurringTaskSubtasks).values(
         seed.subtasks.map((title, position) => ({ recurringTaskId: inserted.id, title, position })),
       );
+    }
+    if (seed.sopTemplateId != null) {
+      await tx.insert(recurringTaskSopLinks).values({ recurringTaskId: inserted.id, sopTemplateId: seed.sopTemplateId });
     }
     created += 1;
   }
@@ -552,6 +560,7 @@ export async function convertIntakeToClient(
     const quote = await calculateIntakeQuoteWithConfig(
       {
         ...form,
+        serviceKeys: (form.serviceKeys ?? []).filter((key) => !intake.isExistingClient || key !== "retroactive_bookkeeping"),
         reportDefinitions:
           form.reportDefinitions ??
           (intake.reportDefinitions as IntakeFormData["reportDefinitions"] | null) ??
@@ -609,7 +618,7 @@ export async function convertIntakeToClient(
         billingFrequency: intake.billingFrequency ?? "monthly",
         monthlyCloseTier: intake.monthlyCloseTier,
         bookkeepingStartDate: intake.bookkeepingStartDate,
-        bankFeedCatchupDate: intake.bankFeedCatchupDate,
+        bankFeedCatchupDate: intake.isExistingClient ? formatLocalDate(today) : intake.bankFeedCatchupDate,
         managerId,
         bookkeeperId,
         monthlyRecurringAmount: stamps.monthlyRecurringAmount,
@@ -647,6 +656,7 @@ export async function convertIntakeToClient(
       })
       .returning();
     const clientId = client.id;
+    const vendorAssignments = await persistVendorAssignments(tx, clientId, form, intakeId);
 
     // 2. Client note from the intake's internal notes.
     if (intake.internalNotes && intake.internalNotes.trim().length > 0) {
@@ -718,15 +728,18 @@ export async function convertIntakeToClient(
     // the FIRST primary_contact wins the client slot, not the last.
     let primaryLinked = false;
     let cpaLinked = false;
+    const storedContactLinks = await tx.select({ contactId: intakeContactLinks.contactId, role: intakeContactLinks.role })
+      .from(intakeContactLinks).where(eq(intakeContactLinks.intakeId, intakeId));
+    const storedContactId = (role: string) => storedContactLinks.find((link) => link.role === role)?.contactId ?? null;
     for (const c of form.contacts ?? []) {
       const displayName =
         (c.entityName?.trim() ?? "") !== ""
           ? c.entityName!.trim()
           : [c.firstName, c.lastName].filter(Boolean).join(" ").trim();
-      const linkedRow =
-        c.contactId != null
-          ? await findContactById(tx, c.contactId)
-          : await findContactByNameEmail(tx, displayName, c.email);
+      const canonicalId = c.contactId ?? storedContactId(c.isPrimary ? 'primary_contact' : c.relationshipType?.toLowerCase() === 'cpa' ? 'cpa' : 'related');
+      const linkedRow = canonicalId != null
+        ? await findContactById(tx, canonicalId)
+        : await findContactByNameEmail(tx, displayName, c.email);
       const channelLinks: import("@/shared/lib/contact-channels").ContactChannelLink[] = [
         ...(c.emailChannels ?? []).map((channel) => ({ ...channel, kind: "email" as const })),
         ...(c.phoneChannels ?? []).map((channel) => ({ ...channel, kind: "phone" as const })),
@@ -757,17 +770,30 @@ export async function convertIntakeToClient(
             })
             .returning()
         )[0];
-      if (linkedRow && channelLinks.length > 0) {
+      if (linkedRow) {
         const merged = [...(linkedRow.contactChannelLinks ?? [])];
-        const seen = new Set(merged.map((link) => `${link.kind}|${link.value}|${link.businessId ?? link.businessName ?? ""}`));
+        const linkKey = (link: (typeof channelLinks)[number], businessId: number | null, businessName: string) =>
+          `${link.kind}|${link.value.toLowerCase()}|${businessId ?? businessName.toLowerCase()}`;
+        const seen = new Set(merged.flatMap((link) => {
+          const associations = link.businesses ?? (link.businessName
+            ? [{ id: link.businessId ?? null, name: link.businessName }]
+            : [{ id: link.businessId ?? null, name: "" }]);
+          return associations.map((business) => linkKey(link, business.id, business.name));
+        }));
         for (const link of channelLinks) {
-          const key = `${link.kind}|${link.value}|${link.businessId ?? link.businessName ?? ""}`;
-          if (!seen.has(key)) {
-            merged.push(link);
+          const associations = link.businesses ?? (link.businessName
+            ? [{ id: link.businessId ?? null, name: link.businessName }]
+            : []);
+          for (const business of associations) {
+            const key = linkKey(link, business.id, business.name);
+            if (seen.has(key)) continue;
+            merged.push({ ...link, businessId: business.id, businessName: business.name, businesses: [business] });
             seen.add(key);
           }
         }
-        await tx.update(contacts).set({ contactChannelLinks: merged }).where(eq(contacts.id, contact.id));
+        const emails = [...new Set([...(linkedRow.emails ?? []), ...(c.emails ?? [])])];
+        const phones = [...new Set([...(linkedRow.phones ?? []), ...(c.phones ?? [])])];
+        await tx.update(contacts).set({ contactChannelLinks: merged, emails, phones }).where(eq(contacts.id, contact.id));
       }
       if (linkedRow) contactsLinked += 1;
       else contactsCreated += 1;
@@ -815,8 +841,8 @@ export async function convertIntakeToClient(
       const cpaEmail =
         typeof form.cpaEmail === "string" && form.cpaEmail.trim() !== "" ? form.cpaEmail.trim() : null;
       const linkedRow =
-        form.cpaContactId != null
-          ? await findContactById(tx, form.cpaContactId)
+        (form.cpaContactId ?? storedContactId('cpa')) != null
+          ? await findContactById(tx, (form.cpaContactId ?? storedContactId('cpa'))!)
           : cpaName !== ""
             ? await findContactByNameEmail(tx, cpaName, cpaEmail)
             : null;
@@ -1160,7 +1186,7 @@ export async function convertIntakeToClient(
           today,
         );
       } else {
-      const tierDay = intake.monthlyCloseTier == null ? 15 : Number(intake.monthlyCloseTier);
+      const tierDay = closeTierDay({ ...form, monthlyCloseTier: intake.monthlyCloseTier });
       const anchorMonth = intake.bookkeepingStartDate
         ? parseLocalDate(intake.bookkeepingStartDate).month
         : 1;
@@ -1245,77 +1271,36 @@ export async function convertIntakeToClient(
         recurringRulesCreated += 1;
       }
 
-      // B18 (01:04:29): a personal card used for business needs a monthly
-      // chase for the breakdown - seeded like any other default rule.
-      if (form.personalCardForBusiness === true) {
+      const behaviorRules = [
+        { enabled: form.personalCardForBusiness === true, title: PERSONAL_CARD_REMINDER_TITLE, noteKey: 'personal-card', dayOfMonth: PERSONAL_CARD_REMINDER_DAY },
+        { enabled: form.depositsNonBusiness === true, title: NON_BUSINESS_DEPOSITS_REVIEW_TITLE, noteKey: 'deposits-non-business', dayOfMonth: null },
+        { enabled: form.businessIncomeToPersonal === true, title: BUSINESS_INCOME_TO_PERSONAL_REVIEW_TITLE, noteKey: 'business-income-personal', dayOfMonth: null },
+        { enabled: form.personalOnBusiness === true, title: OWNER_DRAWS_CONFIRMATION_TITLE, noteKey: 'personal-on-business', dayOfMonth: null },
+      ]
+      for (const rule of behaviorRules) {
+        if (!rule.enabled) continue
+        const dayOfMonth = rule.dayOfMonth ?? (Number.isNaN(tierDay) ? 15 : tierDay)
         const nextRun = initialNextRun(
           {
-            schedule_type: "monthly",
-            day_of_month: PERSONAL_CARD_REMINDER_DAY,
+            schedule_type: schedule.scheduleType,
+            day_of_month: dayOfMonth,
+            anchor_month: schedule.anchorMonth,
             next_run: intake.bookkeepingStartDate ?? formatLocalDate(today),
           },
           intake.bookkeepingStartDate,
           today,
-        );
+        )
         await tx.insert(recurringTasks).values({
           clientId,
-          title: PERSONAL_CARD_REMINDER_TITLE,
-          description: behaviorNote("personal-card"),
-          scheduleType: "monthly",
-          dayOfMonth: PERSONAL_CARD_REMINDER_DAY,
+          title: rule.title,
+          description: behaviorNote(rule.noteKey),
+          scheduleType: schedule.scheduleType,
+          dayOfMonth,
+          anchorMonth: schedule.anchorMonth,
           nextRun,
           assigneeId: bookkeeperId,
-        });
-        recurringRulesCreated += 1;
-      }
-
-      // A41 (00:48:07): money behaving like owner money gets its own monthly
-      // review on the close cadence - non-business deposits are booked as
-      // owner contributions, never as income. Seeded like the B18 reminder.
-      if (form.depositsNonBusiness === true) {
-        const nextRun = initialNextRun(
-          {
-            schedule_type: "monthly",
-            day_of_month: Number.isNaN(tierDay) ? 15 : tierDay,
-            next_run: intake.bookkeepingStartDate ?? formatLocalDate(today),
-          },
-          intake.bookkeepingStartDate,
-          today,
-        );
-        await tx.insert(recurringTasks).values({
-          clientId,
-          title: NON_BUSINESS_DEPOSITS_REVIEW_TITLE,
-          description: behaviorNote("deposits-non-business"),
-          scheduleType: "monthly",
-          dayOfMonth: Number.isNaN(tierDay) ? 15 : tierDay,
-          nextRun,
-          assigneeId: bookkeeperId,
-        });
-        recurringRulesCreated += 1;
-      }
-
-      // A41 (00:48:07): personal spend on business accounts needs the owner
-      // draws confirmed with the client every month on the close cadence.
-      if (form.personalOnBusiness === true) {
-        const nextRun = initialNextRun(
-          {
-            schedule_type: "monthly",
-            day_of_month: Number.isNaN(tierDay) ? 15 : tierDay,
-            next_run: intake.bookkeepingStartDate ?? formatLocalDate(today),
-          },
-          intake.bookkeepingStartDate,
-          today,
-        );
-        await tx.insert(recurringTasks).values({
-          clientId,
-          title: OWNER_DRAWS_CONFIRMATION_TITLE,
-          description: behaviorNote("personal-on-business"),
-          scheduleType: "monthly",
-          dayOfMonth: Number.isNaN(tierDay) ? 15 : tierDay,
-          nextRun,
-          assigneeId: bookkeeperId,
-        });
-        recurringRulesCreated += 1;
+        })
+        recurringRulesCreated += 1
       }
 
       // I6 (logic map): the merchant-recon "yes" answer is more than billing -
@@ -1351,6 +1336,7 @@ export async function convertIntakeToClient(
         title: def.name,
         description: [def.dataSource, def.notes].filter((value) => value?.trim()).join("\n") || null,
         ...scheduleForCadence(def.frequency, anchorMonth),
+        dayOfMonth: tierDay,
       }));
       if (specialtyRules.length > 0) {
         recurringRulesCreated += await insertCustomRules(
@@ -1361,6 +1347,19 @@ export async function convertIntakeToClient(
           intake.bookkeepingStartDate,
           today,
         );
+        for (const definition of reportDefinitionsOf(intake)) {
+          if (definition.sopTemplateId == null) continue;
+          const [sop] = await tx.select({ id: sopTemplates.id }).from(sopTemplates).where(
+            sql`${sopTemplates.id} = ${definition.sopTemplateId} and ${sopTemplates.isActive} = true`,
+          ).limit(1);
+          if (!sop) continue;
+          const [rule] = await tx.select({ id: recurringTasks.id }).from(recurringTasks).where(
+            sql`${recurringTasks.clientId} = ${clientId} and ${recurringTasks.title} = ${definition.name}`,
+          ).limit(1);
+          if (rule) {
+            await tx.insert(recurringTaskSopLinks).values({ recurringTaskId: rule.id, sopTemplateId: sop.id });
+          }
+        }
       }
 
       const customRules =
@@ -1374,7 +1373,33 @@ export async function convertIntakeToClient(
         today,
       );
       }
+      if (vendorAssignments.length > 0 && (routineSchedule == null || Object.keys(routineSchedule).length === 0)) {
+        const vendorRules = vendorCustomRules(
+          vendorAssignments,
+          (form.recordBills ?? form.includeBillPay) === true,
+          form.payBills === true,
+          closeTierDay({ ...form, monthlyCloseTier: intake.monthlyCloseTier }),
+          intake.bookkeepingStartDate ? parseLocalDate(intake.bookkeepingStartDate).month : 1,
+        );
+        recurringRulesCreated += await insertCustomRules(
+          tx,
+          clientId,
+          vendorRules,
+          { managerId, bookkeeperId },
+          intake.bookkeepingStartDate,
+          today,
+        );
+        await linkVendorSops(
+          tx,
+          clientId,
+          vendorAssignments,
+          (form.recordBills ?? form.includeBillPay) === true,
+          form.payBills === true,
+        );
+      }
     }
+
+    await createSopFollowUps(tx, clientId, form, vendorAssignments, userId, managerId ?? null, today);
 
     // 7. Onboarding tasks from the active template rows (§19): admin-phase
     //    tasks start new; the rest start blocked until the admin phase
@@ -1423,7 +1448,7 @@ export async function convertIntakeToClient(
     //     each carrying that year's per-account monthly-grid tasks, exactly
     //     the shape createProject's catch-up generator produces.
     let catchUpProjectsCreated = 0;
-    if ((form.serviceKeys ?? []).includes("retroactive_bookkeeping") && intake.bookkeepingStartDate) {
+    if (!intake.isExistingClient && (form.serviceKeys ?? []).includes("retroactive_bookkeeping") && intake.bookkeepingStartDate) {
       const ranges = catchUpRangesFor(parseLocalDate(intake.bookkeepingStartDate), today);
       const activeAccounts = insertedAccounts.filter((a) => a.isActive);
       for (const range of ranges) {
@@ -1458,16 +1483,16 @@ export async function convertIntakeToClient(
     //    wall of instantly-overdue reports dated months in the past.
     let reportRowsCreated = 0;
     if (!isProject) {
-      const tier = ((): 5 | 10 | 15 => {
-        const n = intake.monthlyCloseTier == null ? 15 : Number(intake.monthlyCloseTier);
-        return n === 5 || n === 10 ? n : 15;
-      })();
-      const catchup = intake.bankFeedCatchupDate ? parseLocalDate(intake.bankFeedCatchupDate) : null;
+      const tier = closeTierDay({ ...form, monthlyCloseTier: intake.monthlyCloseTier });
+      const catchup = intake.isExistingClient
+        ? today
+        : intake.bankFeedCatchupDate ? parseLocalDate(intake.bankFeedCatchupDate) : null;
       const start: Month | null = intake.bookkeepingStartDate
         ? parseLocalDate(intake.bookkeepingStartDate)
         : null;
       for (const def of reportDefinitionsOf(intake)) {
         for (const month of reportMonthsForFrequency(def.frequency)) {
+          if (intake.isExistingClient && month < today.month) continue;
           if (start && (today.year < start.year || (today.year === start.year && month < start.month))) {
             continue;
           }

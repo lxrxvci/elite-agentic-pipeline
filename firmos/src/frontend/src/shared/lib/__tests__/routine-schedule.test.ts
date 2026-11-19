@@ -44,6 +44,19 @@ describe('routineEntryToRuleSchedule', () => {
     ).toBe(22)
   })
 
+  it('preserves end-of-month through sanitization, summaries, and rule conversion', async () => {
+    const entry = sanitizeRoutineEntry(
+      { bucket: 'monthly', order: 0, dayOfMonth: 0 },
+      { bucket: 'monthly', order: 0, dayOfMonth: 10 },
+    )
+    expect(entry.dayOfMonth).toBe(0)
+    expect(routineEntrySummary(entry)).toBe('End of month')
+    expect(routineEntryToRuleSchedule(entry, { tierDay: 10 }).dayOfMonth).toBe(31)
+    const { lastDayOfMonth } = await import('@firmos/domain')
+    expect(lastDayOfMonth(2024, 2)).toBe(29)
+    expect(lastDayOfMonth(2025, 2)).toBe(28)
+  })
+
   it('weekly maps the weekday plus the every-N-weeks interval', () => {
     expect(
       routineEntryToRuleSchedule({ bucket: 'weekly', order: 0, weekdays: [5], everyNWeeks: 2 }, { tierDay: 15 }),

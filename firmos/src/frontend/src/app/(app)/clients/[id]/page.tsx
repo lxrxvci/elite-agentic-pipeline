@@ -48,6 +48,8 @@ import { listClientRules } from '@/server/recurring-rules'
 import { listW9Recipients } from '@/server/w9'
 import { listClientCredentials } from '@/server/vault'
 import { ClientCredentialsPanel } from '@/components/clients/vault-panel'
+import { GustoPayrollPanel } from '@/components/clients/gusto-payroll-panel'
+import { defaultPayrollWeek } from '@/shared/lib/payroll-hours'
 
 export const metadata: Metadata = { title: 'FirmOS - Client' }
 
@@ -462,11 +464,11 @@ export default async function ClientDetailPage({
             </p>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-4 sm:gap-6">
             {/* Clock-C1: one-tap client clock on the record header. */}
             <ClientClockChip clientId={id} />
             <StaffAvatars manager={detail.manager} bookkeeper={detail.bookkeeper} />
-            <dl className="flex gap-6 text-right">
+            <dl className="flex flex-wrap gap-x-6 gap-y-2 text-right">
               <div>
                 <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Bookkeeping start
@@ -495,6 +497,18 @@ export default async function ClientDetailPage({
       <ClientHero stats={heroStats} />
 
       <ClientDetailTabs
+        payrollPanel={detail.payrollProvider?.toLowerCase().includes('gusto') ? (
+          <section aria-label="Payroll handoff" className="rounded-xl border border-border bg-card p-4">
+            <GustoPayrollPanel
+              clientId={id}
+              provider={detail.payrollProvider}
+              {...(() => {
+                const period = defaultPayrollWeek(new Date(today.year, today.month - 1, today.day))
+                return { defaultStart: period.start, defaultEnd: period.end }
+              })()}
+            />
+          </section>
+        ) : undefined}
         detail={detail}
         work={work}
         yearGrid={yearGrid}

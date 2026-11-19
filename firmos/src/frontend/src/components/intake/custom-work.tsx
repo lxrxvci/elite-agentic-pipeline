@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useImperativeHandle, useState, type Ref } from 'react'
 import { Plus } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/native-select'
+import { SearchSelect } from '@/components/ui/search-select'
 import { inputCls } from './account-screens'
 import type { OptionListValueLite, WizardAnswers } from './registry'
 
@@ -25,6 +26,12 @@ const CADENCE_OPTIONS = [
   { value: 'annual', label: 'Annual' },
 ] as const
 
+export interface CustomWorkAdderHandle {
+  hasPending: () => boolean
+  save: () => boolean
+  discard: () => void
+}
+
 export function CustomWorkAdder({
   answers,
   onApply,
@@ -32,6 +39,7 @@ export function CustomWorkAdder({
   catalog,
   industries = [],
   onTagIndustry,
+  ref,
 }: {
   answers: WizardAnswers
   onApply: (patch: Partial<WizardAnswers>) => void
@@ -44,6 +52,7 @@ export function CustomWorkAdder({
   industries?: OptionListValueLite[]
   /** L2 (H7): tagged customs join the industry suggestion engine. */
   onTagIndustry?: (industry: string, title: string) => void
+  ref?: Ref<CustomWorkAdderHandle>
 }) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
@@ -62,14 +71,22 @@ export function CustomWorkAdder({
   const [price, setPrice] = useState('')
   const [industry, setIndustry] = useState('')
 
-  const add = () => {
+  const discard = () => {
+    setOpen(false)
+    setTitle('')
+    setPrice('')
+    setIndustry('')
+    setCadence(closingCadence)
+  }
+
+  const add = (): boolean => {
     const name = title.trim()
-    if (name === '') return
+    if (name === '') return false
     const priceNum = price.trim() === '' ? null : Number(price)
-    if (priceNum != null && (!Number.isFinite(priceNum) || priceNum < 0)) return
+    if (priceNum != null && (!Number.isFinite(priceNum) || priceNum < 0)) return false
     if (cadence === 'one_time') {
       // One-time custom work is a priced line (the price is the point).
-      if (priceNum == null) return
+      if (priceNum == null) return false
       onApply({
         customItems: [
           ...(answers.customItems ?? []),
@@ -102,7 +119,14 @@ export function CustomWorkAdder({
     // add - the next custom starts clean, not on the last-used cadence.
     setCadence(closingCadence)
     setOpen(false)
+    return true
   }
+
+  useImperativeHandle(ref, () => ({
+    hasPending: () => open && (title.trim() !== '' || price.trim() !== '' || industry.trim() !== '' || cadence !== closingCadence),
+    save: add,
+    discard,
+  }))
 
   if (!open) {
     return (
@@ -121,21 +145,29 @@ export function CustomWorkAdder({
   return (
     <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="custom-work-form">
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          aria-label="Custom work name"
-          data-testid="custom-work-name"
-          className={inputCls}
+        <SearchSelect
+          ariaLabel="Custom work name"
+          options={(catalog ?? []).map((row) => ({ id: String(row.id), label: row.name, data: row }))}
+          value={(catalog ?? []).find((row) => row.name === title)?.id.toString() ?? null}
+          selectedLabel={title}
           placeholder="Quarterly sales-tax prep"
-          list="custom-work-catalog"
-          value={title}
-          autoFocus
-          onChange={(e) => setTitle(e.target.value)}
+          inputTestid="custom-work-name"
+          testidPrefix="custom-work"
+          onChange={(_id, option) => setTitle(option.data.name)}
+          onQueryChange={(query) => {
+            if (query !== '') setTitle(query)
+          }}
+          onAdd={async (name) => {
+            onAddToCatalog?.(name)
+            setTitle(name)
+          }}
+          onRename={async (option, name) => {
+            const { renameOptionValueAction } = await import('@/server/actions/option-lists')
+            const result = await renameOptionValueAction('custom_task_templates', option.data.id, name)
+            if (!result.ok) throw new Error(result.error)
+            if (title === option.data.name) setTitle(result.data.name)
+          }}
         />
-        <datalist id="custom-work-catalog">
-          {(catalog ?? []).map((v) => (
-            <option key={v.id} value={v.name} />
-          ))}
-        </datalist>
         <NativeSelect
           aria-label="Cadence"
           data-testid="custom-work-cadence"
@@ -161,6 +193,7 @@ export function CustomWorkAdder({
         {/* L2 (H7): the optional industry tag. */}
         <NativeSelect
           aria-label="Industry tag (optional)"
+          optionOrder="alphabetical"
           data-testid="custom-work-industry"
           className="h-10"
           value={industry}

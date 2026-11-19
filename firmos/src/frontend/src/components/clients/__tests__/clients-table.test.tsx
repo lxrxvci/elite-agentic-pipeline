@@ -90,7 +90,7 @@ describe('ClientsTable', () => {
     renderTable()
     await user.type(screen.getByLabelText('Search clients'), 'spruce')
     expect(screen.getAllByTestId('client-row')).toHaveLength(1)
-    expect(screen.getByText('Blue Spruce Landscaping')).toBeInTheDocument()
+    expect(within(screen.getByTestId('client-row')).getByText('Blue Spruce Landscaping')).toBeInTheDocument()
 
     await user.clear(screen.getByLabelText('Search clients'))
     await user.type(screen.getByLabelText('Search clients'), 'zzz')
@@ -99,6 +99,21 @@ describe('ClientsTable', () => {
 
     await user.click(screen.getByRole('button', { name: 'Clear filters' }))
     expect(screen.getAllByTestId('client-row')).toHaveLength(6)
+  })
+
+  it('uses the shared multi-select to filter multiple clients without hiding the result table', async () => {
+    const user = userEvent.setup()
+    renderTable()
+    await user.click(screen.getByTestId('client-search'))
+    await user.click(screen.getByRole('option', { name: 'Harborline Marine Supply' }))
+    expect(screen.getByRole('option', { name: 'Harborline Marine Supply' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getAllByTestId('client-row')).toHaveLength(1)
+    await user.click(screen.getByRole('option', { name: 'Blue Spruce Landscaping' }))
+    expect(screen.getAllByTestId('client-row')).toHaveLength(2)
+    await user.keyboard('{Escape}')
+    expect(screen.getByTestId('client-filter-selected-list')).toHaveTextContent('Harborline Marine Supply')
+    expect(screen.getByTestId('client-filter-selected-list')).toHaveTextContent('Blue Spruce Landscaping')
+    expect(screen.getByTestId('client-search')).toHaveValue('')
   })
 
   it('sorts by open work count, descending first, toggling direction', async () => {

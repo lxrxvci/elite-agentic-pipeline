@@ -111,7 +111,7 @@ test.describe.serial('portal', () => {
       mimeType: 'application/pdf',
       buffer: RECEIPT_PDF,
     })
-    await page.getByRole('button', { name: 'Upload' }).click()
+    await page.getByRole('button', { name: 'Upload', exact: true }).click()
 
     // It appears in the Receipts group with a download link.
     const download = page.getByRole('link', { name: 'Download e2e-receipt.pdf' })

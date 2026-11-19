@@ -167,7 +167,7 @@ describe('CorrespondencePanel composer', () => {
     await user.type(screen.getByTestId('compose-subject'), 'Statement question')
     await user.type(screen.getByTestId('compose-body'), 'Which statement covers August?')
 
-    // Link the waiting task via the select (Radix: open, then pick).
+    // Link the waiting task via the shared searchable select.
     await user.click(screen.getByTestId('compose-link'))
     await user.click(await screen.findByText('Collect Chase login'))
 

@@ -595,7 +595,7 @@ export function ProjectDetailView({ detail, staff, canEditBilling }: ProjectDeta
               ))}
             </SelectContent>
           </Select>
-          <Select value={assigneeId} onValueChange={setAssigneeId}>
+          <Select optionOrder="alphabetical" value={assigneeId} onValueChange={setAssigneeId}>
             <SelectTrigger className="h-8 w-36 text-xs" aria-label="Assignee">
               <SelectValue placeholder="Unassigned" />
             </SelectTrigger>

@@ -1,19 +1,6 @@
 'use client'
 
-import * as React from 'react'
-import { Check, ChevronsUpDown } from 'lucide-react'
-
-import { Button } from '@/components/ui/button'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { cn } from '@/shared/lib/utils'
+import { SearchSelect } from '@/components/ui/search-select'
 
 export interface PickerOption {
   id: number
@@ -21,12 +8,6 @@ export interface PickerOption {
   hint?: string
 }
 
-/**
- * Searchable single-select combobox (Popover + cmdk) for the quick-add
- * pickers. Keyboard-first: the filter input takes focus on open, arrows
- * move, Enter selects. `noneLabel` adds a clearing option (value null) at
- * the top - used for "Firm-wide" and "Unassigned".
- */
 export function PickerCombobox({
   id,
   label,
@@ -46,75 +27,26 @@ export function PickerCombobox({
   noneLabel?: string
   disabled?: boolean
 }) {
-  const [open, setOpen] = React.useState(false)
-  const selected = options.find((o) => o.id === value)
+  const noneId = '__none__'
+  const selectOptions = [
+    ...(noneLabel == null ? [] : [{ id: noneId, label: noneLabel, pin: 'first' as const, data: { id: 0, label: noneLabel } }]),
+    ...options.map((option) => ({ id: String(option.id), label: option.label, description: option.hint, data: option })),
+  ]
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          id={id}
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          aria-label={label}
-          disabled={disabled}
-          className="h-9 w-full justify-between text-sm font-normal"
-        >
-          <span className={cn('truncate', !selected && !value && 'text-muted-foreground')}>
-            {selected?.label ?? (value == null && noneLabel ? noneLabel : placeholder)}
-          </span>
-          <ChevronsUpDown aria-hidden className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="pointer-events-auto w-[var(--radix-popover-trigger-width)] p-0"
-        align="start"
-      >
-        <Command>
-          <CommandInput placeholder={`Search ${label.toLowerCase()}…`} className="h-9" />
-          <CommandList>
-            <CommandEmpty>No matches.</CommandEmpty>
-            <CommandGroup>
-              {noneLabel != null && (
-                <CommandItem
-                  value={noneLabel}
-                  onSelect={() => {
-                    onChange(null)
-                    setOpen(false)
-                  }}
-                >
-                  <Check
-                    aria-hidden
-                    className={cn('h-3.5 w-3.5', value == null ? 'opacity-100' : 'opacity-0')}
-                  />
-                  {noneLabel}
-                </CommandItem>
-              )}
-              {options.map((option) => (
-                <CommandItem
-                  key={option.id}
-                  value={option.label}
-                  onSelect={() => {
-                    onChange(option.id)
-                    setOpen(false)
-                  }}
-                >
-                  <Check
-                    aria-hidden
-                    className={cn('h-3.5 w-3.5', value === option.id ? 'opacity-100' : 'opacity-0')}
-                  />
-                  <span className="truncate">{option.label}</span>
-                  {option.hint != null && (
-                    <span className="ml-auto pl-2 text-[11px] text-muted-foreground">{option.hint}</span>
-                  )}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <SearchSelect
+      id={id}
+      ariaLabel={label}
+      options={selectOptions}
+      value={value == null && noneLabel != null ? noneId : value == null ? null : String(value)}
+      selectedLabel={value == null ? noneLabel : undefined}
+      placeholder={placeholder}
+      onChange={(next, option) => {
+        if (next === noneId) onChange(null)
+        else onChange(option.data.id)
+      }}
+      disabled={disabled}
+      testidPrefix={id}
+    />
   )
 }

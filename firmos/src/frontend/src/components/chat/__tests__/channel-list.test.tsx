@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -102,12 +102,13 @@ describe('ChannelList', () => {
     const user = userEvent.setup()
     renderList()
     await user.type(screen.getByLabelText('Search conversations'), 'harbor')
-    expect(screen.getByRole('option', { name: /Harborline/ })).toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: /Jorge Medina/ })).not.toBeInTheDocument()
+    const results = within(screen.getByRole('listbox', { name: 'Conversations' }))
+    expect(results.getByRole('option', { name: /Harborline/ })).toBeInTheDocument()
+    expect(results.queryByRole('option', { name: /Jorge Medina/ })).not.toBeInTheDocument()
 
     await user.clear(screen.getByLabelText('Search conversations'))
     await user.type(screen.getByLabelText('Search conversations'), 'zzzz')
-    expect(screen.getByText('No conversations match your search.')).toBeInTheDocument()
+    expect(within(screen.getByRole('listbox', { name: 'Conversations' })).getByText('No conversations match your search.')).toBeInTheDocument()
   })
 
   it('shows the no-channels empty state', () => {

@@ -24,6 +24,10 @@ async function expectQuestion(page: Page, id: string) {
 
 /** Pick an option card and Continue to the next screen (J4: nothing auto-advances). */
 async function pick(page: Page, testid: string, nextQuestion: string) {
+  if (!(await page.getByTestId(testid).isVisible().catch(() => false))) {
+    const combobox = page.getByTestId('question-screen').getByRole('combobox')
+    if (await combobox.count()) await combobox.last().click()
+  }
   await page.getByTestId(testid).click()
   await page.getByTestId('continue').click()
   await expectQuestion(page, nextQuestion)
@@ -93,8 +97,12 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   // multi/fields/repeatable screens use Continue. ──
   // I2: the call said "it's an LLC" but never the tax classification, so the
   // subclass follow-up is next; two named owners make it a partnership.
-  await pick(page, 'option-LLC', 'llc-subclass')
-  await pick(page, 'option-llc_partnership', 'dba-industry')
+  await page.getByRole('combobox', { name: 'How is the business registered?', exact: true }).click()
+  await page.getByTestId('option-LLC').click()
+  await expect(page.getByTestId('inline-followup-llc-subclass')).toBeVisible()
+  await page.getByRole('combobox', { name: 'How is the LLC taxed?', exact: true }).click()
+  await page.getByTestId('option-llc_partnership').click()
+  await advance(page, 'dba-industry')
   await advance(page, 'owners')
   // I2: the discarded owners row becomes a required re-ask - an LLC
   // partnership needs at least 2 owners to continue.
@@ -110,9 +118,11 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   await advance(page, 'has-cpa')
   await pick(page, 'option-no', 'referral')
   // Referral came from the call: the CPA option is preselected, and picking
-  // it opens the I1 who-to-thank follow-up.
-  await expect(page.getByTestId('option-CPA referral')).toHaveAttribute('aria-selected', 'true')
-  await pick(page, 'option-CPA referral', 'referral-who')
+  // it opens the I1 who-to-thank follow-up on the same card.
+  await expect(page.getByTestId('question-referral-input')).toHaveAttribute('data-value', 'CPA referral')
+  await page.getByTestId('question-referral-input').click()
+  await page.getByTestId('option-CPA referral').click()
+  await expect(page.getByTestId('inline-followup-referral-who')).toBeVisible()
   await advance(page, 'engagement')
   await pick(page, 'option-project', 'existing-client')
   await pick(page, 'option-no', 're-yes')
@@ -123,12 +133,15 @@ test('intake import: paste call notes -> review extraction -> prefilled wizard -
   await pick(page, 'option-no', 'services')
   await expect(page.getByTestId('standard-reporting')).toHaveAttribute('data-checked', 'true')
   await advance(page, 'qbo-status')
-  await pick(page, 'option-none', 'qbo-setup')
-  await pick(page, 'option-yes', 'qbo-users')
+  await page.getByTestId('question-qbo-status-input').click()
+  await page.getByTestId('option-none').click()
+  await expect(page.getByTestId('inline-followup-qbo-setup')).toBeVisible()
+  await page.getByTestId('option-no').click()
   // The edited value survived: 3 QuickBooks users.
   await expect(page.getByLabel('QuickBooks users')).toHaveValue('3')
-  await advance(page, 'qbo-tier')
-  await pick(page, 'option-recommended', 'notes')
+  await page.getByRole('combobox', { name: 'Which QuickBooks plan?', exact: true }).click()
+  await page.getByTestId('option-recommended').click()
+  await advance(page, 'notes')
   // R7: the retroactive/cleanup question is gone - the books-start date
   // qualifies retroactive work on its own. J3: notes open the chapter; the
   // routine scheduler is bookkeeping-only.

@@ -1,35 +1,90 @@
-import { ChevronDown } from 'lucide-react'
-import type { SelectHTMLAttributes } from 'react'
+'use client'
 
+import * as React from 'react'
+
+import { SearchSelect, type SearchSelectOption } from '@/components/ui/search-select'
 import { cn } from '@/shared/lib/utils'
 
-/**
- * M6 (10_10 00:02:17, meeting #5): every native <select> in the app renders
- * through this ONE shell - "are all the drop downs going to look like
- * this… it should just be uniform if there's going to be a drop down."
- * appearance-none everywhere, with the same chevron affordance, border,
- * and focus ring; the caller passes size/layout classes only (h-*, w-*,
- * text size). Type-ahead comboboxes (institution/industry/contact) stay
- * their own shared family - this is the native-select family.
- */
 export const nativeSelectCls =
   'w-full appearance-none rounded-md border border-input bg-background pl-3 pr-8 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring'
+
+type NativeOption = { value: string; label: string; disabled?: boolean }
+
+function readOptions(children: React.ReactNode): NativeOption[] {
+  const options: NativeOption[] = []
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return
+    const childProps = child.props as { children?: React.ReactNode; value?: string | number; disabled?: boolean }
+    if (child.type === React.Fragment) {
+      options.push(...readOptions(childProps.children))
+      return
+    }
+    if (child.type !== 'option') return
+    const label = React.Children.toArray(childProps.children).join('')
+    options.push({
+      value: String(childProps.value ?? label),
+      label,
+      disabled: Boolean(childProps.disabled),
+    })
+  })
+  return options
+}
 
 export function NativeSelect({
   className,
   wrapperClassName,
   children,
+  value,
+  defaultValue,
+  onChange,
+  disabled,
+  id,
+  optionOrder = 'source',
   ...props
-}: SelectHTMLAttributes<HTMLSelectElement> & { wrapperClassName?: string }) {
+}: React.SelectHTMLAttributes<HTMLSelectElement> & {
+  wrapperClassName?: string
+  optionOrder?: 'alphabetical' | 'source'
+  'data-testid'?: string
+}) {
+  const [uncontrolledValue, setUncontrolledValue] = React.useState(String(defaultValue ?? ''))
+  const currentValue = String(value ?? uncontrolledValue)
+  const options = React.useMemo(() => readOptions(children), [children])
+  const selectOptions: SearchSelectOption<NativeOption>[] = options.map((option) => ({
+    id: option.value,
+    label: option.label,
+    keywords: [option.value],
+    disabled: option.disabled,
+    pin: option.value === '' ? 'first' : undefined,
+    data: option,
+  }))
+
+  const commit = (next: string) => {
+    if (value === undefined) setUncontrolledValue(next)
+    onChange?.({
+      target: { value: next },
+      currentTarget: { value: next },
+    } as React.ChangeEvent<HTMLSelectElement>)
+  }
+
   return (
-    <span className={cn('relative block', wrapperClassName)}>
-      <select className={cn(nativeSelectCls, className)} {...props}>
-        {children}
-      </select>
-      <ChevronDown
-        aria-hidden
-        className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-      />
-    </span>
+    <SearchSelect
+      id={id}
+      ariaLabel={typeof props['aria-label'] === 'string' ? props['aria-label'] : id ?? 'Select an option'}
+      options={selectOptions}
+      optionOrder={optionOrder}
+      value={currentValue}
+      selectedLabel={currentValue}
+      onChange={commit}
+      onQueryChange={(query) => {
+        const exact = selectOptions.find((option) => option.data.value === query || option.label === query)
+        if (exact) commit(exact.data.value)
+      }}
+      placeholder={options[0]?.label ?? 'Select…'}
+      disabled={disabled}
+      inputTestid={typeof props['data-testid'] === 'string' ? props['data-testid'] : undefined}
+      testidPrefix={id ?? 'native-select'}
+      className={cn(wrapperClassName, className)}
+      inputClassName={className}
+    />
   )
 }

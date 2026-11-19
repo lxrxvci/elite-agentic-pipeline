@@ -131,7 +131,7 @@ export function NewProjectDialog({ clients, templates, defaultClientId, triggerL
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label htmlFor="project-client">Client</Label>
-            <Select value={clientId} onValueChange={setClientId}>
+            <Select optionOrder="alphabetical" value={clientId} onValueChange={setClientId}>
               <SelectTrigger id="project-client" aria-label="Client">
                 <SelectValue placeholder="Select a client" />
               </SelectTrigger>

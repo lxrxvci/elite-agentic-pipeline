@@ -380,15 +380,15 @@ async function main(): Promise<void> {
     await page.getByTestId("count-plus").click();
     await page.getByLabel("Loan name 1").fill("Loan from Wren");
     await page.getByLabel("Lender 1").fill("Wren Okafor");
-    await page.getByTestId("proof-select-0").selectOption("owner_declared");
+    await page.getByTestId("proof-select-0").fill("owner_declared");
     await wizardAdvance(page, "vehicles");
     await wizardAdvance(page, "other-assets"); // no vehicles
     // Other assets: the typed quick list (equipment, goodwill).
     await page.getByTestId("count-input").fill("2");
     await page.getByLabel("What is it? 1").fill("Espresso machine");
-    await page.getByTestId("asset-type-0").selectOption("equipment");
+    await page.getByTestId("asset-type-0").fill("equipment");
     await page.getByLabel("What is it? 2").fill("Bought the route book");
-    await page.getByTestId("asset-type-1").selectOption("goodwill");
+    await page.getByTestId("asset-type-1").fill("goodwill");
     await page.waitForTimeout(300);
     await shot(page, "intake-assets-list");
     await wizardAdvance(page, "re-yes");
@@ -414,7 +414,7 @@ async function main(): Promise<void> {
     // C10: a priced specialty report with missed past filings, committed as a
     // chip; the live quote prices it (hours x rate / flat + retro one-time).
     await page.getByLabel("Report name").fill("Oregon Special Report");
-    await page.getByLabel("Frequency").selectOption("annual");
+    await page.getByLabel("Frequency").fill("annual");
     await page.getByLabel("Data source (optional)").fill("Secretary of State portal");
     await page.getByLabel("Flat price per report (optional)").fill("200");
     await page.getByLabel("Missed past filings (optional)").fill("18");
@@ -534,7 +534,7 @@ async function main(): Promise<void> {
     // 9. E4 notes: priority + due date on the quick-note composer.
     await page.goto(`${BASE}/notes`, { waitUntil: "networkidle" });
     await page.getByLabel("New note").fill("Harborline asked about Q3 estimates - urgent follow-up.");
-    await page.getByTestId("note-priority-select").selectOption("urgent");
+    await page.getByTestId("note-priority-select").fill("urgent");
     await page.getByLabel("Due date (optional)").fill("2026-09-30");
     await page.getByRole("button", { name: "Add note" }).click();
     await page.waitForTimeout(600);

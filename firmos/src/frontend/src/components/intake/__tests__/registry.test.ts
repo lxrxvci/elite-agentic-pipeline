@@ -173,12 +173,20 @@ describe('branch map', () => {
     }
   })
 
-  it('the real-estate chapter always renders but the detail questions stay gated', () => {
+  it('the real-estate chapter progressively reveals its grouped questions on one wizard screen', () => {
     const chapter = CHAPTERS.find((c) => c.id === 'real-estate')!
     const no = visibleQuestions(chapter, { ...base, isRealEstateClient: false }).map((q) => q.id)
     expect(no).toEqual(['re-yes'])
     const yes = visibleQuestions(chapter, { ...base, isRealEstateClient: true }).map((q) => q.id)
-    expect(yes).toEqual(['re-yes', 're-count', 're-types', 're-depreciation'])
+    expect(yes).toEqual(['re-yes', 're-count'])
+    const counted = visibleQuestions(chapter, { ...base, isRealEstateClient: true, propertyCount: 2 }).map((q) => q.id)
+    expect(counted).toEqual(['re-yes', 're-count', 're-types'])
+    const typed = visibleQuestions(chapter, { ...base, isRealEstateClient: true, propertyCount: 2, propertyTypes: ['land'] }).map((q) => q.id)
+    expect(typed).toEqual(['re-yes', 're-count', 're-types', 're-depreciation'])
+    const cards = flattenScreens({ ...base, isRealEstateClient: true, propertyCount: 2, propertyTypes: ['land'] })
+    expect(cards.filter((card) => card.kind === 'question' && card.chapterId === 'real-estate')).toEqual([
+      { kind: 'question', chapterId: 'real-estate', questionId: 're-yes' },
+    ])
     // Project engagements get the chapter too.
     const project = visibleQuestions(chapter, { ...base, engagementType: 'project', isRealEstateClient: true }).map((q) => q.id)
     expect(project).toContain('re-count')
@@ -194,27 +202,80 @@ describe('branch map', () => {
 
     const withPayroll = visibleQuestions(income, { ...base, hasPayroll: true }).map((q) => q.id)
     expect(withPayroll).toContain('payroll-provider')
-    expect(withPayroll).toContain('payroll-frequency')
-    expect(withPayroll).toContain('payroll-services')
+    expect(withPayroll).not.toContain('payroll-frequency')
+    expect(withPayroll).not.toContain('payroll-services')
+    const withProvider = visibleQuestions(income, { ...base, hasPayroll: true, payrollProvider: 'Gusto' }).map((q) => q.id)
+    expect(withProvider).toContain('payroll-frequency')
+    const withFrequency = visibleQuestions(income, { ...base, hasPayroll: true, payrollProvider: 'Gusto', payrollFrequency: 'weekly' }).map((q) => q.id)
+    expect(withFrequency).toContain('payroll-pay-dates')
+    expect(withFrequency).not.toContain('payroll-services')
+    const withSchedule = visibleQuestions(income, { ...base, hasPayroll: true, payrollProvider: 'Gusto', payrollFrequency: 'weekly', payrollPayWeekday: 5 }).map((q) => q.id)
+    expect(withSchedule).toContain('payroll-services')
+    const unconfirmedMonthly = visibleQuestions(income, { ...base, hasPayroll: true, payrollProvider: 'Gusto', payrollFrequency: 'monthly' }).map((q) => q.id)
+    expect(unconfirmedMonthly).toContain('payroll-pay-dates')
+    expect(unconfirmedMonthly).toContain('payroll-services')
   })
 
-  it('merchant questions only appear when they take cards', () => {
+  it('keeps numeric, ordinal, and cadence options in their authored order', () => {
+    const expectedDays = Array.from({ length: 31 }, (_, index) => String(index + 1))
+    const expectedMonthEndDays = [...expectedDays, '0']
+    const payDates = findQuestion('income', 'payroll-pay-dates')!
+    for (const key of ['payrollPeriodStart1', 'payrollPeriodStart2']) {
+      expect(payDates.fields?.find((field) => field.key === key)?.options?.map((option) => option.value)).toEqual(expectedDays)
+    }
+    for (const key of ['payrollPeriodEnd1', 'payrollPeriodEnd2', 'payrollPayDate1', 'payrollPayDate2']) {
+      expect(payDates.fields?.find((field) => field.key === key)?.options?.map((option) => option.value)).toEqual(expectedMonthEndDays)
+    }
+    expect(findQuestion('income', 'payroll-frequency')?.options?.map((option) => option.value)).toEqual([
+      'weekly',
+      'biweekly',
+      'semi_monthly',
+      'monthly',
+    ])
+    expect(findQuestion('reporting', 'close-tier')?.options?.map((option) => option.value)).toEqual(['5', '10', '15', 'other'])
+    expect(findQuestion('income', 'payment-methods')?.optionOrder).toBe('alphabetical')
+  })
+
+  it('adds the business-income-to-personal review at the client close cadence', () => {
+    const question = findQuestion('income', 'business-income-personal')!
+    expect(question.title).toBe('Do they ever deposit business income into personal accounts?')
+    expect(question.apply(base, 'yes')).toEqual({ businessIncomeToPersonal: true })
+    expect(question.apply(base, 'no')).toEqual({ businessIncomeToPersonal: false })
+    const tasks = deriveRoutineTasks({
+      ...base,
+      businessIncomeToPersonal: true,
+      bookkeepingFrequency: 'quarterly',
+      monthlyCloseTier: '10',
+    })
+    expect(tasks.find((task) => task.key === 'business-income-personal')).toMatchObject({
+      defaultEntry: { bucket: 'quarterly', daysAfterPeriodEnd: 10 },
+    })
+    expect(question.summarize({
+      businessIncomeToPersonal: true,
+      behaviorNotes: { 'business-income-personal': 'Personal checking receives customer payments' },
+    })).toContain('Personal checking receives customer payments')
+  })
+
+  it('merchant questions stay visible and optional for every payment method', () => {
     const income = CHAPTERS.find((c) => c.id === 'income')!
     const cashOnly = visibleQuestions(income, { ...base, paymentMethods: ['cash', 'check'] }).map((q) => q.id)
-    expect(cashOnly).not.toContain('merchants')
+    expect(cashOnly).toContain('merchants')
     const cards = visibleQuestions(income, { ...base, paymentMethods: ['card'] }).map((q) => q.id)
     expect(cards).toContain('merchants')
     const merchants = findQuestion('income', 'merchants')!
     expect(merchants.merchantReconcile).toBe(true)
+    expect(merchants.required).toBe(false)
     expect(cards).not.toContain('merchant-recon') // consolidated into the processor card
   })
 
-  it('close tier only matters for monthly closes', () => {
+  it('a closing deadline is collected for every close cadence', () => {
     const reporting = CHAPTERS.find((c) => c.id === 'reporting')!
-    const monthly = visibleQuestions(reporting, { ...base, bookkeepingFrequency: 'monthly' }).map((q) => q.id)
-    expect(monthly).toContain('close-tier')
-    const quarterly = visibleQuestions(reporting, { ...base, bookkeepingFrequency: 'quarterly' }).map((q) => q.id)
-    expect(quarterly).not.toContain('close-tier')
+    for (const bookkeepingFrequency of ['monthly', 'quarterly', 'semi_annual', 'annual']) {
+      const questions = visibleQuestions(reporting, { ...base, bookkeepingFrequency }).map((q) => q.id)
+      expect(questions).toContain('close-tier')
+    }
+    const close = findQuestion('reporting', 'close-tier')!
+    expect(close.options?.find((option) => option.value === 'other')?.sub).toBe('Choose 1 to 365 days after the period ends')
   })
 
   it('the review screen is always last and never a question', () => {
@@ -227,13 +288,14 @@ describe('branch map', () => {
 describe('CPA question card (I1)', () => {
   const entity = CHAPTERS.find((c) => c.id === 'entity')!
   const hasCpa = entity.questions.find((q) => q.id === 'has-cpa')!
-  const cpaDetails = entity.questions.find((q) => q.id === 'cpa-details')!
+  const cpaDetails = hasCpa.inlineFollowup!.question
 
   it('is its own yes/no card with the detail fields gated behind yes', () => {
     expect(hasCpa.type).toBe('select')
     expect(hasCpa.apply(base, 'yes')).toEqual({ hasCpa: true })
     expect(visibleQuestions(entity, { ...base, hasCpa: false }).map((q) => q.id)).not.toContain('cpa-details')
-    expect(visibleQuestions(entity, { ...base, hasCpa: true }).map((q) => q.id)).toContain('cpa-details')
+    expect(visibleQuestions(entity, { ...base, hasCpa: true }).map((q) => q.id)).not.toContain('cpa-details')
+    expect(hasCpa.inlineFollowup?.when({ ...base, hasCpa: true })).toBe(true)
     // The detail card asks for the CPA name and email.
     expect(cpaDetails.fields?.map((f) => f.key)).toEqual(['cpaName', 'cpaEmail'])
   })
@@ -433,7 +495,7 @@ describe('owner report-recipient flag (I1, 00:27:59)', () => {
 
   it('collects phone and the receives-reports checkbox per owner', () => {
     const keys = owners.repeatable!.itemFields.map((f) => f.key)
-    expect(keys).toEqual(['name', 'email', 'phone', 'ownershipPercent', 'receivesReports'])
+    expect(keys).toEqual(['name', 'phone', 'email', 'ownershipPercent', 'receivesReports'])
     expect(owners.repeatable!.sub!({ name: 'Wren', ownershipPercent: 60, receivesReports: true })).toBe(
       '60% owner · gets reports',
     )
@@ -528,6 +590,7 @@ describe('firstUnansweredScreen (resume)', () => {
       isRealEstateClient: false,
       personalCardForBusiness: false,
       depositsNonBusiness: false,
+      businessIncomeToPersonal: false,
       personalOnBusiness: false,
       hasPayroll: false,
       bookkeepingFrequency: 'monthly',
@@ -649,9 +712,10 @@ describe('A41 money-behavior cards', () => {
 
   it('each money-behavior question is its own required yes/no card beside the personal-card one', () => {
     const ids = visibleQuestions(income, base).map((q) => q.id)
-    // The dictated order: non-business deposits, personal on business, then
-    // the existing business-on-personal-card question.
-    expect(ids.indexOf('deposits-non-business')).toBe(ids.indexOf('personal-on-business') - 1)
+    // The dictated order: non-business deposits, business income to personal,
+    // personal on business, then business expenses on a personal card.
+    expect(ids.indexOf('deposits-non-business')).toBe(ids.indexOf('business-income-personal') - 1)
+    expect(ids.indexOf('business-income-personal')).toBe(ids.indexOf('personal-on-business') - 1)
     expect(ids.indexOf('personal-on-business')).toBe(ids.indexOf('personal-card') - 1)
 
     const deposits = findQuestion('income', 'deposits-non-business')!
@@ -699,6 +763,9 @@ describe('C10 specialty report capture', () => {
       frequency: 'annual',
       dataSource: 'Client portal',
       notes: null,
+      catalogId: null,
+      isCommon: null,
+      sopTemplateId: null,
       pricingMode: null,
       estimatedHours: null,
       flatPrice: 200,
@@ -725,6 +792,9 @@ describe('C10 specialty report capture', () => {
       frequency: 'quarterly',
       dataSource: null,
       notes: null,
+      catalogId: null,
+      isCommon: null,
+      sopTemplateId: null,
       pricingMode: null,
       estimatedHours: 2,
       flatPrice: null,
@@ -826,6 +896,22 @@ describe('J3 routine scheduler (meeting #3, R1-R5, 00:39:26-00:54:05)', () => {
     // Self-processed payroll is reports-entry work, not processing.
     const self = deriveRoutineTasks({ ...base, hasPayroll: true, payrollSelfProcessed: true, payrollFrequency: 'weekly' })
     expect(self.find((t) => t.key === 'payroll-handling')!.title).toBe('Download and enter payroll reports')
+  })
+
+  it('keeps the close-cadence fallback when a payroll schedule is unconfirmed', () => {
+    const tasks = deriveRoutineTasks({
+      ...base,
+      hasPayroll: true,
+      payrollProvider: 'Gusto',
+      payrollFrequency: 'semi_monthly',
+      payrollPayDates: [],
+      payrollPeriods: [],
+      monthlyCloseTier: '10',
+    })
+    expect(tasks.find((task) => task.key === 'payroll-handling')?.defaultEntry).toMatchObject({
+      bucket: 'monthly',
+      dayOfMonth: 10,
+    })
   })
 
   it('answer-derived add-ons appear in their buckets with tier defaults', () => {
@@ -1038,11 +1124,11 @@ describe('scorp_selection_requires_payroll_provider (I2)', () => {
     expect(payroll.summarize(scorp)).toBe('Yes · officers must be on payroll')
   })
 
-  it('opens the provider/frequency/services follow-ups even with no stored payroll answer', () => {
+  it('opens the provider first for corporate payroll, even with no stored payroll answer', () => {
     const ids = visibleQuestions(income, scorp).map((q) => q.id)
     expect(ids).toContain('payroll-provider')
-    expect(ids).toContain('payroll-frequency')
-    expect(ids).toContain('payroll-services')
+    expect(ids).not.toContain('payroll-frequency')
+    expect(ids).not.toContain('payroll-services')
     expect(provider.required).toBe(true)
     expect(provider.when?.(scorp)).toBe(true)
     expect(provider.help).toBeTypeOf('function')
@@ -1067,12 +1153,13 @@ describe('scorp_selection_requires_payroll_provider (I2)', () => {
       isRealEstateClient: false,
       personalCardForBusiness: false,
       depositsNonBusiness: false,
+      businessIncomeToPersonal: false,
       personalOnBusiness: false,
       equitySetup: 'grouped',
     }
     // Payroll itself reads answered (the auto-flag); the provider does not.
     const screens = flattenScreens(a)
-    expect(screens[firstUnansweredScreen(a)]).toMatchObject({ questionId: 'payroll-provider' })
+    expect(screens[firstUnansweredScreen(a)]).toMatchObject({ questionId: 'payroll' })
   })
 
   it('llc_scorp behaves exactly like a direct S-corp pick', () => {
@@ -1707,22 +1794,16 @@ describe('financed_vehicle_routes_to_loans (J1, D5 - 00:23:23)', () => {
 describe('merchant_selection_flags_review (J1, E5 - 00:24:04)', () => {
   const merchantsQ = findQuestion('income', 'merchants')!
 
-  it('card or online payment methods make the processors question required', () => {
-    expect(merchantsQ.required).toBe(true)
-    // Visible only when a card/online method is picked (takesCards gate).
-    expect(merchantsQ.when!(base)).toBe(false)
-    expect(merchantsQ.when!({ ...base, paymentMethods: ['check'] })).toBe(false)
-    expect(merchantsQ.when!({ ...base, paymentMethods: ['card'] })).toBe(true)
-    expect(merchantsQ.when!({ ...base, paymentMethods: ['online'] })).toBe(true)
+  it('stays visible and optional regardless of payment methods', () => {
+    expect(merchantsQ.required).toBe(false)
+    expect(merchantsQ.when).toBeUndefined()
   })
 
-  it('the helper copy says online payments need a processor to reconcile', () => {
-    const help = merchantsQ.help as (a: WizardAnswers) => string
-    expect(help({ ...base, paymentMethods: ['online'] })).toContain('need a processor to reconcile')
-    expect(help({ ...base, paymentMethods: ['card'] })).toContain('processor')
+  it('uses static helper copy with an explicit no-processor path', () => {
+    expect(merchantsQ.help).toBe('List every merchant processor they use, or continue with none. Each selected processor gets its own account on the books.')
   })
 
-  it('an empty processors list reads as unanswered (resume parks here) and the review row flags nothing', () => {
+  it('an empty processors list is valid and the review row flags nothing', () => {
     const a: WizardAnswers = { ...base, paymentMethods: ['card'] }
     expect(merchantsQ.get(a)).toEqual([])
     expect(merchantsQ.summarize(a)).toBeNull()
@@ -1824,7 +1905,7 @@ describe('J2 bills split (E6)', () => {
     expect(pay.apply(base, 'yes')).toEqual({ payBills: true, recordBills: true })
 
     // Recording flipped to no retires the pay answer and both bill lists.
-    expect(record.apply(base, 'no')).toEqual({ recordBills: false, payBills: false, billPayLocations: [], recordBillVendors: [] })
+    expect(record.apply(base, 'no')).toEqual({ recordBills: false, payBills: false, billPayLocations: [], recordBillVendors: [], vendorAssignments: [] })
     expect(record.apply(base, 'yes')).toEqual({ recordBills: true })
   })
 
@@ -1883,21 +1964,27 @@ describe('J2 preliminary reports option (R6)', () => {
 describe('K5 1099 wave (D1, 09_30 00:35:49)', () => {
   const card = findQuestion('reporting', 'ten99-services')!
 
-  it('1099_mutually_exclusive: full management drops collection and vice versa', () => {
-    // The freshest pick wins when both land (the toggle appends).
-    expect(card.apply({ ...base, serviceKeys: [] }, ['1099_collection', '1099_full_management']).include1099Collection).toBe(false)
-    expect(card.apply({ ...base, serviceKeys: [] }, ['1099_collection', '1099_full_management']).include1099FullManagement).toBe(true)
-    expect(card.apply({ ...base, serviceKeys: [] }, ['1099_full_management', '1099_collection']).include1099FullManagement).toBe(false)
-    // And the keys land alone.
-    expect(card.apply({ ...base, serviceKeys: [] }, ['1099_collection', '1099_full_management']).serviceKeys).toEqual(['1099_full_management'])
+  it('offers one exclusive choice: no work, collection, or full management', () => {
+    expect(card.type).toBe('select')
+    expect(card.required).toBe(true)
+    expect(card.apply({ ...base, serviceKeys: ['bank_feed_management'] }, '1099_full_management')).toMatchObject({
+      serviceKeys: ['bank_feed_management', '1099_full_management'],
+      include1099Collection: false,
+      include1099FullManagement: true,
+    })
+    expect(card.apply({ ...base, serviceKeys: ['1099_full_management'] }, '1099_collection')).toMatchObject({
+      serviceKeys: ['1099_collection'],
+      include1099Collection: true,
+      include1099FullManagement: false,
+    })
+    expect(card.get({ ...base, serviceKeys: [] })).toBe('no')
   })
 
-  it('the count rides the card as an inline followup; deselecting both clears it', () => {
-    expect(card.followup?.key).toBe('estimated1099Count')
-    expect(card.followup?.keys).toEqual(['1099_collection', '1099_full_management'])
-    // Per-filing is no longer a chip (the count x rate prices it).
+  it('keeps an optional estimate inline and clears it when no work is selected', () => {
+    expect(card.inlineFollowup?.question.id).toBe('1099-estimate')
+    expect(card.inlineFollowup?.question.required).toBe(false)
     expect(card.options?.some((o) => o.value === '1099_per_filing')).toBe(false)
-    const cleared = card.apply({ ...base, serviceKeys: ['1099_collection'], estimated1099Count: 12 }, [])
+    const cleared = card.apply({ ...base, serviceKeys: ['1099_collection'], estimated1099Count: 12 }, 'no')
     expect(cleared.estimated1099Count).toBeNull()
   })
 

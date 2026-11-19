@@ -280,6 +280,7 @@ export function CalendarViewRoot({
               that's assigned to that task" (00:59:13). */}
           <NativeSelect
             aria-label="Filter by employee"
+            optionOrder="alphabetical"
             data-testid="calendar-assignee-filter"
             className="h-8 px-2 text-xs"
             value={assigneeId ?? ''}

@@ -57,8 +57,8 @@ describe('B4: role types are a database (09_30 00:06:12)', () => {
     )
     const roleInput = screen.getByLabelText('Role')
     expect(roleInput.tagName).toBe('INPUT')
-    const datalist = screen.getByTestId('datalist-relationshipType')
-    expect(datalist.querySelector('option[value="Office manager"]')).not.toBeNull()
+    fireEvent.click(roleInput)
+    expect(screen.getByRole('option', { name: 'Office manager' })).toBeInTheDocument()
   })
 
   it('custom_role_persists_globally: a new role persists to contact_roles on commit', async () => {

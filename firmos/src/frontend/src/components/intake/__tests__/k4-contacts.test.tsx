@@ -6,8 +6,8 @@ import { findQuestion, syncLinkedContactCopies, type QuestionDef, type WizardAns
 import { QuestionScreen } from '../screens'
 
 /**
- * K4 (meeting 09_30): editable committed cards, the contact type-ahead on
- * every person field, cross-card sync, and the processor tile grid.
+ * Editable committed cards, contact search on every person field,
+ * cross-card sync, and shared processor selection.
  */
 
 function Harness({
@@ -46,7 +46,7 @@ describe('J6: every_committed_item_editable (09_30 00:01:54)', () => {
     owners: [{ name: 'Wren Okafor', email: 'wren@x.io', ownershipPercent: 100 }],
   }
 
-  it('committed_card_expands_and_edits_inline - click, change, save', () => {
+  it('committed_card_expands_and_edits_inline - click, change, save', async () => {
     render(<Harness q={ownersQ} initial={base} />)
     // Vertical stacked cards (a list), not side-by-side chips.
     const card = screen.getByTestId('entity-chip')
@@ -59,7 +59,7 @@ describe('J6: every_committed_item_editable (09_30 00:01:54)', () => {
 
     fireEvent.change(within(form).getByLabelText('Email (optional)'), { target: { value: 'wren.okafor@x.io' } })
     fireEvent.click(screen.getByTestId('entity-edit-save-0'))
-    expect(answersNow().owners?.[0]?.email).toBe('wren.okafor@x.io')
+    await waitFor(() => expect(answersNow().owners?.[0]?.email).toBe('wren.okafor@x.io'))
     // The card collapses back to its summary.
     expect(screen.queryByTestId('entity-edit-form-0')).toBeNull()
   })
@@ -134,14 +134,14 @@ describe('B7: edit_syncs_across_cards (09_30 00:06:59)', () => {
   })
 })
 
-describe('C6/C7: processor tiles', () => {
+describe('C6/C7: processor selection', () => {
   const merchantsQ = findQuestion('income', 'merchants')!
   const processors = [
     { id: 2, name: 'Stripe' },
     { id: 1, name: 'Square' },
   ]
 
-  it('the comparison is settled (L2/B3): no tile grid - the alphabetized vertical stack is the UI', () => {
+  it('uses the shared searchable multi-select and writes the stable answer shape', () => {
     function MerchantHarness() {
       const [answers, setAnswers] = useState<WizardAnswers>({ paymentMethods: ['card'] })
       return (
@@ -160,17 +160,12 @@ describe('C6/C7: processor tiles', () => {
     }
     render(<MerchantHarness />)
 
-    // L2 (B3, 10_06 00:10:01): tiles are retired - one vertical stack where
-    // click selects without a name re-entry (the l2-processor-stack spec
-    // covers select/deselect, pencil rename, and add).
-    expect(screen.queryByTestId('processor-tiles')).toBeNull()
-    expect(screen.getByTestId('processor-stack')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('processor-toggle-Square'))
+    fireEvent.click(screen.getByTestId('processor-input'))
+    fireEvent.click(screen.getByTestId('processor-option-Square'))
     expect(answersNow().merchantAccounts).toEqual([
       expect.objectContaining({ processor: 'Square', processorId: 1, name: 'Square' }),
     ])
-    fireEvent.click(screen.getByTestId('processor-toggle-Square'))
+    fireEvent.click(screen.getByTestId('processor-option-Square'))
     expect(answersNow().merchantAccounts).toEqual([])
   })
 })

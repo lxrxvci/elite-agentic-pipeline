@@ -9,6 +9,8 @@ import type { ContactLookupResults } from '@/server/contact-lookup'
 import type { InstitutionRow } from '@/server/institutions'
 import type { MerchantProcessorRow } from '@/server/merchant-processors'
 import type { PayrollProviderRow } from '@/server/payroll-providers'
+import type { VendorCatalogRow, VendorDefaultsInput } from '@/server/vendors'
+import type { ReportCatalogRow } from '@/server/reports-catalog'
 
 import {
   CUSTOM_OTHER_VALUE,
@@ -16,6 +18,8 @@ import {
   findChapter,
   findQuestion,
   isCustomOtherPick,
+  isGroupedFlow,
+  questionGroupParent,
   visibleQuestions,
   type OptionListValueLite,
   type QuestionDef,
@@ -60,6 +64,15 @@ export function EditQuestionDialog({
   contactSearch = null,
   optionLists,
   onAddOptionListValue,
+  intakeId = 0,
+  reportCatalog = [],
+  onAddReportType,
+  onRenameReportType,
+  vendorCatalog = [],
+  sopTemplates = [],
+  onAddVendor,
+  onRenameVendor,
+  onVendorDefaults,
 }: {
   target: EditTarget | null
   answers: WizardAnswers
@@ -76,6 +89,15 @@ export function EditQuestionDialog({
   /** K3: the option lists behind optionsFromList questions (from the wizard). */
   optionLists?: Record<string, OptionListValueLite[]>
   onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
+  intakeId?: number
+  reportCatalog?: ReportCatalogRow[]
+  onAddReportType?: (name: string, isCommon: boolean, sopTemplateId: number | null) => Promise<ReportCatalogRow | null>
+  onRenameReportType?: (id: number, name: string) => Promise<ReportCatalogRow | null>
+  vendorCatalog?: VendorCatalogRow[]
+  sopTemplates?: { id: number; title: string }[]
+  onAddVendor?: (name: string, input: VendorDefaultsInput) => Promise<VendorCatalogRow | null>
+  onRenameVendor?: (id: number, name: string) => Promise<VendorCatalogRow | null>
+  onVendorDefaults?: (id: number, input: VendorDefaultsInput) => Promise<VendorCatalogRow | null>
 }) {
   // L1 (C2, 10_06 00:12:26): the note rides the in-card panel inside the
   // dialog - no overlay-level note state anymore.
@@ -89,7 +111,7 @@ export function EditQuestionDialog({
   const chapter = target ? findChapter(target.chapterId) : undefined
   // Walk list: the chapter's currently-visible questions (recomputed as
   // edits apply - a conditional card can appear or vanish mid-walk).
-  const walkQs = target?.walk && chapter ? visibleQuestions(chapter, answers) : []
+  const walkQs = target?.walk && chapter ? visibleQuestions(chapter, answers).filter((question) => !questionGroupParent(question)) : []
   const activeQid = target?.walk ? (stepQid ?? target.questionId) : target?.questionId
   const q = activeQid ? findQuestion(target!.chapterId, activeQid) : undefined
   if (!target || !q || !chapter) return null
@@ -143,7 +165,8 @@ export function EditQuestionDialog({
     onApply(patch)
     // "Other - type it" opens the inline input and yes-no-list cards reveal
     // the list editor - Continue (onAdvance) moves past those.
-    if (isCustomOtherPick(q, value) || q.type === 'yes-no-list') return
+    if (isCustomOtherPick(q, value) || q.type === 'yes-no-list' || q.type === 'vendor-setup' || q.type === 'payment-instructions' || isGroupedFlow(q)) return
+    if (q.inlineFollowup?.when({ ...answers, ...patch })) return
     advanceOrClose()
   }
 
@@ -206,6 +229,15 @@ export function EditQuestionDialog({
               contactSearch={contactSearch}
               optionLists={optionLists}
               onAddOptionListValue={onAddOptionListValue}
+              reportCatalog={reportCatalog}
+              onAddReportType={onAddReportType}
+              onRenameReportType={onRenameReportType}
+              intakeId={intakeId}
+              vendorCatalog={vendorCatalog}
+              sopTemplates={sopTemplates}
+              onAddVendor={onAddVendor}
+              onRenameVendor={onRenameVendor}
+              onVendorDefaults={onVendorDefaults}
             />
           </div>
         </DialogContent>

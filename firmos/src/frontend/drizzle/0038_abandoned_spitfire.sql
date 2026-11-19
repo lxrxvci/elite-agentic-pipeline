@@ -1,0 +1,1 @@
+ALTER TABLE "client_vendor_assignments" ADD COLUMN "sop_status" text;

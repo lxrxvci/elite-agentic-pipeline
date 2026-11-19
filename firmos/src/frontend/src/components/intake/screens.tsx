@@ -1,20 +1,14 @@
 'use client'
 
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Check, Eye, EyeOff, Info, Pencil, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { NativeSelect } from '@/components/ui/native-select'
+import { SearchSelect, type SearchSelectOption } from '@/components/ui/search-select'
+import { SopChoiceFields, type SopStatus } from './sop-choice'
 import type { ContactLookupResults } from '@/server/contact-lookup'
-import type { ContactChannel } from '@/shared/lib/contact-channels'
+import { contactChannelBusinesses, type ContactBusinessAssociation, type ContactChannel } from '@/shared/lib/contact-channels'
 import type { IntakeAccountInput } from '@/server/intake'
 import type { InstitutionRow } from '@/server/institutions'
 import type { MerchantProcessorRow } from '@/server/merchant-processors'
@@ -23,7 +17,8 @@ import { cn } from '@/shared/lib/utils'
 
 import { AccountCountScreen, inputCls, InstitutionSelect } from './account-screens'
 import { ConfirmDeleteDialog } from './confirm-delete-dialog'
-import { CustomWorkAdder } from './custom-work'
+import { CustomWorkAdder, type CustomWorkAdderHandle } from './custom-work'
+import { UnsavedDraftDialog } from './unsaved-draft-dialog'
 import { CardNavigation } from './navigation'
 import { ContactPicker, type ContactPickerHit } from './contact-picker'
 import { NoteOnYesPanel } from './note-on-yes-panel'
@@ -32,9 +27,14 @@ import { ProcessorStackScreen } from './processor-stack'
 import { dateTextDigits, dateTextToIso, isoToDateText, maskDateText } from './date-text'
 import { formatPhone, phoneDigits } from './format'
 import { RoutineSchedulerScreen } from './routine-scheduler'
+import { VendorSetupScreen } from './vendor-setup'
+import type { VendorCatalogRow, VendorDefaultsInput } from '@/server/vendors'
+import type { ReportCatalogRow } from '@/server/reports-catalog'
 import {
   CUSTOM_OTHER_VALUE,
   customAllowed,
+  groupedQuestions,
+  isGroupedFlow,
   FREQUENCY_LABELS,
   laterAddonQualified,
   mergeListOptions,
@@ -48,8 +48,8 @@ import {
 } from './registry'
 
 /**
- * Question renderers for the conversational intake wizard. One question per
- * screen; each type knows how to collect its value and calls back into the
+ * Question renderers for the conversational intake wizard. One question or
+ * grouped flow per screen; each type knows how to collect its value and calls back into the
  * wizard (which owns autosave and the branch walk). J4 harness (meeting
  * 09_30): nothing auto-advances - every screen commits via its Continue
  * button. J1: the contact type-ahead (ContactPicker) sits on the
@@ -193,49 +193,36 @@ export function MultiChips({
   options,
   values,
   onToggle,
+  onAdd,
+  optionOrder = 'source',
 }: {
   options: NonNullable<QuestionDef['options']>
   values: string[]
   onToggle: (value: string) => void
+  onAdd?: (name: string) => Promise<void>
+  optionOrder?: 'alphabetical' | 'source'
 }) {
-  // L2 (B2, 10_06 00:09:18-00:23:20): every multiple-choice list is a
-  // vertical stack - "how much easier is it to just look up and down in a
-  // straight line." Click selects, click again deselects.
   return (
-    <ul className="divide-y divide-border rounded-xl border border-border bg-card" role="group" aria-label="Choices" data-testid="multi-stack">
-      {options.map((o) => {
-        const selected = values.includes(o.value)
-        return (
-          <li key={o.value}>
-            <button
-              type="button"
-              role="checkbox"
-              aria-checked={selected}
-              data-testid={`chip-${o.value}`}
-              data-selected={selected || undefined}
-              onClick={() => onToggle(o.value)}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            >
-              <span
-                className={cn(
-                  'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
-                  selected ? 'border-firm-brand bg-firm-brand text-white' : 'border-input bg-card',
-                )}
-                aria-hidden
-              >
-                {selected && <Check className="h-3 w-3" />}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className={cn('block text-sm', selected ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-                  {o.label}
-                </span>
-                {o.sub && <span className="mt-0.5 block text-xs text-muted-foreground">{o.sub}</span>}
-              </span>
-            </button>
-          </li>
-        )
-      })}
-    </ul>
+    <SearchSelect
+      multiple
+      ariaLabel="Choices"
+      optionOrder={optionOrder}
+      options={options.map((option) => ({
+        id: option.value,
+        label: option.label,
+        description: option.sub,
+        disabled: option.disabled,
+        testidExact: `chip-${option.value}`,
+        data: option,
+      }))}
+      values={values}
+      onChange={(_next, option) => onToggle(option.data.value)}
+      onAdd={onAdd}
+      addLabel={(query) => (query ? `Add "${query}" as new` : 'Something else…')}
+      listboxTestid="multi-stack"
+      testidPrefix="multi"
+      placeholder="Search or select options…"
+    />
   )
 }
 
@@ -365,6 +352,8 @@ export function ServicesScreen({
   const [editCadence, setEditCadence] = useState('monthly')
   const [editPrice, setEditPrice] = useState('')
   const [editIndustry, setEditIndustry] = useState('')
+  const customWorkRef = useRef<CustomWorkAdderHandle>(null)
+  const [confirmCustomWork, setConfirmCustomWork] = useState(false)
 
   const openAddonEdit = (target: { kind: 'rule' | 'item'; index: number }) => {
     if (target.kind === 'rule') {
@@ -667,6 +656,7 @@ export function ServicesScreen({
                         {c.edit.kind === 'rule' && (
                           <NativeSelect
                             aria-label="Industry tag (optional)"
+                            optionOrder="alphabetical"
                             data-testid="custom-addon-edit-industry"
                             className="h-10"
                             value={editIndustry}
@@ -730,6 +720,7 @@ export function ServicesScreen({
           )}
           <div className="mt-2">
             <CustomWorkAdder
+              ref={customWorkRef}
               answers={answers}
               onApply={onCustomWork}
               onAddToCatalog={onAddCustomTaskTitle}
@@ -750,8 +741,36 @@ export function ServicesScreen({
           setPendingDelete(null)
         }}
       />
+      <UnsavedDraftDialog
+        open={confirmCustomWork}
+        itemLabel="custom work"
+        addLabel="Add"
+        onSave={() => {
+          if (!customWorkRef.current?.save()) return
+          setConfirmCustomWork(false)
+          onCommit(addonValues)
+          onAdvance()
+        }}
+        onDiscard={() => {
+          customWorkRef.current?.discard()
+          setConfirmCustomWork(false)
+          onCommit(addonValues)
+          onAdvance()
+        }}
+        onCancel={() => setConfirmCustomWork(false)}
+      />
 
-      <CardNavigation onClick={() => { onCommit(addonValues); onAdvance() }} data-testid="continue">
+      <CardNavigation
+        onClick={() => {
+          if (customWorkRef.current?.hasPending()) {
+            setConfirmCustomWork(true)
+            return
+          }
+          onCommit(addonValues)
+          onAdvance()
+        }}
+        data-testid="continue"
+      >
         Continue
       </CardNavigation>
     </div>
@@ -948,6 +967,8 @@ function FieldInput({  def,
   onAddProcessor,
   allValues,
   optionLists,
+  onAddOptionListValue,
+  reportTools,
 }: {
   def: FieldDef
   value: unknown
@@ -959,32 +980,112 @@ function FieldInput({  def,
   allValues?: Record<string, unknown>
   /** K3: option_list_values rows behind optionsFromList text fields. */
   optionLists?: Record<string, OptionListValueLite[]>
+  onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
+  reportTools?: ReportTools
 }) {
   // L5 (J1, 10_06 01:07:49): masked fields (the EIN) type password-style
   // with a hide/unhide toggle - the stored value stays raw text.
   if (def.kind === 'text' && def.masked) {
     return <MaskedTextInput def={def} value={value} onChange={onChange} />
   }
-  // K3 (DB1/J1): a list-backed text field type-aheads the list; its value
-  // persists to the list when the screen commits (FieldsScreen/Repeatable).
-  if (def.kind === 'text' && def.optionsFromList) {    const listId = `dl-${def.key}`
+  if (def.kind === 'select' && def.optionsFromList === 'sop_templates') {
     return (
-      <>
-        <input
-          aria-label={def.label}
-          className={inputCls}
-          type="text"
-          list={listId}
-          placeholder={def.placeholder}
-          value={value == null ? '' : String(value)}
-          onChange={(e) => onChange(def.key, e.target.value)}
-        />
-        <datalist id={listId} data-testid={`datalist-${def.key}`}>
-          {(optionLists?.[def.optionsFromList] ?? []).map((v) => (
-            <option key={v.id} value={v.name} />
-          ))}
-        </datalist>
-      </>
+      <SopChoiceFields
+        label="SOP"
+        status={(allValues?.sopStatus as SopStatus | null | undefined) ?? (value ? 'existing' : null)}
+        sopTemplateId={typeof value === 'number' ? value : null}
+        sops={reportTools?.sops ?? []}
+        onChange={(patch) => {
+          onChange('sopStatus', patch.sopStatus)
+          onChange(def.key, patch.sopTemplateId)
+        }}
+      />
+    )
+  }
+  if (def.kind === 'text' && def.optionsFromList === 'report_types' && reportTools) {
+    const currentText = value == null ? '' : String(value)
+    const selected = reportTools.catalog.find((row) => row.name === currentText)
+    return (
+      <SearchSelect
+        ariaLabel={def.label}
+        options={reportTools.catalog.map((row) => ({
+          id: String(row.id),
+          label: row.name,
+          description: row.isCommon ? 'Shared report' : 'This client only',
+          data: row,
+        }))}
+        value={selected == null ? null : String(selected.id)}
+        selectedLabel={currentText}
+        placeholder={def.placeholder}
+        inputTestid={`datalist-${def.key}`}
+        testidPrefix={def.key}
+        onChange={(_id, option) => {
+          onChange('catalogId', option.data.id)
+          onChange('isCommon', option.data.isCommon)
+          onChange('sopTemplateId', option.data.sopTemplateId)
+          onChange('sopStatus', option.data.sopTemplateId != null ? 'existing' : null)
+          onChange(def.key, option.data.name)
+        }}
+        onQueryChange={(query) => {
+          if (query === '') return
+          onChange(def.key, query)
+          onChange('catalogId', null)
+          onChange('isCommon', false)
+          onChange('sopTemplateId', null)
+        }}
+        onAdd={async (name) => {
+          const row = await reportTools.onAdd(name, false, null)
+          if (!row) throw new Error('Could not add the report type - try again.')
+          onChange('catalogId', row.id)
+          onChange('isCommon', row.isCommon)
+          onChange('sopTemplateId', row.sopTemplateId)
+          onChange('sopStatus', row.sopTemplateId != null ? 'existing' : null)
+          onChange(def.key, row.name)
+        }}
+        onRename={async (option, name) => {
+          const row = await reportTools.onRename(option.data.id, name)
+          if (!row) throw new Error('Could not rename the report type - try again.')
+          onChange('catalogId', row.id)
+          onChange('isCommon', row.isCommon)
+          onChange('sopTemplateId', row.sopTemplateId)
+          onChange('sopStatus', row.sopTemplateId != null ? 'existing' : null)
+          onChange(def.key, row.name)
+        }}
+      />
+    )
+  }
+  if (def.kind === 'text' && def.optionsFromList) {
+    const listKey = def.optionsFromList
+    const rows = optionLists?.[listKey] ?? []
+    const currentText = value == null ? '' : String(value)
+    const selected = rows.find((row) => row.name === currentText)
+    return (
+      <SearchSelect
+        ariaLabel={def.label}
+        options={rows.map((row) => ({ id: String(row.id), label: row.name, data: row }))}
+        value={selected == null ? null : String(selected.id)}
+        selectedLabel={currentText}
+        placeholder={def.placeholder}
+        inputTestid={`datalist-${def.key}`}
+        testidPrefix={def.key}
+        onChange={(_id, option) => onChange(def.key, option.data.name)}
+        onQueryChange={(query) => {
+          if (query !== '') onChange(def.key, query)
+        }}
+        onAdd={onAddOptionListValue
+          ? async (name) => {
+              const row = await onAddOptionListValue(listKey, name)
+              if (!row) throw new Error('Could not add the option - try again.')
+              onChange(def.key, row.name)
+            }
+          : undefined}
+        onRename={async (option, name) => {
+          const { renameOptionValueAction } = await import('@/server/actions/option-lists')
+          const result = await renameOptionValueAction(listKey, option.data.id, name)
+          if (!result.ok) throw new Error(result.error)
+          onChange(def.key, result.data.name)
+        }}
+      />
     )
   }
   if (def.kind === 'processor') {
@@ -1044,6 +1145,7 @@ function FieldInput({  def,
       <NativeSelect
         aria-label={def.label}
         className="h-10"
+        optionOrder={def.optionOrder ?? 'source'}
         value={String(value ?? '')}
         onChange={(e) => onChange(def.key, e.target.value || undefined)}
       >
@@ -1103,6 +1205,8 @@ function FieldGrid({
   processors,
   onAddProcessor,
   optionLists,
+  onAddOptionListValue,
+  reportTools,
 }: {
   fields: FieldDef[]
   value: Record<string, unknown>
@@ -1111,6 +1215,8 @@ function FieldGrid({
   processors?: MerchantProcessorRow[]
   onAddProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
   optionLists?: Record<string, OptionListValueLite[]>
+  onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
+  reportTools?: ReportTools
 }) {
   const visible = fields.filter((f) => !f.visibleIf || f.visibleIf(value))
   // M7 (10_10 00:20:21): consecutive rowGroup fields fold into one full-width
@@ -1132,6 +1238,8 @@ function FieldGrid({
       onAddProcessor={onAddProcessor}
       allValues={value}
       optionLists={optionLists}
+      onAddOptionListValue={onAddOptionListValue}
+      reportTools={reportTools}
     />
   )
   return (
@@ -1186,7 +1294,64 @@ function validateFields(fields: FieldDef[], value: Record<string, unknown>): str
   return null
 }
 
+function inlineQuestionError(q: QuestionDef, answers: WizardAnswers): string | null {
+  if (q.type === 'fields') {
+    const value = q.fieldsValue?.(answers) ?? Object.fromEntries((q.fields ?? []).map((field) => [field.key, answers[field.key]]))
+    const fields = q.required
+      ? (q.fields ?? [])
+      : (q.fields ?? []).filter((field) => {
+          const input = value[field.key]
+          return input != null && String(input).trim() !== ''
+        })
+    return validateFields(fields, value)
+  }
+  if (q.type === 'multi') {
+    const values = (q.get(answers) as string[] | undefined) ?? []
+    if (q.payrollServices && answers.payrollSelfProcessed !== true && !(answers.serviceKeys ?? []).includes('process_payroll')) {
+      return 'Pick who runs payroll first - their own, or us.'
+    }
+    if (q.required && values.length === 0) return 'Pick at least one before continuing.'
+    const followup = q.followup
+    if (followup && followup.keys.some((key) => values.includes(key)) &&
+        (followup.when?.(answers) ?? true) && followup.valueKind === 'boolean' && answers[followup.key] == null) {
+      return 'Answer the follow-up question before continuing.'
+    }
+  }
+  if (q.type === 'select' && q.required) {
+    const value = q.get(answers)
+    if (value == null || value === '') return 'Choose an answer before continuing.'
+  }
+  if (q.type === 'repeatable') {
+    const items = (q.get(answers) as Array<Record<string, unknown>> | undefined) ?? []
+    if (q.required && items.length === 0) {
+      return q.repeatable?.processorStack ? 'Pick at least one processor, or go back.' : 'Add at least one before continuing.'
+    }
+    const itemError = q.validateItems?.(items, answers)
+    if (itemError) return itemError
+    if (q.merchantReconcile && items.length > 0 && answers.includeMerchantReconciliation == null) {
+      return 'Choose whether we should reconcile the merchant accounts.'
+    }
+  }
+  if (q.type === 'vendor-setup' || q.type === 'payment-instructions') {
+    const current = q.get(answers)
+    if (q.required && current == null) return 'Choose an answer before continuing.'
+    const assignments: Array<{ paymentMethod?: string | null }> = answers.vendorAssignments ?? (answers.recordBillVendors ?? []).map(() => ({}))
+    if (current === 'yes' && assignments.length === 0) return 'Select a vendor or add a one-off vendor before continuing.'
+    if (q.type === 'payment-instructions' && current === 'yes' && assignments.some((assignment) => !assignment.paymentMethod)) {
+      return 'Choose a payment method for every selected vendor.'
+    }
+  }
+  return null
+}
+
 // ── Repeatable mini-entity loop ───────────────────────────────────────────
+
+interface ReportTools {
+  catalog: ReportCatalogRow[]
+  sops: { id: number; title: string }[]
+  onAdd: (name: string, isCommon: boolean, sopTemplateId: number | null) => Promise<ReportCatalogRow | null>
+  onRename: (id: number, name: string) => Promise<ReportCatalogRow | null>
+}
 
 export function RepeatableScreen({
   q,
@@ -1204,6 +1369,7 @@ export function RepeatableScreen({
   onAddProcessor,
   optionLists,
   onAddOptionListValue,
+  reportTools,
 }: {
   q: QuestionDef
   items: Array<Record<string, unknown>>
@@ -1222,16 +1388,17 @@ export function RepeatableScreen({
   onCommit: (items: Array<Record<string, unknown>>) => void
   onAdvance: () => void
   /** J1 (C5): the type-ahead lookup behind `contactPicker` repeatables. */
-  contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
+  contactSearch?: ((query: string, associationContactId?: number | null) => Promise<ContactLookupResults | null>) | null
   /** J1 (E4): the merchant_processors list behind `processor` item fields. */
   processors?: MerchantProcessorRow[]
   onAddProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
   /** K3: option_list_values rows + the persist write for list-backed fields. */
   optionLists?: Record<string, OptionListValueLite[]>
   onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
+  reportTools?: ReportTools
 }) {
   const rep = q.repeatable!
-  const [draft, setDraft] = useState<Record<string, unknown>>({})
+  const [draft, setDraft] = useState<Record<string, unknown>>(q.id === 'reports' ? { isCommon: false } : {})
   const [error, setError] = useState<string | null>(null)
   // K1 (09_30 00:38:21): Continue with a filled-but-unadded draft asks
   // "save this before proceeding?" instead of silently committing it (the
@@ -1247,7 +1414,10 @@ export function RepeatableScreen({
   const [pendingDelete, setPendingDelete] = useState<{ idx: number; name: string } | null>(null)
 
   const draftValid = rep.itemValid(draft)
-  const draftTouched = Object.values(draft).some((v) => v != null && v !== '')
+  const draftTouched = Object.entries(draft).some(([key, value]) => key === 'isCommon' ? value === true : value != null && value !== '')
+  const editDirty = editingIndex != null && JSON.stringify(editDraft) !== JSON.stringify(q.id === 'reports'
+    ? { ...items[editingIndex], isCommon: items[editingIndex].isCommon !== false }
+    : items[editingIndex])
   const capped = maxItems != null && items.length >= maxItems
 
   const removeAt = (idx: number) => {
@@ -1255,84 +1425,122 @@ export function RepeatableScreen({
     onCommit(items.filter((_, i) => i !== idx))
   }
 
+  const [closeOnly, setCloseOnly] = useState(false)
+  const normalizedItem = (item: Record<string, unknown>) => q.id === 'reports'
+    ? { ...item, isCommon: item.isCommon !== false }
+    : item
+
   const openEdit = (idx: number) => {
     setError(null)
     setEditingIndex((current) => {
-      if (current === idx) return null
-      setEditDraft({ ...items[idx] })
+      const dirty = current != null && JSON.stringify(editDraft) !== JSON.stringify(normalizedItem(items[current]))
+      if (current != null && current !== idx && dirty) {
+        setError('Save or discard the current edit before opening another item.')
+        return current
+      }
+      if (current === idx) {
+        if (dirty) {
+          setCloseOnly(true)
+          setConfirmDraftSave(true)
+        } else {
+          setEditingIndex(null)
+        }
+        return current
+      }
+      setCloseOnly(false)
+      setEditDraft(normalizedItem(items[idx]))
       return idx
     })
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (editingIndex == null) return
     const err = validateFields(rep.itemFields, editDraft)
     if (err) {
       setError(err)
       return
     }
-    persistItemLists(editDraft)
-    setError(null)
-    onCommit(items.map((item, i) => (i === editingIndex ? { ...editDraft } : item)))
-    setEditingIndex(null)
-  }
-
-  // K3 (J2): list-backed item fields persist when a draft commits.
-  const persistItemLists = (item: Record<string, unknown>) => {
-    if (!onAddOptionListValue) return
-    for (const f of rep.itemFields) {
-      const v = item[f.key]
-      if (f.optionsFromList && typeof v === 'string' && v.trim() !== '') {
-        void onAddOptionListValue(f.optionsFromList, v.trim())
-      }
+    try {
+      const saved = await persistItemLists(editDraft)
+      setError(null)
+      onCommit(items.map((item, i) => (i === editingIndex ? saved : item)))
+      setEditingIndex(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save this item - try again.')
     }
   }
 
-  const addAnother = () => {
+  const persistItemLists = async (item: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const next = { ...item }
+    for (const f of rep.itemFields) {
+      const v = next[f.key]
+      if (!f.optionsFromList || typeof v !== 'string' || v.trim() === '') continue
+      if (f.optionsFromList === 'report_types' && reportTools) {
+        const row = await reportTools.onAdd(v.trim(), next.isCommon !== false, (next.sopTemplateId as number | null | undefined) ?? null)
+        if (!row) throw new Error('Could not save the report type - try again.')
+        next.catalogId = row.id
+        next.isCommon = row.isCommon
+      } else if (onAddOptionListValue) {
+        await onAddOptionListValue(f.optionsFromList, v.trim())
+      }
+    }
+    return next
+  }
+
+  const addAnother = async () => {
     if (capped) return
     const err = validateFields(rep.itemFields, draft)
     if (err || !draftValid) {
       setError(err ?? 'A little more detail first.')
       return
     }
-    // B1 (09_30 00:04:41): the add-time guard (ownership cap) names the
-    // remaining available and refuses the add - not just a Continue block.
     const addError = validateAddItem?.(items, draft) ?? null
     if (addError) {
       setError(addError)
       return
     }
-    setError(null)
-    persistItemLists(draft)
-    onCommit([...items, draft])
-    setDraft({})
+    try {
+      const saved = await persistItemLists(draft)
+      setError(null)
+      onCommit([...items, saved])
+      setDraft(q.id === 'reports' ? { isCommon: false } : {})
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not add this item - try again.')
+    }
   }
 
-  const proceed = (next: Array<Record<string, unknown>>) => {
+  const proceed = (next: Array<Record<string, unknown>>): boolean => {
     if (next.length === 0 && q.required) {
       setError('Add at least one, or go back.')
-      return
+      return false
     }
-    // I2: the entity's count guard runs last, over the about-to-commit list.
     const countError = validateItems?.(next) ?? null
     if (countError) {
       setError(countError)
-      return
+      return false
     }
     setError(null)
     onCommit(next)
     onAdvance()
+    return true
   }
 
   const finish = () => {
-    // A capped list can't grow - the draft form is hidden then, so a draft
-    // can only be pending while under the cap.
     if (draftTouched && !capped) {
       const err = validateFields(rep.itemFields, draft)
       if (err || !draftValid) {
         setError(err ?? 'A little more detail first, or clear the form to skip.')
         return
       }
+    }
+    if (editDirty) {
+      const err = validateFields(rep.itemFields, editDraft)
+      if (err) {
+        setError(err)
+        return
+      }
+    }
+    if ((draftTouched && !capped) || editDirty) {
       setError(null)
       setConfirmDraftSave(true)
       return
@@ -1340,11 +1548,29 @@ export function RepeatableScreen({
     proceed(items)
   }
 
-  const finishWithDraft = (saveDraft: boolean) => {
-    setConfirmDraftSave(false)
-    if (saveDraft) persistItemLists(draft)
-    proceed(saveDraft ? [...items, draft] : items)
-    if (saveDraft) setDraft({})
+  const finishWithDraft = async (saveDraft: boolean) => {
+    try {
+      let next = items
+      if (saveDraft && editingIndex != null) {
+        const saved = await persistItemLists(editDraft)
+        next = next.map((item, index) => index === editingIndex ? saved : item)
+      }
+      if (saveDraft && draftTouched) {
+        next = [...next, await persistItemLists(draft)]
+      }
+      if (closeOnly) {
+        onCommit(next)
+        setEditingIndex(null)
+      } else if (!proceed(next)) {
+        return
+      }
+      setDraft(q.id === 'reports' ? { isCommon: false } : {})
+      setEditingIndex(null)
+      setCloseOnly(false)
+      setConfirmDraftSave(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save this item - try again.')
+    }
   }
 
   return (
@@ -1392,6 +1618,8 @@ export function RepeatableScreen({
                       processors={processors}
                       onAddProcessor={onAddProcessor}
                       optionLists={optionLists}
+                      onAddOptionListValue={onAddOptionListValue}
+                      reportTools={reportTools}
                     />
                     <div className="mt-3 flex items-center gap-2">
                       <Button type="button" variant="action" size="sm" onClick={saveEdit} data-testid={`entity-edit-save-${i}`}>
@@ -1483,6 +1711,8 @@ export function RepeatableScreen({
               processors={processors}
               onAddProcessor={onAddProcessor}
               optionLists={optionLists}
+              onAddOptionListValue={onAddOptionListValue}
+              reportTools={reportTools}
             />
             <div className="mt-3">
               <Button
@@ -1516,42 +1746,14 @@ export function RepeatableScreen({
       {/* K1 (09_30 00:38:21): the unsaved-work guardrail - "Do you want to
           save this contact before moving to the next page?" Never auto-add,
           never silently drop. */}
-      <Dialog open={confirmDraftSave} onOpenChange={setConfirmDraftSave}>
-        <DialogContent data-testid="unsaved-draft-dialog">
-          <DialogHeader>
-            <DialogTitle>Save this before continuing?</DialogTitle>
-            <DialogDescription>
-              You started adding {rep.summarize(draft) || 'an item'} but never clicked &quot;{rep.addLabel}&quot;.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="flex-col gap-2 sm:flex-row">
-            <Button
-              type="button"
-              variant="action"
-              onClick={() => finishWithDraft(true)}
-              data-testid="unsaved-draft-save"
-            >
-              Save and continue
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => finishWithDraft(false)}
-              data-testid="unsaved-draft-discard"
-            >
-              Don&apos;t save
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setConfirmDraftSave(false)}
-              data-testid="unsaved-draft-back"
-            >
-              Go back
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <UnsavedDraftDialog
+        open={confirmDraftSave}
+        itemLabel={editingIndex != null ? rep.summarize(editDraft) : rep.summarize(draft) || 'an item'}
+        addLabel={editingIndex != null ? 'Save' : rep.addLabel}
+        onSave={() => finishWithDraft(true)}
+        onDiscard={() => finishWithDraft(false)}
+        onCancel={() => setConfirmDraftSave(false)}
+      />
 
       {/* L1 (H4, 10_06 00:31:41): the committed-card X confirms first -
           "anytime you're going to delete something, there should be a
@@ -1589,11 +1791,82 @@ export function RepeatableScreen({
  * scalar. Each channel can now select its associated business from the client
  * database; the scalar email/phone stays primary and legacy strings migrate.
  */
+function BusinessAssociations({
+  channel,
+  label,
+  contactId,
+  contactSearch,
+  testidPrefix,
+  onChange,
+}: {
+  channel: ContactChannel
+  label: string
+  contactId?: number | null
+  contactSearch?: ((query: string, associationContactId?: number | null) => Promise<ContactLookupResults | null>) | null
+  testidPrefix: string
+  onChange: (businesses: ContactBusinessAssociation[]) => void
+}) {
+  const selected = contactChannelBusinesses(channel)
+  const businessKey = (business: ContactBusinessAssociation) => business.id == null
+    ? `name:${business.name.toLowerCase()}`
+    : `id:${business.id}`
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+  const requestRef = useRef(0)
+  const [options, setOptions] = useState<SearchSelectOption<ContactBusinessAssociation>[]>([])
+  const [loading, setLoading] = useState(false)
+  const load = useCallback(async (query: string) => {
+    const request = ++requestRef.current
+    setLoading(true)
+    const results = await contactSearch?.(query, contactId ?? null) ?? null
+    if (request !== requestRef.current) return
+    setLoading(false)
+    const selectedOptions = selectedRef.current.map((business) => ({
+      id: businessKey(business), label: business.name, data: business,
+    }))
+    const remoteOptions = (results?.clients ?? []).map((client) => ({
+      id: `id:${client.id}`, label: client.name, data: { id: client.id, name: client.name },
+    }))
+    setOptions([...selectedOptions, ...remoteOptions].filter((option, index, all) =>
+      all.findIndex((candidate) => candidate.id === option.id) === index,
+    ))
+  }, [contactSearch, contactId])
+  useEffect(() => {
+    void load('')
+    return () => { requestRef.current += 1 }
+  }, [load])
+  const available = [...selected, ...options.map((option) => option.data)]
+
+  return (
+    <div className="mt-2 min-w-0">
+      <SearchSelect
+        multiple
+        ariaLabel={label}
+        options={options}
+        values={selected.map(businessKey)}
+        onChange={(ids) => onChange(ids.flatMap((id) => {
+          const business = available.find((candidate) => businessKey(candidate) === id)
+          return business ? [business] : []
+        }))}
+        onSearch={load}
+        loading={loading}
+        placeholder="Associated businesses…"
+        inputTestid={`${testidPrefix}-input`}
+        testidPrefix={testidPrefix}
+      />
+      {contactId == null && (
+        <p className="mt-1.5 text-xs text-muted-foreground">Add the business through its client record, then resume this intake to associate it.</p>
+      )}
+    </div>
+  )
+}
+
 function ChannelList({
   label,
   kind,
   values,
   currentBusinessName,
+  contactId,
   contactSearch,
   testidPrefix,
   onChange,
@@ -1602,7 +1875,8 @@ function ChannelList({
   kind: 'email' | 'tel'
   values: Array<ContactChannel | string>
   currentBusinessName: string
-  contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
+  contactId?: number | null
+  contactSearch?: ((query: string, associationContactId?: number | null) => Promise<ContactLookupResults | null>) | null
   testidPrefix: string
   onChange: (next: ContactChannel[]) => void
 }) {
@@ -1638,35 +1912,14 @@ function ChannelList({
                 <X className="h-3.5 w-3.5" aria-hidden />
               </button>
             </div>
-            <div className="mt-2 flex items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <ContactPicker
-                  search={(query) => contactSearch?.(query) ?? Promise.resolve(null)}
-                  includeContacts={false}
-                  includeClients
-                  onPick={(hit) => {
-                    if (hit.kind !== 'client') return
-                    update(i, { businessId: hit.id, businessName: hit.name })
-                  }}
-                  placeholder={channel.businessName ? 'Change associated business…' : 'Associate a business…'}
-                  ariaLabel={`Associated business for ${label} ${i + 1}`}
-                  testidPrefix={`${testidPrefix}-business-picker-${i}`}
-                />
-              </div>
-              {channel.businessName && (
-                <span className="inline-flex max-w-40 items-center gap-1 truncate rounded bg-accent px-2 py-1 text-[11px] text-accent-foreground" data-testid={`${testidPrefix}-business-${i}`}>
-                  <span className="truncate">{channel.businessName}</span>
-                  <button
-                    type="button"
-                    aria-label={`Clear business for ${label} ${i + 1}`}
-                    onClick={() => update(i, { businessId: null, businessName: null })}
-                    className="rounded focus-visible:outline-2 focus-visible:outline-ring"
-                  >
-                    <X className="h-3 w-3" aria-hidden />
-                  </button>
-                </span>
-              )}
-            </div>
+            <BusinessAssociations
+              channel={channel}
+              label={`Associated businesses for ${label} ${i + 1}`}
+              contactId={contactId}
+              contactSearch={contactSearch}
+              testidPrefix={`${testidPrefix}-business-picker-${i}`}
+              onChange={(businesses) => update(i, { businessId: null, businessName: null, businesses })}
+            />
           </li>
         ))}
       </ul>
@@ -1691,12 +1944,14 @@ function FieldsScreen({
   contactSearch = null,
   optionLists,
   onAddOptionListValue,
+  showNavigation = true,
 }: {
   q: QuestionDef
   answers: WizardAnswers
   onApply: (patch: Partial<WizardAnswers>) => void
   onAdvance: () => void
-  contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
+  showNavigation?: boolean
+  contactSearch?: ((query: string, associationContactId?: number | null) => Promise<ContactLookupResults | null>) | null
   optionLists?: Record<string, OptionListValueLite[]>
   onAddOptionListValue?: (listKey: string, name: string) => Promise<OptionListValueLite | null>
 }) {
@@ -1802,28 +2057,24 @@ function FieldsScreen({
         fields={fields}
         value={value}
         optionLists={optionLists}
+        onAddOptionListValue={onAddOptionListValue}
         onChange={(k, v) => {
           // B1: the typed text renders as-is from here on, even when the
           // question's apply() normalizes it (trimmed whitespace, split
           // names) - the derived value can never eat a keystroke.
           setTyped((t) => ({ ...t, [k]: v }))
           const next = { ...value, [k]: v }
-          // J1: typing over the name drops the link - the picker is the
-          // only path that sets it, manual edits are the create-new path.
-          if (picker && k === picker.nameKey) {
-            next[picker.linkKey] = null
-            if (picker.clientLinkKey) next[picker.clientLinkKey] = null
-          }
           onApply(q.apply(answers, next))
         }}
       />
       {q.contactChannels === true && (
-        <div className="grid gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5 sm:grid-cols-2" data-testid="contact-channels">
+        <div className="space-y-5" data-testid="contact-channels">
           <ChannelList
             label="Other emails (optional)"
             kind="email"
             values={Array.isArray(value.contactEmailsExtra) ? (value.contactEmailsExtra as Array<ContactChannel | string>) : []}
             currentBusinessName={answers.legalName ?? ''}
+            contactId={linkedContactId}
             contactSearch={contactSearch}
             testidPrefix="channel-email"
             onChange={(next) => {
@@ -1836,6 +2087,7 @@ function FieldsScreen({
             kind="tel"
             values={Array.isArray(value.contactPhonesExtra) ? (value.contactPhonesExtra as Array<ContactChannel | string>) : []}
             currentBusinessName={answers.legalName ?? ''}
+            contactId={linkedContactId}
             contactSearch={contactSearch}
             testidPrefix="channel-phone"
             onChange={(next) => {
@@ -1850,9 +2102,11 @@ function FieldsScreen({
           {error}
         </p>
       )}
-      <CardNavigation type="submit" data-testid="continue">
-        {q.required || hasAny ? 'Continue' : 'Skip for now'}
-      </CardNavigation>
+      {showNavigation && (
+        <CardNavigation type="submit" data-testid="continue">
+          {q.required || hasAny ? 'Continue' : 'Skip for now'}
+        </CardNavigation>
+      )}
     </form>
   )
 }
@@ -2015,6 +2269,105 @@ function YesNoListScreen({
   )
 }
 
+function GroupedIntakeCard({
+  q,
+  answers,
+  onApply,
+  onAdvance,
+  onPickOption,
+  showNavigation = true,
+  ...props
+}: Parameters<typeof QuestionScreen>[0]) {
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const children = groupedQuestions(q, answers)
+  const current = q.get(answers)
+  const missingParent = q.required === true && (current == null || current === '' || (Array.isArray(current) && current.length === 0))
+  const advance = async () => {
+    if (busy || missingParent) return
+    const message = children.map((child) => inlineQuestionError(child, answers)).find((value) => value != null)
+    if (message) {
+      setError(message)
+      return
+    }
+    const customText = (answers.customAnswers?.[q.id] as string | undefined)?.trim()
+    if (q.optionsFromList && customText && props.onAddOptionListValue) {
+      setBusy(true)
+      try {
+        const row = await props.onAddOptionListValue(q.optionsFromList, customText)
+        if (!row) throw new Error('Could not add the option - try again.')
+        if (q.id === 'qbo-status') {
+          const customAnswers = { ...(answers.customAnswers ?? {}) }
+          delete customAnswers[q.id]
+          onApply({ ...q.apply(answers, row.name), customAnswers })
+        }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'Could not add the option - try again.')
+        return
+      } finally {
+        setBusy(false)
+      }
+    }
+    setError(null)
+    onAdvance()
+  }
+  return (
+    <div className="space-y-4" data-testid={q.id === 're-yes' ? 'property-intake-card' : `question-group-${q.id}`}>
+      <QuestionScreen
+        {...props}
+        q={q}
+        answers={answers}
+        onApply={(patch) => {
+          setError(null)
+          onApply(patch)
+        }}
+        onAdvance={() => {}}
+        onPickOption={onPickOption}
+        showNavigation={false}
+        skipGroupedFlow
+      />
+      {children.map((child) => {
+        const help = typeof child.help === 'function' ? child.help(answers) : child.help
+        const badge = child.badge?.(answers) ?? null
+        const callout = child.callout?.(answers) ?? null
+        return (
+          <section className="border-t border-border pt-4" aria-label={child.title} data-testid={`inline-followup-${child.id}`} key={child.id}>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h2 className="text-base font-semibold text-foreground">{child.title}</h2>
+              {badge && <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent-foreground" data-testid="recommendation-badge">{badge}</span>}
+            </div>
+            {help && <p className="mt-1 text-sm text-muted-foreground">{help}</p>}
+            {callout && <p className="mt-2 text-sm text-muted-foreground" role="note">{callout}</p>}
+            <div className="mt-3">
+              <QuestionScreen
+                {...props}
+                q={child}
+                answers={answers}
+                onApply={(patch) => {
+                  setError(null)
+                  onApply(patch)
+                }}
+                onAdvance={() => {}}
+                onPickOption={(value) => {
+                  setError(null)
+                  onApply(child.apply(answers, value))
+                }}
+                showNavigation={false}
+              />
+            </div>
+          </section>
+        )
+      })}
+      {error && <p className="text-sm font-medium text-status-overdue" role="alert">{error}</p>}
+      {showNavigation && (
+        <CardNavigation onClick={() => void advance()} disabled={busy || missingParent} data-testid="continue">
+          {busy ? 'Saving…' : 'Continue'}
+        </CardNavigation>
+      )}
+    </div>
+  )
+}
+
 // ── The screen dispatcher ─────────────────────────────────────────────────
 
 export function QuestionScreen({
@@ -2036,6 +2389,17 @@ export function QuestionScreen({
   industrySuggestions,
   onJumpTo,
   onTagIndustry,
+  showNavigation = true,
+  skipGroupedFlow = false,
+  intakeId = 0,
+  vendorCatalog = [],
+  sopTemplates = [],
+  onAddVendor,
+  onRenameVendor,
+  onVendorDefaults,
+  reportCatalog = [],
+  onAddReportType,
+  onRenameReportType,
 }: {
   q: QuestionDef
   answers: WizardAnswers
@@ -2055,7 +2419,7 @@ export function QuestionScreen({
   merchantProcessors?: MerchantProcessorRow[]
   onAddMerchantProcessor?: (name: string) => Promise<MerchantProcessorRow | null>
   /** J1 (C5/C6/C7): the contact+client type-ahead behind picker questions. */
-  contactSearch?: ((query: string) => Promise<ContactLookupResults | null>) | null
+  contactSearch?: ((query: string, associationContactId?: number | null) => Promise<ContactLookupResults | null>) | null
   /** K3 (DB1/J1): the option_list_values rows behind optionsFromList
    *  questions/fields, and the persist write for customs. */
   optionLists?: Record<string, OptionListValueLite[]>
@@ -2068,12 +2432,55 @@ export function QuestionScreen({
   onJumpTo?: (chapterId: string, questionId: string) => void
   /** L2 (H7): tagged customs join the industry suggestion engine. */
   onTagIndustry?: (industry: string, title: string) => void
+  showNavigation?: boolean
+  skipGroupedFlow?: boolean
+  intakeId?: number
+  vendorCatalog?: VendorCatalogRow[]
+  sopTemplates?: { id: number; title: string }[]
+  onAddVendor?: (name: string, input: VendorDefaultsInput) => Promise<VendorCatalogRow | null>
+  onRenameVendor?: (id: number, name: string) => Promise<VendorCatalogRow | null>
+  onVendorDefaults?: (id: number, input: VendorDefaultsInput) => Promise<VendorCatalogRow | null>
+  reportCatalog?: ReportCatalogRow[]
+  onAddReportType?: (name: string, isCommon: boolean, sopTemplateId: number | null) => Promise<ReportCatalogRow | null>
+  onRenameReportType?: (id: number, name: string) => Promise<ReportCatalogRow | null>
 }) {
   // J2 (P1): the required-multi empty-attempt message (payroll handling).
   const [requiredError, setRequiredError] = useState<string | null>(null)
-  // K3: the add-new affordance on list-backed multi questions.
-  const [listAddOpen, setListAddOpen] = useState(false)
-  const [listAddText, setListAddText] = useState('')
+
+  if (isGroupedFlow(q) && !skipGroupedFlow) {
+    return (
+      <GroupedIntakeCard
+        q={q}
+        answers={answers}
+        onApply={onApply}
+        onAdvance={onAdvance}
+        onPickOption={onPickOption}
+        institutions={institutions}
+        onAddInstitution={onAddInstitution}
+        payrollProviders={payrollProviders}
+        onAddPayrollProvider={onAddPayrollProvider}
+        merchantProcessors={merchantProcessors}
+        onAddMerchantProcessor={onAddMerchantProcessor}
+        contactSearch={contactSearch}
+        optionLists={optionLists}
+        onAddOptionListValue={onAddOptionListValue}
+        servicesCatalog={servicesCatalog}
+        industrySuggestions={industrySuggestions}
+        onJumpTo={onJumpTo}
+        onTagIndustry={onTagIndustry}
+        showNavigation={showNavigation}
+        intakeId={intakeId}
+        vendorCatalog={vendorCatalog}
+        sopTemplates={sopTemplates}
+        onAddVendor={onAddVendor}
+        onRenameVendor={onRenameVendor}
+        onVendorDefaults={onVendorDefaults}
+        reportCatalog={reportCatalog}
+        onAddReportType={onAddReportType}
+        onRenameReportType={onRenameReportType}
+      />
+    )
+  }
 
   // I3: the per-type account count card (plan §1 screen 7).
   if (q.type === 'account-count') {
@@ -2097,35 +2504,51 @@ export function QuestionScreen({
     )
   }
 
+  if (q.type === 'vendor-setup' || q.type === 'payment-instructions') {
+    return (
+      <VendorSetupScreen
+        q={q}
+        answers={answers}
+        mode={q.type === 'vendor-setup' ? 'record' : 'pay'}
+        intakeId={intakeId}
+        vendors={vendorCatalog}
+        sops={sopTemplates}
+        onApply={onApply}
+        onAdvance={onAdvance}
+        onPickOption={onPickOption}
+        onAddVendor={onAddVendor ?? (async () => null)}
+        onRenameVendor={onRenameVendor ?? (async () => null)}
+        onVendorDefaults={onVendorDefaults ?? (async () => null)}
+        showNavigation={showNavigation}
+      />
+    )
+  }
+
   if (q.type === 'select') {
     const current = q.get(answers) as string | undefined
 
-    // J1 (P2/DB1): the payroll-provider question renders the database-backed
-    // dropdown + inline add-new instead of option cards; the stored answer
-    // is the provider's NAME (the answer key stays stable). Dropdowns never
-    // pick, then Continue.
     if (q.dropdown === 'payrollProviders') {
       const rows = payrollProviders
       const selected = rows.find((r) => r.name === current) ?? null
       return (
         <div className="space-y-4">
-          <InstitutionSelect
-            institutions={rows}
-            selectedId={selected?.id ?? null}
-            selectedName={current ?? null}
-            index={0}
+          <SearchSelect
             ariaLabel={q.title}
+            options={rows.map((row) => ({ id: String(row.id), label: row.name, data: row }))}
+            value={selected == null ? null : String(selected.id)}
+            selectedLabel={current ?? null}
+            placeholder="Search or pick the payroll provider…"
             testidPrefix="provider"
-            listboxLabel="Payroll providers"
-            selectPlaceholder="Pick the payroll provider…"
-            addToggleLabel="Add a new provider…"
-            addSubmitLabel="Add provider"
-            addPlaceholder="SurePayroll"
-            addErrorLabel="provider"
-            onSelect={(row) => onApply(q.apply(answers, row.name))}
-            onAdd={async (name) => (onAddPayrollProvider ? onAddPayrollProvider(name) : null)}
+            inputTestid="provider-select-0"
+            addLabel={(query) => (query ? `Add "${query}" as a new provider` : 'Add a new provider…')}
+            onChange={(_id, option) => onApply(q.apply(answers, option.data.name))}
+            onAdd={async (name) => {
+              const row = onAddPayrollProvider ? await onAddPayrollProvider(name) : null
+              if (!row) throw new Error('Could not add the provider - try again.')
+              onApply(q.apply(answers, row.name))
+            }}
           />
-          {current != null && current !== '' && (
+          {showNavigation && current != null && current !== '' && (
             <CardNavigation onClick={onAdvance} data-testid="continue">
               Continue
             </CardNavigation>
@@ -2148,6 +2571,7 @@ export function QuestionScreen({
       q.optionsFromList,
       optionLists,
     )
+    const inlineQuestion = q.inlineFollowup?.when(answers) ? q.inlineFollowup.question : null
     // K3 (J2): the typed custom persists to the question's list before
     // moving on, so it is offered on every future intake.
     const persistCustomThenAdvance = async () => {
@@ -2155,6 +2579,11 @@ export function QuestionScreen({
       // note says something - mandatory, just no longer a blocking overlay.
       if (q.noteOnYes && current === 'yes' && ((answers.behaviorNotes?.[q.id] as string | undefined) ?? '').trim() === '') {
         setRequiredError('Add the note before continuing - the card can\u2019t move on without it.')
+        return
+      }
+      const inlineError = inlineQuestion ? inlineQuestionError(inlineQuestion, answers) : null
+      if (inlineError) {
+        setRequiredError(inlineError)
         return
       }
       setRequiredError(null)
@@ -2171,17 +2600,78 @@ export function QuestionScreen({
     }
     return (
       <div className="space-y-4">
-        <OptionCards
-          options={options}
-          current={current}
-          onPick={onPickOption}
-          allowCustom={customOn}
-        />
+        {options.length > 2 ? (
+          <SearchSelect
+            ariaLabel={q.title}
+            optionOrder={q.optionOrder ?? 'source'}
+            options={(customOn && !options.some((option) => option.value === CUSTOM_OTHER_VALUE)
+              ? [...options, { value: CUSTOM_OTHER_VALUE, label: 'Other — type it' }]
+              : options
+            ).map((option) => ({
+              id: option.value,
+              label: option.label,
+              description: option.sub,
+              disabled: option.disabled,
+              pin: option.value === CUSTOM_OTHER_VALUE ? 'last' : undefined,
+              testidExact: `option-${option.value}`,
+              data: option,
+            }))}
+            value={current ?? ''}
+            selectedLabel={options.find((option) => option.value === current)?.label ?? current ?? null}
+            placeholder="Search or select an answer…"
+            testidPrefix={`question-${q.id}`}
+            onChange={(_id, option) => onPickOption(option.data.value)}
+            onAdd={q.optionsFromList && onAddOptionListValue
+              ? async (name) => {
+                  const row = await onAddOptionListValue(q.optionsFromList!, name)
+                  if (!row) throw new Error('Could not add the option - try again.')
+                  onPickOption(row.name)
+                }
+              : undefined}
+            onRename={q.optionsFromList
+              ? async (option, name) => {
+                  const listKey = q.optionsFromList!
+                  const row = optionLists?.[listKey]?.find((item) => item.name === option.data.value)
+                  if (!row) throw new Error('This option cannot be renamed here.')
+                  const { renameOptionValueAction } = await import('@/server/actions/option-lists')
+                  const result = await renameOptionValueAction(listKey, row.id, name)
+                  if (!result.ok) throw new Error(result.error)
+                  if (current === option.data.value) onPickOption(result.data.name)
+                }
+              : undefined}
+          />
+        ) : (
+          <OptionCards
+            options={options}
+            current={current}
+            onPick={onPickOption}
+            allowCustom={customOn}
+          />
+        )}
         {/* L1 (C1/C2, 10_06 00:12:26): the note rides INSIDE the card as a
             drop-down panel tied to the yes pick - never a blocking overlay,
             and a no hides it without deleting it (re-picking yes restores). */}
         {q.noteOnYes && current === 'yes' && (
           <NoteOnYesPanel q={q} answers={answers} onApply={onApply} />
+        )}
+        {inlineQuestion && (
+          <section className="border-t border-border pt-4" aria-label={inlineQuestion.title} data-testid={`inline-followup-${inlineQuestion.id}`}>
+            <h2 className="text-base font-semibold text-foreground">{inlineQuestion.title}</h2>
+            {typeof inlineQuestion.help === 'string' && <p className="mt-1 text-sm text-muted-foreground">{inlineQuestion.help}</p>}
+            <div className="mt-3">
+              <QuestionScreen
+                q={inlineQuestion}
+                answers={answers}
+                onApply={onApply}
+                onAdvance={onAdvance}
+                onPickOption={onPickOption}
+                contactSearch={contactSearch}
+                optionLists={optionLists}
+                onAddOptionListValue={onAddOptionListValue}
+                showNavigation={false}
+              />
+            </div>
+          </section>
         )}
         {requiredError && (
           <p className="text-sm font-medium text-status-overdue" role="alert" data-testid={`note-required-${q.id}`}>
@@ -2214,13 +2704,15 @@ export function QuestionScreen({
             the pre-answered corporate payroll card (I2) and any screen
             revisited via Back would otherwise dead-end (live-verified
             2026-09: the wizard stalled here with no affordance). */}
-        <CardNavigation
-          onClick={() => void persistCustomThenAdvance()}
-          disabled={!otherOpen && current == null}
-          data-testid="continue"
-        >
-          Continue
-        </CardNavigation>
+        {showNavigation && (
+          <CardNavigation
+            onClick={() => void persistCustomThenAdvance()}
+            disabled={!otherOpen && current == null}
+            data-testid="continue"
+          >
+            Continue
+          </CardNavigation>
+        )}
       </div>
     )
   }
@@ -2236,6 +2728,7 @@ export function QuestionScreen({
         onAdvance={onAdvance}
         optionLists={optionLists}
         onAddOptionListValue={onAddOptionListValue}
+        showNavigation={showNavigation}
       />
     )
   }
@@ -2275,22 +2768,22 @@ export function QuestionScreen({
     // J2 (P1): a required multi never skips silently - Continue stays
     // clickable and an empty attempt explains itself (payroll handling).
     const canContinue = (values.length > 0 || !q.required) && !followupNeedsAnswer
-    // K3 (DB1/J1): chips from the list plus an add-new chip that persists
-    // and selects in one tap.
-    const options = mergeListOptions(q.options ?? [], q.optionsFromList, optionLists)
-    const addCustomOption = async () => {
-      const text = listAddText.trim()
-      if (!q.optionsFromList || !text || !onAddOptionListValue) return
-      const row = await onAddOptionListValue(q.optionsFromList, text)
-      if (row) {
-        setListAddText('')
-        setListAddOpen(false)
-        if (!values.includes(row.name)) toggle(row.name)
-      }
+    const options = mergeListOptions(q.dynamicOptions?.(answers) ?? q.options ?? [], q.optionsFromList, optionLists)
+    const addCustomOption = async (name: string) => {
+      if (!q.optionsFromList || !onAddOptionListValue) return
+      const row = await onAddOptionListValue(q.optionsFromList, name)
+      if (!row) throw new Error('Could not add the option - try again.')
+      if (!values.includes(row.name)) toggle(row.name)
     }
     return (
       <div className="space-y-4">
-        <MultiChips options={options} values={values} onToggle={toggle} />
+        <MultiChips
+          options={options}
+          optionOrder={q.optionOrder ?? 'source'}
+          values={values}
+          onToggle={toggle}
+          onAdd={q.optionsFromList && onAddOptionListValue ? addCustomOption : undefined}
+        />
         {/* K5 (D1): an inline follow-up revealed by the current picks (the
             1099 estimate count rides the 1099 card - 09_30 00:35:49). */}
         {followupVisible && q.followup && (
@@ -2341,67 +2834,26 @@ export function QuestionScreen({
             )}
           </div>
         )}
-        {q.optionsFromList && onAddOptionListValue && (
-          listAddOpen ? (
-            <div className="flex items-center gap-2">
-              <input
-                aria-label="Type the custom option"
-                data-testid="multi-custom-input"
-                className={inputCls}
-                placeholder="Type it once - it's on the list from now on"
-                value={listAddText}
-                autoFocus
-                onChange={(e) => setListAddText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    void addCustomOption()
-                  }
-                  if (e.key === 'Escape') setListAddOpen(false)
-                }}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void addCustomOption()}
-                disabled={listAddText.trim() === ''}
-                data-testid="multi-custom-add"
-              >
-                <Plus className="h-3.5 w-3.5" aria-hidden />
-                Add
-              </Button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              data-testid="multi-custom-open"
-              onClick={() => setListAddOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:border-firm-brand/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            >
-              <Plus className="h-3.5 w-3.5" aria-hidden />
-              Something else…
-            </button>
-          )
-        )}
         {requiredError && (
           <p className="text-sm font-medium text-status-overdue" role="alert">
             {requiredError}
           </p>
         )}
-        <CardNavigation
-          onClick={() => {
-            if (!canContinue) {
-              setRequiredError(followupNeedsAnswer ? 'Answer the follow-up question before continuing.' : 'Pick at least one before continuing.')
-              return
-            }
-            setRequiredError(null)
-            onAdvance()
-          }}
-          data-testid="continue"
-        >
-          {values.length === 0 && !q.required ? 'Skip for now' : 'Continue'}
-        </CardNavigation>
+        {showNavigation && (
+          <CardNavigation
+            onClick={() => {
+              if (!canContinue) {
+                setRequiredError(followupNeedsAnswer ? 'Answer the follow-up question before continuing.' : 'Pick at least one before continuing.')
+                return
+              }
+              setRequiredError(null)
+              onAdvance()
+            }}
+            data-testid="continue"
+          >
+            {values.length === 0 && !q.required ? 'Skip for now' : 'Continue'}
+          </CardNavigation>
+        )}
       </div>
     )
   }
@@ -2434,6 +2886,7 @@ export function QuestionScreen({
         contactSearch={contactSearch}
         optionLists={optionLists}
         onAddOptionListValue={onAddOptionListValue}
+        showNavigation={showNavigation}
       />
     )
   }
@@ -2454,9 +2907,8 @@ export function QuestionScreen({
     )
   }
 
-  // L2 (B3, 10_06 00:10:01): the merchants question renders as ONE
-  // alphabetized vertical stack (click selects, pencil renames, add at the
-  // bottom) - the tile grid, dropdown, and name field are retired.
+  // The merchants question uses the shared searchable multi-select with
+  // inline add and pencil rename; the answer shape stays unchanged.
   if (q.type === 'repeatable' && q.repeatable?.processorStack) {
     return (
       <ProcessorStackScreen
@@ -2466,6 +2918,7 @@ export function QuestionScreen({
         onAddProcessor={onAddMerchantProcessor}
         onApply={onApply}
         onAdvance={onAdvance}
+        showNavigation={showNavigation}
       />
     )
   }
@@ -2489,6 +2942,12 @@ export function QuestionScreen({
       onAddProcessor={onAddMerchantProcessor}
       optionLists={optionLists}
       onAddOptionListValue={onAddOptionListValue}
+      reportTools={reportCatalog.length > 0 || onAddReportType || onRenameReportType ? {
+        catalog: reportCatalog,
+        sops: sopTemplates,
+        onAdd: onAddReportType ?? (async () => null),
+        onRename: onRenameReportType ?? (async () => null),
+      } : undefined}
     />
   )
 }

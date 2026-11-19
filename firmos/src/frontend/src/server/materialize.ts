@@ -29,6 +29,7 @@ import {
 
 import { catchupOf, toDomainClient, type ClientRow } from "./domain-adapters";
 import { localToday } from "./dates";
+import { closeDeadlineDay } from "@/shared/lib/closing-deadline";
 
 /**
  * materializeOperationalRows - HANDOFF §6.3 generation + §9 materialization
@@ -74,6 +75,9 @@ interface ReportDefinition {
   /** C10 specialty-report extras (data-source note, pricing) pass through. */
   dataSource?: string | null;
   notes?: string | null;
+  catalogId?: number | null;
+  isCommon?: boolean | null;
+  sopTemplateId?: number | null;
   estimatedHours?: number | null;
   flatPrice?: number | null;
   hourlyRate?: number | null;
@@ -102,7 +106,7 @@ export async function materializeOperationalRows(
       continue;
     }
     try {
-      const created = await materializeClient(client, years);
+      const created = await materializeClient(client, years, today);
       summary.clientsProcessed += 1;
       summary.bankFeedsCreated += created.bankFeeds;
       summary.reconciliationsCreated += created.reconciliations;
@@ -123,14 +127,21 @@ export async function materializeOperationalRows(
 async function materializeClient(
   client: ClientRow,
   years: number[],
+  today: LocalDate,
 ): Promise<{ bankFeeds: number; reconciliations: number; reports: number }> {
+  const [intake] = await db
+    .select({ isExistingClient: clientIntakes.isExistingClient })
+    .from(clientIntakes)
+    .where(eq(clientIntakes.clientId, client.id))
+    .limit(1);
+  const existingClient = intake?.isExistingClient === true;
   let bankFeeds = 0;
   let reconciliations = 0;
   let reports = 0;
   for (const year of years) {
-    bankFeeds += await ensureBankFeeds(client, year);
-    reconciliations += await ensureReconciliations(client, year);
-    reports += await ensureClientReports(client, year);
+    bankFeeds += await ensureBankFeeds(client, year, existingClient, today);
+    reconciliations += await ensureReconciliations(client, year, existingClient, today);
+    reports += await ensureClientReports(client, year, existingClient, today);
   }
   return { bankFeeds, reconciliations, reports };
 }
@@ -142,7 +153,12 @@ function mondayOfWeek(d: LocalDate): LocalDate {
   return addDays(d, -((dayOfWeek(d) + 6) % 7));
 }
 
-async function ensureBankFeeds(client: ClientRow, year: number): Promise<number> {
+async function ensureBankFeeds(
+  client: ClientRow,
+  year: number,
+  existingClient: boolean,
+  today: LocalDate,
+): Promise<number> {
   if (!client.requiresWeeklyBankFeeds) return 0;
 
   const jan1: LocalDate = { year, month: 1, day: 1 };
@@ -152,6 +168,7 @@ async function ensureBankFeeds(client: ClientRow, year: number): Promise<number>
     const start = parseLocalDate(client.bookkeepingStartDate);
     if (compareLocalDate(start, lower) > 0) lower = start;
   }
+  if (existingClient && compareLocalDate(today, lower) > 0) lower = today;
   if (compareLocalDate(lower, dec31) > 0) return 0;
 
   const catchup = catchupOf(client);
@@ -190,7 +207,12 @@ async function ensureBankFeeds(client: ClientRow, year: number): Promise<number>
 
 // ── Account reconciliations (§6.3) ───────────────────────────────────────
 
-async function ensureReconciliations(client: ClientRow, year: number): Promise<number> {
+async function ensureReconciliations(
+  client: ClientRow,
+  year: number,
+  existingClient: boolean,
+  today: LocalDate,
+): Promise<number> {
   const clientAccounts = await db
     .select()
     .from(accounts)
@@ -211,6 +233,7 @@ async function ensureReconciliations(client: ClientRow, year: number): Promise<n
     const closeMonth = account.closeDate ? parseLocalDate(account.closeDate) : null;
 
     for (let month = 1; month <= 12; month++) {
+      if (existingClient && (year < today.year || (year === today.year && month < today.month))) continue;
       if (startMonth && (year < startMonth.year || (year === startMonth.year && month < startMonth.month))) continue;
       if (openMonth && (year < openMonth.year || (year === openMonth.year && month < openMonth.month))) continue;
       if (closeMonth && (year > closeMonth.year || (year === closeMonth.year && month > closeMonth.month))) continue;
@@ -261,7 +284,12 @@ export function reportDefinitionsOf(intake: {
   );
 }
 
-async function ensureClientReports(client: ClientRow, year: number): Promise<number> {
+async function ensureClientReports(
+  client: ClientRow,
+  year: number,
+  existingClient: boolean,
+  today: LocalDate,
+): Promise<number> {
   const [intake] = await db
     .select()
     .from(clientIntakes)
@@ -272,9 +300,12 @@ async function ensureClientReports(client: ClientRow, year: number): Promise<num
   const definitions = reportDefinitionsOf(intake);
   if (definitions.length === 0) return 0;
 
-  // Non-monthly clients have no tier cutoff and fall back to the default
-  // 15 (§6.1 RULE 1) - do not use the raw stored tier here.
-  const tier = tierDayForClient(toDomainClient(client)) ?? 15;
+  // The intake's numeric offset works for every cadence; the legacy tier is
+  // only the pricing fallback for older intakes.
+  const tier = closeDeadlineDay({
+    ...((intake.formData ?? {}) as Record<string, unknown>),
+    monthlyCloseTier: intake.monthlyCloseTier,
+  });
   const startMonth = client.bookkeepingStartDate
     ? parseLocalDate(client.bookkeepingStartDate)
     : null;
@@ -285,6 +316,7 @@ async function ensureClientReports(client: ClientRow, year: number): Promise<num
   let created = 0;
   for (const def of definitions) {
     for (const month of reportMonthsForFrequency(def.frequency)) {
+      if (existingClient && (year < today.year || (year === today.year && month < today.month))) continue;
       if (startMonth && (year < startMonth.year || (year === startMonth.year && month < startMonth.month))) continue;
       // Idempotency guard: the schema's client_reports_client_name_period_unique
       // constraint backs this existence check on (client, report name,

@@ -52,13 +52,14 @@ describe('ConvertDialog assignment workload (E13)', () => {
         onOpenChange={() => {}}
       />,
     )
-    expect(screen.getByTestId('select-manager')).toHaveTextContent('Dana Whitfield')
-    expect(screen.getByTestId('select-manager')).not.toHaveTextContent('open)')
+    expect(screen.getByTestId('select-manager')).toHaveValue('Assign after conversion')
+    expect(screen.getByTestId('select-manager')).not.toHaveValue('open)')
   })
 })
 
 function selectOptions(select: HTMLElement): string[] {
-  return Array.from(select.querySelectorAll('option')).map((o) => o.textContent ?? '')
+  fireEvent.click(select)
+  return Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.textContent ?? '')
 }
 
 /** L6 (I4/I5, 10_06 00:59:13): "once we convert… we'll do the task
@@ -99,9 +100,9 @@ describe('conversion_assigns_per_task_with_stagger_hints (L6/I5)', () => {
     // Pick the seats: rows default to them, and the hint follows.
     fireEvent.change(screen.getByTestId('select-manager'), { target: { value: '3' } })
     fireEvent.change(screen.getByTestId('select-bookkeeper'), { target: { value: '5' } })
-    expect(screen.getByTestId('convert-task-assignee-client_questions')).toHaveValue('3')
+    expect(screen.getByTestId('convert-task-assignee-client_questions')).toHaveAttribute('data-value', '3')
     expect(screen.getByTestId('convert-task-load-client_questions')).toHaveTextContent('2 open')
-    expect(screen.getByTestId('convert-task-assignee-categorize_transactions')).toHaveValue('5')
+    expect(screen.getByTestId('convert-task-assignee-categorize_transactions')).toHaveAttribute('data-value', '5')
     expect(screen.getByTestId('convert-task-load-categorize_transactions')).toHaveTextContent('12 open')
 
     // A per-task override sticks while the seat default moves.

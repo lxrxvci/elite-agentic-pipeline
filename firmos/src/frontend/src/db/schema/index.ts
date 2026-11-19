@@ -1,5 +1,5 @@
 /**
- * FirmOS database schema - 64 tables across 15 domain groups, modeled
+ * FirmOS database schema - 65 tables across 16 domain groups, modeled
  * up front from HANDOFF §7 (ADR-0005). Single tenant: no tenant_id/org_id
  * anywhere.
  *
@@ -37,6 +37,7 @@ export * from "./tax";
 export * from "./time";
 export * from "./communications";
 export * from "./admin";
+export * from "./vendors";
 export * from "./saved-views";
 export * from "./vault";
 export * from "./meetings";

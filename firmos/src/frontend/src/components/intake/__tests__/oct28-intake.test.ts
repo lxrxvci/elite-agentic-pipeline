@@ -11,13 +11,13 @@ describe('October 28 intake data capture', () => {
     expect(q.when?.({ ...base, hasPayroll: false, payrollFrequency: 'semi_monthly' })).toBe(false)
 
     const weekly = q.apply(base, { payrollFrequency: 'weekly', payrollPayWeekday: '5' })
-    expect(weekly).toEqual({ payrollPayWeekday: 5, payrollPayDates: [] })
+    expect(weekly).toEqual({ payrollPayWeekday: 5, payrollPayDates: [], payrollPeriods: [] })
 
     const semi = q.apply(base, { payrollFrequency: 'semi_monthly', payrollPayDate1: '15', payrollPayDate2: '30' })
-    expect(semi).toEqual({ payrollPayWeekday: null, payrollPayDates: [15, 30] })
+    expect(semi).toEqual({ payrollPayWeekday: null, payrollPayDates: [15, 30], payrollPeriods: [{ startDay: null, endDay: null, payDay: 15 }, { startDay: null, endDay: null, payDay: 30 }] })
 
     const monthly = q.apply(base, { payrollFrequency: 'monthly', payrollPayDate1: '10' })
-    expect(monthly).toEqual({ payrollPayWeekday: null, payrollPayDates: [10] })
+    expect(monthly).toEqual({ payrollPayWeekday: null, payrollPayDates: [10], payrollPeriods: [{ startDay: null, endDay: null, payDay: 10 }] })
   })
 
   it('last-tax-filed stays distinct from the bookkeeping start date', () => {
@@ -28,9 +28,9 @@ describe('October 28 intake data capture', () => {
 
   it('record-bills captures a separate required vendor list and clears it on no', () => {
     const q = findQuestion('reporting', 'record-bills')!
-    expect(q.yesNoList).toMatchObject({ listKey: 'recordBillVendors', optionListKey: 'record_bill_vendors', requireItems: true })
+    expect(q.type).toBe('vendor-setup')
     expect(q.apply(base, 'yes')).toEqual({ recordBills: true })
-    expect(q.apply(base, 'no')).toEqual({ recordBills: false, payBills: false, billPayLocations: [], recordBillVendors: [] })
+    expect(q.apply(base, 'no')).toEqual({ recordBills: false, payBills: false, billPayLocations: [], recordBillVendors: [], vendorAssignments: [] })
     expect(q.summarize({ ...base, recordBills: true, recordBillVendors: ['Utilities', 'Rent'] })).toBe('Yes · records: Utilities\nRent')
   })
 
@@ -42,7 +42,7 @@ describe('October 28 intake data capture', () => {
   })
 
   it('equity per-owner is a boolean follow-up on the breakdown card', () => {
-    const q = findQuestion('balance', 'equity-breakdown')!
+    const q = findQuestion('balance', 'equity-setup')!.inlineFollowup!.question
     expect(findQuestion('balance', 'equity-per-owner')).toBeUndefined()
     expect(q.followup).toMatchObject({ key: 'equityPerOwner', valueKind: 'boolean' })
     expect(q.followup?.when?.({ ...base, owners: [{ name: 'A' }, { name: 'B' }] })).toBe(true)

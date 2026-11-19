@@ -1,7 +1,10 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 
+import { lastDayOfMonth } from '@firmos/domain'
+
 import { Card, CardContent } from '@/components/ui/card'
+import { GustoPayrollPanel } from '@/components/clients/gusto-payroll-panel'
 import { MonthNav } from '@/components/reports/month-nav'
 import { PayrollTable } from '@/components/reports/payroll-table'
 import { PayoutConfigPopover } from '@/components/reports/payout-config-popover'
@@ -48,6 +51,17 @@ export default async function PayrollPage({
       <Card>
         <CardContent className="px-0 pb-0 pt-0">
           <PayrollTable calc={calc} />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-4">
+          <GustoPayrollPanel
+            scope="firm"
+            provider="Gusto"
+            exportAction="/api/payroll-hours.csv"
+            defaultStart={`${year}-${String(month).padStart(2, '0')}-01`}
+            defaultEnd={`${year}-${String(month).padStart(2, '0')}-${lastDayOfMonth(year, month)}`}
+          />
         </CardContent>
       </Card>
     </div>

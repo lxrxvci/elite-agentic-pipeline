@@ -272,7 +272,6 @@ function ScheduleControls({
             value={selectedDay}
             onChange={(event) => onPatch({ dayOfMonth: Number(event.target.value) })}
           >
-            <option value={1}>First day of the month</option>
             {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => (
               <option
                 key={day}
@@ -283,7 +282,7 @@ function ScheduleControls({
                 {day}{day === tierDay ? ' — close target' : ''}
               </option>
             ))}
-            <option value={31}>Last day of the month</option>
+            <option value={0}>End of month</option>
           </NativeSelect>
           {tierDay != null && (
             <span className="rounded bg-accent px-2 py-1 text-xs font-medium text-accent-foreground" data-testid={`close-target-${task.key}`}>

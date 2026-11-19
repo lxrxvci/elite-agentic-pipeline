@@ -253,6 +253,27 @@
       "when": 1793951326025,
       "tag": "0035_perpetual_silhouette",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794628884735,
+      "tag": "0036_pink_shotgun",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795068128106,
+      "tag": "0037_short_the_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795069072321,
+      "tag": "0038_abandoned_spitfire",
+      "breakpoints": true
     }
   ]
 }

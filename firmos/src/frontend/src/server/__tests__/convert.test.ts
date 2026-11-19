@@ -2104,12 +2104,14 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
       // J1 (E4/DB1): the processor pick carries the merchant_processors FK.
       merchantAccounts: [{ name: "Stripe", processorId: stripe.id }],
       includeMerchantReconciliation: true,
-      // J2 (E1-E3): the three money-behavior yes answers + mandatory notes.
+      // All four money-behavior answers and their inline notes.
       depositsNonBusiness: true,
+      businessIncomeToPersonal: true,
       personalOnBusiness: true,
       personalCardForBusiness: true,
       behaviorNotes: {
         "deposits-non-business": "Owner covers a bill from his personal account some months",
+        "business-income-personal": "Customer payment landed in personal checking",
         "personal-on-business": "Groceries hit the business debit card",
         "personal-card": "The Amex picks up supplies",
       },
@@ -2220,11 +2222,16 @@ describe.skipIf(!reachable)("J5 full-graph: every J1-J4 shape converts end-to-en
     // ── Recurring rules through the J3 scheduler path: every J2 note rides ──
     const rules = await db.select().from(recurringTasks).where(eq(recurringTasks.clientId, clientId));
     const byTitle = new Map(rules.map((r) => [r.title, r]));
-    expect(rules).toHaveLength(15); // + the annual EOY tax checklist (E9)
+    expect(rules).toHaveLength(16); // includes the annual EOY checklist and the fourth commingling review
     expect(byTitle.get("Send Reports")).toMatchObject({ scheduleType: "monthly", dayOfMonth: 10, description: PRELIMINARY_REPORTS_NOTE });
     expect(byTitle.get(NON_BUSINESS_DEPOSITS_REVIEW_TITLE)?.description).toBe(
       "Client context from intake: Owner covers a bill from his personal account some months",
     );
+    expect(byTitle.get("Review business income deposited into personal accounts")).toMatchObject({
+      scheduleType: "monthly",
+      dayOfMonth: 10,
+      description: "Client context from intake: Customer payment landed in personal checking",
+    });
     expect(byTitle.get(OWNER_DRAWS_CONFIRMATION_TITLE)?.description).toBe(
       "Client context from intake: Groceries hit the business debit card",
     );

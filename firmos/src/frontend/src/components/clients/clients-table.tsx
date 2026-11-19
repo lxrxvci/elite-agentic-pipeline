@@ -2,12 +2,12 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Mail, Search, Users } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Mail, Users } from 'lucide-react'
 import type { ClientWorkState } from '@firmos/domain'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { SearchSelect } from '@/components/ui/search-select'
 import {
   Select,
   SelectContent,
@@ -102,6 +102,7 @@ function HealthCell({ score, status }: { score: number; status: WorkStatus }) {
 export function ClientsTable({ rows, canSeeRates = false }: ClientsTableProps) {
   const router = useRouter()
   const [search, setSearch] = useState('')
+  const [selectedClientIds, setSelectedClientIds] = useState<string[]>([])
   const [stateFilter, setStateFilter] = useState<StateFilter>('all')
   const [cadenceFilter, setCadenceFilter] = useState<CadenceFilter>('all')
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all')
@@ -124,13 +125,13 @@ export function ClientsTable({ rows, canSeeRates = false }: ClientsTableProps) {
 
   const filtered = useMemo(
     () =>
-      filterClients(rows, {
+      filterClients(selectedClientIds.length > 0 ? rows.filter((row) => selectedClientIds.includes(String(row.id))) : rows, {
         search,
         state: stateFilter,
         cadence: cadenceFilter,
         assigneeId: assigneeFilter,
       }),
-    [rows, search, stateFilter, cadenceFilter, assigneeFilter],
+    [rows, selectedClientIds, search, stateFilter, cadenceFilter, assigneeFilter],
   )
 
   const sorted = useMemo(
@@ -139,10 +140,11 @@ export function ClientsTable({ rows, canSeeRates = false }: ClientsTableProps) {
   )
 
   const filtersActive =
-    search.trim() !== '' || stateFilter !== 'all' || cadenceFilter !== 'all' || assigneeFilter !== 'all'
+    search.trim() !== '' || selectedClientIds.length > 0 || stateFilter !== 'all' || cadenceFilter !== 'all' || assigneeFilter !== 'all'
 
   function resetFilters() {
     setSearch('')
+    setSelectedClientIds([])
     setStateFilter('all')
     setCadenceFilter('all')
     setAssigneeFilter('all')
@@ -189,19 +191,21 @@ export function ClientsTable({ rows, canSeeRates = false }: ClientsTableProps) {
     <div className="space-y-3">
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-52 flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search clients…"
-            aria-label="Search clients"
-            className="h-8 pl-8 text-sm"
-          />
-        </div>
+        <SearchSelect
+          multiple
+          ariaLabel="Search clients"
+          options={rows.map((row) => ({ id: String(row.id), label: row.dbaName ?? row.legalName, keywords: [row.legalName], data: row }))}
+          values={selectedClientIds}
+          onChange={(ids) => { setSelectedClientIds(ids); setSearch('') }}
+          onQueryChange={setSearch}
+          selectedLabel={search}
+          placeholder="Search clients…"
+          emptyMessage="No clients match."
+          className="min-w-52 flex-1"
+          inputClassName="h-8 text-sm"
+          inputTestid="client-search"
+          testidPrefix="client-filter"
+        />
 
         <Select value={stateFilter} onValueChange={(v) => setStateFilter(v as StateFilter)}>
           <SelectTrigger className="h-8 w-36 text-xs" aria-label="Filter by state">
@@ -230,7 +234,7 @@ export function ClientsTable({ rows, canSeeRates = false }: ClientsTableProps) {
           </SelectContent>
         </Select>
 
-        <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+        <Select optionOrder="alphabetical" value={assigneeFilter} onValueChange={setAssigneeFilter}>
           <SelectTrigger className="h-8 w-44 text-xs" aria-label="Filter by assignee">
             <SelectValue placeholder="All staff" />
           </SelectTrigger>

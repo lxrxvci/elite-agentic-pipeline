@@ -466,7 +466,7 @@ export function ProgressionBoard({ board }: { board: FirmProgressionBoard }) {
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+        <Select optionOrder="alphabetical" value={assigneeFilter} onValueChange={setAssigneeFilter}>
           <SelectTrigger className="h-8 w-44 text-xs" aria-label="Filter by team member">
             <SelectValue placeholder="All staff" />
           </SelectTrigger>

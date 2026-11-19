@@ -15,7 +15,7 @@ test.use({ persona: 'owner' })
 /** Open the Harborline client record from the list. */
 async function openHarborline(page: Page) {
   await page.goto('/clients')
-  await page.getByLabel('Search clients').fill('Harborline')
+  await page.getByTestId('client-search').fill('Harborline')
   const row = page.getByTestId('client-row').filter({ hasText: 'Harborline Marine Supply' })
   await expect(row).toBeVisible()
   await row.click()
@@ -40,13 +40,13 @@ test('clients: list filters, sort, health rings, eff $/hr column', async ({ page
   expect((await ring.count()) + (await notScored.count())).toBe(1)
 
   // Search narrows.
-  await page.getByLabel('Search clients').fill('Harborline')
+  await page.getByTestId('client-search').fill('Harborline')
   await expect(rows).toHaveCount(1)
   await expect(rows.first()).toContainText('Harborline Marine Supply')
 
   // State filter: Paused shows only paused clients (seed has Redwood paused).
-  await page.getByLabel('Search clients').fill('')
-  await page.getByLabel('Filter by state').click()
+  await page.getByTestId('client-search').fill('')
+  await page.getByRole('combobox', { name: 'Filter by state', exact: true }).click()
   await page.getByRole('option', { name: 'Paused' }).click()
   await expect(rows.first()).toBeVisible()
   for (const row of await rows.all()) {
@@ -54,9 +54,9 @@ test('clients: list filters, sort, health rings, eff $/hr column', async ({ page
   }
 
   // Cadence filter narrows to monthly clients.
-  await page.getByLabel('Filter by state').click()
+  await page.getByRole('combobox', { name: 'Filter by state', exact: true }).click()
   await page.getByRole('option', { name: 'All states' }).click()
-  await page.getByLabel('Filter by cadence').click()
+  await page.getByRole('combobox', { name: 'Filter by cadence', exact: true }).click()
   await page.getByRole('option', { name: 'Monthly' }).first().click()
   const monthlyCount = await rows.count()
   expect(monthlyCount).toBeGreaterThan(0)
@@ -142,7 +142,7 @@ test('clients: properties tab on the real-estate client', async ({ page }) => {
   // overlaps the second row (see the fixme test below).
   await page.setViewportSize({ width: 1920, height: 900 })
   await page.goto('/clients')
-  await page.getByLabel('Search clients').fill('Riverstone')
+  await page.getByTestId('client-search').fill('Riverstone')
   const row = page.getByTestId('client-row').filter({ hasText: 'Riverstone Property Group' })
   await expect(row).toBeVisible()
   await row.click()
@@ -162,7 +162,7 @@ test('clients: properties tab on the real-estate client', async ({ page }) => {
 // is visibly clipped by the panel). Expected correct behavior below.
 test('clients: wrapped second-row tabs stay clickable at 1280px', async ({ page }) => {
   await page.goto('/clients')
-  await page.getByLabel('Search clients').fill('Riverstone')
+  await page.getByTestId('client-search').fill('Riverstone')
   await page.getByTestId('client-row').filter({ hasText: 'Riverstone Property Group' }).click()
   await page.waitForURL((url) => /^\/clients\/\d+$/.test(url.pathname))
   await page.getByTestId('properties-tab').click()

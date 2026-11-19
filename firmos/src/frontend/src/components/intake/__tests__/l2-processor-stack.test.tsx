@@ -5,12 +5,6 @@ import { useState } from 'react'
 import { findQuestion, type WizardAnswers } from '../registry'
 import { QuestionScreen } from '../screens'
 
-/**
- * L2 (B3, 10_06 00:09:18-00:10:01): the processor card is ONE alphabetized
- * vertical stack - click selects/highlights, pencil edits only the name,
- * add button at the bottom. No tiles, no dropdown, no name field.
- */
-
 const renameMerchantProcessorAction = vi.fn()
 vi.mock('@/server/actions/merchant-processors', () => ({
   renameMerchantProcessorAction: (...args: unknown[]) => renameMerchantProcessorAction(...args),
@@ -44,35 +38,37 @@ function Harness({ initial, processors = PROCESSORS.map((p) => ({ ...p })) }: { 
 
 const answersNow = (): WizardAnswers => JSON.parse(screen.getByTestId('answers').textContent ?? '{}')
 
-describe('L2/B3: processors_are_a_vertical_stack_with_pencil_edit (10_06 00:10:01)', () => {
-  it('one alphabetized stack, no tiles/dropdown/name field; click selects with no re-typing, click again deselects', () => {
+describe('Jason selector: merchant processor multi-select', () => {
+  it('opens an alphabetized searchable list and toggles selections with checkboxes', () => {
     render(<Harness initial={{ merchantAccounts: [] } as unknown as WizardAnswers} />)
-    const stack = screen.getByTestId('processor-stack')
-    // A single vertical list (ul), alphabetized rows, no tile grid or dropdown.
-    expect(stack.tagName).toBe('UL')
-    expect(stack.querySelector('[data-testid="processor-dropdown"]')).toBeNull()
-    expect(screen.queryByLabelText('Processor')).toBeNull()
-    expect(screen.queryByLabelText('Name')).toBeNull()
-    const rows = screen.getAllByRole('checkbox').map((el) => el.textContent)
-    expect(rows).toEqual(['Clover', 'Square', 'Stripe'])
+    fireEvent.click(screen.getByTestId('processor-input'))
+    expect(
+      Array.from(screen.getByTestId('processor-listbox').querySelectorAll('[role="option"]'))
+        .slice(0, 3)
+        .map((option) => option.textContent),
+    ).toEqual([
+      'Clover',
+      'Square',
+      'Stripe',
+    ])
 
-    // Click selects - the committed row carries the processor's own name (C7).
-    fireEvent.click(screen.getByTestId('processor-toggle-Square'))
+    fireEvent.click(screen.getByTestId('processor-option-Square'))
     expect(answersNow().merchantAccounts).toEqual([{ name: 'Square', processor: 'Square', processorId: 2 }])
-    expect(screen.getByTestId('processor-toggle-Square')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('processor-option-Square')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('processor-listbox')).toBeInTheDocument()
 
-    // Click again deselects.
-    fireEvent.click(screen.getByTestId('processor-toggle-Square'))
+    fireEvent.click(screen.getByTestId('processor-option-Square'))
     expect(answersNow().merchantAccounts).toEqual([])
   })
 
-  it('the pencil renames only the name - committed rows on this intake follow', async () => {
+  it('the pencil renames only the name and committed rows follow', async () => {
     renameMerchantProcessorAction.mockResolvedValue({ ok: true, data: { id: 2, name: 'Square POS' } })
     render(
       <Harness
         initial={{ merchantAccounts: [{ name: 'Square', processor: 'Square', processorId: 2 }] } as unknown as WizardAnswers}
       />,
     )
+    fireEvent.click(screen.getByTestId('processor-input'))
     fireEvent.click(screen.getByTestId('processor-edit-Square'))
     const input = screen.getByLabelText('Rename Square')
     expect(input).toHaveValue('Square')
@@ -82,19 +78,40 @@ describe('L2/B3: processors_are_a_vertical_stack_with_pencil_edit (10_06 00:10:0
     await waitFor(() => expect(answersNow().merchantAccounts?.[0]?.name).toBe('Square POS'))
   })
 
-  it('Add processor sits at the bottom; a new processor arrives selected', async () => {
+  it('keeps renamed and newly added options after parent rerenders', async () => {
+    renameMerchantProcessorAction.mockResolvedValue({ ok: true, data: { id: 2, name: 'Square POS' } })
+    render(
+      <Harness
+        initial={{ merchantAccounts: [{ name: 'Square', processor: 'Square', processorId: 2 }] } as unknown as WizardAnswers}
+      />,
+    )
+    fireEvent.click(screen.getByTestId('processor-input'))
+    fireEvent.click(screen.getByTestId('processor-edit-Square'))
+    fireEvent.change(screen.getByLabelText('Rename Square'), { target: { value: 'Square POS' } })
+    fireEvent.click(screen.getByTestId('processor-rename-save-2'))
+    await waitFor(() => expect(answersNow().merchantAccounts?.[0]?.name).toBe('Square POS'))
+    fireEvent.click(screen.getByTestId('processor-add-toggle'))
+    fireEvent.change(screen.getByTestId('processor-add-input'), { target: { value: 'Helcim' } })
+    fireEvent.click(screen.getByTestId('processor-add-submit'))
+    await waitFor(() => expect(answersNow().merchantAccounts).toHaveLength(2))
+    expect(screen.getByTestId('processor-option-Square POS')).toBeVisible()
+    expect(screen.getByTestId('processor-option-Helcim')).toBeVisible()
+  })
+
+  it('Add processor sits inside the dropdown and a new processor arrives selected', async () => {
     render(<Harness initial={{ merchantAccounts: [] } as unknown as WizardAnswers} />)
-    fireEvent.click(screen.getByTestId('processor-add-open'))
-    fireEvent.change(screen.getByLabelText('New processor name'), { target: { value: 'Helcim' } })
+    fireEvent.click(screen.getByTestId('processor-input'))
+    fireEvent.click(screen.getByTestId('processor-add-toggle'))
+    fireEvent.change(screen.getByTestId('processor-add-input'), { target: { value: 'Helcim' } })
     fireEvent.click(screen.getByTestId('processor-add-submit'))
     await waitFor(() =>
       expect(answersNow().merchantAccounts).toEqual([{ name: 'Helcim', processor: 'Helcim', processorId: 99 }]),
     )
   })
 
-  it('Continue blocks when nothing is selected (required when they take cards)', () => {
-    render(<Harness initial={{ merchantAccounts: [] } as unknown as WizardAnswers} />)
+  it('Continue allows no processors after the reconciliation choice', () => {
+    render(<Harness initial={{ merchantAccounts: [], includeMerchantReconciliation: false } as unknown as WizardAnswers} />)
     fireEvent.click(screen.getByTestId('continue'))
-    expect(screen.getByRole('alert').textContent).toContain('Pick at least one processor')
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })

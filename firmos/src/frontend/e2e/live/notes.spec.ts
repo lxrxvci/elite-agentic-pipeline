@@ -23,7 +23,7 @@ test('notes: quick-add with priority + due date, chips render, delete cleans up'
   const dialog = page.getByRole('dialog', { name: 'Quick note' })
   await expect(dialog).toBeVisible()
   await dialog.getByLabel('Note', { exact: true }).fill(body)
-  await dialog.getByLabel('Priority').selectOption('high')
+  await dialog.getByLabel('Priority').fill('high')
   const tomorrow = new Date()
   tomorrow.setDate(tomorrow.getDate() + 1)
   const tomorrowIso = tomorrow.toLocaleDateString('en-CA')

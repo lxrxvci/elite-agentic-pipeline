@@ -1,7 +1,8 @@
 'use client'
 
 import * as React from 'react'
-import { Check, ChevronDown, Clock, LogOut, Search, SquareCheck, TimerReset } from 'lucide-react'
+import { Check, ChevronDown, Clock, LogOut, SquareCheck, TimerReset } from 'lucide-react'
+import { SearchSelect } from '@/components/ui/search-select'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -84,19 +85,6 @@ type WidgetState = 'loading' | 'out' | 'in' | 'autoOut'
 const WORK_ACTIVITY_TYPES = ACTIVITY_TYPES.filter((t) => !isBreakActivityType(t))
 const BREAK_ACTIVITY_TYPES = ACTIVITY_TYPES.filter((t) => isBreakActivityType(t))
 
-/** Light fuzzy match: every query character in order, case-insensitive. */
-function fuzzyMatch(name: string, query: string): boolean {
-  const n = name.toLowerCase()
-  const q = query.toLowerCase()
-  if (n.includes(q)) return true
-  let i = 0
-  for (const ch of n) {
-    if (ch === q[i]) i += 1
-    if (i === q.length) return true
-  }
-  return q.length === 0
-}
-
 export function ClockWidget({
   pollMs = POLL_MS,
   idleThresholdMs,
@@ -114,7 +102,7 @@ export function ClockWidget({
   const [error, setError] = React.useState<string | null>(null)
   const [confirmOut, setConfirmOut] = React.useState(false)
   const [clients, setClients] = React.useState<ClockClientOption[] | null>(null)
-  const [clientQuery, setClientQuery] = React.useState('')
+  const [clientMenuOpen, setClientMenuOpen] = React.useState(false)
   const [, setTick] = React.useState(0)
   // Clock-C2 idle state: the countdown's remaining seconds while it shows,
   // and the pending return-time forgiveness gap.
@@ -309,7 +297,6 @@ export function ClockWidget({
         applyStatus(result.data.status)
         toastTimerSwitch(result.data.switch)
         setConfirmOut(false)
-        setClientQuery('')
       } else {
         setError(result.error)
         await refresh()
@@ -509,11 +496,6 @@ export function ClockWidget({
   const activitySeconds = activity
     ? (Date.now() - new Date(activity.startedAt).getTime()) / 1000
     : 0
-  const filteredClients =
-    clientQuery.trim().length > 0
-      ? (clients ?? []).filter((c) => fuzzyMatch(c.name, clientQuery.trim())).slice(0, 8)
-      : (clients ?? []).slice(0, 10)
-
   const triggerLabel = activity
     ? activity.clientName != null
       ? `On the clock: ${activity.clientName}${activityMeta ? `, ${activityMeta.label}` : ''}`
@@ -540,12 +522,11 @@ export function ClockWidget({
       </span>
 
       <DropdownMenu
+        open={clientMenuOpen}
         onOpenChange={(open) => {
+          setClientMenuOpen(open)
           if (open) void loadClients()
-          else {
-            setConfirmOut(false)
-            setClientQuery('')
-          }
+          else setConfirmOut(false)
         }}
       >
         <DropdownMenuTrigger asChild>
@@ -597,47 +578,31 @@ export function ClockWidget({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64">
           <DropdownMenuLabel>Client timer</DropdownMenuLabel>
-          <div className="px-2 pb-1.5">
-            <div className="flex items-center gap-1.5 rounded-md border border-input px-2">
-              <Search aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <input
-                value={clientQuery}
-                onChange={(e) => setClientQuery(e.target.value)}
-                onKeyDown={(e) => e.stopPropagation()}
-                placeholder="Search clients…"
-                aria-label="Search clients"
-                data-testid="clock-client-search"
-                className="h-7 w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-          </div>
-          {filteredClients.length === 0 ? (
-            <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
-              {clients == null ? 'Loading clients…' : 'No clients match.'}
-            </p>
-          ) : (
-            filteredClients.map((client) => {
-              const current = client.id === currentClientId
-              return (
-                <DropdownMenuItem
-                  key={client.id}
-                  disabled={busy || current}
-                  onSelect={() => startClientTimer(client)}
-                  className="gap-2"
-                  data-testid="clock-client-option"
-                  data-client-id={client.id}
-                >
-                  <span className="flex-1 truncate">{client.name}</span>
-                  {client.isToday && (
-                    <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      Today
-                    </span>
-                  )}
-                  {current && <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-status-on-track" />}
-                </DropdownMenuItem>
-              )
-            })
-          )}
+          <SearchSelect
+            ariaLabel="Search clients"
+            options={(clients ?? []).map((client) => ({
+              id: String(client.id),
+              label: client.name,
+              description: client.isToday ? "Today's client" : client.lastWorkedAt ? 'Recent client' : undefined,
+              disabled: busy || client.id === currentClientId,
+              testidExact: 'clock-client-option',
+              data: client,
+            }))}
+            value={currentClientId == null ? null : String(currentClientId)}
+            onChange={(_id, option) => {
+              startClientTimer(option.data)
+              setClientMenuOpen(false)
+            }}
+            optionOrder="source"
+            disabled={busy}
+            loading={clients == null}
+            placeholder="Search clients…"
+            emptyMessage="No clients match."
+            className="mx-2 mb-1.5"
+            inputClassName="h-8 text-xs"
+            inputTestid="clock-client-search"
+            testidPrefix="clock-client-search"
+          />
           <DropdownMenuSeparator />
           <DropdownMenuLabel>Activity kind</DropdownMenuLabel>
           {WORK_ACTIVITY_TYPES.map((type) => {

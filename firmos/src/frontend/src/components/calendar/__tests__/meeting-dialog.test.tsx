@@ -61,7 +61,7 @@ describe('MeetingDialog', () => {
     expect(screen.getByTestId('meeting-save')).toBeDisabled()
 
     // ...until a client is picked.
-    await userEvent.click(screen.getByLabelText(/client/i))
+    await userEvent.click(screen.getByRole('combobox', { name: 'Client' }))
     await userEvent.click(screen.getByRole('option', { name: 'Harborline Marine Supply' }))
     const amount = screen.getByLabelText(/amount/i)
     await userEvent.type(amount, '150')

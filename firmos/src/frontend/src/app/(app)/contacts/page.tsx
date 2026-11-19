@@ -80,7 +80,7 @@ export default async function ContactsPage() {
               {rows.map((row) => (
                 <TableRow key={row.id} data-testid="contact-row" className="h-12">
                   <TableCell className="px-4 py-0">
-                    <span className="truncate text-sm font-medium text-foreground">{row.name}</span>
+                    <Link href={`/contacts/${row.id}`} className="truncate text-sm font-medium text-foreground hover:underline">{row.name}</Link>
                     {row.type === 'entity' && (
                       <span className="ml-2 text-xs text-muted-foreground">Entity</span>
                     )}
